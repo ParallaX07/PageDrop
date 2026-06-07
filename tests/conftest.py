@@ -42,6 +42,16 @@ def empty_pdf(pdf_fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
+def corrupt_pdf(pdf_fixtures_dir: Path) -> Path:
+    return fixture_path(pdf_fixtures_dir, "corrupt")
+
+
+@pytest.fixture
+def garbage_pdf(pdf_fixtures_dir: Path) -> Path:
+    return fixture_path(pdf_fixtures_dir, "garbage")
+
+
+@pytest.fixture
 def main_window(qtbot):
     """Fresh MainWindow instance registered with qtbot."""
     from pagedrop.ui.main_window import MainWindow

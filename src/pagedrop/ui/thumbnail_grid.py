@@ -18,6 +18,7 @@ class ThumbnailWorker(QRunnable):
     class Signals(QObject):
         page_ready = pyqtSignal(int, int, QPixmap)  # generation, page_index, pixmap
         finished = pyqtSignal(int)  # generation
+        error = pyqtSignal(int, str)  # generation, message
 
     def __init__(
         self,
@@ -35,32 +36,33 @@ class ThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
+        doc = None
         try:
             doc = fitz.open(self._path)
-        except fitz.FileDataError:
-            return
-        try:
             for i in range(self._total_pages):
                 if self._is_cancelled(self._generation):
                     return
-                try:
-                    png = render_page_png(doc, i, width_px=160)
-                except ValueError:
-                    return
+                png = render_page_png(doc, i, width_px=160)
                 if self._is_cancelled(self._generation):
                     return
                 pix = QPixmap()
                 pix.loadFromData(png, "PNG")
                 self.signals.page_ready.emit(self._generation, i, pix)
-            self.signals.finished.emit(self._generation)
+            if not self._is_cancelled(self._generation):
+                self.signals.finished.emit(self._generation)
+        except Exception as exc:
+            if not self._is_cancelled(self._generation):
+                self.signals.error.emit(self._generation, str(exc))
         finally:
-            doc.close()
+            if doc is not None:
+                doc.close()
 
 
 class ThumbnailGrid(QScrollArea):
     rendering_started = pyqtSignal(int)
     rendering_progress = pyqtSignal(int, int)
     rendering_finished = pyqtSignal()
+    rendering_error = pyqtSignal(str)
     selection_changed = pyqtSignal(set)
 
     def __init__(
@@ -116,8 +118,13 @@ class ThumbnailGrid(QScrollArea):
         )
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)
+        worker.signals.error.connect(self._on_rendering_error)
         self.rendering_started.emit(total)
         self._thread_pool.start(worker)
+
+    def cancel_rendering(self) -> None:
+        """Invalidate the current render generation (e.g. before opening another PDF)."""
+        self._cancel_rendering()
 
     def clear(self) -> None:
         self._cancel_rendering()
@@ -174,6 +181,11 @@ class ThumbnailGrid(QScrollArea):
         if self._is_cancelled(generation):
             return
         self.rendering_finished.emit()
+
+    def _on_rendering_error(self, generation: int, message: str) -> None:
+        if self._is_cancelled(generation):
+            return
+        self.rendering_error.emit(message)
 
     def _on_card_clicked(
         self, page_index: int, modifiers: Qt.KeyboardModifier

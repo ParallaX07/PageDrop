@@ -81,6 +81,10 @@ class PageCard(QFrame):
             or self._selection_manager is None
             or self._temp_manager is None
         ):
+            if self._loader is None:
+                window = self.window()
+                if hasattr(window, "statusBar"):
+                    window.statusBar().showMessage("Open a PDF first")
             super().mouseMoveEvent(event)
             return
 
@@ -121,6 +125,13 @@ class PageCard(QFrame):
                 output_dir,
                 base_name,
             )
+        except OSError as exc:
+            QMessageBox.critical(
+                self.window(),
+                "Extract Pages",
+                f"Could not prepare pages for drag-and-drop (disk full or write error):\n{exc}",
+            )
+            return
         except Exception as exc:
             QMessageBox.critical(
                 self.window(),

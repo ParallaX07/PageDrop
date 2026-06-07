@@ -45,6 +45,8 @@ def test_close_idempotent(one_page_pdf):
     loader.close()
 
 
-def test_empty_file_raises_corrupt_error(empty_pdf):
-    with pytest.raises(PdfCorruptError):
-        PdfLoader(str(empty_pdf))
+def test_empty_file_raises_corrupt_error(tmp_path):
+    empty_bytes = tmp_path / "empty_bytes.pdf"
+    empty_bytes.write_bytes(b"")
+    with pytest.raises(PdfCorruptError, match="empty"):
+        PdfLoader(str(empty_bytes))

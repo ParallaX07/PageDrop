@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pypdf import PdfWriter
 
-FIXTURE_NAMES = ("one_page", "five_page", "empty")
+FIXTURE_NAMES = ("one_page", "five_page", "empty", "corrupt", "garbage")
 
 
 def generate_one_page(path: Path) -> None:
@@ -25,7 +25,20 @@ def generate_five_page(path: Path) -> None:
 
 
 def generate_empty(path: Path) -> None:
-    path.write_bytes(b"")
+    """Valid PDF structure with zero pages."""
+    writer = PdfWriter()
+    with path.open("wb") as handle:
+        writer.write(handle)
+
+
+def generate_corrupt(path: Path) -> None:
+    """Plain text saved with a .pdf extension."""
+    path.write_text("This is not a PDF file — just text renamed to .pdf\n", encoding="utf-8")
+
+
+def generate_garbage(path: Path) -> None:
+    """Random binary bytes with a .pdf extension."""
+    path.write_bytes(bytes(range(256)) * 4)
 
 
 def generate_n_page(path: Path, page_count: int) -> None:
@@ -43,10 +56,12 @@ def ensure_fixtures(directory: Path) -> None:
         "one_page": generate_one_page,
         "five_page": generate_five_page,
         "empty": generate_empty,
+        "corrupt": generate_corrupt,
+        "garbage": generate_garbage,
     }
     for name, generator in generators.items():
         target = directory / f"{name}.pdf"
-        if not target.exists():
+        if name in ("empty", "corrupt", "garbage") or not target.exists():
             generator(target)
 
 
