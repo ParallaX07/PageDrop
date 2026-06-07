@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, encode_page_indices
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.selection_manager import SelectionManager
@@ -238,6 +239,7 @@ class PageCard(QFrame):
             return
 
         mime = QMimeData()
+        mime.setData(INTERNAL_PAGE_MIME, encode_page_indices(logical_indices))
         urls = [QUrl.fromLocalFile(str(path)) for path in temp_paths]
         mime.setUrls(urls)
 
