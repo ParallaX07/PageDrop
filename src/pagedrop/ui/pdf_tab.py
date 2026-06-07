@@ -149,6 +149,18 @@ class PdfTab(QWidget):
         self.pdf_loaded.emit()
         return loader
 
+    def delete_selected_pages(self) -> bool:
+        """Delete the current thumbnail selection; no-op when nothing is selected."""
+        if self._edit_model is None:
+            return False
+        if not self._thumbnail_grid.selection_manager.selection:
+            return False
+        self.close_preview()
+        if not self._thumbnail_grid.delete_selected_pages():
+            return False
+        self._sync_dirty_from_model()
+        return True
+
     def close_loader(self) -> None:
         """Cancel rendering, release loaders, and reset to a blank tab."""
         self.close_preview()

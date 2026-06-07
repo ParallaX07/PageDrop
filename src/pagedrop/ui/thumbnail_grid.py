@@ -499,9 +499,14 @@ class ThumbnailGrid(QScrollArea):
 
     def _show_context_menu(self, global_pos) -> None:
         menu = QMenu(self)
-        extract_action = menu.addAction("Extract selected pages to folder…")
         has_pdf = self._model is not None
         has_selection = bool(self.selection_manager.selection)
+
+        delete_action = menu.addAction("Delete selected pages")
+        delete_action.setEnabled(has_pdf and has_selection)
+
+        menu.addSeparator()
+        extract_action = menu.addAction("Extract selected pages to folder…")
         extract_action.setEnabled(has_pdf and has_selection)
 
         if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get(
@@ -510,8 +515,34 @@ class ThumbnailGrid(QScrollArea):
             chosen = None
         else:
             chosen = menu.exec(global_pos)
-        if chosen is extract_action:
+        if chosen is delete_action:
+            self.delete_selected_pages()
+        elif chosen is extract_action:
             self.extract_to_folder_requested.emit()
+
+    def delete_selected_pages(self) -> bool:
+        """Remove selected logical pages from the model and refresh the grid."""
+        if self._model is None or self._get_loader is None:
+            return False
+        logical_indices = sorted(self.selection_manager.selection)
+        if not logical_indices:
+            return False
+
+        self._model.remove_pages(logical_indices)
+        self.selection_manager.clear()
+        self._last_clicked_index = None
+
+        total = self._model.logical_count()
+        if total == 0:
+            self.set_empty_state_message(
+                "No pages in this document",
+                hint="Open another PDF or add pages to continue",
+                show_hint=True,
+                show_shortcuts=False,
+            )
+
+        self.load_model(self._model, self._get_loader)
+        return True
 
     def extract_selected_to_folder(self, output_dir) -> list:
         """Write selected pages to *output_dir*; returns paths or raises."""

@@ -136,6 +136,14 @@ class MainWindow(QMainWindow):
         self._deselect_all_action.triggered.connect(self._clear_selection)
         self._deselect_all_action.setEnabled(False)
 
+        self._delete_pages_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            "Delete page(s)",
+        )
+        self._delete_pages_action.setToolTip("Delete selected pages (Delete)")
+        self._delete_pages_action.triggered.connect(self._delete_selected_pages)
+        self._delete_pages_action.setEnabled(False)
+
         toolbar.addSeparator()
 
         self._filename_label = QLabel("No file open")
@@ -199,6 +207,12 @@ class MainWindow(QMainWindow):
         )
         self._clear_selection_action.triggered.connect(self._on_escape)
         self.addAction(self._clear_selection_action)
+
+        delete_pages = QAction(self)
+        delete_pages.setShortcut(QKeySequence(Qt.Key.Key_Delete))
+        delete_pages.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        delete_pages.triggered.connect(self._delete_selected_pages)
+        self.addAction(delete_pages)
 
     def _build_tab_shortcuts(self) -> None:
         next_tab = QAction(self)
@@ -297,6 +311,7 @@ class MainWindow(QMainWindow):
             not tab.is_preview_visible()
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
+        self._update_delete_pages_action()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
         self._update_preview_mode_ui()
@@ -311,10 +326,39 @@ class MainWindow(QMainWindow):
         self._preview_action.setEnabled(False)
         self._select_all_action.setEnabled(False)
         self._deselect_all_action.setEnabled(False)
+        self._delete_pages_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
         self._progress_bar.hide()
         self._update_close_tab_action()
+
+    def _update_delete_pages_action(self) -> None:
+        tab = self._active_tab()
+        self._delete_pages_action.setEnabled(
+            tab is not None
+            and tab.edit_model is not None
+            and not tab.is_preview_visible()
+            and bool(tab.thumbnail_grid.selection_manager.selection)
+        )
+
+    def _delete_selected_pages(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None:
+            return
+        selection = tab.thumbnail_grid.selection_manager.selection
+        if not selection:
+            return
+        count = len(selection)
+        if not tab.delete_selected_pages():
+            return
+        self._tab_manager.update_tab_title(tab)
+        self._update_delete_pages_action()
+        self._deselect_all_action.setEnabled(False)
+        if tab.edit_model.logical_count() == 0:
+            self.statusBar().showMessage("All pages deleted")
+        else:
+            noun = "page" if count == 1 else "pages"
+            self.statusBar().showMessage(f"Deleted {count} {noun}")
 
     def _select_all_pages(self) -> None:
         tab = self._active_tab()
@@ -401,6 +445,7 @@ class MainWindow(QMainWindow):
             and not in_preview
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
+        self._update_delete_pages_action()
 
     def _update_preview_status(self) -> None:
         tab = self._active_tab()
@@ -694,6 +739,7 @@ class MainWindow(QMainWindow):
             and has_selection
             and not tab.is_preview_visible()
         )
+        self._update_delete_pages_action()
         if selection:
             count = len(selection)
             noun = "page" if count == 1 else "pages"
