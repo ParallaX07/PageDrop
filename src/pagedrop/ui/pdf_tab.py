@@ -46,6 +46,7 @@ class PdfTab(QWidget):
             show_hint=True,
         )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
+        self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)
         self._preview_widget = PagePreviewWidget()
         self._preview_widget.closed.connect(self.close_preview)
 
@@ -187,6 +188,10 @@ class PdfTab(QWidget):
         return True
 
     def _on_pages_reordered(self) -> None:
+        self.close_preview()
+        self._sync_dirty_from_model()
+
+    def _on_pages_inserted(self) -> None:
         self.close_preview()
         self._sync_dirty_from_model()
 

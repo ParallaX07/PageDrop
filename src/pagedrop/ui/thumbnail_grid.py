@@ -25,7 +25,7 @@ from pagedrop.assets import empty_state_logo_pixmap
 from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import PdfLoader, render_page_png
+from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.page_card import PageCard
@@ -107,6 +107,8 @@ class ThumbnailGrid(QScrollArea):
     zoom_changed = pyqtSignal(int)
     extract_to_folder_requested = pyqtSignal()
     pages_reordered = pyqtSignal()
+    pages_inserted = pyqtSignal(int, str, int)  # count, filename, 1-based position
+    pdf_drop_failed = pyqtSignal(object)
 
     def __init__(
         self,
@@ -700,6 +702,88 @@ class ThumbnailGrid(QScrollArea):
         self._reflow_grid(force=True)
         self._update_focus_highlight()
 
+    @staticmethod
+    def pdf_paths_from_mime(mime) -> list[str]:
+        """Return sorted local *.pdf paths from a file-manager drag payload."""
+        paths: list[str] = []
+        if not mime.hasUrls():
+            return paths
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = url.toLocalFile()
+            if path.lower().endswith(".pdf"):
+                paths.append(path)
+        return sorted(paths)
+
+    def insert_pdf_pages(self, paths: list[str], drop_index: int) -> bool:
+        """Insert all pages from *paths* at *drop_index*. Returns True on success."""
+        if self._model is None or self._get_loader is None or not paths:
+            return False
+
+        insert_at = drop_index
+        total_inserted = 0
+        last_filename = ""
+
+        for path in sorted(paths):
+            loader = self._get_loader(path)
+            refs = [PageRef(path, index) for index in range(loader.page_count)]
+            if not refs:
+                continue
+            self._model.insert_pages(insert_at, refs)
+            self._sync_grid_after_insert(insert_at, len(refs))
+            total_inserted += len(refs)
+            last_filename = Path(path).name
+            insert_at += len(refs)
+
+        if total_inserted == 0:
+            return False
+
+        self._last_clicked_index = None
+        self.pages_inserted.emit(total_inserted, last_filename, drop_index + 1)
+        return True
+
+    def _sync_grid_after_insert(self, insert_index: int, count: int) -> None:
+        assert self._model is not None
+        assert self._get_loader is not None
+        if self._pending_card_indices:
+            self.load_model(self._model, self._get_loader)
+            return
+        if len(self._cards) + count != self._model.logical_count():
+            self.load_model(self._model, self._get_loader)
+            return
+
+        self._invalidate_render_generation()
+        new_cards: list[PageCard] = []
+        for offset in range(count):
+            logical_index = insert_index + offset
+            card = PageCard(logical_index, self._container)
+            card.set_card_width(self._card_width)
+            card.set_drag_context(
+                self._model, self.selection_manager, self._temp_manager
+            )
+            ref = self._model.page_at(logical_index)
+            card.set_page_ref(ref)
+            loader = self._get_loader(ref.source_path)
+            width_mm, height_mm = loader.page_size_mm(ref.source_index)
+            card.set_page_tooltip(width_mm, height_mm)
+            card.clicked.connect(self._on_card_clicked)
+            card.double_clicked.connect(self.preview_requested.emit)
+            card.context_menu_requested.connect(self._on_card_context_menu)
+            new_cards.append(card)
+
+        self._cards[insert_index:insert_index] = new_cards
+        for _ in range(count):
+            self._page_render_width.insert(insert_index, 0)
+
+        self._reindex_cards()
+        self.selection_manager.set_page_count(self._model.logical_count())
+        self._reflow_grid(force=True)
+        self._start_rendering(
+            silent=False,
+            page_indices=list(range(insert_index, insert_index + count)),
+        )
+
     def drop_index_at_pos(self, pos: QPoint) -> int:
         """Return the logical insertion index (0…N) for a point in container coords."""
         if not self._cards:
@@ -801,19 +885,27 @@ class ThumbnailGrid(QScrollArea):
         self.pages_reordered.emit()
         return True
 
+    def _accepts_inbound_pdf_drop(self, mime) -> bool:
+        return bool(self.pdf_paths_from_mime(mime)) and self._model is not None
+
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasFormat(INTERNAL_PAGE_MIME):
+        mime = event.mimeData()
+        if mime.hasFormat(INTERNAL_PAGE_MIME):
+            event.acceptProposedAction()
+            return
+        if self._accepts_inbound_pdf_drop(mime):
             event.acceptProposedAction()
             return
         event.ignore()
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
-        if not event.mimeData().hasFormat(INTERNAL_PAGE_MIME):
-            event.ignore()
+        mime = event.mimeData()
+        if mime.hasFormat(INTERNAL_PAGE_MIME) or self._accepts_inbound_pdf_drop(mime):
+            pos = self._container.mapFrom(self, event.position().toPoint())
+            self._update_drop_indicator(self.drop_index_at_pos(pos))
+            event.acceptProposedAction()
             return
-        pos = self._container.mapFrom(self, event.position().toPoint())
-        self._update_drop_indicator(self.drop_index_at_pos(pos))
-        event.acceptProposedAction()
+        event.ignore()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self._hide_drop_indicator()
@@ -822,16 +914,30 @@ class ThumbnailGrid(QScrollArea):
     def dropEvent(self, event: QDropEvent) -> None:
         self._hide_drop_indicator()
         mime = event.mimeData()
-        if not mime.hasFormat(INTERNAL_PAGE_MIME):
+        if mime.hasFormat(INTERNAL_PAGE_MIME):
+            indices = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+            pos = self._container.mapFrom(self, event.position().toPoint())
+            to_index = self.drop_index_at_pos(pos)
+            if self.reorder_pages_by_drop(indices, to_index):
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
+
+        pdf_paths = self.pdf_paths_from_mime(mime)
+        if not pdf_paths or self._model is None:
             event.ignore()
             return
 
-        indices = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
         pos = self._container.mapFrom(self, event.position().toPoint())
-        to_index = self.drop_index_at_pos(pos)
-        if self.reorder_pages_by_drop(indices, to_index):
-            event.acceptProposedAction()
-        else:
+        drop_index = self.drop_index_at_pos(pos)
+        try:
+            if self.insert_pdf_pages(pdf_paths, drop_index):
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+        except PdfLoadError as exc:
+            self.pdf_drop_failed.emit(exc)
             event.ignore()
 
     def delete_selected_pages(self) -> bool:
