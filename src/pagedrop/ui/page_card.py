@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, QUrl, pyqtSignal
@@ -7,12 +8,20 @@ from PyQt6.QtGui import (
     QColor,
     QDrag,
     QEnterEvent,
+    QFocusEvent,
     QFont,
     QMouseEvent,
     QPainter,
     QPixmap,
 )
-from PyQt6.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QMessageBox,
+    QVBoxLayout,
+)
 
 from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.core.pdf_loader import PdfLoader
@@ -29,6 +38,7 @@ from pagedrop.utils.temp_manager import TempManager
 class PageCard(QFrame):
     clicked = pyqtSignal(int, Qt.KeyboardModifier)
     double_clicked = pyqtSignal(int)
+    context_menu_requested = pyqtSignal(int, QPoint)
     CARD_WIDTH = CARD_WIDTH
 
     def __init__(self, page_index: int, parent=None) -> None:
@@ -38,6 +48,7 @@ class PageCard(QFrame):
         self._source_pixmap: QPixmap | None = None
         self._selected = False
         self._hovered = False
+        self._keyboard_focused = False
         self._drag_start_pos: QPoint | None = None
         self._loader: PdfLoader | None = None
         self._selection_manager: SelectionManager | None = None
@@ -47,6 +58,13 @@ class PageCard(QFrame):
         self.setFixedWidth(self._card_width)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(14)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 55))
+        self.setGraphicsEffect(shadow)
 
         self._thumbnail_label = QLabel()
         self._thumbnail_label.setObjectName("PageCardThumbnail")
@@ -79,6 +97,17 @@ class PageCard(QFrame):
         self._selection_manager = selection_manager
         self._temp_manager = temp_manager
 
+    def set_page_tooltip(self, width_mm: int, height_mm: int) -> None:
+        page_num = self.page_index + 1
+        self.setToolTip(
+            f"Page {page_num} · {width_mm}×{height_mm} mm · Click to select"
+        )
+
+    def set_keyboard_focused(self, focused: bool) -> None:
+        if self._keyboard_focused != focused:
+            self._keyboard_focused = focused
+            self._apply_visual_state()
+
     def enterEvent(self, event: QEnterEvent) -> None:
         self._hovered = True
         self._apply_visual_state()
@@ -88,6 +117,13 @@ class PageCard(QFrame):
         self._hovered = False
         self._apply_visual_state()
         super().leaveEvent(event)
+
+    def focusInEvent(self, event: QFocusEvent) -> None:
+        super().focusInEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        self.context_menu_requested.emit(self.page_index, event.globalPos())
+        event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -191,7 +227,15 @@ class PageCard(QFrame):
 
         QApplication.setOverrideCursor(Qt.CursorShape.DragCopyCursor)
         try:
-            drag.exec(Qt.DropAction.CopyAction)
+            # Offscreen/test Qt has no drop target; exec() would block the event loop forever.
+            # Under tests, conftest patches exec to return immediately. Offscreen
+            # without PAGEDROP_TESTING has no drop target — skip the native loop.
+            if os.environ.get("QT_QPA_PLATFORM") == "offscreen" and not os.environ.get(
+                "PAGEDROP_TESTING"
+            ):
+                pass
+            else:
+                drag.exec(Qt.DropAction.CopyAction)
         finally:
             QApplication.restoreOverrideCursor()
             self._temp_manager.cleanup_paths(temp_paths)
@@ -277,5 +321,9 @@ class PageCard(QFrame):
 
     def _apply_visual_state(self) -> None:
         self.setStyleSheet(
-            page_card_stylesheet(selected=self._selected, hovered=self._hovered)
+            page_card_stylesheet(
+                selected=self._selected,
+                hovered=self._hovered,
+                focused=self._keyboard_focused,
+            )
         )

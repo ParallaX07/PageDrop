@@ -55,7 +55,8 @@ def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):
     )
     main_window._open_pdf()
     qtbot.waitUntil(
-        lambda: main_window.windowTitle() == f"PageDrop — {five_page_pdf.name}",
+        lambda: main_window.windowTitle()
+        == f"PageDrop — {five_page_pdf.name} (5 pages)",
         timeout=5000,
     )
 
@@ -64,7 +65,7 @@ def test_status_bar_shows_page_count(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitUntil(
         lambda: "Loaded" in main_window.statusBar().currentMessage(),
-        timeout=30000,
+        timeout=15000,
     )
     message = main_window.statusBar().currentMessage()
     assert "5" in message

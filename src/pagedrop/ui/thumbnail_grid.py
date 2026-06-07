@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QResizeEvent, QWheelEvent
-from PyQt6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QWheelEvent
+from PyQt6.QtWidgets import QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout, QWidget
 
 import fitz
 
+from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
@@ -22,6 +25,7 @@ from pagedrop.ui.theme import (
 from pagedrop.utils.temp_manager import TempManager
 
 ZOOM_RENDER_DEBOUNCE_MS = 400
+RENDER_POOL_DRAIN_MS = 3000
 
 
 class ThumbnailWorker(QRunnable):
@@ -78,6 +82,7 @@ class ThumbnailGrid(QScrollArea):
     selection_changed = pyqtSignal(set)
     preview_requested = pyqtSignal(int)
     zoom_changed = pyqtSignal(int)
+    extract_to_folder_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -91,6 +96,7 @@ class ThumbnailGrid(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._container = QWidget()
         self._container.setObjectName("ThumbnailContainer")
@@ -135,6 +141,7 @@ class ThumbnailGrid(QScrollArea):
         self._zoom_render_timer.setInterval(ZOOM_RENDER_DEBOUNCE_MS)
         self._zoom_render_timer.timeout.connect(self._render_zoom_quality)
         self._last_clicked_index: int | None = None
+        self._focused_index: int | None = None
         self.selection_manager = SelectionManager(
             on_selection_changed=self._on_selection_changed,
         )
@@ -147,14 +154,19 @@ class ThumbnailGrid(QScrollArea):
 
         total = loader.page_count
         self._last_clicked_index = None
+        self._focused_index = 0 if total else None
         self.selection_manager.set_page_count(total)
         self._cards = [PageCard(i, self._container) for i in range(total)]
         for card in self._cards:
             card.set_card_width(self._card_width)
             card.set_drag_context(loader, self.selection_manager, self._temp_manager)
+            width_mm, height_mm = loader.page_size_mm(card.page_index)
+            card.set_page_tooltip(width_mm, height_mm)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)
+            card.context_menu_requested.connect(self._on_card_context_menu)
         self._reflow_grid(force=True)
+        self._update_focus_highlight()
         self._start_rendering(silent=False)
 
     def _start_rendering(self, *, silent: bool) -> None:
@@ -198,9 +210,11 @@ class ThumbnailGrid(QScrollArea):
     def clear(self) -> None:
         self._zoom_render_timer.stop()
         self._cancel_rendering()
+        self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
         self._clear_cards()
         self._loader = None
         self._last_clicked_index = None
+        self._focused_index = None
         self.selection_manager.set_page_count(0)
 
     @property
@@ -211,9 +225,108 @@ class ThumbnailGrid(QScrollArea):
     def card_width(self) -> int:
         return self._card_width
 
+    @property
+    def focused_index(self) -> int | None:
+        return self._focused_index
+
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reflow_grid()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self._cards:
+            super().keyPressEvent(event)
+            return
+
+        if self._focused_index is None:
+            self._set_focused_index(0)
+            event.accept()
+            return
+
+        cols = max(self._grid_cols, 1)
+        idx = self._focused_index
+        key = event.key()
+
+        if key == Qt.Key.Key_Left:
+            self._set_focused_index(max(0, idx - 1))
+            event.accept()
+        elif key == Qt.Key.Key_Right:
+            self._set_focused_index(min(len(self._cards) - 1, idx + 1))
+            event.accept()
+        elif key == Qt.Key.Key_Up:
+            self._set_focused_index(max(0, idx - cols))
+            event.accept()
+        elif key == Qt.Key.Key_Down:
+            self._set_focused_index(min(len(self._cards) - 1, idx + cols))
+            event.accept()
+        elif key in (Qt.Key.Key_Space, Qt.Key.Key_Select):
+            self.selection_manager.toggle(idx)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        self._show_context_menu(event.globalPos())
+        event.accept()
+
+    def _on_card_context_menu(self, page_index: int, global_pos) -> None:
+        if page_index not in self.selection_manager.selection:
+            self.selection_manager.select_single(page_index)
+            self._last_clicked_index = page_index
+        self._set_focused_index(page_index)
+        self._show_context_menu(global_pos)
+
+    def _show_context_menu(self, global_pos) -> None:
+        menu = QMenu(self)
+        extract_action = menu.addAction("Extract selected pages to folder…")
+        has_pdf = self._loader is not None
+        has_selection = bool(self.selection_manager.selection)
+        extract_action.setEnabled(has_pdf and has_selection)
+
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get(
+            "PAGEDROP_TESTING"
+        ):
+            chosen = None
+        else:
+            chosen = menu.exec(global_pos)
+        if chosen is extract_action:
+            self.extract_to_folder_requested.emit()
+
+    def extract_selected_to_folder(self, output_dir) -> list:
+        """Write selected pages to *output_dir*; returns paths or raises."""
+        if self._loader is None:
+            return []
+        page_indices = sorted(self.selection_manager.selection)
+        if not page_indices:
+            return []
+        base_name = Path(self._loader.path).stem
+        return extract_pages_to_files(
+            self._loader.path,
+            page_indices,
+            output_dir,
+            base_name,
+        )
+
+    def _set_focused_index(self, index: int) -> None:
+        if not self._cards:
+            self._focused_index = None
+            return
+        clamped = max(0, min(len(self._cards) - 1, index))
+        if self._focused_index == clamped:
+            return
+        self._focused_index = clamped
+        self._update_focus_highlight()
+        self._scroll_to_focused_card()
+
+    def _update_focus_highlight(self) -> None:
+        for index, card in enumerate(self._cards):
+            card.set_keyboard_focused(index == self._focused_index)
+
+    def _scroll_to_focused_card(self) -> None:
+        if self._focused_index is None or not self._cards:
+            return
+        card = self._cards[self._focused_index]
+        self.ensureWidgetVisible(card, 24, 24)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
@@ -339,6 +452,8 @@ class ThumbnailGrid(QScrollArea):
         else:
             self.selection_manager.select_single(page_index)
         self._last_clicked_index = page_index
+        self._set_focused_index(page_index)
+        self.setFocus()
 
     def _on_selection_changed(self, selection: set[int]) -> None:
         for index, card in enumerate(self._cards):

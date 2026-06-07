@@ -112,7 +112,7 @@ app = QApplication([])
 window = MainWindow()
 print(window._temp_manager.get_dir(), flush=True)
 sys.stdout.flush()
-time.sleep(60)
+time.sleep(5)
 """
     proc = subprocess.Popen(
         [sys.executable, "-c", code],

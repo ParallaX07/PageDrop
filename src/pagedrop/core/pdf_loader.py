@@ -66,6 +66,10 @@ class PdfLoader:
         """Render page to PNG bytes at target width."""
         return render_page_png(self.doc, page_index, width_px=width_px)
 
+    def page_size_mm(self, page_index: int) -> tuple[int, int]:
+        """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
+        return page_size_mm(self.doc, page_index)
+
     def close(self) -> None:
         if getattr(self, "_closed", False):
             return
@@ -75,6 +79,16 @@ class PdfLoader:
 
 MAX_RENDER_DPI = 150
 MAX_RENDER_WIDTH_PX = 2048
+
+_MM_PER_POINT = 25.4 / 72.0
+
+
+def page_size_mm(doc: fitz.Document, page_index: int) -> tuple[int, int]:
+    """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
+    page = doc[page_index]
+    width_mm = round(page.rect.width * _MM_PER_POINT)
+    height_mm = round(page.rect.height * _MM_PER_POINT)
+    return width_mm, height_mm
 
 
 def render_page_png(

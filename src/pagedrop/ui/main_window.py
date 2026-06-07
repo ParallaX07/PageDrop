@@ -23,6 +23,7 @@ from pagedrop.core.pdf_loader import (
     PdfLoader,
 )
 from pagedrop.ui.page_preview import PagePreviewDialog
+from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
@@ -92,6 +93,18 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        self._select_all_action = toolbar.addAction("Select All")
+        self._select_all_action.setToolTip("Select all pages (Ctrl+A)")
+        self._select_all_action.triggered.connect(self._select_all_pages)
+        self._select_all_action.setEnabled(False)
+
+        self._deselect_all_action = toolbar.addAction("Deselect All")
+        self._deselect_all_action.setToolTip("Clear selection (Esc)")
+        self._deselect_all_action.triggered.connect(self._clear_selection)
+        self._deselect_all_action.setEnabled(False)
+
+        toolbar.addSeparator()
+
         self._filename_label = QLabel("No file open")
         self._filename_label.setObjectName("ToolbarFilename")
         self._filename_label.setProperty("active", False)
@@ -125,6 +138,9 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.zoom_changed.connect(self._zoom_controls.set_value)
         self._zoom_controls.zoom_requested.connect(
             self._thumbnail_grid.set_thumbnail_zoom
+        )
+        self._thumbnail_grid.extract_to_folder_requested.connect(
+            self._extract_selected_to_folder
         )
         self.setCentralWidget(self._thumbnail_grid)
 
@@ -217,16 +233,65 @@ class MainWindow(QMainWindow):
 
         return super().eventFilter(obj, event)
 
+    def _update_window_title(self) -> None:
+        if self._loader is None or self.current_pdf_path is None:
+            self.setWindowTitle(self.APP_TITLE)
+            return
+        filename = Path(self.current_pdf_path).name
+        count = self._loader.page_count
+        noun = "page" if count == 1 else "pages"
+        self.setWindowTitle(f"{self.APP_TITLE} — {filename} ({count} {noun})")
+
+    def _extract_selected_to_folder(self) -> None:
+        if self._loader is None:
+            return
+        selection = self._thumbnail_grid.selection_manager.selection
+        if not selection:
+            return
+
+        start_dir = last_directory()
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Extract selected pages to folder",
+            start_dir,
+        )
+        if not folder:
+            return
+
+        remember_directory(folder)
+        try:
+            paths = self._thumbnail_grid.extract_selected_to_folder(Path(folder))
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Extract Pages",
+                f"Could not write PDFs to the chosen folder:\n{exc}",
+            )
+            return
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Extract Pages",
+                f"Could not extract pages:\n{exc}",
+            )
+            return
+
+        count = len(paths)
+        noun = "page" if count == 1 else "pages"
+        self.statusBar().showMessage(f"Extracted {count} {noun} to {folder}")
+
     def _open_pdf(self) -> None:
+        start_dir = last_directory()
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open PDF",
-            "",
+            start_dir,
             "PDF Files (*.pdf);;All Files (*)",
         )
         if not path:
             return
 
+        remember_directory(path)
         self._load_pdf(path)
 
     def _load_pdf(self, path: str) -> None:
@@ -263,13 +328,15 @@ class MainWindow(QMainWindow):
         self._loader = loader
         self.current_pdf_path = path
 
-        self.setWindowTitle(f"{self.APP_TITLE} — {filename}")
+        self._update_window_title()
         self._filename_label.setText(filename)
         self._filename_label.setProperty("active", True)
         self._filename_label.style().unpolish(self._filename_label)
         self._filename_label.style().polish(self._filename_label)
         self._close_action.setEnabled(True)
         self._preview_action.setEnabled(True)
+        self._select_all_action.setEnabled(True)
+        self._deselect_all_action.setEnabled(True)
         self._zoom_controls.setEnabled(True)
         self._zoom_controls.set_value(self._thumbnail_grid.thumbnail_width_px)
         self.statusBar().showMessage(f"Loading {loader.page_count} pages…")
@@ -286,13 +353,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("PDF closed")
 
     def _reset_ui(self) -> None:
-        self.setWindowTitle(self.APP_TITLE)
+        self._update_window_title()
         self._filename_label.setText("No file open")
         self._filename_label.setProperty("active", False)
         self._filename_label.style().unpolish(self._filename_label)
         self._filename_label.style().polish(self._filename_label)
         self._close_action.setEnabled(False)
         self._preview_action.setEnabled(False)
+        self._select_all_action.setEnabled(False)
+        self._deselect_all_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
         self._progress_bar.hide()
@@ -326,6 +395,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Rendering failed")
 
     def _on_selection_changed(self, selection: set[int]) -> None:
+        has_selection = bool(selection)
+        self._deselect_all_action.setEnabled(self._loader is not None and has_selection)
         if selection:
             count = len(selection)
             noun = "page" if count == 1 else "pages"

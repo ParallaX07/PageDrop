@@ -111,7 +111,7 @@ def test_rapid_reopen_cancels_worker(main_window, five_page_pdf, one_page_pdf, q
 
     qtbot.waitUntil(
         lambda: "Loaded" in main_window.statusBar().currentMessage(),
-        timeout=30000,
+        timeout=15000,
     )
     assert len(main_window._thumbnail_grid._cards) == 1
     assert five_page_pdf.name not in main_window.windowTitle()

@@ -5,14 +5,8 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 
 from pagedrop.ui.main_window import MainWindow
+from tests.conftest import wait_for_pdf_loaded
 from tests.fixtures.generate_fixtures import generate_n_page
-
-
-def _show_window(qtbot, window) -> None:
-    window.show()
-    qtbot.waitExposed(window)
-    window.activateWindow()
-    window.setFocus()
 
 
 def _selected_indices(cards) -> set[int]:
@@ -26,9 +20,9 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
 
     window = MainWindow()
     qtbot.addWidget(window)
-    _show_window(qtbot, window)
+    window.showMinimized()
     window._load_pdf(str(ten_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=30000)
+    wait_for_pdf_loaded(qtbot, window)
 
     cards = window._thumbnail_grid._cards
     assert len(cards) == 10
