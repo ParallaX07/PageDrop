@@ -37,6 +37,10 @@ class PdfTab(QWidget):
         self._content_stack.setObjectName("TabContentStack")
 
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
+        self._thumbnail_grid.set_empty_state_message(
+            "Open a PDF to begin",
+            show_hint=False,
+        )
         self._preview_widget = PagePreviewWidget()
         self._preview_widget.closed.connect(self.close_preview)
 

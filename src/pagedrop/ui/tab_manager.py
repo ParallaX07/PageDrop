@@ -11,6 +11,7 @@ class TabManager(QTabWidget):
     """Browser-style tab bar; each tab is an independent PdfTab workspace."""
 
     active_tab_changed = pyqtSignal(PdfTab)
+    tab_added = pyqtSignal(PdfTab)
     tab_closed = pyqtSignal(int)
     all_tabs_closed = pyqtSignal()
 
@@ -37,6 +38,7 @@ class TabManager(QTabWidget):
             tab = PdfTab(temp_manager=self._temp_manager)
         index = self.addTab(tab, tab.tab_title)
         self._connect_tab(tab, index)
+        self.tab_added.emit(tab)
         return tab
 
     def add_blank_tab(self) -> PdfTab:

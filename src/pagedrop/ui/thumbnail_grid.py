@@ -166,6 +166,21 @@ class ThumbnailGrid(QScrollArea):
             on_selection_changed=self._on_selection_changed,
         )
 
+    def set_empty_state_message(
+        self,
+        title: str,
+        *,
+        hint: str | None = None,
+        show_hint: bool = True,
+    ) -> None:
+        self._empty_title.setText(title)
+        if hint is not None:
+            self._empty_hint.setText(hint)
+        if show_hint:
+            self._empty_hint.show()
+        else:
+            self._empty_hint.hide()
+
     def load_pdf(self, loader: PdfLoader) -> None:
         self._cancel_rendering()
         self._clear_cards()

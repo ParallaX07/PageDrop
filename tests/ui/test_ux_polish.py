@@ -112,9 +112,9 @@ def test_qsettings_remembers_directory(
 
     def fake_open(parent, title, start_dir, file_filter):
         captured["start"] = start_dir
-        return ("", "")
+        return ([], "")
 
-    monkeypatch.setattr(QFileDialog, "getOpenFileName", fake_open)
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", fake_open)
     main_window._open_pdf()
     assert captured["start"] == str(five_page_pdf.parent)
 

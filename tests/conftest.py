@@ -71,6 +71,11 @@ def wait_for_pdf_loaded(qtbot: QtBot, window, *, timeout: int = RENDER_TIMEOUT_M
     )
 
 
+def load_pdf_in_active_tab(window, path: str) -> None:
+    """Load a PDF into the active tab (test helper)."""
+    window._load_pdf(str(path))
+
+
 def wait_for_grid_loaded(qtbot: QtBot, grid, *, timeout: int = RENDER_TIMEOUT_MS) -> None:
     """Wait until a standalone ThumbnailGrid finishes its initial render."""
     qtbot.waitUntil(

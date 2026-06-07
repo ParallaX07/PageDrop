@@ -32,7 +32,7 @@ def test_menu_actions_exist(main_window):
     actions = _file_menu_actions(main_window)
     labels = {action.text().replace("&", "") for action in actions if not action.isSeparator()}
     assert "Open PDF..." in labels
-    assert "Close PDF" in labels
+    assert "Close Tab" in labels
     assert "Exit" in labels
 
 
@@ -50,9 +50,10 @@ def test_toolbar_open_button(main_window):
 def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):
     monkeypatch.setattr(
         QFileDialog,
-        "getOpenFileName",
-        lambda *args, **kwargs: (str(five_page_pdf), "PDF Files (*.pdf)"),
+        "getOpenFileNames",
+        lambda *args, **kwargs: ([str(five_page_pdf)], "PDF Files (*.pdf)"),
     )
+    monkeypatch.setattr(main_window, "_ask_open_target", lambda path: "current")
     main_window._open_pdf()
     qtbot.waitUntil(
         lambda: main_window.windowTitle()
