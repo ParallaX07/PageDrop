@@ -872,29 +872,29 @@ overwrite the original PDF.
 
 ### Checklist — PDF Writer
 
-- [ ] Write `core/pdf_writer.py`:
+- [x] Write `core/pdf_writer.py`:
   ```python
   def write_pdf(model: PdfEditModel, output_path: str) -> None:
       # pypdf: iterate model pages in order, add_page from each PageRef
   ```
-- [ ] Handle multi-source `PageRef` list (pages from dropped PDFs and primary file)
-- [ ] Reopen or cache `PdfReader` per unique `source_path` during write
+- [x] Handle multi-source `PageRef` list (pages from dropped PDFs and primary file)
+- [x] Reopen or cache `PdfReader` per unique `source_path` during write
 
 ### Checklist — Menu & Toolbar
 
-- [ ] **File → Save As…** (`Ctrl+Shift+S`) — always `QFileDialog.getSaveFileName`
-- [ ] Default filename: `{original_stem}_edited.pdf`
-- [ ] **No Save action** that writes to `original_path`
-- [ ] Reject if user picks the same path as `original_path` (dialog + do not write)
-- [ ] After success: `model.mark_saved(path)`; clear dirty; tab title loses `*`; status bar OK
-- [ ] Disable Save As when model is empty
+- [x] **File → Save As…** (`Ctrl+Shift+S`) — always `QFileDialog.getSaveFileName`
+- [x] Default filename: `{original_stem}_edited.pdf`
+- [x] **No Save action** that writes to `original_path`
+- [x] Reject if user picks the same path as `original_path` (dialog + do not write)
+- [x] After success: `model.mark_saved(path)`; clear dirty; tab title loses `*`; status bar OK
+- [x] Disable Save As when model is empty
 
 ### Checklist — Unsaved Changes Prompts
 
-- [ ] Implement `closeEvent` (replace `pass` TODO in `main_window.py`):
-  - [ ] Dirty tabs → *Save As* / *Discard* / *Cancel*
-- [ ] Same prompt when closing a dirty tab via `×` or `Ctrl+W`
-- [ ] *Save As* from prompt opens save dialog; *Cancel* aborts close
+- [x] Implement `closeEvent` (replace `pass` TODO in `main_window.py`):
+  - [x] Dirty tabs → *Save As* / *Discard* / *Cancel*
+- [x] Same prompt when closing a dirty tab via `×` or `Ctrl+W`
+- [x] *Save As* from prompt opens save dialog; *Cancel* aborts close
 
 ### Checklist — Test Scripts & Smoke Tests
 
@@ -911,11 +911,11 @@ overwrite the original PDF.
 - [ ] Run: `uv run pytest tests/core/test_pdf_writer.py tests/ui/test_save_as.py tests/smoke/test_phase15_save_as.py -v`
 
 ### ✅ Test Gate 15
-- [ ] **Reorder, delete, insert via drop** → Save As to new path
-- [ ] **Open saved file externally** → correct page count and order
-- [ ] **Original file unchanged** on disk
-- [ ] **Dirty `*`** appears after edits, clears after Save As
-- [ ] **Close dirty tab/app** → prompt with Save As / Discard / Cancel
+- [x] **Reorder, delete, insert via drop** → Save As to new path
+- [x] **Open saved file externally** → correct page count and order
+- [x] **Original file unchanged** on disk
+- [x] **Dirty `*`** appears after edits, clears after Save As
+- [x] **Close dirty tab/app** → prompt with Save As / Discard / Cancel
 
 > **Out of scope for Phases 11–15 (unless added later):** undo/redo, page rotation,
 > cross-tab page drag, password-prompt UI, Save-to-original / incremental Save.
