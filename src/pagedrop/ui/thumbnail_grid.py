@@ -6,7 +6,9 @@ from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QGridLayout, QScrollArea, QWidget
 
-from pagedrop.core.pdf_loader import PdfLoader
+import fitz
+
+from pagedrop.core.pdf_loader import PdfLoader, render_page_png
 from pagedrop.ui.page_card import PageCard
 
 
@@ -17,30 +19,40 @@ class ThumbnailWorker(QRunnable):
 
     def __init__(
         self,
-        loader: PdfLoader,
+        path: str,
         total_pages: int,
         generation: int,
         is_cancelled: Callable[[int], bool],
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
-        self._loader = loader
+        self._path = path
         self._total_pages = total_pages
         self._generation = generation
         self._is_cancelled = is_cancelled
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        for i in range(self._total_pages):
-            if self._is_cancelled(self._generation):
-                return
-            png = self._loader.render_page(i, width_px=160)
-            if self._is_cancelled(self._generation):
-                return
-            pix = QPixmap()
-            pix.loadFromData(png, "PNG")
-            self.signals.page_ready.emit(self._generation, i, pix)
-        self.signals.finished.emit(self._generation)
+        try:
+            doc = fitz.open(self._path)
+        except fitz.FileDataError:
+            return
+        try:
+            for i in range(self._total_pages):
+                if self._is_cancelled(self._generation):
+                    return
+                try:
+                    png = render_page_png(doc, i, width_px=160)
+                except ValueError:
+                    return
+                if self._is_cancelled(self._generation):
+                    return
+                pix = QPixmap()
+                pix.loadFromData(png, "PNG")
+                self.signals.page_ready.emit(self._generation, i, pix)
+            self.signals.finished.emit(self._generation)
+        finally:
+            doc.close()
 
 
 class ThumbnailGrid(QScrollArea):
@@ -80,7 +92,7 @@ class ThumbnailGrid(QScrollArea):
         self._generation += 1
         generation = self._generation
         worker = ThumbnailWorker(
-            loader,
+            loader.path,
             total,
             generation,
             self._is_cancelled,

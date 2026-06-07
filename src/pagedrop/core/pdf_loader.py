@@ -56,11 +56,21 @@ class PdfLoader:
 
     def render_page(self, page_index: int, width_px: int = 160) -> bytes:
         """Render page to PNG bytes at target width."""
-        page = self.doc[page_index]
-        scale = width_px / page.rect.width
-        mat = fitz.Matrix(scale, scale)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        return pix.tobytes("png")
+        return render_page_png(self.doc, page_index, width_px=width_px)
 
     def close(self) -> None:
+        if getattr(self, "_closed", False):
+            return
         self.doc.close()
+        self._closed = True
+
+
+def render_page_png(
+    doc: fitz.Document, page_index: int, width_px: int = 160
+) -> bytes:
+    """Render a page from an open PyMuPDF document to PNG bytes."""
+    page = doc[page_index]
+    scale = width_px / page.rect.width
+    mat = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+    return pix.tobytes("png")

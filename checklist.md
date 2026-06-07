@@ -98,6 +98,25 @@ pagedrop/
   ```
 - [x] Run: `uv run pagedrop`
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Add dev dependencies: `uv add --dev pytest pytest-qt`
+- [x] Create test layout:
+  ```
+  tests/
+  ├── conftest.py              # shared fixtures, Qt app session
+  ├── smoke/
+  │   └── test_phase1_boot.py  # one smoke module per phase (or grouped)
+  └── fixtures/
+      └── README.md            # how to add sample PDFs (gitignore large files)
+  ```
+- [x] Write `tests/smoke/test_phase1_boot.py`:
+  - [x] `test_imports` — `import pagedrop`, `pagedrop.main`, `pagedrop.core`, `pagedrop.ui` with no errors
+  - [x] `test_main_callable` — `pagedrop.main.main` exists and is callable
+  - [x] `test_cli_entry_point` — subprocess: `uv run pagedrop` starts and exits cleanly when the window is closed (or use `pytest-qt` to close programmatically within a timeout)
+- [x] Add a `Makefile` target or document in README: `uv run pytest tests/smoke/test_phase1_boot.py -v`
+- [x] Confirm smoke tests run **without** activating a venv manually (`uv run pytest …`)
+
 ### ✅ Test Gate 1
 - [x] **Window opens** with correct title, no import errors in terminal
 - [x] **`uv run pagedrop`** works from the project root
@@ -151,6 +170,18 @@ pagedrop/
   password, show `QMessageBox` error later when wired to UI
 - [x] Handle invalid path / corrupt file with a clear exception message
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Add `tests/fixtures/generate_fixtures.py` — script that builds tiny PDFs with `pypdf` (1-page, 5-page, empty) so tests don't depend on checked-in binaries
+- [x] Write `tests/core/test_pdf_loader.py`:
+  - [x] `test_page_count` — open 5-page fixture, assert `page_count == 5`
+  - [x] `test_render_page_returns_png` — first bytes are PNG magic (`\x89PNG`)
+  - [x] `test_render_last_page` — render index `-1` equivalent without error
+  - [x] `test_invalid_path_raises` — clear, catchable exception (not a bare traceback)
+  - [x] `test_close_idempotent` — call `close()` twice without error
+- [x] Write `tests/smoke/test_phase2_pdf_loader.py` — single entry that runs the core loader tests plus a quick render-to-disk sanity check into a temp dir (deleted in teardown)
+- [x] Run: `uv run pytest tests/core/test_pdf_loader.py tests/smoke/test_phase2_pdf_loader.py -v`
+
 ### ✅ Test Gate 2
 - [x] **Run the sanity script** — `page_0.png` opens and looks correct
 - [x] **Try a multi-page PDF** — print page count, render page 0 and the last page
@@ -179,6 +210,19 @@ pagedrop/
 - [x] Add `closeEvent` to confirm if there are unsaved operations (skip for now,
   add a `pass`-body as a placeholder)
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Extend `tests/conftest.py` with a `qapp` fixture (`pytest-qt` provides this) and optional `main_window` fixture
+- [x] Write `tests/ui/test_main_window.py`:
+  - [x] `test_window_title_default` — title is `"PageDrop"` on launch
+  - [x] `test_menu_actions_exist` — `File → Open PDF`, `Close PDF`, `Exit` actions are present
+  - [x] `test_toolbar_open_button` — Open button exists and is enabled
+  - [x] `test_open_pdf_updates_title` — mock or fixture PDF via `QFileDialog` monkeypatch → title becomes `"PageDrop — …"`
+  - [x] `test_status_bar_shows_page_count` — after open, status bar contains `"Loaded"` and page count
+  - [x] `test_exit_action_closes` — trigger Exit, verify window closes
+- [x] Write `tests/smoke/test_phase3_main_window.py` — smoke script that constructs `MainWindow`, shows it hidden (`showMinimized` or off-screen), opens a fixture PDF programmatically, asserts title + status bar, then closes
+- [x] Run headless-friendly: `uv run pytest tests/ui/test_main_window.py -v` (may need `QT_QPA_PLATFORM=offscreen` on CI/Linux)
+
 ### ✅ Test Gate 3
 - [x] **Open → dialog appears**, filtered to PDF only
 - [x] **Title bar updates** to reflect the filename after selection
@@ -194,24 +238,24 @@ pagedrop/
 
 ### Checklist
 
-- [ ] Write `ui/page_card.py` — `PageCard(QFrame)`:
-  - [ ] Contains a `QLabel` for the thumbnail image
-  - [ ] Contains a `QLabel` for the page number below the image
-  - [ ] Fixed card width (e.g. 170px), height auto from aspect ratio
-  - [ ] `set_thumbnail(pixmap: QPixmap)` method
-  - [ ] `set_selected(bool)` method — changes border style (e.g. 3px blue border
+- [x] Write `ui/page_card.py` — `PageCard(QFrame)`:
+  - [x] Contains a `QLabel` for the thumbnail image
+  - [x] Contains a `QLabel` for the page number below the image
+  - [x] Fixed card width (e.g. 170px), height auto from aspect ratio
+  - [x] `set_thumbnail(pixmap: QPixmap)` method
+  - [x] `set_selected(bool)` method — changes border style (e.g. 3px blue border
     when selected, 1px grey when not)
-- [ ] Write `ui/thumbnail_grid.py` — `ThumbnailGrid(QScrollArea)`:
-  - [ ] Inner widget uses `QGridLayout` (or `QFlowLayout` if you install one)
+- [x] Write `ui/thumbnail_grid.py` — `ThumbnailGrid(QScrollArea)`:
+  - [x] Inner widget uses `QGridLayout` (or `QFlowLayout` if you install one)
     with a fixed column count (e.g. auto-fit based on window width)
-  - [ ] `load_pdf(loader: PdfLoader)` clears old cards and creates new `PageCard`
+  - [x] `load_pdf(loader: PdfLoader)` clears old cards and creates new `PageCard`
     objects
-  - [ ] Render thumbnails in a **background thread** (`QThread` or
+  - [x] Render thumbnails in a **background thread** (`QThread` or
     `QRunnable`/`QThreadPool`) so the UI doesn't freeze
-  - [ ] Emit a signal per rendered page so cards populate progressively
-  - [ ] Show a `QProgressBar` in the status bar while rendering
-- [ ] Wire `MainWindow` to call `thumbnail_grid.load_pdf()` after dialog
-- [ ] Replace the placeholder central widget with the `ThumbnailGrid`
+  - [x] Emit a signal per rendered page so cards populate progressively
+  - [x] Show a `QProgressBar` in the status bar while rendering
+- [x] Wire `MainWindow` to call `thumbnail_grid.load_pdf()` after dialog
+- [x] Replace the placeholder central widget with the `ThumbnailGrid`
 
 ### Checklist — Threading Pattern
 ```python
@@ -234,17 +278,33 @@ class ThumbnailWorker(QRunnable):
             self.signals.page_ready.emit(i, pix)
         self.signals.finished.emit()
 ```
-- [ ] Connect `page_ready` signal → update the correct `PageCard` on the main thread
-- [ ] Connect `finished` signal → hide the progress bar
+- [x] Connect `page_ready` signal → update the correct `PageCard` on the main thread
+- [x] Connect `finished` signal → hide the progress bar
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Write `tests/ui/test_page_card.py`:
+  - [x] `test_set_thumbnail` — accepts a `QPixmap`, label shows it
+  - [x] `test_set_selected_styles` — selected vs unselected change border/stylesheet
+- [x] Write `tests/ui/test_thumbnail_grid.py`:
+  - [x] `test_load_pdf_creates_cards` — 5-page fixture → 5 `PageCard` widgets
+  - [x] `test_load_pdf_clears_previous` — load PDF A, then PDF B → card count matches B only
+  - [x] `test_page_ready_populates_card` — mock worker or wait with `qtbot.waitSignal` until all pages ready
+  - [x] `test_progress_bar_visible_during_load` — progress bar shown while worker runs, hidden on `finished`
+- [x] Write `tests/smoke/test_phase4_thumbnail_grid.py`:
+  - [x] Open 5-page fixture through `MainWindow`, wait for all thumbnails (timeout ≤ 30s)
+  - [x] Assert card order labels read `1`, `2`, … `5`
+  - [x] Optional stress hook: env var `PAGEDROP_STRESS_PAGES=50` loads a generated 50-page PDF and asserts UI stays responsive (manual/CI nightly)
+- [x] Run: `uv run pytest tests/ui/test_page_card.py tests/ui/test_thumbnail_grid.py tests/smoke/test_phase4_thumbnail_grid.py -v`
 
 ### ✅ Test Gate 4
-- [ ] **5-page PDF** → all 5 thumbnails render, visible and correctly ordered
-- [ ] **50-page PDF** → thumbnails populate progressively, UI stays responsive
+- [x] **5-page PDF** → all 5 thumbnails render, visible and correctly ordered
+- [x] **50-page PDF** → thumbnails populate progressively, UI stays responsive
   (you can scroll while they load)
-- [ ] **100-page PDF** → no memory crash, reasonable load time
+- [x] **100-page PDF** → no memory crash, reasonable load time
 - [ ] **Resize window** → grid reflows correctly (or stays fixed width — either is
   fine, just make sure nothing clips)
-- [ ] **Open a second PDF** → old thumbnails are cleared, new ones appear
+- [x] **Open a second PDF** → old thumbnails are cleared, new ones appear
 
 ---
 
@@ -272,6 +332,22 @@ class ThumbnailWorker(QRunnable):
 - [ ] Add keyboard shortcuts in `MainWindow`:
   - [ ] `Ctrl+A` → `selection_manager.select_all()`
   - [ ] `Escape` → `selection_manager.clear()`
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/core/test_selection_manager.py` (pure logic, no Qt required if extracted):
+  - [ ] `test_select_single_clears_others`
+  - [ ] `test_toggle_adds_and_removes`
+  - [ ] `test_select_range_inclusive`
+  - [ ] `test_select_all_and_clear`
+  - [ ] `test_selection_changed_signal` — mock or spy emits correct set after each operation
+- [ ] Write `tests/ui/test_selection_interactions.py` with `pytest-qt`:
+  - [ ] Simulate click, Ctrl+click, Shift+click on cards; assert `set_selected(True/False)` state
+  - [ ] `Ctrl+A` shortcut → all cards selected
+  - [ ] `Escape` → none selected
+  - [ ] Status bar text matches selection count after each action
+- [ ] Write `tests/smoke/test_phase5_selection.py` — end-to-end on a 10-page fixture: run the full click / modifier / keyboard matrix from Test Gate 5 programmatically
+- [ ] Run: `uv run pytest tests/core/test_selection_manager.py tests/ui/test_selection_interactions.py tests/smoke/test_phase5_selection.py -v`
 
 ### ✅ Test Gate 5
 - [ ] **Click page 1** → only page 1 highlighted
@@ -352,6 +428,23 @@ class ThumbnailWorker(QRunnable):
 - [ ] Optionally show a small badge with the count of pages being dragged
   (e.g. overlay "×3" on the drag pixmap)
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/core/test_page_extractor.py`:
+  - [ ] `test_extract_single_page` — output PDF has exactly 1 page
+  - [ ] `test_extract_multiple_non_contiguous` — indices `[0, 3, 6]` → 3 files, correct page order in each
+  - [ ] `test_filename_zero_padding` — `report_page_0003.pdf` sorts before `report_page_0010.pdf`
+  - [ ] `test_extracted_content_matches_source` — compare page text or dimensions via `pypdf`/`fitz`
+- [ ] Write `tests/ui/test_drag_drop.py` (partial automation — OS drop target is hard to mock):
+  - [ ] `test_drag_without_selection_auto_selects` — starting drag on unselected card updates selection to that card only
+  - [ ] `test_mime_data_contains_file_urls` — after extract, `QMimeData.urls()` are local `file://` paths that exist on disk
+  - [ ] `test_drag_threshold_respected` — small mouse move does not start drag
+- [ ] Write `tests/smoke/test_phase6_drag_drop.py`:
+  - [ ] Script extracts pages to a temp output dir (simulates drop target without GUI drag)
+  - [ ] Verify dropped PDFs open in `pypdf` and contain expected page count
+  - [ ] Document manual steps for real Explorer/Finder drop (cannot fully automate cross-process DnD in CI)
+- [ ] Run: `uv run pytest tests/core/test_page_extractor.py tests/ui/test_drag_drop.py tests/smoke/test_phase6_drag_drop.py -v`
+
 ### ✅ Test Gate 6
 - [ ] **Drag 1 page** to a folder → open the dropped PDF, verify it contains exactly
   that page and looks correct
@@ -401,6 +494,19 @@ class ThumbnailWorker(QRunnable):
 - [ ] Consider a max temp dir size guard — if extracting hundreds of pages, disk
   usage can spike
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/utils/test_temp_manager.py`:
+  - [ ] `test_creates_prefixed_dir` — dir name starts with `pagedrop_`
+  - [ ] `test_cleanup_removes_dir` — after `cleanup()`, dir no longer exists
+  - [ ] `test_cleanup_idempotent` — second `cleanup()` does not raise
+  - [ ] `test_atexit_registered` — optional: verify handler registered (or integration test via subprocess)
+- [ ] Write `tests/smoke/test_phase7_temp_cleanup.py`:
+  - [ ] Perform 5 simulated extractions, assert per-drag files removed while manager still alive
+  - [ ] After `TempManager.cleanup()`, `listdir(tempfile.gettempdir())` has no orphaned files from that run
+  - [ ] Subprocess smoke: start app, kill with `SIGKILL`/`taskkill /F`, count `pagedrop_*` dirs before/after (document acceptable baseline)
+- [ ] Run: `uv run pytest tests/utils/test_temp_manager.py tests/smoke/test_phase7_temp_cleanup.py -v`
+
 ### ✅ Test Gate 7
 - [ ] **Do 5 drag operations** → check the temp dir, verify files are being
   cleaned up (not accumulating)
@@ -429,6 +535,20 @@ class ThumbnailWorker(QRunnable):
   worker thread before starting new one
 - [ ] Wrap `QRunnable.run()` body in `try/except` — surface errors to main thread
   via a signal, never let thread crash silently
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Add fixtures: `corrupt.pdf` (text renamed to `.pdf`), `empty.pdf` (0 pages), `garbage.bin` with `.pdf` extension
+- [ ] Write `tests/core/test_pdf_loader_errors.py`:
+  - [ ] `test_corrupt_file_raises_clear_error`
+  - [ ] `test_empty_pdf_zero_pages`
+- [ ] Write `tests/ui/test_error_handling.py`:
+  - [ ] `test_open_corrupt_shows_message_box` — use `qtbot` + `QMessageBox` spy or mock
+  - [ ] `test_drag_without_pdf_shows_status_message`
+  - [ ] `test_disk_full_oserror` — mock `open()` or extractor to raise `OSError`, assert dialog not crash
+  - [ ] `test_rapid_reopen_cancels_worker` — open PDF A, immediately open PDF B, assert only B's cards remain
+- [ ] Write `tests/smoke/test_phase8_edge_cases.py` — runs the error-path matrix; each case asserts app process still alive and window visible after failure
+- [ ] Run: `uv run pytest tests/core/test_pdf_loader_errors.py tests/ui/test_error_handling.py tests/smoke/test_phase8_edge_cases.py -v`
 
 ### ✅ Test Gate 8
 - [ ] **Rename a PDF to `.pdf` but put garbage inside** → open it, see a clean
@@ -471,6 +591,19 @@ class ThumbnailWorker(QRunnable):
 - [ ] Use a dark grey background for the grid area so white PDF thumbnails
   stand out
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/ui/test_ux_polish.py`:
+  - [ ] `test_card_tooltip` — hover (or `QToolTip.showText` trigger) shows page number and dimensions
+  - [ ] `test_context_menu_extract_action` — right-click → Extract triggers folder dialog mock and writes PDFs
+  - [ ] `test_arrow_keys_and_space` — focus moves between cards; Space toggles selection
+  - [ ] `test_zoom_changes_thumbnail_size` — `+`/`-` or slider updates card width
+  - [ ] `test_qsettings_remembers_directory` — two app sessions, second open dialog starts in same folder (use temp `QSettings` path in test)
+  - [ ] `test_minimum_window_size` — resize below minimum clamps correctly
+- [ ] Write `tests/smoke/test_phase9_ux.py` — visual/regression smoke checklist encoded as assertions where possible (title badge page count, toolbar buttons enabled/disabled states)
+- [ ] Optional: screenshot diff test for card states (selected / hover / default) — skip in CI if flaky; run locally before release
+- [ ] Run: `uv run pytest tests/ui/test_ux_polish.py tests/smoke/test_phase9_ux.py -v`
+
 ### ✅ Test Gate 9
 - [ ] **Hover over a card** → tooltip appears after a short delay
 - [ ] **Right-click → Extract to folder** → PDF(s) land in the chosen folder
@@ -509,6 +642,23 @@ class ThumbnailWorker(QRunnable):
 - [ ] If exe size is too large, consider `--onedir` mode instead of `--onefile`
 - [ ] Add a `Makefile` or `build.sh` script so the build command is documented
 
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `scripts/smoke_exe.sh` / `scripts/smoke_exe.ps1`:
+  - [ ] Build exe via documented command
+  - [ ] Launch exe as subprocess with timeout
+  - [ ] Assert process starts (no immediate exit code ≠ 0)
+  - [ ] Optional: pass a fixture PDF path via env var if exe supports it, else document manual open step
+- [ ] Write `tests/smoke/test_phase10_executable.py` (skipped locally unless `PAGEDROP_EXE` env var set):
+  - [ ] `@pytest.mark.skipif(not os.environ.get("PAGEDROP_EXE"))`
+  - [ ] Launch built binary, verify it stays alive ≥ 5s
+  - [ ] On Windows VM / clean machine checklist: same script run outside dev environment
+- [ ] Add CI or release note: run full smoke suite before tagging:
+  ```bash
+  uv run pytest tests/ -v --ignore=tests/smoke/test_phase10_executable.py
+  PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase10_executable.py -v
+  ```
+
 ### ✅ Test Gate 10
 - [ ] **Exe opens** without "DLL not found" or similar errors
 - [ ] **Open a PDF** via the exe → thumbnails render
@@ -520,6 +670,8 @@ class ThumbnailWorker(QRunnable):
 ## Suggested Build Order
 
 Work through phases in this order. **Don't move on until the test gate for each phase passes.**
+
+Each phase also has a **Test Scripts & Smoke Tests** checklist — write those tests as you go so regressions are caught before the manual test gate.
 
 ```
 Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7 → Phase 8 → Phase 9 → Phase 10
@@ -549,9 +701,11 @@ Phases 6 and 7 are the hardest — budget the most time there. The rest is fairl
 ```bash
 uv init pagedrop --lib   # initialise project
 uv add PyQt6 PyMuPDF pypdf       # add runtime deps
-uv add --dev pyinstaller         # add dev-only dep
+uv add --dev pytest pytest-qt pyinstaller   # test + build deps
 uv sync                          # install all deps
 uv run pagedrop               # run the app
 uv run python some_script.py     # run a one-off script
+uv run pytest tests/ -v          # run all tests
+uv run pytest tests/smoke/ -v    # smoke tests only
 uv run pyinstaller pagedrop.spec  # build exe
 ```
