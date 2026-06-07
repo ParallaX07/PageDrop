@@ -6,6 +6,7 @@ from PyQt6.QtCore import QMimeData, QPoint, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QDrag,
+    QEnterEvent,
     QFont,
     QMouseEvent,
     QPainter,
@@ -16,35 +17,49 @@ from PyQt6.QtWidgets import QApplication, QFrame, QLabel, QMessageBox, QVBoxLayo
 from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui.theme import (
+    CARD_PADDING,
+    CARD_WIDTH,
+    accent_qcolor,
+    page_card_stylesheet,
+)
 from pagedrop.utils.temp_manager import TempManager
 
 
 class PageCard(QFrame):
     clicked = pyqtSignal(int, Qt.KeyboardModifier)
-    CARD_WIDTH = 170
+    double_clicked = pyqtSignal(int)
+    CARD_WIDTH = CARD_WIDTH
 
     def __init__(self, page_index: int, parent=None) -> None:
         super().__init__(parent)
         self.page_index = page_index
+        self._card_width = CARD_WIDTH
+        self._source_pixmap: QPixmap | None = None
         self._selected = False
+        self._hovered = False
         self._drag_start_pos: QPoint | None = None
         self._loader: PdfLoader | None = None
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
 
-        self.setFixedWidth(self.CARD_WIDTH)
+        self.setObjectName("PageCard")
+        self.setFixedWidth(self._card_width)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._thumbnail_label = QLabel()
+        self._thumbnail_label.setObjectName("PageCardThumbnail")
         self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._thumbnail_label.setMinimumHeight(80)
 
         self._page_label = QLabel(f"Page {page_index + 1}")
+        self._page_label.setObjectName("PageCardLabel")
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         layout.addWidget(self._thumbnail_label)
         layout.addWidget(self._page_label)
 
@@ -63,6 +78,16 @@ class PageCard(QFrame):
         self._loader = loader
         self._selection_manager = selection_manager
         self._temp_manager = temp_manager
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        self._hovered = True
+        self._apply_visual_state()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self._apply_visual_state()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -105,6 +130,18 @@ class PageCard(QFrame):
             self.clicked.emit(self.page_index, event.modifiers())
         self._drag_start_pos = None
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit(self.page_index)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def set_card_width(self, width: int, *, fast: bool = True) -> None:
+        self._card_width = width
+        self.setFixedWidth(width)
+        self._refresh_thumbnail_display(fast=fast)
 
     def _start_drag(self) -> None:
         assert self._loader is not None
@@ -197,7 +234,8 @@ class PageCard(QFrame):
         badge_x = canvas.width() - badge_w - 2
         badge_y = 2
 
-        painter.setBrush(QColor(59, 130, 246))
+        accent = accent_qcolor()
+        painter.setBrush(QColor(*accent))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
         painter.setPen(QColor(255, 255, 255))
@@ -214,16 +252,30 @@ class PageCard(QFrame):
         return canvas
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
-        scaled = pixmap.scaledToWidth(
-            self.CARD_WIDTH - 8,
-            Qt.TransformationMode.SmoothTransformation,
+        self._source_pixmap = pixmap
+        self._refresh_thumbnail_display(fast=False)
+
+    def _refresh_thumbnail_display(self, *, fast: bool = False) -> None:
+        if self._source_pixmap is None or self._source_pixmap.isNull():
+            return
+        target_width = self._card_width - CARD_PADDING
+        mode = (
+            Qt.TransformationMode.FastTransformation
+            if fast
+            else Qt.TransformationMode.SmoothTransformation
         )
-        self._thumbnail_label.setPixmap(scaled)
-        self._thumbnail_label.setMinimumHeight(scaled.height())
+        if self._source_pixmap.width() == target_width:
+            display = self._source_pixmap
+        else:
+            display = self._source_pixmap.scaledToWidth(target_width, mode)
+        self._thumbnail_label.setPixmap(display)
+        self._thumbnail_label.setMinimumHeight(display.height())
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
-        if selected:
-            self.setStyleSheet("border: 3px solid #3b82f6; border-radius: 4px;")
-        else:
-            self.setStyleSheet("border: 1px solid #666; border-radius: 4px;")
+        self._apply_visual_state()
+
+    def _apply_visual_state(self) -> None:
+        self.setStyleSheet(
+            page_card_stylesheet(selected=self._selected, hovered=self._hovered)
+        )

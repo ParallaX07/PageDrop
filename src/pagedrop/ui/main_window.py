@@ -11,8 +11,10 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QSizePolicy,
     QStyle,
     QToolBar,
+    QWidget,
 )
 
 from pagedrop.core.pdf_loader import (
@@ -20,7 +22,15 @@ from pagedrop.core.pdf_loader import (
     PdfLoadError,
     PdfLoader,
 )
+from pagedrop.ui.page_preview import PagePreviewDialog
+from pagedrop.ui.theme import (
+    DEFAULT_THUMBNAIL_WIDTH,
+    MAX_THUMBNAIL_WIDTH,
+    MIN_THUMBNAIL_WIDTH,
+    ZOOM_WHEEL_STEP,
+)
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+from pagedrop.ui.zoom_controls import ZoomControls
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -31,10 +41,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.current_pdf_path: str | None = None
         self._loader: PdfLoader | None = None
+        self._preview_dialog: PagePreviewDialog | None = None
         self._temp_manager = TempManager()
 
         self.setWindowTitle(self.APP_TITLE)
-        self.resize(900, 650)
+        self.setMinimumSize(720, 480)
+        self.resize(960, 680)
 
         self._build_menu()
         self._build_toolbar()
@@ -70,11 +82,36 @@ class MainWindow(QMainWindow):
         )
         open_action.triggered.connect(self._open_pdf)
 
+        self._preview_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+            "Preview",
+        )
+        self._preview_action.setToolTip("Preview selected page (double-click a card)")
+        self._preview_action.triggered.connect(self._open_preview)
+        self._preview_action.setEnabled(False)
+
         toolbar.addSeparator()
 
         self._filename_label = QLabel("No file open")
+        self._filename_label.setObjectName("ToolbarFilename")
+        self._filename_label.setProperty("active", False)
         self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         toolbar.addWidget(self._filename_label)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        toolbar.addWidget(spacer)
+
+        self._zoom_controls = ZoomControls(
+            min_width=MIN_THUMBNAIL_WIDTH,
+            max_width=MAX_THUMBNAIL_WIDTH,
+            step=ZOOM_WHEEL_STEP,
+            initial=DEFAULT_THUMBNAIL_WIDTH,
+        )
+        toolbar.addWidget(self._zoom_controls)
 
     def _build_central_widget(self) -> None:
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
@@ -83,6 +120,12 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.rendering_finished.connect(self._on_rendering_finished)
         self._thumbnail_grid.rendering_error.connect(self._on_rendering_error)
         self._thumbnail_grid.selection_changed.connect(self._on_selection_changed)
+        self._thumbnail_grid.preview_requested.connect(self._open_preview_at)
+        self._thumbnail_grid.zoom_changed.connect(self._on_zoom_changed)
+        self._thumbnail_grid.zoom_changed.connect(self._zoom_controls.set_value)
+        self._zoom_controls.zoom_requested.connect(
+            self._thumbnail_grid.set_thumbnail_zoom
+        )
         self.setCentralWidget(self._thumbnail_grid)
 
     def _build_status_widgets(self) -> None:
@@ -110,6 +153,46 @@ class MainWindow(QMainWindow):
     def _clear_selection(self) -> None:
         self._thumbnail_grid.selection_manager.clear()
 
+    def _preview_start_page(self) -> int:
+        selection = self._thumbnail_grid.selection_manager.selection
+        if selection:
+            return min(selection)
+        return 0
+
+    def _open_preview(self) -> None:
+        if self._loader is None:
+            return
+        self._open_preview_at(self._preview_start_page())
+
+    def _open_preview_at(self, page_index: int) -> None:
+        if self._loader is None:
+            return
+
+        if self._preview_dialog is not None and self._preview_dialog.isVisible():
+            self._preview_dialog.close()
+
+        dialog = PagePreviewDialog(
+            self._loader,
+            start_page=page_index,
+            on_page_changed=self._on_preview_page_changed,
+            parent=self,
+        )
+        dialog.finished.connect(self._on_preview_closed)
+        self._preview_dialog = dialog
+        dialog.showMaximized()
+
+    def _on_preview_page_changed(self, page_index: int) -> None:
+        self._thumbnail_grid.selection_manager.select_single(page_index)
+
+    def _on_preview_closed(self) -> None:
+        self._preview_dialog = None
+
+    def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
+        if self._loader is not None:
+            self.statusBar().showMessage(
+                f"Thumbnail size: {thumbnail_width_px} px"
+            )
+
     def eventFilter(self, obj, event) -> bool:
         if (
             event.type() != QEvent.Type.KeyPress
@@ -124,6 +207,12 @@ class MainWindow(QMainWindow):
                 return True
         elif event.matches(QKeySequence.StandardKey.SelectAll) and self._loader is not None:
             self._select_all_pages()
+            return True
+        elif self._loader is not None and event.text() in {"+", "="}:
+            self._thumbnail_grid.zoom_by(ZOOM_WHEEL_STEP)
+            return True
+        elif self._loader is not None and event.text() == "-":
+            self._thumbnail_grid.zoom_by(-ZOOM_WHEEL_STEP)
             return True
 
         return super().eventFilter(obj, event)
@@ -176,7 +265,13 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"{self.APP_TITLE} — {filename}")
         self._filename_label.setText(filename)
+        self._filename_label.setProperty("active", True)
+        self._filename_label.style().unpolish(self._filename_label)
+        self._filename_label.style().polish(self._filename_label)
         self._close_action.setEnabled(True)
+        self._preview_action.setEnabled(True)
+        self._zoom_controls.setEnabled(True)
+        self._zoom_controls.set_value(self._thumbnail_grid.thumbnail_width_px)
         self.statusBar().showMessage(f"Loading {loader.page_count} pages…")
         self._thumbnail_grid.load_pdf(loader)
 
@@ -193,7 +288,13 @@ class MainWindow(QMainWindow):
     def _reset_ui(self) -> None:
         self.setWindowTitle(self.APP_TITLE)
         self._filename_label.setText("No file open")
+        self._filename_label.setProperty("active", False)
+        self._filename_label.style().unpolish(self._filename_label)
+        self._filename_label.style().polish(self._filename_label)
         self._close_action.setEnabled(False)
+        self._preview_action.setEnabled(False)
+        self._zoom_controls.setEnabled(False)
+        self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
         self._progress_bar.hide()
 
     def _on_rendering_started(self, total_pages: int) -> None:
@@ -234,6 +335,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         pass  # TODO: confirm if there are unsaved operations
+        if self._preview_dialog is not None:
+            self._preview_dialog.close()
         QApplication.instance().removeEventFilter(self)
         self._thumbnail_grid.clear()
         if self._loader is not None:
