@@ -13,6 +13,7 @@ import fitz
 from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.theme import (
     CARD_PADDING,
@@ -29,6 +30,9 @@ SCROLL_RENDER_DEBOUNCE_MS = 150
 RENDER_POOL_DRAIN_MS = 3000
 VISIBLE_RENDER_BUFFER_ROWS = 2
 DEFERRED_THUMBNAIL_BATCH = 24
+LARGE_PDF_PAGE_THRESHOLD = 50
+CARD_CREATE_BATCH = 32
+DEFERRED_LAYOUT_BATCH = 48
 
 
 class ThumbnailWorker(QRunnable):
@@ -82,6 +86,7 @@ class ThumbnailGrid(QScrollArea):
     rendering_progress = pyqtSignal(int, int)
     rendering_finished = pyqtSignal()
     rendering_error = pyqtSignal(str)
+    busy_changed = pyqtSignal(bool, str)
     selection_changed = pyqtSignal(set)
     preview_requested = pyqtSignal(int)
     zoom_changed = pyqtSignal(int)
@@ -166,6 +171,18 @@ class ThumbnailGrid(QScrollArea):
             self._process_deferred_thumbnail_refresh
         )
         self._pending_thumbnail_refresh: list[int] = []
+        self._pending_card_indices: list[int] = []
+        self._card_create_timer = QTimer(self)
+        self._card_create_timer.setSingleShot(True)
+        self._card_create_timer.timeout.connect(self._process_card_creation_batch)
+        self._deferred_layout_timer = QTimer(self)
+        self._deferred_layout_timer.setSingleShot(True)
+        self._deferred_layout_timer.timeout.connect(self._process_deferred_layout_batch)
+        self._pending_layout_indices: list[int] = []
+        self._busy_reasons: set[str] = set()
+        self._busy_message = ""
+        self._overlay = BusyOverlay(self)
+        self._busy_render_generation = -1
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
@@ -205,16 +222,50 @@ class ThumbnailGrid(QScrollArea):
         self._last_clicked_index = None
         self._focused_index = 0 if total else None
         self.selection_manager.set_page_count(total)
-        self._cards = [PageCard(i, self._container) for i in range(total)]
-        for card in self._cards:
+
+        if total <= LARGE_PDF_PAGE_THRESHOLD:
+            self._create_all_cards(range(total))
+            self._reflow_grid(force=True)
+            self._update_focus_highlight()
+            self._start_rendering(silent=False)
+            return
+
+        self._pending_card_indices = list(range(total))
+        self._enter_busy("loading", f"Preparing {total} pages…")
+        self._card_create_timer.start(0)
+
+    def _create_all_cards(self, indices: range | list[int]) -> None:
+        assert self._loader is not None
+        for i in indices:
+            card = PageCard(i, self._container)
             card.set_card_width(self._card_width)
-            card.set_drag_context(loader, self.selection_manager, self._temp_manager)
-            width_mm, height_mm = loader.page_size_mm(card.page_index)
+            card.set_drag_context(
+                self._loader, self.selection_manager, self._temp_manager
+            )
+            width_mm, height_mm = self._loader.page_size_mm(i)
             card.set_page_tooltip(width_mm, height_mm)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)
             card.context_menu_requested.connect(self._on_card_context_menu)
-        self._reflow_grid(force=True)
+            self._cards.append(card)
+
+    def _process_card_creation_batch(self) -> None:
+        if self._loader is None or not self._pending_card_indices:
+            return
+
+        batch = self._pending_card_indices[:CARD_CREATE_BATCH]
+        self._pending_card_indices = self._pending_card_indices[CARD_CREATE_BATCH:]
+        self._create_all_cards(batch)
+        self._reflow_grid(force=len(self._cards) <= CARD_CREATE_BATCH)
+        remaining = len(self._pending_card_indices)
+        total = len(self._cards) + remaining
+        self._enter_busy("loading", f"Preparing pages ({len(self._cards)}/{total})…")
+
+        if self._pending_card_indices:
+            self._card_create_timer.start(0)
+            return
+
+        self._leave_busy("loading")
         self._update_focus_highlight()
         self._start_rendering(silent=False)
 
@@ -251,6 +302,11 @@ class ThumbnailGrid(QScrollArea):
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)
         worker.signals.error.connect(self._on_rendering_error)
+        self._busy_render_generation = generation
+        message = (
+            "Updating thumbnails…" if silent else "Rendering thumbnails…"
+        )
+        self._enter_busy("rendering", message)
         if not silent:
             self.rendering_started.emit(len(page_indices))
         self._render_pool.start(worker)
@@ -296,10 +352,18 @@ class ThumbnailGrid(QScrollArea):
         self._background_render_timer.start()
 
     def _on_scroll_changed(self, _value: int) -> None:
-        if self._loader is None or not self._pages_needing_render():
+        if self._loader is None:
             return
-        if self._visible_pages_needing_render():
-            self._scroll_render_timer.start()
+        visible = self._get_visible_page_indices()
+        for index in visible:
+            if 0 <= index < len(self._cards):
+                card = self._cards[index]
+                card.apply_layout_width()
+                if card._source_pixmap is not None:
+                    card.refresh_thumbnail_display(fast=True)
+        if self._pages_needing_render():
+            if self._visible_pages_needing_render():
+                self._scroll_render_timer.start()
 
     def cancel_rendering(self) -> None:
         """Invalidate the current render generation (e.g. before opening another PDF)."""
@@ -310,7 +374,11 @@ class ThumbnailGrid(QScrollArea):
         self._scroll_render_timer.stop()
         self._background_render_timer.stop()
         self._deferred_thumbnail_timer.stop()
+        self._card_create_timer.stop()
+        self._deferred_layout_timer.stop()
         self._pending_thumbnail_refresh.clear()
+        self._pending_card_indices.clear()
+        self._pending_layout_indices.clear()
         self._cancel_rendering()
         self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
         self._clear_cards()
@@ -319,6 +387,10 @@ class ThumbnailGrid(QScrollArea):
         self._last_clicked_index = None
         self._focused_index = None
         self.selection_manager.set_page_count(0)
+        self._busy_reasons.clear()
+        self._busy_render_generation = -1
+        self._overlay.hide_overlay()
+        self.busy_changed.emit(False, "")
 
     @property
     def thumbnail_width_px(self) -> int:
@@ -334,6 +406,7 @@ class ThumbnailGrid(QScrollArea):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._overlay._sync_geometry()
         self._reflow_grid()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
@@ -463,21 +536,45 @@ class ThumbnailGrid(QScrollArea):
         self._thumbnail_width_px = thumbnail_width_px
         self._card_width = thumbnail_width_px + CARD_PADDING
         visible = set(self._get_visible_page_indices())
-        deferred: list[int] = []
+        deferred_layout: list[int] = []
         for index, card in enumerate(self._cards):
             in_view = index in visible
-            card.set_card_width(
-                self._card_width,
-                fast=True,
-                refresh_thumbnail=in_view,
-            )
-            if not in_view:
-                deferred.append(index)
-        if deferred:
-            self._schedule_deferred_thumbnail_refresh(deferred)
+            if in_view:
+                card.set_card_width(
+                    self._card_width,
+                    fast=True,
+                    refresh_thumbnail=True,
+                    apply_layout=True,
+                )
+            else:
+                card.set_card_width(
+                    self._card_width,
+                    fast=True,
+                    refresh_thumbnail=False,
+                    apply_layout=False,
+                )
+                deferred_layout.append(index)
+        if deferred_layout:
+            self._schedule_deferred_layout_update(deferred_layout)
         self._reflow_grid()
         self.zoom_changed.emit(self._thumbnail_width_px)
         self._schedule_zoom_rerender()
+
+    def _schedule_deferred_layout_update(self, indices: list[int]) -> None:
+        self._pending_layout_indices.extend(indices)
+        if not self._deferred_layout_timer.isActive():
+            self._deferred_layout_timer.start(0)
+
+    def _process_deferred_layout_batch(self) -> None:
+        batch = self._pending_layout_indices[:DEFERRED_LAYOUT_BATCH]
+        self._pending_layout_indices = self._pending_layout_indices[
+            DEFERRED_LAYOUT_BATCH:
+        ]
+        for index in batch:
+            if 0 <= index < len(self._cards):
+                self._cards[index].apply_layout_width()
+        if self._pending_layout_indices:
+            self._deferred_layout_timer.start(0)
 
     def _schedule_deferred_thumbnail_refresh(self, indices: list[int]) -> None:
         self._pending_thumbnail_refresh.extend(indices)
@@ -550,7 +647,11 @@ class ThumbnailGrid(QScrollArea):
         self._zoom_render_timer.stop()
         self._scroll_render_timer.stop()
         self._background_render_timer.stop()
+        self._card_create_timer.stop()
+        self._pending_card_indices.clear()
         self._generation += 1
+        self._busy_render_generation = -1
+        self._leave_busy("rendering")
 
     def _is_cancelled(self, generation: int) -> bool:
         return generation != self._generation
@@ -619,6 +720,9 @@ class ThumbnailGrid(QScrollArea):
         if self._is_cancelled(generation):
             return
         self._sync_rendered_width_state()
+        if generation == self._busy_render_generation:
+            self._busy_render_generation = -1
+            self._leave_busy("rendering")
         if not self._silent_render:
             self.rendering_finished.emit()
         elif self._background_pages_needing_render():
@@ -627,7 +731,24 @@ class ThumbnailGrid(QScrollArea):
     def _on_rendering_error(self, generation: int, message: str) -> None:
         if self._is_cancelled(generation):
             return
+        if generation == self._busy_render_generation:
+            self._busy_render_generation = -1
+            self._leave_busy("rendering")
         self.rendering_error.emit(message)
+
+    def _enter_busy(self, reason: str, message: str) -> None:
+        self._busy_reasons.add(reason)
+        self._busy_message = message
+        self._overlay.show_message(message)
+        self.busy_changed.emit(True, message)
+
+    def _leave_busy(self, reason: str) -> None:
+        self._busy_reasons.discard(reason)
+        if self._busy_reasons:
+            return
+        self._busy_message = ""
+        self._overlay.hide_overlay()
+        self.busy_changed.emit(False, "")
 
     def _on_card_clicked(
         self, page_index: int, modifiers: Qt.KeyboardModifier

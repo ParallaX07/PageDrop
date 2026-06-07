@@ -231,10 +231,12 @@ class MainWindow(QMainWindow):
         grid.rendering_progress.connect(self._on_rendering_progress)
         grid.rendering_finished.connect(self._on_rendering_finished)
         grid.rendering_error.connect(self._on_rendering_error)
+        grid.busy_changed.connect(self._on_grid_busy_changed)
         grid.selection_changed.connect(self._on_selection_changed)
         grid.preview_requested.connect(self._open_preview_at)
         grid.zoom_changed.connect(self._on_zoom_changed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
+        tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
 
     def _active_tab(self) -> PdfTab | None:
         return self._tab_manager.active_tab
@@ -657,6 +659,28 @@ class MainWindow(QMainWindow):
             f"Could not render thumbnails:\n{message}",
         )
         self.statusBar().showMessage("Rendering failed")
+
+    def _on_grid_busy_changed(self, busy: bool, message: str) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        tab = self._active_tab()
+        if tab is None or tab.is_preview_visible():
+            return
+        if busy and message:
+            self.statusBar().showMessage(message)
+        elif tab.loader is not None and not self._progress_bar.isVisible():
+            self.statusBar().showMessage(f"Loaded {tab.loader.page_count} pages")
+
+    def _on_preview_busy_changed(self, busy: bool, message: str) -> None:
+        tab = self._active_tab()
+        if tab is None or self.sender() is not tab.preview_widget:
+            return
+        if busy and message:
+            self.statusBar().showMessage(message)
+        elif tab.loader is not None:
+            page = tab.preview_widget.current_page + 1
+            total = tab.loader.page_count
+            self.statusBar().showMessage(f"Preview · page {page} of {total}")
 
     def _on_selection_changed(self, selection: set[int]) -> None:
         sender = self.sender()

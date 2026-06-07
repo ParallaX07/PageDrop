@@ -485,6 +485,20 @@ def app_stylesheet() -> str:
         font-family: {FONT_MONO};
         padding: 10px 16px;
     }}
+
+    QWidget#BusyOverlay {{
+        background-color: rgba(19, 19, 22, 180);
+    }}
+
+    QLabel#BusyOverlayMessage {{
+        color: {TEXT_PRIMARY};
+        font-size: 14px;
+        font-weight: 600;
+        padding: 16px 24px;
+        background-color: {BG_SURFACE};
+        border: 1px solid {BORDER_SUBTLE};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
     """
 
 

@@ -182,12 +182,22 @@ class PageCard(QFrame):
         super().mouseDoubleClickEvent(event)
 
     def set_card_width(
-        self, width: int, *, fast: bool = True, refresh_thumbnail: bool = True
+        self,
+        width: int,
+        *,
+        fast: bool = True,
+        refresh_thumbnail: bool = True,
+        apply_layout: bool = True,
     ) -> None:
         self._card_width = width
-        self.setFixedWidth(width)
+        if apply_layout:
+            self.apply_layout_width()
         if refresh_thumbnail:
             self._refresh_thumbnail_display(fast=fast)
+
+    def apply_layout_width(self) -> None:
+        if self.width() != self._card_width:
+            self.setFixedWidth(self._card_width)
 
     def refresh_thumbnail_display(self, *, fast: bool = False) -> None:
         """Re-scale the cached source pixmap to the current card width."""
