@@ -110,7 +110,7 @@ class MergeWindow(QMainWindow):
 
         self._add_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
-            "Add PDFs…",
+            "Add PDFs",
         )
         self._add_action.triggered.connect(self._add_pdfs)
 
@@ -151,7 +151,7 @@ class MergeWindow(QMainWindow):
 
         self._merge_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
-            "Merge…",
+            "Merge",
         )
         self._merge_action.triggered.connect(self._merge_pdfs)
         merge_button = toolbar.widgetForAction(self._merge_action)
