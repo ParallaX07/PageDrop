@@ -1,0 +1,97 @@
+"""Phase 6 UI tests — drag-and-drop preparation on PageCard."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QDrag
+
+from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui.page_card import PageCard
+from pagedrop.utils.temp_manager import TempManager
+
+
+def _make_card(
+    qtbot,
+    pdf_path,
+    page_index: int = 0,
+) -> tuple[PageCard, PdfLoader, SelectionManager, TempManager]:
+    loader = PdfLoader(str(pdf_path))
+    selection_manager = SelectionManager()
+    selection_manager.set_page_count(loader.page_count)
+    temp_manager = TempManager()
+
+    card = PageCard(page_index)
+    qtbot.addWidget(card)
+    card.resize(200, 200)
+    card.show()
+    card.set_drag_context(loader, selection_manager, temp_manager)
+    return card, loader, selection_manager, temp_manager
+
+
+def _patch_drag_exec(monkeypatch, on_exec):
+    def fake_exec(self, *args, **kwargs):
+        on_exec(self)
+        return Qt.DropAction.IgnoreAction
+
+    monkeypatch.setattr(QDrag, "exec", fake_exec)
+
+
+def test_drag_without_selection_auto_selects(qtbot, five_page_pdf, monkeypatch):
+    card, loader, selection_manager, _ = _make_card(qtbot, five_page_pdf, page_index=2)
+    selection_manager.select_single(0)
+    assert selection_manager.selection == {0}
+
+    _patch_drag_exec(monkeypatch, lambda _drag: None)
+
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+    assert selection_manager.selection == {2}
+    loader.close()
+
+
+def test_mime_data_contains_file_urls(qtbot, five_page_pdf, monkeypatch):
+    card, loader, selection_manager, _ = _make_card(qtbot, five_page_pdf, page_index=0)
+    selection_manager.select_single(0)
+    selection_manager.toggle(2)
+
+    captured_urls: list[Path] = []
+
+    def capture_mime(drag: QDrag) -> None:
+        mime = drag.mimeData()
+        assert mime is not None
+        urls = mime.urls()
+        assert len(urls) == 2
+        for url in urls:
+            assert url.isLocalFile()
+            local_path = Path(url.toLocalFile())
+            assert local_path.exists()
+            assert local_path.suffix == ".pdf"
+            captured_urls.append(local_path)
+
+    _patch_drag_exec(monkeypatch, capture_mime)
+
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+    assert len(captured_urls) == 2
+    loader.close()
+
+
+def test_drag_threshold_respected(qtbot, five_page_pdf, monkeypatch):
+    card, loader, _, _ = _make_card(qtbot, five_page_pdf, page_index=0)
+    drag_started: list[bool] = []
+
+    def spy_start_drag() -> None:
+        drag_started.append(True)
+
+    monkeypatch.setattr(card, "_start_drag", spy_start_drag)
+
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(52, 50))
+
+    assert drag_started == []
+    loader.close()

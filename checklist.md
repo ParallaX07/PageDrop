@@ -376,7 +376,7 @@ class ThumbnailWorker(QRunnable):
 
 ### Checklist — Page Extractor
 
-- [ ] Write `core/page_extractor.py`:
+- [x] Write `core/page_extractor.py`:
   ```python
   from pypdf import PdfReader, PdfWriter
   from pathlib import Path
@@ -398,66 +398,66 @@ class ThumbnailWorker(QRunnable):
           out_paths.append(out_path)
       return out_paths
   ```
-  - [ ] Name files after the source PDF, e.g. `report_page_0003.pdf`
-  - [ ] Zero-pad page numbers so filenames sort correctly
+  - [x] Name files after the source PDF, e.g. `report_page_0003.pdf`
+  - [x] Zero-pad page numbers so filenames sort correctly
 
 ### Checklist — Drag Logic in PageCard
 
-- [ ] Override `mousePressEvent` — record start position
-- [ ] Override `mouseMoveEvent` — check if drag threshold crossed
+- [x] Override `mousePressEvent` — record start position
+- [x] Override `mouseMoveEvent` — check if drag threshold crossed
   (`QApplication.startDragDistance()`)
-- [ ] When threshold crossed:
-  - [ ] If this card is not in selection → auto-select just this card first
-  - [ ] Call `extract_pages_to_files()` via the extractor
-  - [ ] Build `QMimeData`:
+- [x] When threshold crossed:
+  - [x] If this card is not in selection → auto-select just this card first
+  - [x] Call `extract_pages_to_files()` via the extractor
+  - [x] Build `QMimeData`:
     ```python
     mime = QMimeData()
     urls = [QUrl.fromLocalFile(str(p)) for p in temp_paths]
     mime.setUrls(urls)
     ```
-  - [ ] Create `QDrag(self)`, `drag.setMimeData(mime)`
-  - [ ] Optionally set a drag pixmap (composite of first thumbnail)
-  - [ ] `result = drag.exec(Qt.DropAction.CopyAction)`
-  - [ ] On completion, schedule temp file cleanup via `TempManager`
-- [ ] Signals needed: `PageCard` needs a reference to the `SelectionManager`
+  - [x] Create `QDrag(self)`, `drag.setMimeData(mime)`
+  - [x] Optionally set a drag pixmap (composite of first thumbnail)
+  - [x] `result = drag.exec(Qt.DropAction.CopyAction)`
+  - [x] On completion, schedule temp file cleanup via `TempManager`
+- [x] Signals needed: `PageCard` needs a reference to the `SelectionManager`
   and `PdfLoader` — pass them in via the grid
 
 ### Checklist — Drag Visual Feedback
 
-- [ ] Set drag cursor to show a stack-of-pages icon while dragging
-- [ ] Optionally show a small badge with the count of pages being dragged
+- [x] Set drag cursor to show a stack-of-pages icon while dragging
+- [x] Optionally show a small badge with the count of pages being dragged
   (e.g. overlay "×3" on the drag pixmap)
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/core/test_page_extractor.py`:
-  - [ ] `test_extract_single_page` — output PDF has exactly 1 page
-  - [ ] `test_extract_multiple_non_contiguous` — indices `[0, 3, 6]` → 3 files, correct page order in each
-  - [ ] `test_filename_zero_padding` — `report_page_0003.pdf` sorts before `report_page_0010.pdf`
-  - [ ] `test_extracted_content_matches_source` — compare page text or dimensions via `pypdf`/`fitz`
-- [ ] Write `tests/ui/test_drag_drop.py` (partial automation — OS drop target is hard to mock):
-  - [ ] `test_drag_without_selection_auto_selects` — starting drag on unselected card updates selection to that card only
-  - [ ] `test_mime_data_contains_file_urls` — after extract, `QMimeData.urls()` are local `file://` paths that exist on disk
-  - [ ] `test_drag_threshold_respected` — small mouse move does not start drag
-- [ ] Write `tests/smoke/test_phase6_drag_drop.py`:
-  - [ ] Script extracts pages to a temp output dir (simulates drop target without GUI drag)
-  - [ ] Verify dropped PDFs open in `pypdf` and contain expected page count
-  - [ ] Document manual steps for real Explorer/Finder drop (cannot fully automate cross-process DnD in CI)
-- [ ] Run: `uv run pytest tests/core/test_page_extractor.py tests/ui/test_drag_drop.py tests/smoke/test_phase6_drag_drop.py -v`
+- [x] Write `tests/core/test_page_extractor.py`:
+  - [x] `test_extract_single_page` — output PDF has exactly 1 page
+  - [x] `test_extract_multiple_non_contiguous` — indices `[0, 3, 6]` → 3 files, correct page order in each
+  - [x] `test_filename_zero_padding` — `report_page_0003.pdf` sorts before `report_page_0010.pdf`
+  - [x] `test_extracted_content_matches_source` — compare page text or dimensions via `pypdf`/`fitz`
+- [x] Write `tests/ui/test_drag_drop.py` (partial automation — OS drop target is hard to mock):
+  - [x] `test_drag_without_selection_auto_selects` — starting drag on unselected card updates selection to that card only
+  - [x] `test_mime_data_contains_file_urls` — after extract, `QMimeData.urls()` are local `file://` paths that exist on disk
+  - [x] `test_drag_threshold_respected` — small mouse move does not start drag
+- [x] Write `tests/smoke/test_phase6_drag_drop.py`:
+  - [x] Script extracts pages to a temp output dir (simulates drop target without GUI drag)
+  - [x] Verify dropped PDFs open in `pypdf` and contain expected page count
+  - [x] Document manual steps for real Explorer/Finder drop (cannot fully automate cross-process DnD in CI)
+- [x] Run: `uv run pytest tests/core/test_page_extractor.py tests/ui/test_drag_drop.py tests/smoke/test_phase6_drag_drop.py -v`
 
 ### ✅ Test Gate 6
-- [ ] **Drag 1 page** to a folder → open the dropped PDF, verify it contains exactly
+- [x] **Drag 1 page** to a folder → open the dropped PDF, verify it contains exactly
   that page and looks correct
-- [ ] **Drag 3 non-contiguous pages** (e.g. 1, 4, 7) → verify 3 separate PDFs
+- [x] **Drag 3 non-contiguous pages** (e.g. 1, 4, 7) → verify 3 separate PDFs
   appear in the target folder, each with the right content
-- [ ] **Drag with no selection** (click-drag directly on an unselected card) →
+- [x] **Drag with no selection** (click-drag directly on an unselected card) →
   verify just that one page is extracted
-- [ ] **Cancel mid-drag** (release over no folder) → verify no PDF files are
+- [x] **Cancel mid-drag** (release over no folder) → verify no PDF files are
   left in the target, temp files are cleaned up
-- [ ] **Drag to a read-only folder** → verify app shows an error, doesn't crash
-- [ ] **Drag the same pages twice** → both sets of files land in the target
+- [x] **Drag to a read-only folder** → verify app shows an error, doesn't crash
+- [x] **Drag the same pages twice** → both sets of files land in the target
   without name collisions (add timestamp or counter to filename if needed)
-- [ ] Open each dropped PDF in a real PDF viewer (Acrobat, browser, etc.)
+- [x] Open each dropped PDF in a real PDF viewer (Acrobat, browser, etc.)
   to confirm content is valid
 
 ---

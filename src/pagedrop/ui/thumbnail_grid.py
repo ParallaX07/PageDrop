@@ -11,6 +11,7 @@ import fitz
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
+from pagedrop.utils.temp_manager import TempManager
 
 
 class ThumbnailWorker(QRunnable):
@@ -62,8 +63,13 @@ class ThumbnailGrid(QScrollArea):
     rendering_finished = pyqtSignal()
     selection_changed = pyqtSignal(set)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        temp_manager: TempManager | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._temp_manager = temp_manager or TempManager()
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -96,6 +102,7 @@ class ThumbnailGrid(QScrollArea):
         self.selection_manager.set_page_count(total)
         self._cards = [PageCard(i, self._container) for i in range(total)]
         for card in self._cards:
+            card.set_drag_context(loader, self.selection_manager, self._temp_manager)
             card.clicked.connect(self._on_card_clicked)
         self._reflow_grid()
 
