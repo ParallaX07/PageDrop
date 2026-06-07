@@ -7,6 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
 
+from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
@@ -65,6 +66,8 @@ def test_mime_data_contains_file_urls(qtbot, five_page_pdf, monkeypatch):
     def capture_mime(drag: QDrag) -> None:
         mime = drag.mimeData()
         assert mime is not None
+        assert mime.hasFormat(INTERNAL_PAGE_MIME)
+        assert decode_page_indices(mime.data(INTERNAL_PAGE_MIME)) == [0, 2]
         urls = mime.urls()
         assert len(urls) == 2
         for url in urls:
@@ -96,4 +99,48 @@ def test_drag_threshold_respected(qtbot, five_page_pdf, monkeypatch):
     qtbot.mouseMove(card, pos=QPoint(52, 50))
 
     assert drag_started == []
+    loader.close()
+
+
+def test_outbound_drag_reflects_edit_model_order(
+    qtbot, five_page_pdf, monkeypatch
+):
+    """Outbound drag extracts pages in logical (edited) order, not source order."""
+    from pypdf import PdfReader
+
+    card, loader, selection_manager, _ = _make_card(
+        qtbot, five_page_pdf, page_index=0
+    )
+    model = card._model
+    assert model is not None
+    model.move_pages([3, 4], 0)
+
+    selection_manager.set_page_count(model.logical_count())
+    selection_manager.select_single(0)
+    selection_manager.toggle(1)
+
+    verified_sources: list[int] = []
+
+    def capture_mime(drag: QDrag) -> None:
+        mime = drag.mimeData()
+        assert mime is not None
+        assert decode_page_indices(mime.data(INTERNAL_PAGE_MIME)) == [0, 1]
+        source_reader = PdfReader(str(five_page_pdf))
+        for url, source_index in zip(mime.urls(), [3, 4], strict=True):
+            path = Path(url.toLocalFile())
+            reader = PdfReader(path)
+            assert len(reader.pages) == 1
+            source_box = source_reader.pages[source_index].mediabox
+            dropped_box = reader.pages[0].mediabox
+            assert float(dropped_box.width) == float(source_box.width)
+            assert float(dropped_box.height) == float(source_box.height)
+            verified_sources.append(source_index)
+
+    _patch_drag_exec(monkeypatch, capture_mime)
+
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+    assert verified_sources == [3, 4]
+
     loader.close()
