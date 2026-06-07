@@ -505,6 +505,47 @@ def app_stylesheet() -> str:
         border: 1px solid {BORDER_SUBTLE};
         border-radius: {RADIUS_CONTROL}px;
     }}
+
+    QWidget#MergeListPane {{
+        background-color: {BG_GRID};
+    }}
+
+    QWidget#MergeEmptyState {{
+        background-color: {BG_GRID};
+    }}
+
+    QLabel#MergeEmptyLogo {{
+        background: transparent;
+        border: none;
+        padding: 0 0 12px 0;
+    }}
+
+    QLabel#MergeEmptyTitle {{
+        color: {TEXT_SECONDARY};
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+    }}
+
+    QLabel#MergeEmptyHint {{
+        color: {TEXT_MUTED};
+        font-size: 13px;
+        font-weight: 400;
+    }}
+
+    QScrollArea#MergeFileGrid {{
+        background-color: {BG_GRID};
+        border: none;
+    }}
+
+    QWidget#MergeFileGridContainer {{
+        background-color: {BG_GRID};
+    }}
+
+    QFrame#DropIndicator {{
+        background-color: {ACCENT};
+        border-radius: 2px;
+    }}
     """
 
 
@@ -571,5 +612,40 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.3px;
+    }}
+    """
+
+
+def merge_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
+    border_color = ACCENT if selected else BORDER_DEFAULT
+    if selected and hovered:
+        border_color = ACCENT_HOVER
+    elif hovered:
+        border_color = BORDER_HOVER
+
+    border_width = 3 if selected else 1
+    background = BG_CARD_HOVER if hovered else BG_CARD
+    title_color = TEXT_PRIMARY if selected else TEXT_PRIMARY
+    subtitle_color = TEXT_MUTED if not selected else TEXT_SECONDARY
+
+    return f"""
+    QFrame#MergeFileCard {{
+        background-color: {background};
+        border: {border_width}px solid {border_color};
+        border-radius: {RADIUS_CARD}px;
+    }}
+    QLabel#MergeFileCardThumbnail {{
+        background-color: #FAFAFA;
+        border-radius: 6px;
+    }}
+    QLabel#MergeFileCardTitle {{
+        color: {title_color};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#MergeFileCardSubtitle {{
+        color: {subtitle_color};
+        font-size: 11px;
+        font-weight: 500;
     }}
     """

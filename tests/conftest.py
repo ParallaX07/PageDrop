@@ -99,15 +99,21 @@ def _limit_qtbot_default_timeout(qtbot):
 
 
 @pytest.fixture(autouse=True)
-def _drain_render_workers_after_test():
+def _drain_render_workers_after_test(qtbot):
+    """Drain render pools before qtbot destroys widgets (depends on qtbot for order)."""
     yield
     from PyQt6.QtWidgets import QApplication
 
+    from pagedrop.ui.merge_file_grid import MergeFileGrid
     from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 
     for widget in QApplication.allWidgets():
-        if isinstance(widget, ThumbnailGrid):
+        if isinstance(widget, (ThumbnailGrid, MergeFileGrid)):
             widget.cancel_rendering()
+    for widget in QApplication.allWidgets():
+        if isinstance(widget, ThumbnailGrid):
+            widget._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
+        if isinstance(widget, MergeFileGrid):
             widget._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
 
 
