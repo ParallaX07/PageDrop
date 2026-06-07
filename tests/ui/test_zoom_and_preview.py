@@ -244,7 +244,7 @@ def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qt
 
     zoom._zoom_in.click()
     assert grid.thumbnail_width_px == initial + ZOOM_WHEEL_STEP
-    assert zoom._value_label.text() == str(grid.thumbnail_width_px)
+    assert zoom._value_label.text() == f"{grid.thumbnail_width_px}px"
 
 
 def test_zoom_slider_changes_thumbnail_width(main_window, five_page_pdf, qtbot):

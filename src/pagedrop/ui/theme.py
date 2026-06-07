@@ -10,6 +10,8 @@ BG_CARD = "#222228"
 BG_CARD_HOVER = "#2A2A32"
 BG_TOOLBAR = "#1A1A1F"
 BG_STATUS = "#1A1A1F"
+BG_TAB_BAR = "#17171C"
+BG_PREVIEW_FOOTER = "#1A1A1F"
 
 BORDER_SUBTLE = "#2E2E36"
 BORDER_DEFAULT = "#45454F"
@@ -22,6 +24,12 @@ ACCENT_PRESSED = "#1F7FCC"
 TEXT_PRIMARY = "#F2F2F4"
 TEXT_SECONDARY = "#A8A8B3"
 TEXT_MUTED = "#6E6E7A"
+
+CLOSE_TAB = "#E85D5D"
+CLOSE_TAB_HOVER_BG = "#3D2228"
+
+# Tinted shadow (cool blue, not pure black)
+SHADOW_RGB = (14, 22, 38)
 
 RADIUS_CARD = 10
 RADIUS_CONTROL = 8
@@ -114,6 +122,47 @@ def app_stylesheet() -> str:
     }}
 
     QToolBar QToolButton:pressed {{
+        background-color: {BG_BASE};
+    }}
+
+    QToolBar QToolButton#ToolbarPrimary {{
+        background-color: {ACCENT};
+        color: #FFFFFF;
+        border: 1px solid {ACCENT_PRESSED};
+        font-weight: 600;
+    }}
+
+    QToolBar QToolButton#ToolbarPrimary:hover {{
+        background-color: {ACCENT_HOVER};
+        border-color: {ACCENT_HOVER};
+    }}
+
+    QToolBar QToolButton#ToolbarPrimary:pressed {{
+        background-color: {ACCENT_PRESSED};
+        border-color: {ACCENT_PRESSED};
+    }}
+
+    QToolButton#NewTabButton {{
+        background-color: transparent;
+        color: {TEXT_SECONDARY};
+        border: 1px solid {BORDER_SUBTLE};
+        border-radius: {RADIUS_CONTROL}px;
+        font-size: 16px;
+        font-weight: 600;
+        min-width: 28px;
+        max-width: 28px;
+        min-height: 28px;
+        max-height: 28px;
+        padding: 0;
+    }}
+
+    QToolButton#NewTabButton:hover {{
+        background-color: {BG_CARD_HOVER};
+        color: {TEXT_PRIMARY};
+        border-color: {BORDER_HOVER};
+    }}
+
+    QToolButton#NewTabButton:pressed {{
         background-color: {BG_BASE};
     }}
 
@@ -257,17 +306,84 @@ def app_stylesheet() -> str:
         background-color: {BG_GRID};
     }}
 
+    QWidget#EmptyStatePanel {{
+        background-color: transparent;
+    }}
+
     QLabel#GridEmptyState {{
-        color: {TEXT_MUTED};
-        font-size: 14px;
-        font-weight: 500;
-        padding: 48px 32px;
+        color: {TEXT_SECONDARY};
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+        padding: 0;
     }}
 
     QLabel#GridEmptyHint {{
         color: {TEXT_MUTED};
-        font-size: 12px;
-        padding: 0 32px 48px 32px;
+        font-size: 13px;
+        font-weight: 400;
+        padding: 0;
+    }}
+
+    QLabel#GridEmptyKbd {{
+        color: {TEXT_MUTED};
+        font-family: {FONT_MONO};
+        font-size: 11px;
+        padding: 8px 0 0 0;
+    }}
+
+    QTabWidget#TabManager::pane {{
+        border: none;
+        background-color: {BG_BASE};
+        top: -1px;
+    }}
+
+    QTabWidget#TabManager > QTabBar {{
+        background-color: {BG_TAB_BAR};
+        border-bottom: 1px solid {BORDER_SUBTLE};
+    }}
+
+    QTabWidget#TabManager > QTabBar::tab {{
+        background-color: transparent;
+        color: {TEXT_MUTED};
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 8px 14px 7px 14px;
+        margin-right: 2px;
+        min-width: 80px;
+        max-width: 220px;
+        font-weight: 500;
+    }}
+
+    QTabWidget#TabManager > QTabBar::tab:selected {{
+        color: {TEXT_PRIMARY};
+        background-color: {BG_SURFACE};
+        border-bottom: 2px solid {ACCENT};
+        font-weight: 600;
+    }}
+
+    QTabWidget#TabManager > QTabBar::tab:hover:!selected {{
+        color: {TEXT_SECONDARY};
+        background-color: {BG_CARD};
+    }}
+
+    QTabWidget#TabManager > QTabBar::tab:selected:hover {{
+        color: {TEXT_PRIMARY};
+    }}
+
+    QTabWidget#TabManager QTabBar QAbstractButton {{
+        background-color: transparent;
+        border: none;
+        border-radius: 4px;
+        padding: 2px;
+        min-width: 18px;
+        max-width: 18px;
+        min-height: 18px;
+        max-height: 18px;
+    }}
+
+    QTabWidget#TabManager QTabBar QAbstractButton:hover {{
+        background-color: {CLOSE_TAB_HOVER_BG};
     }}
 
     QScrollBar:vertical {{
@@ -358,10 +474,16 @@ def app_stylesheet() -> str:
         padding: 8px;
     }}
 
+    QWidget#PreviewFooter {{
+        background-color: {BG_PREVIEW_FOOTER};
+        border-top: 1px solid {BORDER_SUBTLE};
+    }}
+
     QLabel#PagePreviewHint {{
         color: {TEXT_MUTED};
-        font-size: 12px;
-        padding: 8px 16px;
+        font-size: 11px;
+        font-family: {FONT_MONO};
+        padding: 10px 16px;
     }}
     """
 
@@ -369,6 +491,36 @@ def app_stylesheet() -> str:
 def accent_qcolor() -> tuple[int, int, int]:
     """RGB tuple for programmatic painting (drag badge, etc.)."""
     return (47, 155, 230)
+
+
+def shadow_qcolor(*, alpha: int = 55) -> tuple[int, int, int, int]:
+    """RGBA tuple for tinted drop shadows."""
+    r, g, b = SHADOW_RGB
+    return (r, g, b, alpha)
+
+
+def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
+    """Red × icon for tab close buttons."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+
+    size = 16
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(2.0)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+
+    inset = 4
+    painter.drawLine(inset, inset, size - inset, size - inset)
+    painter.drawLine(size - inset, inset, inset, size - inset)
+    painter.end()
+
+    return QIcon(pixmap)
 
 
 def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False) -> str:
@@ -381,7 +533,7 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
         border_color = ACCENT
 
     border_width = 3 if selected else (2 if focused else 1)
-    background = BG_CARD if selected else (BG_CARD_HOVER if hovered else BG_CARD)
+    background = BG_CARD_HOVER if hovered else BG_CARD
     label_color = TEXT_PRIMARY if selected else TEXT_SECONDARY
 
     return f"""

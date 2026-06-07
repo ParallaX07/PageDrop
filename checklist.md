@@ -1,7 +1,9 @@
 # PageDrop — Complete Build Plan
 
 A Python desktop app that renders PDF pages as thumbnails so you can drag single
-or multiple pages directly into folders in your file manager.
+or multiple pages directly into folders in your file manager. **Phases 1–9** (complete)
+cover the read-only single-document workflow. **Phases 11–15** extend the app with
+multi-tab editing, page reorder/delete, inbound PDF drop, and Save As.
 
 ---
 
@@ -36,11 +38,15 @@ pagedrop/
         ├── ui/
         │   ├── __init__.py
         │   ├── main_window.py    # QMainWindow, toolbar, layout
+        │   ├── tab_manager.py    # QTabWidget wrapper + tab lifecycle   [Phase 11]
+        │   ├── pdf_tab.py        # per-tab state container widget        [Phase 11]
         │   ├── thumbnail_grid.py # scrollable grid of pages
         │   └── page_card.py      # individual page widget + drag logic
         ├── core/
         │   ├── __init__.py
         │   ├── pdf_loader.py     # open PDF, render pages via PyMuPDF
+        │   ├── pdf_editor.py     # PdfEditModel + PageRef dataclass      [Phase 12]
+        │   ├── pdf_writer.py     # write_pdf() — merge from multiple src [Phase 15]
         │   └── page_extractor.py # write selected pages to temp PDFs
         └── utils/
             ├── __init__.py
@@ -615,7 +621,308 @@ class ThumbnailWorker(QRunnable):
 
 ---
 
-## Phase 10 — Optional: Compile to Executable
+## Phase 11 — Multi-Tab Shell
+
+**Goal:** Browser-style tabs at the top of the app; each tab is an independent document
+workspace. **Multiple PDFs can be open at the same time** — one PDF per tab. **Tabs can
+be closed** individually at any time.
+
+> **Design decisions (locked in):**
+> - **Single file** in Open dialog → prompt: *Open in current tab* or *Open in new tab*
+> - **Multiple files** selected in Open dialog → each PDF opens in its **own new tab**
+>   (no current-tab prompt; batch open only creates new tabs)
+> - Tab title shows `filename.pdf` or `filename.pdf*` when dirty
+> - Closing the last tab → spawn a fresh blank tab (app stays open)
+
+### Checklist — New Files
+
+- [x] Write `ui/tab_manager.py` — `TabManager(QTabWidget)`:
+  - [x] Add tab, close tab, switch active tab
+  - [x] **Close button (`×`) on every tab** (`setTabsClosable(True)`)
+  - [x] `close_tab(index)` — tear down tab widget, cancel render worker, release loaders
+  - [x] `*` suffix on tab title when tab is dirty (stub `is_dirty=False` until Phase 15)
+  - [x] Emit signals: `active_tab_changed`, `tab_closed`, `all_tabs_closed`
+- [x] Write `ui/pdf_tab.py` — `PdfTab(QWidget)` per-tab container:
+  - [x] Owns `ThumbnailGrid`, preview stack (`QStackedWidget`), zoom state
+  - [x] Exposes `load_pdf(path)`, `close_loader()`, `is_dirty`, `tab_title`
+  - [x] Per-tab render worker cancellation on close (reuse `_generation` pattern)
+
+### Checklist — MainWindow Refactor
+
+- [x] Replace single `_loader` / `_thumbnail_grid` with `TabManager` as central widget
+- [x] **File → Open PDF** — `QFileDialog.getOpenFileNames` (multi-select enabled):
+  - [x] **One file selected** → dialog: *Open in current tab* / *Open in new tab*
+  - [x] **Multiple files selected** → open **each in its own new tab** (skip current-tab prompt)
+  - [x] If current tab is blank and user picks *Open in current tab* (single file only),
+    load into that tab instead of adding another
+- [x] **File → Close Tab** — closes active tab; disable when only one blank tab remains
+- [x] Rename **Close PDF** → **Close Tab** (same action as above)
+- [x] **Close tab via `×`** on tab bar — same teardown as menu/keyboard close
+- [x] Window title reflects active tab (filename + page count)
+- [x] Route toolbar/menu actions (Select All, Preview, Zoom, Extract) to **active tab** only
+- [x] Keyboard: `Ctrl+Tab` / `Ctrl+Shift+Tab` switch tabs; **`Ctrl+W` closes active tab**
+- [x] Launch with one blank tab showing empty state `"Open a PDF to begin"`
+- [x] **Closing the last tab** → spawn a new blank tab (do not quit the app)
+- [x] Optional: **Ctrl+T** or **+** button to open a new blank tab without a PDF
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Write `tests/ui/test_tab_manager.py`:
+  - [x] `test_open_in_new_tab` — two tabs, independent paths
+  - [x] `test_open_in_current_tab` — replaces blank tab content
+  - [x] `test_multi_select_opens_each_in_new_tab` — pick 3 PDFs at once → 3 new tabs
+  - [x] `test_close_tab_via_x_button` — tab removed, neighbours intact
+  - [x] `test_close_tab_via_ctrl_w` — active tab closes
+  - [x] `test_close_last_tab_spawns_blank_tab` — app stays open with empty tab
+  - [x] `test_close_middle_tab` — other tabs unaffected
+  - [x] `test_ctrl_tab_switches_active` — keyboard navigation
+  - [x] `test_toolbar_routes_to_active_tab` — action on tab B does not affect tab A
+- [x] Write `tests/smoke/test_phase11_tabs.py` — multi-select open 3 fixture PDFs,
+  switch between tabs, close middle via `×`, verify no cross-contamination
+- [x] Run: `uv run pytest tests/ui/test_tab_manager.py tests/smoke/test_phase11_tabs.py -v`
+
+### ✅ Test Gate 11
+- [x] **Multi-select 3 PDFs** in Open dialog → 3 tabs, each with correct thumbnails
+- [x] **Single-file open** → current-tab vs new-tab prompt works
+- [x] **Switch tabs** → selection, zoom, and scroll do not leak between tabs
+- [x] **Close tab via `×`** → tab gone, others intact
+- [x] **Close tab via `Ctrl+W`** → active tab closes
+- [x] **Close last tab** → new blank tab appears, app keeps running
+- [x] **Ctrl+Tab / Ctrl+Shift+Tab** switch tabs as expected
+
+---
+
+## Phase 12 — Editable Page Model (`PdfEditModel`)
+
+**Goal:** Introduce a logical page list decoupled from source PDF order — foundation for
+reorder, delete, insert, and save.
+
+### Checklist — Core Model
+
+- [ ] Write `core/pdf_editor.py`:
+  ```python
+  @dataclass(frozen=True)
+  class PageRef:
+      source_path: str
+      source_index: int  # 0-based in that file
+
+  class PdfEditModel:
+      def __init__(self, source_path: str, page_count: int): ...
+      def logical_count(self) -> int: ...
+      def page_at(self, logical_index: int) -> PageRef: ...
+      def insert_pages(self, index: int, refs: list[PageRef]) -> None: ...
+      def remove_pages(self, logical_indices: list[int]) -> None: ...
+      def move_pages(self, indices: list[int], to_index: int) -> None: ...
+      def move_up(self, indices: list[int]) -> None: ...
+      def move_down(self, indices: list[int]) -> None: ...
+      def is_dirty(self) -> bool: ...
+      def mark_saved(self, save_path: str) -> None: ...
+  ```
+- [ ] Each `PdfTab` owns a `PdfEditModel`; initial model = all pages from opened file in order
+- [ ] Track `original_path` separately from any future Save As path
+
+### Checklist — Grid & Rendering Refactor
+
+- [ ] Refactor `ThumbnailGrid.load_pdf()` → `load_model(model, loader_cache)`:
+  - [ ] Cards reflect **logical** order; labels show `1…N` after edits
+  - [ ] `SelectionManager` indices are **logical** positions (re-document semantics)
+- [ ] Update `ThumbnailWorker` to render via `PageRef` (path + source_index), not single-path
+- [ ] Update `PagePreviewWidget` to resolve logical index → `PageRef` → render
+- [ ] Loader cache per tab: keyed by `source_path`, avoid duplicate `fitz.open()` handles
+
+### Checklist — Outbound Drag Update
+
+- [ ] Update `page_extractor.py` (or add helper) to extract from `PageRef` list
+- [ ] Update `PageCard._start_drag()` to resolve selection through `PdfEditModel` so outbound
+  drag exports the **edited logical order**, not raw source indices
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/core/test_pdf_editor.py`:
+  - [ ] `test_initial_model_matches_source_page_count`
+  - [ ] `test_insert_pages_at_index`
+  - [ ] `test_remove_pages`
+  - [ ] `test_move_pages_changes_order`
+  - [ ] `test_move_up_down`
+  - [ ] `test_is_dirty_after_edit`
+  - [ ] `test_mark_saved_clears_dirty`
+- [ ] Write `tests/smoke/test_phase12_edit_model.py` — open 5-page fixture, verify model,
+  thumbnails, and preview stay in sync
+- [ ] Run: `uv run pytest tests/core/test_pdf_editor.py tests/smoke/test_phase12_edit_model.py -v`
+
+### ✅ Test Gate 12
+- [ ] **Open 5-page PDF** → model count = 5, labels `1…5`
+- [ ] **Preview page 3** → shows correct source page after any model load
+- [ ] **Thumbnails** render from correct `PageRef` sources
+- [ ] **Outbound drag** still works and reflects logical selection
+
+---
+
+## Phase 13 — Reorder and Delete Pages
+
+**Goal:** Reorganize and remove pages inside a tab. Reorder via internal drag-and-drop
+**and** arrow-button fallback.
+
+> **Design decision (locked in):** Both internal DnD and Move up/down toolbar buttons.
+
+### Checklist — Delete Pages
+
+- [ ] Toolbar button: **Delete page(s)** (enabled when selection non-empty)
+- [ ] Context menu: **Delete selected pages**
+- [ ] `Delete` key shortcut
+- [ ] Call `PdfEditModel.remove_pages()`; refresh grid; mark tab dirty
+- [ ] Deleting all pages → empty grid message; tab stays open, marked dirty
+- [ ] No-op when nothing selected
+
+### Checklist — Arrow Reorder
+
+- [ ] Toolbar: **Move up** / **Move down** (move selected block, preserve relative order)
+- [ ] Context menu entries mirroring toolbar
+- [ ] Shortcuts: `Ctrl+↑` / `Ctrl+↓`
+- [ ] After move: refresh grid, reselect moved pages at new logical positions
+- [ ] Disable at top/bottom boundary
+
+### Checklist — Internal Drag-and-Drop Reorder
+
+- [ ] Distinguish **internal reorder drag** from **outbound file-manager drag**:
+  - Internal mime: `application/x-pagedrop-page` with logical index payload
+  - Outbound mime: existing `file://` URLs (unchanged protocol for Explorer/Finder)
+- [ ] Show **drop indicator line** between cards while dragging (insertion index from cursor)
+- [ ] Multi-page drag: move selected pages as a block to drop index
+- [ ] Call `PdfEditModel.move_pages()`; re-render affected thumbnails; mark dirty
+- [ ] Reset `last_clicked_index` after reorder (same rule as reload)
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/ui/test_page_reorder.py`:
+  - [ ] `test_delete_selected_pages`
+  - [ ] `test_delete_all_pages_shows_empty_state`
+  - [ ] `test_move_up_down_buttons`
+  - [ ] `test_labels_renumber_after_delete`
+- [ ] Write `tests/ui/test_internal_drag_reorder.py`:
+  - [ ] `test_drop_indicator_index`
+  - [ ] `test_multi_select_internal_move`
+  - [ ] `test_outbound_drag_still_uses_file_urls`
+- [ ] Update `tests/ui/test_drag_drop.py` for post-model outbound drag
+- [ ] Run: `uv run pytest tests/ui/test_page_reorder.py tests/ui/test_internal_drag_reorder.py -v`
+
+### ✅ Test Gate 13
+- [ ] **Drag pages 3 and 5** to position 1 → order and labels correct
+- [ ] **Move selection down** with arrow buttons → order updates
+- [ ] **Delete page 2** → labels renumber, tab marked dirty
+- [ ] **Outbound drag** extracts pages in edited order
+- [ ] **Internal vs outbound drag** do not conflict
+
+---
+
+## Phase 14 — Inbound PDF Drop (Insert Pages)
+
+**Goal:** Drag a PDF file from Explorer/Finder onto the thumbnail grid; all pages from the
+dropped file insert at the exact drop position (between thumbnails).
+
+> **Design decision (locked in):** Insert at exact drop point between cards, not append-only.
+
+### Checklist — Drop Target
+
+- [ ] Enable `setAcceptDrops(True)` on `ThumbnailGrid` (or inner scroll container)
+- [ ] `dragEnterEvent`: accept `text/uri-list` with local `*.pdf` paths; reject non-PDF
+- [ ] `dragMoveEvent`: reuse Phase 13 **between-card insertion indicator**; compute drop index
+- [ ] `dropEvent`:
+  - [ ] Open dropped PDF via `PdfLoader` (corrupt/empty errors → existing dialogs)
+  - [ ] Create `PageRef` for **all pages** in dropped file
+  - [ ] `model.insert_pages(drop_index, refs)`; mark tab dirty
+  - [ ] Cache loader for dropped source path
+  - [ ] Queue thumbnail render for new pages
+- [ ] Status bar: `"Inserted N pages from other.pdf at position M"`
+
+### Checklist — Edge Cases
+
+- [ ] Drop same file as tab's primary source → insert copies at position (duplicate refs OK)
+- [ ] Drop while thumbnails still loading → cancel-then-insert or queue (document choice)
+- [ ] Drop multiple files at once → insert in path-sorted order at same index
+- [ ] Reject drop on tab with no model (blank tab) or auto-init empty model first
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/ui/test_inbound_pdf_drop.py`:
+  - [ ] `test_drop_pdf_inserts_all_pages_at_index`
+  - [ ] `test_drop_rejects_non_pdf`
+  - [ ] `test_drop_marks_tab_dirty`
+  - [ ] `test_drop_multiple_files_sorted`
+- [ ] Write `tests/smoke/test_phase14_inbound_drop.py` — drag `B.pdf` (3 pages) between
+  pages 2 and 3 of open doc; verify logical order and thumbnails
+- [ ] Run: `uv run pytest tests/ui/test_inbound_pdf_drop.py tests/smoke/test_phase14_inbound_drop.py -v`
+
+### ✅ Test Gate 14
+- [ ] **Drag 3-page PDF** between pages 2 and 3 →  logical order correct
+- [ ] **Thumbnails** appear for inserted pages
+- [ ] **Tab marked dirty** after drop
+- [ ] **Non-PDF drop** rejected gracefully
+- [ ] **Drop indicator** shows correct insertion point while hovering
+
+---
+
+## Phase 15 — Save As (Never Overwrite Original)
+
+**Goal:** Persist the edited logical document to a **new file only** — never silently
+overwrite the original PDF.
+
+> **Design decision (locked in):** Save As only. No Save-to-original. Validate output path
+> ≠ `original_path`.
+
+### Checklist — PDF Writer
+
+- [ ] Write `core/pdf_writer.py`:
+  ```python
+  def write_pdf(model: PdfEditModel, output_path: str) -> None:
+      # pypdf: iterate model pages in order, add_page from each PageRef
+  ```
+- [ ] Handle multi-source `PageRef` list (pages from dropped PDFs and primary file)
+- [ ] Reopen or cache `PdfReader` per unique `source_path` during write
+
+### Checklist — Menu & Toolbar
+
+- [ ] **File → Save As…** (`Ctrl+Shift+S`) — always `QFileDialog.getSaveFileName`
+- [ ] Default filename: `{original_stem}_edited.pdf`
+- [ ] **No Save action** that writes to `original_path`
+- [ ] Reject if user picks the same path as `original_path` (dialog + do not write)
+- [ ] After success: `model.mark_saved(path)`; clear dirty; tab title loses `*`; status bar OK
+- [ ] Disable Save As when model is empty
+
+### Checklist — Unsaved Changes Prompts
+
+- [ ] Implement `closeEvent` (replace `pass` TODO in `main_window.py`):
+  - [ ] Dirty tabs → *Save As* / *Discard* / *Cancel*
+- [ ] Same prompt when closing a dirty tab via `×` or `Ctrl+W`
+- [ ] *Save As* from prompt opens save dialog; *Cancel* aborts close
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [ ] Write `tests/core/test_pdf_writer.py`:
+  - [ ] `test_write_preserves_page_order`
+  - [ ] `test_write_after_reorder_delete_insert`
+  - [ ] `test_write_multi_source_refs`
+- [ ] Write `tests/ui/test_save_as.py`:
+  - [ ] `test_save_as_never_writes_original_path`
+  - [ ] `test_dirty_flag_cleared_after_save`
+  - [ ] `test_close_dirty_tab_shows_prompt`
+- [ ] Write `tests/smoke/test_phase15_save_as.py` — full edit workflow → Save As → verify
+  output with `pypdf`; original file byte-unchanged
+- [ ] Run: `uv run pytest tests/core/test_pdf_writer.py tests/ui/test_save_as.py tests/smoke/test_phase15_save_as.py -v`
+
+### ✅ Test Gate 15
+- [ ] **Reorder, delete, insert via drop** → Save As to new path
+- [ ] **Open saved file externally** → correct page count and order
+- [ ] **Original file unchanged** on disk
+- [ ] **Dirty `*`** appears after edits, clears after Save As
+- [ ] **Close dirty tab/app** → prompt with Save As / Discard / Cancel
+
+> **Out of scope for Phases 11–15 (unless added later):** undo/redo, page rotation,
+> cross-tab page drag, password-prompt UI, Save-to-original / incremental Save.
+
+---
+
+## Phase 16 — Optional: Compile to Executable
 
 **Goal:** A single `.exe` (Windows) or binary (Linux/macOS) that runs without Python.
 
@@ -649,20 +956,21 @@ class ThumbnailWorker(QRunnable):
   - [ ] Launch exe as subprocess with timeout
   - [ ] Assert process starts (no immediate exit code ≠ 0)
   - [ ] Optional: pass a fixture PDF path via env var if exe supports it, else document manual open step
-- [ ] Write `tests/smoke/test_phase10_executable.py` (skipped locally unless `PAGEDROP_EXE` env var set):
+- [ ] Write `tests/smoke/test_phase16_executable.py` (skipped locally unless `PAGEDROP_EXE` env var set):
   - [ ] `@pytest.mark.skipif(not os.environ.get("PAGEDROP_EXE"))`
   - [ ] Launch built binary, verify it stays alive ≥ 5s
   - [ ] On Windows VM / clean machine checklist: same script run outside dev environment
 - [ ] Add CI or release note: run full smoke suite before tagging:
   ```bash
-  uv run pytest tests/ -v --ignore=tests/smoke/test_phase10_executable.py
-  PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase10_executable.py -v
+  uv run pytest tests/ -v --ignore=tests/smoke/test_phase16_executable.py
+  PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
   ```
 
-### ✅ Test Gate 10
+### ✅ Test Gate 16
 - [ ] **Exe opens** without "DLL not found" or similar errors
 - [ ] **Open a PDF** via the exe → thumbnails render
 - [ ] **Drag a page to a folder** → works exactly like the dev version
+- [ ] **Multi-tab and Save As** work in the built binary
 - [ ] **Test on a second machine** or VM that has never had Python installed
 
 ---
@@ -674,11 +982,13 @@ Work through phases in this order. **Don't move on until the test gate for each 
 Each phase also has a **Test Scripts & Smoke Tests** checklist — write those tests as you go so regressions are caught before the manual test gate.
 
 ```
-Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7 → Phase 8 → Phase 9 → Phase 10
-Setup     PDF load  Window    Grid      Select    Drag/Drop  Temp mgmt  Errors    Polish    Exe
+Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 16 Exe
+     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Binary
 ```
 
-Phases 6 and 7 are the hardest — budget the most time there. The rest is fairly linear.
+Phases 12–15 are sequential (each builds on `PdfEditModel`). Phase 11 should land before
+Phase 13 UI work. Phases 6–7 were the hardest in the original build; Phase 13–14 (dual drag
+types + drop indicator) will need similar care.
 
 ---
 
@@ -693,6 +1003,14 @@ Phases 6 and 7 are the hardest — budget the most time there. The rest is fairl
 | Shift+click breaks after re-load | Reset `last_clicked_index` to `None` when loading new PDF |
 | File manager gets confused by non-`file://` URLs | Always use `QUrl.fromLocalFile()`, never manual string URLs |
 | Worker still running when PDF is closed | Keep a reference to the worker, cancel/wait on PDF close |
+| Internal reorder drag vs outbound file drag | Use separate mime types (`application/x-pagedrop-page` vs `file://` URLs); test both paths |
+| Outbound drag uses stale source indices | Resolve selection through `PdfEditModel` / `PageRef`, not raw PDF indices |
+| `pypdf` multi-source write | Cache or reopen `PdfReader` per unique `PageRef.source_path` in `write_pdf()` |
+| PyMuPDF not thread-safe across paths | Worker opens doc by path per `PageRef`; loader cache on main thread only |
+| Shift+click breaks after reorder | Reset `last_clicked_index` when logical order changes |
+| Save As overwrites original | Reject output path == `original_path`; no silent Save action |
+| Tab state leaks on switch | Route all toolbar/menu actions to active `PdfTab` only |
+| Drop during thumbnail load | Cancel or queue insert until render generation settles |
 
 ---
 

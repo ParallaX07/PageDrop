@@ -64,7 +64,7 @@ class ZoomControls(QWidget):
         self._value_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self._value_label.setFixedWidth(40)
+        self._value_label.setFixedWidth(44)
 
         layout.addWidget(self._caption)
         layout.addWidget(self._zoom_out)
@@ -81,7 +81,7 @@ class ZoomControls(QWidget):
         self._syncing = True
         step_index = (clamped - self._min_width) // self._step
         self._slider.setValue(step_index)
-        self._value_label.setText(f"{clamped}")
+        self._value_label.setText(f"{clamped}px")
         self._update_button_states(clamped)
         self._syncing = False
 
