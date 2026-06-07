@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFileDialog
 
 from pagedrop.ui.merge_window import MergeWindow
 from tests.fixtures.generate_fixtures import generate_n_page
@@ -51,6 +52,29 @@ def test_merge_disabled_when_empty(qtbot, one_page_pdf):
 
     window._add_paths([str(one_page_pdf)])
     assert window._merge_action.isEnabled()
+
+
+def test_merge_runs_in_background_without_blocking_ui(qtbot, one_page_pdf, five_page_pdf, tmp_path, monkeypatch):
+    output = tmp_path / "merged.pdf"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+
+    window = _merge_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    window._add_paths([str(one_page_pdf), str(five_page_pdf)])
+
+    window._merge_pdfs()
+    assert window._merging
+    assert window._busy_overlay.isVisible()
+
+    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+    assert output.is_file()
+    assert not window._busy_overlay.isVisible()
+    assert "Merged 2 files" in window.statusBar().currentMessage()
 
 
 def test_double_click_enters_preview_stack(qtbot, one_page_pdf):

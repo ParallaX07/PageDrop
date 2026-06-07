@@ -64,6 +64,7 @@ def test_smoke_merge_reorder_save_as(qtbot, tmp_path, monkeypatch):
     )
 
     window._merge_pdfs()
+    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
 
     merged = PdfReader(str(output))
     expected_widths = [444, 555, 666, 111, 222, 333]

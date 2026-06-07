@@ -635,8 +635,8 @@ def merge_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
         border-radius: {RADIUS_CARD}px;
     }}
     QLabel#MergeFileCardThumbnail {{
-        background-color: #FAFAFA;
-        border-radius: 6px;
+        background-color: transparent;
+        border: none;
     }}
     QLabel#MergeFileCardTitle {{
         color: {title_color};
