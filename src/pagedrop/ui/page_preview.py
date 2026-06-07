@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from collections.abc import Callable
+
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEvent
 from PyQt6.QtWidgets import (
     QLabel,
@@ -9,12 +11,64 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
+import fitz
+
+from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader, render_page_png
+from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MIN_PREVIEW_RENDER_WIDTH,
     ZOOM_WHEEL_STEP,
 )
+
+PREVIEW_RENDER_DEBOUNCE_MS = 150
+
+
+class PreviewRenderWorker(QRunnable):
+    class Signals(QObject):
+        finished = pyqtSignal(int, int, int, bytes)  # generation, page, width, png
+        error = pyqtSignal(int, str)
+
+    def __init__(
+        self,
+        path: str,
+        page_index: int,
+        width_px: int,
+        generation: int,
+        is_cancelled: Callable[[int], bool],
+    ) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._path = path
+        self._page_index = page_index
+        self._width_px = width_px
+        self._generation = generation
+        self._is_cancelled = is_cancelled
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        doc = None
+        try:
+            if self._is_cancelled(self._generation):
+                return
+            doc = fitz.open(self._path)
+            if self._is_cancelled(self._generation):
+                return
+            png = render_page_png(doc, self._page_index, width_px=self._width_px)
+            if self._is_cancelled(self._generation):
+                return
+            self.signals.finished.emit(
+                self._generation,
+                self._page_index,
+                self._width_px,
+                png,
+            )
+        except Exception as exc:
+            if not self._is_cancelled(self._generation):
+                self.signals.error.emit(self._generation, str(exc))
+        finally:
+            if doc is not None:
+                doc.close()
 
 
 class _PreviewScrollArea(QScrollArea):
@@ -45,6 +99,7 @@ class PagePreviewWidget(QWidget):
 
     page_changed = pyqtSignal(int)
     closed = pyqtSignal()
+    busy_changed = pyqtSignal(bool, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -52,6 +107,13 @@ class PagePreviewWidget(QWidget):
         self._current_page = 0
         self._render_width_px = 1200
         self._manual_zoom = False
+        self._generation = 0
+        self._render_pool = QThreadPool(self)
+        self._render_pool.setMaxThreadCount(1)
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(PREVIEW_RENDER_DEBOUNCE_MS)
+        self._render_timer.timeout.connect(self._start_render)
 
         self.setObjectName("PagePreview")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -74,6 +136,8 @@ class PagePreviewWidget(QWidget):
         self._scroll.setWidget(self._image_label)
         self._scroll.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
         layout.addWidget(self._scroll, stretch=1)
+
+        self._overlay = BusyOverlay(self._scroll.viewport())
 
         self._footer = QWidget()
         self._footer.setObjectName("PreviewFooter")
@@ -98,6 +162,7 @@ class PagePreviewWidget(QWidget):
         return self._render_width_px
 
     def set_loader(self, loader: PdfLoader | None) -> None:
+        self._cancel_render()
         self._loader = loader
         if loader is None:
             self._current_page = 0
@@ -113,7 +178,7 @@ class PagePreviewWidget(QWidget):
             return
         self._current_page = max(0, min(page_index, self._loader.page_count - 1))
         self._update_render_width()
-        self._render_current_page()
+        self._schedule_render()
 
     def zoom_by(self, step: int) -> None:
         if self._loader is None:
@@ -127,22 +192,23 @@ class PagePreviewWidget(QWidget):
             return
         self._manual_zoom = True
         self._render_width_px = new_width
-        self._render_current_page()
+        self._schedule_render()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         if self._loader is not None:
             self._update_render_width()
-            self._render_current_page()
+            self._schedule_render()
         self.setFocus()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._overlay._sync_geometry()
         if self.isVisible() and self._loader is not None:
             previous_width = self._render_width_px
             self._update_render_width()
             if self._render_width_px != previous_width:
-                self._render_current_page()
+                self._schedule_render()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
@@ -176,20 +242,65 @@ class PagePreviewWidget(QWidget):
         if clamped == self._current_page:
             return
         self._current_page = clamped
-        self._render_current_page()
+        self._schedule_render()
         self.page_changed.emit(self._current_page)
 
-    def _render_current_page(self) -> None:
+    def _schedule_render(self) -> None:
         if self._loader is None:
             return
-        png = self._loader.render_page(
+        self._overlay.show_message("Rendering page…")
+        self.busy_changed.emit(True, "Rendering page…")
+        self._render_timer.start()
+
+    def _start_render(self) -> None:
+        if self._loader is None:
+            return
+        self._generation += 1
+        generation = self._generation
+        worker = PreviewRenderWorker(
+            self._loader.path,
             self._current_page,
-            width_px=self._render_width_px,
+            self._render_width_px,
+            generation,
+            self._is_cancelled,
         )
+        worker.signals.finished.connect(self._on_render_finished)
+        worker.signals.error.connect(self._on_render_error)
+        self._render_pool.start(worker)
+
+    def _cancel_render(self) -> None:
+        self._render_timer.stop()
+        self._generation += 1
+        self._overlay.hide_overlay()
+        self.busy_changed.emit(False, "")
+
+    def _is_cancelled(self, generation: int) -> bool:
+        return generation != self._generation
+
+    def _on_render_finished(
+        self,
+        generation: int,
+        page_index: int,
+        width_px: int,
+        png: bytes,
+    ) -> None:
+        if self._is_cancelled(generation):
+            return
+        if page_index != self._current_page or width_px != self._render_width_px:
+            return
         pixmap = QPixmap()
         pixmap.loadFromData(png, "PNG")
         self._image_label.setPixmap(pixmap)
         self._image_label.adjustSize()
+        self._overlay.hide_overlay()
+        self.busy_changed.emit(False, "")
+
+    def _on_render_error(self, generation: int, message: str) -> None:
+        if self._is_cancelled(generation):
+            return
+        self._overlay.hide_overlay()
+        self.busy_changed.emit(False, "")
+        self._image_label.setText(f"Could not render page:\n{message}")
 
 
 # Backward-compatible alias for older imports.
