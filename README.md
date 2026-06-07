@@ -144,10 +144,46 @@ Test fixtures are generated on the fly — see `tests/fixtures/README.md` for de
 
 ### Building an executable (optional)
 
-PyInstaller packaging is planned (Phase 16 in the build checklist) but not yet set up. See `checklist.md` for the full build plan and phase history.
+Install dev dependencies (includes PyInstaller), then build:
+
+```bash
+uv sync --group dev
+uv run pyinstaller --noconfirm pagedrop.spec
+```
+
+The binary is written to `dist/pagedrop` (Linux/macOS) or `dist/pagedrop.exe` (Windows).
+
+Smoke-test the build (builds first unless `--skip-build` / `-SkipBuild`):
+
+```bash
+# Linux/macOS
+./scripts/smoke_exe.sh
+
+# Windows
+.\scripts\smoke_exe.ps1
+```
+
+Or via Makefile:
+
+```bash
+make build-exe
+make smoke-exe          # Unix smoke script
+make test-release       # full pytest gate + exe smoke (set PAGEDROP_EXE if needed)
+```
+
+Before tagging a release, run the full suite plus the executable smoke test:
+
+```bash
+uv run pytest tests/ -v --ignore=tests/smoke/test_phase16_executable.py
+PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
+```
+
+On Windows PowerShell, set `$env:PAGEDROP_EXE = ".\dist\pagedrop.exe"` instead of `PAGEDROP_EXE=...`.
+
+Verify manually on a machine **without Python**: open a PDF, drag a page into the file manager, and confirm extracted files appear.
 
 ## Status
 
-PageDrop is under active development. Phases 1–9 (core viewer and drag-out), 11–15 (multi-tab editing and Save As), 17 (merge), 18 (multi-window), and 19 (Create PDF) are implemented. Standalone executable distribution is not yet available.
+PageDrop is under active development. Phases 1–9 (core viewer and drag-out), 11–15 (multi-tab editing and Save As), 16 (PyInstaller packaging), 17 (merge), 18 (multi-window), and 19 (Create PDF) are implemented. Standalone executables can be built locally; release binaries are not yet published.
 
 For the detailed implementation checklist and design decisions, see [`checklist.md`](checklist.md).

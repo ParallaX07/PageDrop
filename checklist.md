@@ -1339,39 +1339,39 @@ Stay in the Create PDF window after save — do **not** auto-open the result in 
 
 ### Checklist
 
-- [ ] Add `PyInstaller` as a dev dependency:
+- [x] Add `PyInstaller` as a dev dependency:
   ```toml
-  [project.optional-dependencies]
-  dev = ["pyinstaller>=6.0"]
+  [dependency-groups]
+  dev = [..., "pyinstaller>=6.0"]
   ```
-  Then: `uv sync --extra dev`
-- [ ] Do a basic build first: `uv run pyinstaller --onefile --windowed src/pagedrop/main.py`
-- [ ] If that fails, create a `.spec` file and add hidden imports for PyMuPDF
+  Then: `uv sync --group dev`
+- [x] Do a basic build first: `uv run pyinstaller --onefile --windowed src/pagedrop/main.py`
+- [x] If that fails, create a `.spec` file and add hidden imports for PyMuPDF
   and PyQt6 plugins:
   ```python
   # pagedrop.spec
   hiddenimports=["fitz", "PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets"]
   ```
-- [ ] Add `--add-data` for any assets (icons, etc.) if you added them
+- [x] Add `--add-data` for any assets (icons, etc.) if you added them
 - [ ] Test the built executable on a machine **without Python installed**
 - [ ] Check that the exe opens PDFs correctly and drag-drop to file manager works
 - [ ] Note: PyMuPDF bundles its own native libs — PyInstaller should pick them up
   automatically, but verify
 - [ ] If exe size is too large, consider `--onedir` mode instead of `--onefile`
-- [ ] Add a `Makefile` or `build.sh` script so the build command is documented
+- [x] Add a `Makefile` or `build.sh` script so the build command is documented
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `scripts/smoke_exe.sh` / `scripts/smoke_exe.ps1`:
-  - [ ] Build exe via documented command
-  - [ ] Launch exe as subprocess with timeout
-  - [ ] Assert process starts (no immediate exit code ≠ 0)
-  - [ ] Optional: pass a fixture PDF path via env var if exe supports it, else document manual open step
-- [ ] Write `tests/smoke/test_phase16_executable.py` (skipped locally unless `PAGEDROP_EXE` env var set):
-  - [ ] `@pytest.mark.skipif(not os.environ.get("PAGEDROP_EXE"))`
-  - [ ] Launch built binary, verify it stays alive ≥ 5s
+- [x] Write `scripts/smoke_exe.sh` / `scripts/smoke_exe.ps1`:
+  - [x] Build exe via documented command
+  - [x] Launch exe as subprocess with timeout
+  - [x] Assert process starts (no immediate exit code ≠ 0)
+  - [x] Optional: pass a fixture PDF path via env var if exe supports it, else document manual open step
+- [x] Write `tests/smoke/test_phase16_executable.py` (skipped locally unless `PAGEDROP_EXE` env var set):
+  - [x] `@pytest.mark.skipif(not os.environ.get("PAGEDROP_EXE"))`
+  - [x] Launch built binary, verify it stays alive ≥ 5s
   - [ ] On Windows VM / clean machine checklist: same script run outside dev environment
-- [ ] Add CI or release note: run full smoke suite before tagging:
+- [x] Add CI or release note: run full smoke suite before tagging:
   ```bash
   uv run pytest tests/ -v --ignore=tests/smoke/test_phase16_executable.py
   PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
