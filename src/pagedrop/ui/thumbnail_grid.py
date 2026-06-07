@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QGridLayout, QScrollArea, QWidget
 import fitz
 
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
+from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 
 
@@ -59,6 +60,7 @@ class ThumbnailGrid(QScrollArea):
     rendering_started = pyqtSignal(int)
     rendering_progress = pyqtSignal(int, int)
     rendering_finished = pyqtSignal()
+    selection_changed = pyqtSignal(set)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -79,6 +81,10 @@ class ThumbnailGrid(QScrollArea):
         self._loader: PdfLoader | None = None
         self._generation = 0
         self._thread_pool = QThreadPool.globalInstance()
+        self._last_clicked_index: int | None = None
+        self.selection_manager = SelectionManager(
+            on_selection_changed=self._on_selection_changed,
+        )
 
     def load_pdf(self, loader: PdfLoader) -> None:
         self._cancel_rendering()
@@ -86,7 +92,11 @@ class ThumbnailGrid(QScrollArea):
         self._loader = loader
 
         total = loader.page_count
+        self._last_clicked_index = None
+        self.selection_manager.set_page_count(total)
         self._cards = [PageCard(i, self._container) for i in range(total)]
+        for card in self._cards:
+            card.clicked.connect(self._on_card_clicked)
         self._reflow_grid()
 
         self._generation += 1
@@ -106,6 +116,8 @@ class ThumbnailGrid(QScrollArea):
         self._cancel_rendering()
         self._clear_cards()
         self._loader = None
+        self._last_clicked_index = None
+        self.selection_manager.set_page_count(0)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -155,3 +167,24 @@ class ThumbnailGrid(QScrollArea):
         if self._is_cancelled(generation):
             return
         self.rendering_finished.emit()
+
+    def _on_card_clicked(
+        self, page_index: int, modifiers: Qt.KeyboardModifier
+    ) -> None:
+        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+            anchor = (
+                self._last_clicked_index
+                if self._last_clicked_index is not None
+                else page_index
+            )
+            self.selection_manager.select_range(anchor, page_index)
+        elif modifiers & Qt.KeyboardModifier.ControlModifier:
+            self.selection_manager.toggle(page_index)
+        else:
+            self.selection_manager.select_single(page_index)
+        self._last_clicked_index = page_index
+
+    def _on_selection_changed(self, selection: set[int]) -> None:
+        for index, card in enumerate(self._cards):
+            card.set_selected(index in selection)
+        self.selection_changed.emit(selection)

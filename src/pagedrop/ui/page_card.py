@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 
 class PageCard(QFrame):
+    clicked = pyqtSignal(int, Qt.KeyboardModifier)
     CARD_WIDTH = 170
 
     def __init__(self, page_index: int, parent=None) -> None:
@@ -30,6 +31,15 @@ class PageCard(QFrame):
         layout.addWidget(self._page_label)
 
         self.set_selected(False)
+
+    @property
+    def is_selected(self) -> bool:
+        return self._selected
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.page_index, event.modifiers())
+        super().mousePressEvent(event)
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         scaled = pixmap.scaledToWidth(

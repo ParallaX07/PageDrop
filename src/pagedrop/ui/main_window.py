@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QLabel,
     QMainWindow,
@@ -36,6 +37,8 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central_widget()
         self._build_status_widgets()
+        self._build_selection_shortcuts()
+        QApplication.instance().installEventFilter(self)
         self.statusBar().showMessage("Ready")
 
     def _build_menu(self) -> None:
@@ -75,6 +78,7 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.rendering_started.connect(self._on_rendering_started)
         self._thumbnail_grid.rendering_progress.connect(self._on_rendering_progress)
         self._thumbnail_grid.rendering_finished.connect(self._on_rendering_finished)
+        self._thumbnail_grid.selection_changed.connect(self._on_selection_changed)
         self.setCentralWidget(self._thumbnail_grid)
 
     def _build_status_widgets(self) -> None:
@@ -82,6 +86,43 @@ class MainWindow(QMainWindow):
         self._progress_bar.setMaximumWidth(200)
         self._progress_bar.hide()
         self.statusBar().addPermanentWidget(self._progress_bar)
+
+    def _build_selection_shortcuts(self) -> None:
+        select_all = QAction(self)
+        select_all.setShortcut(QKeySequence.StandardKey.SelectAll)
+        select_all.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        select_all.triggered.connect(self._select_all_pages)
+        self.addAction(select_all)
+
+        clear_selection = QAction(self)
+        clear_selection.setShortcut(QKeySequence.StandardKey.Cancel)
+        clear_selection.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        clear_selection.triggered.connect(self._clear_selection)
+        self.addAction(clear_selection)
+
+    def _select_all_pages(self) -> None:
+        self._thumbnail_grid.selection_manager.select_all()
+
+    def _clear_selection(self) -> None:
+        self._thumbnail_grid.selection_manager.clear()
+
+    def eventFilter(self, obj, event) -> bool:
+        if (
+            event.type() != QEvent.Type.KeyPress
+            or not isinstance(event, QKeyEvent)
+            or QApplication.activeModalWidget() is not None
+        ):
+            return super().eventFilter(obj, event)
+
+        if event.matches(QKeySequence.StandardKey.Cancel):
+            if self._thumbnail_grid.selection_manager.selection:
+                self._clear_selection()
+                return True
+        elif event.matches(QKeySequence.StandardKey.SelectAll) and self._loader is not None:
+            self._select_all_pages()
+            return True
+
+        return super().eventFilter(obj, event)
 
     def _open_pdf(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -147,10 +188,24 @@ class MainWindow(QMainWindow):
     def _on_rendering_finished(self) -> None:
         self._progress_bar.hide()
         if self._loader is not None:
-            self.statusBar().showMessage(f"Loaded {self._loader.page_count} pages")
+            if self._thumbnail_grid.selection_manager.selection:
+                self._on_selection_changed(
+                    self._thumbnail_grid.selection_manager.selection
+                )
+            else:
+                self.statusBar().showMessage(f"Loaded {self._loader.page_count} pages")
+
+    def _on_selection_changed(self, selection: set[int]) -> None:
+        if selection:
+            count = len(selection)
+            noun = "page" if count == 1 else "pages"
+            self.statusBar().showMessage(f"{count} {noun} selected")
+        else:
+            self.statusBar().showMessage("No selection")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         pass  # TODO: confirm if there are unsaved operations
+        QApplication.instance().removeEventFilter(self)
         self._thumbnail_grid.clear()
         if self._loader is not None:
             self._loader.close()
