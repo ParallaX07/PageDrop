@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, encode_page_indices
 from pagedrop.core.page_extractor import extract_page_refs_to_files
-from pagedrop.core.pdf_editor import PdfEditModel
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.theme import (
     CARD_PADDING,
@@ -52,6 +52,7 @@ class PageCard(QFrame):
         self._hovered = False
         self._keyboard_focused = False
         self._drag_start_pos: QPoint | None = None
+        self._page_ref: PageRef | None = None
         self._model: PdfEditModel | None = None
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
@@ -88,6 +89,17 @@ class PageCard(QFrame):
     @property
     def is_selected(self) -> bool:
         return self._selected
+
+    @property
+    def page_ref(self) -> PageRef | None:
+        return self._page_ref
+
+    def set_page_ref(self, ref: PageRef) -> None:
+        self._page_ref = ref
+
+    def set_logical_index(self, index: int) -> None:
+        self.page_index = index
+        self._page_label.setText(f"Page {index + 1}")
 
     def set_drag_context(
         self,

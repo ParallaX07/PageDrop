@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import defaultdict, deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -293,6 +294,7 @@ class ThumbnailGrid(QScrollArea):
                 self._model, self.selection_manager, self._temp_manager
             )
             ref = self._model.page_at(i)
+            card.set_page_ref(ref)
             loader = self._get_loader(ref.source_path)
             width_mm, height_mm = loader.page_size_mm(ref.source_index)
             card.set_page_tooltip(width_mm, height_mm)
@@ -595,14 +597,108 @@ class ThumbnailGrid(QScrollArea):
         return True
 
     def _restore_after_reorder(self, new_selection: set[int]) -> None:
-        assert self._model is not None
-        assert self._get_loader is not None
-        self.load_model(self._model, self._get_loader)
+        self._sync_grid_after_reorder()
         self.selection_manager.set_selection(new_selection)
         if new_selection:
             anchor = min(new_selection)
             self._last_clicked_index = anchor
             self._set_focused_index(anchor)
+
+    def _invalidate_render_generation(self) -> None:
+        """Drop in-flight thumbnail callbacks without restarting a full render."""
+        self._generation += 1
+        self._busy_render_generation = -1
+        self._leave_busy("rendering")
+
+    def _remove_cards_at_indices(self, indices: list[int]) -> None:
+        for idx in sorted(indices, reverse=True):
+            card = self._cards.pop(idx)
+            card.setParent(None)
+            card.deleteLater()
+            if idx < len(self._page_render_width):
+                self._page_render_width.pop(idx)
+
+    def _reindex_cards(self) -> None:
+        assert self._model is not None
+        assert self._get_loader is not None
+        for index, card in enumerate(self._cards):
+            ref = self._model.page_at(index)
+            card.set_logical_index(index)
+            card.set_page_ref(ref)
+            loader = self._get_loader(ref.source_path)
+            width_mm, height_mm = loader.page_size_mm(ref.source_index)
+            card.set_page_tooltip(width_mm, height_mm)
+
+    def _reorder_cards_to_model(self) -> None:
+        """Reorder existing cards to match the model without re-rendering."""
+        assert self._model is not None
+        assert self._get_loader is not None
+        if not self._cards:
+            return
+
+        refs = [self._model.page_at(i) for i in range(self._model.logical_count())]
+        card_pools: dict[PageRef, deque[PageCard]] = defaultdict(deque)
+        width_pools: dict[PageRef, deque[int]] = defaultdict(deque)
+        for card, width in zip(self._cards, self._page_render_width):
+            ref = card.page_ref
+            if ref is None:
+                self.load_model(self._model, self._get_loader)
+                return
+            card_pools[ref].append(card)
+            width_pools[ref].append(width)
+
+        new_cards: list[PageCard] = []
+        new_widths: list[int] = []
+        for ref in refs:
+            pool = card_pools.get(ref)
+            if not pool:
+                self.load_model(self._model, self._get_loader)
+                return
+            new_cards.append(pool.popleft())
+            new_widths.append(width_pools[ref].popleft())
+
+        self._cards = new_cards
+        self._page_render_width = new_widths
+
+    def _sync_grid_after_reorder(self) -> None:
+        assert self._model is not None
+        assert self._get_loader is not None
+        if self._pending_card_indices:
+            self.load_model(self._model, self._get_loader)
+            return
+        if len(self._cards) != self._model.logical_count():
+            self.load_model(self._model, self._get_loader)
+            return
+
+        self._invalidate_render_generation()
+        self._reorder_cards_to_model()
+        self._reindex_cards()
+        self.selection_manager.set_page_count(self._model.logical_count())
+        self._reflow_grid(force=True)
+        self._update_focus_highlight()
+
+    def _sync_grid_after_delete(self, removed_indices: list[int]) -> None:
+        assert self._model is not None
+        assert self._get_loader is not None
+        if self._pending_card_indices:
+            self.load_model(self._model, self._get_loader)
+            return
+
+        self._invalidate_render_generation()
+        self._remove_cards_at_indices(removed_indices)
+
+        total = self._model.logical_count()
+        self.selection_manager.set_page_count(total)
+        if total == 0:
+            self._focused_index = None
+            self._reflow_grid(force=True)
+            return
+
+        self._reindex_cards()
+        if self._focused_index is not None:
+            self._focused_index = min(self._focused_index, total - 1)
+        self._reflow_grid(force=True)
+        self._update_focus_highlight()
 
     def drop_index_at_pos(self, pos: QPoint) -> int:
         """Return the logical insertion index (0…N) for a point in container coords."""
@@ -698,7 +794,7 @@ class ThumbnailGrid(QScrollArea):
         new_selection = self._new_selection_after_move(ordered, to_index)
         self._model.move_pages(ordered, to_index)
         self._last_clicked_index = None
-        self.load_model(self._model, self._get_loader)
+        self._sync_grid_after_reorder()
         self.selection_manager.set_selection(new_selection)
         if new_selection:
             self._set_focused_index(min(new_selection))
@@ -759,7 +855,7 @@ class ThumbnailGrid(QScrollArea):
                 show_shortcuts=False,
             )
 
-        self.load_model(self._model, self._get_loader)
+        self._sync_grid_after_delete(logical_indices)
         return True
 
     def extract_selected_to_folder(self, output_dir) -> list:
@@ -998,6 +1094,8 @@ class ThumbnailGrid(QScrollArea):
         self, generation: int, page_index: int, pixmap: QPixmap
     ) -> None:
         if self._is_cancelled(generation):
+            return
+        if page_index >= len(self._cards):
             return
         self._cards[page_index].set_thumbnail(pixmap)
         self._page_render_width[page_index] = self._thumbnail_width_px
