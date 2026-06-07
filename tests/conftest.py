@@ -45,8 +45,12 @@ def _install_nonblocking_qt() -> None:
     def _noop_menu_exec(self, *args, **kwargs):
         return None
 
+    def _noop_message_exec(self, *args, **kwargs):
+        return int(QMessageBox.StandardButton.Cancel)
+
     QDrag.exec = _noop_drag_exec  # type: ignore[method-assign]
     QMenu.exec = _noop_menu_exec  # type: ignore[method-assign]
+    QMessageBox.exec = _noop_message_exec  # type: ignore[method-assign]
 
     _ok = staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
     QMessageBox.critical = _ok

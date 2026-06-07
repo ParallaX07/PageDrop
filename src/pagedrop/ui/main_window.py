@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, Qt
@@ -22,6 +23,7 @@ from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
 )
+from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tab_manager import TabManager
@@ -94,6 +96,11 @@ class MainWindow(QMainWindow):
         self._close_action = file_menu.addAction("&Close Tab")
         self._close_action.triggered.connect(self._close_tab)
         self._close_action.setEnabled(False)
+
+        self._save_as_action = file_menu.addAction("Save &As...")
+        self._save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self._save_as_action.triggered.connect(self._save_as)
+        self._save_as_action.setEnabled(False)
 
         file_menu.addSeparator()
 
@@ -189,6 +196,8 @@ class MainWindow(QMainWindow):
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
         self._tab_manager.tab_added.connect(self._connect_tab_signals)
         self._tab_manager.tab_closed.connect(lambda _: self._update_close_tab_action())
+        self._tab_manager.tabCloseRequested.disconnect(self._tab_manager.close_tab)
+        self._tab_manager.tabCloseRequested.connect(self._on_tab_close_requested)
 
         new_tab_button = QToolButton()
         new_tab_button.setObjectName("NewTabButton")
@@ -281,6 +290,7 @@ class MainWindow(QMainWindow):
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
+        tab.dirty_changed.connect(self._update_save_as_action)
 
     def _active_tab(self) -> PdfTab | None:
         return self._tab_manager.active_tab
@@ -347,6 +357,7 @@ class MainWindow(QMainWindow):
         self._zoom_controls.set_value(tab.zoom_level)
         self._update_preview_mode_ui()
         self._update_close_tab_action()
+        self._update_save_as_action()
 
     def _reset_toolbar_for_blank_tab(self) -> None:
         self._update_window_title()
@@ -364,6 +375,15 @@ class MainWindow(QMainWindow):
         self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
         self._progress_bar.hide()
         self._update_close_tab_action()
+        self._update_save_as_action()
+
+    def _update_save_as_action(self) -> None:
+        tab = self._active_tab()
+        self._save_as_action.setEnabled(
+            tab is not None
+            and tab.edit_model is not None
+            and tab.edit_model.logical_count() > 0
+        )
 
     def _update_delete_pages_action(self) -> None:
         tab = self._active_tab()
@@ -403,6 +423,7 @@ class MainWindow(QMainWindow):
         self._update_delete_pages_action()
         self._update_move_pages_actions()
         self._deselect_all_action.setEnabled(False)
+        self._update_save_as_action()
         if tab.edit_model.logical_count() == 0:
             self.statusBar().showMessage("All pages deleted")
         else:
@@ -736,14 +757,144 @@ class MainWindow(QMainWindow):
             self._sync_toolbar_from_active_tab()
             self.statusBar().showMessage(f"Loading {loader.page_count} pages…")
 
+    def _same_path(self, left: str, right: str) -> bool:
+        try:
+            return Path(left).resolve().samefile(Path(right).resolve())
+        except OSError:
+            return Path(left).resolve() == Path(right).resolve()
+
+    def _default_save_as_path(self, tab: PdfTab) -> str:
+        model = tab.edit_model
+        assert model is not None
+        original = Path(model.original_path)
+        if model.save_path is not None:
+            start_dir = Path(model.save_path).parent
+        else:
+            start_dir = original.parent
+        return str(start_dir / f"{original.stem}_edited.pdf")
+
+    def _save_as(self, tab: PdfTab | None = None) -> bool:
+        """Save the active tab (or *tab*) to a new path. Returns True on success."""
+        target = tab or self._active_tab()
+        if target is None or target.edit_model is None:
+            return False
+
+        model = target.edit_model
+        if model.logical_count() == 0:
+            return False
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save As",
+            self._default_save_as_path(target),
+            "PDF Files (*.pdf);;All Files (*)",
+        )
+        if not path:
+            return False
+
+        if not path.lower().endswith(".pdf"):
+            path = f"{path}.pdf"
+
+        if self._same_path(path, model.original_path):
+            QMessageBox.warning(
+                self,
+                "Save As",
+                "Cannot save over the original file.\n"
+                "Choose a different path.",
+            )
+            return False
+
+        try:
+            write_pdf(model, path)
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Save As",
+                f"Could not write PDF:\n{exc}",
+            )
+            return False
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Save As",
+                f"Could not save PDF:\n{exc}",
+            )
+            return False
+
+        remember_directory(path)
+        model.mark_saved(path)
+        target._sync_dirty_from_model()
+        self._tab_manager.update_tab_title(target)
+        if target is self._active_tab():
+            self._sync_toolbar_from_active_tab()
+            self.statusBar().showMessage(f"Saved to {Path(path).name}")
+        return True
+
+    def _prompt_unsaved_changes(self, tab: PdfTab) -> str:
+        """Return ``save``, ``discard``, or ``cancel``."""
+        if os.environ.get("PAGEDROP_TESTING") == "1":
+            return "discard"
+
+        model = tab.edit_model
+        filename = Path(model.original_path).name if model is not None else "document"
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Unsaved Changes")
+        message.setText(f'"{filename}" has unsaved changes.')
+        message.setInformativeText("Save your changes before closing?")
+        save_button = message.addButton(
+            "Save As...",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        discard_button = message.addButton(
+            "Discard",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is save_button:
+            return "save"
+        if clicked is discard_button:
+            return "discard"
+        return "cancel"
+
+    def _try_close_tab(self, index: int) -> bool:
+        if index < 0 or index >= self._tab_manager.count():
+            return False
+
+        tab = self._tab_manager.widget(index)
+        if not isinstance(tab, PdfTab):
+            return False
+
+        if tab.is_blank:
+            if self._is_only_blank_tab():
+                return False
+        elif tab.is_dirty:
+            choice = self._prompt_unsaved_changes(tab)
+            if choice == "cancel":
+                return False
+            if choice == "save" and not self._save_as(tab):
+                return False
+
+        self._tab_manager.close_tab(index)
+        return True
+
     def _close_tab(self) -> None:
         if self._is_only_blank_tab():
             return
         index = self._tab_manager.currentIndex()
-        if index >= 0:
-            self._tab_manager.close_tab(index)
-        self._sync_toolbar_from_active_tab()
-        self.statusBar().showMessage("Tab closed")
+        if index >= 0 and self._try_close_tab(index):
+            self._sync_toolbar_from_active_tab()
+            self.statusBar().showMessage("Tab closed")
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        tab = self._tab_manager.widget(index)
+        if isinstance(tab, PdfTab) and tab.is_blank and self._is_only_blank_tab():
+            return
+        if self._try_close_tab(index):
+            self._sync_toolbar_from_active_tab()
+            self.statusBar().showMessage("Tab closed")
 
     def _on_rendering_started(self, total_pages: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -860,7 +1011,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No selection")
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        pass  # TODO: confirm if there are unsaved operations
+        dirty_tabs: list[PdfTab] = []
+        for index in range(self._tab_manager.count()):
+            widget = self._tab_manager.widget(index)
+            if (
+                isinstance(widget, PdfTab)
+                and not widget.is_blank
+                and widget.is_dirty
+            ):
+                dirty_tabs.append(widget)
+
+        for tab in dirty_tabs:
+            choice = self._prompt_unsaved_changes(tab)
+            if choice == "cancel":
+                event.ignore()
+                return
+            if choice == "save" and not self._save_as(tab):
+                event.ignore()
+                return
+
         QApplication.instance().removeEventFilter(self)
         for index in range(self._tab_manager.count()):
             widget = self._tab_manager.widget(index)
