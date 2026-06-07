@@ -3,7 +3,8 @@
 A Python desktop app that renders PDF pages as thumbnails so you can drag single
 or multiple pages directly into folders in your file manager. **Phases 1–9** (complete)
 cover the read-only single-document workflow. **Phases 11–15** extend the app with
-multi-tab editing, page reorder/delete, inbound PDF drop, and Save As.
+multi-tab editing, page reorder/delete, inbound PDF drop, and Save As. **Phase 17**
+adds a separate Merge PDFs window for whole-file combine workflows.
 
 ---
 
@@ -40,13 +41,16 @@ pagedrop/
         │   ├── main_window.py    # QMainWindow, toolbar, layout
         │   ├── tab_manager.py    # QTabWidget wrapper + tab lifecycle   [Phase 11]
         │   ├── pdf_tab.py        # per-tab state container widget        [Phase 11]
+        │   ├── merge_window.py   # modeless Merge PDFs window            [Phase 17]
         │   ├── thumbnail_grid.py # scrollable grid of pages
+        │   ├── page_preview.py   # single-page preview + arrow navigation
         │   └── page_card.py      # individual page widget + drag logic
         ├── core/
         │   ├── __init__.py
         │   ├── pdf_loader.py     # open PDF, render pages via PyMuPDF
         │   ├── pdf_editor.py     # PdfEditModel + PageRef dataclass      [Phase 12]
-        │   ├── pdf_writer.py     # write_pdf() — merge from multiple src [Phase 15]
+        │   ├── pdf_merge.py      # PdfMergeModel — ordered file list     [Phase 17]
+        │   ├── pdf_writer.py     # write_pdf() + merge_pdf_files()       [Phase 15/17]
         │   └── page_extractor.py # write selected pages to temp PDFs
         └── utils/
             ├── __init__.py
@@ -919,6 +923,126 @@ overwrite the original PDF.
 
 > **Out of scope for Phases 11–15 (unless added later):** undo/redo, page rotation,
 > cross-tab page drag, password-prompt UI, Save-to-original / incremental Save.
+> Whole-file PDF merge lives in **Phase 17** (separate window, not the tab editor).
+
+---
+
+## Phase 17 — Merge PDFs Window
+
+**Goal:** A **separate modeless window** where users combine whole PDF files in order:
+add, delete, and reorder **files** (not pages within files), preview any file on
+double-click, then **Save As** the merged output. Stay in the merge window after save —
+do **not** auto-open the result in the main editor tab.
+
+> **Design decisions (locked in):**
+> - File-order model only — do **not** reuse `PdfEditModel` for the list UI (page vs file reorder must stay distinct).
+> - **Save As only** on merge — no “open in new tab” shortcut.
+> - **Stack preview** (same pattern as `PdfTab`): list pane → full-document preview → Esc back to list.
+> - **Allow duplicate paths** in the list (user may merge the same file twice intentionally).
+> - Reuse `PagePreviewWidget.set_loader()` for preview — all pages navigable via ← → / ↑ ↓.
+
+### Checklist — Core Model (`pdf_merge.py`)
+
+- [x] Write `core/pdf_merge.py` with `PdfMergeModel`:
+  - [x] Internal state: `list[str]` of absolute paths in merge order
+  - [x] `add_files(paths)` — append; resolve to absolute paths
+  - [x] `remove_at(index)` / `remove_indices(indices)`
+  - [x] `move_up(indices)` / `move_down(indices)` — mirror `PdfEditModel` move semantics for whole files
+  - [x] `reorder(from_index, to_index)` — for drag-drop sync from list widget
+  - [x] Helpers: `file_count()`, `path_at(i)`, `display_name(i)` → `Path(path).name`
+  - [x] `all_paths()` — ordered copy for writer
+
+### Checklist — PDF Writer
+
+- [x] Add to `core/pdf_writer.py`:
+  ```python
+  def merge_pdf_files(file_paths: list[str], output_path: str) -> None:
+      # pypdf: for each path in order, append ALL pages; cache PdfReader per path
+  ```
+- [x] Reject empty `file_paths` with clear error
+- [x] Reuse `PdfReader` cache-per-path pattern from `write_pdf()`
+- [x] Propagate load/read errors using existing `PdfLoadError` style (corrupt, empty, missing)
+- [x] Keep `write_pdf(model, …)` unchanged — tab Save As stays page-level
+
+### Checklist — Merge Window UI (`merge_window.py`)
+
+- [x] Write `ui/merge_window.py` — `MergeWindow(QMainWindow)`:
+  - [x] Central `QStackedWidget`:
+    - [x] Index 0: list pane (`MergeListPane` or inline layout)
+    - [x] Index 1: reused `PagePreviewWidget`
+  - [x] `QListWidget` rows:
+    - [x] Primary text: **filename** (`Path(path).name`)
+    - [x] Secondary text (optional): page count from `PdfLoader`
+    - [x] Tooltip: full path
+  - [x] Toolbar / actions: **Add PDFs…**, **Remove**, **Move Up**, **Move Down**, **Merge…**
+  - [x] **Add PDFs…** — `QFileDialog.getOpenFileNames`; append to model; refresh list
+  - [x] **Remove** — delete selected row(s) from model
+  - [x] **Move Up / Down** — reorder selected file(s); disable at list bounds
+  - [x] **Internal drag-drop** on list — `QListWidget.setDragDropMode(InternalMove)`; sync order back to `PdfMergeModel`
+  - [x] **Drop target** on list — accept PDF `text/uri-list` drops (reuse path extraction from `ThumbnailGrid.pdf_paths_from_mime`)
+  - [x] **Merge…** disabled when list empty
+  - [x] **Merge…** — `QFileDialog.getSaveFileName`; default `{first_stem}_merged.pdf`; call `merge_pdf_files()`; status bar success message; **do not** open main tab
+  - [x] Status bar: file count, preview page indicator when in preview stack
+
+### Checklist — Stack Preview (double-click)
+
+- [x] **Double-click** list row:
+  - [x] Open `PdfLoader(path)` for that row
+  - [x] `preview.set_loader(loader)` — builds single-source model with **all pages**
+  - [x] `preview.show_page(0)` — start at page 1
+  - [x] `stack.setCurrentWidget(preview)`
+  - [x] Status: `"Preview — page N of M"` (connect `page_changed` while in preview)
+- [x] **Back from preview:**
+  - [x] Connect `PagePreviewWidget.closed` (Esc) → `stack.setCurrentWidget(list_pane)`
+  - [x] Override or set footer hint to **"← → change page · Ctrl+scroll zoom · Esc back to list"** (not “back to grid”)
+  - [x] Optional toolbar **Back to list** button while preview visible
+- [x] Preview navigates **entire PDF** via arrow keys — no single-page-only preview
+
+### Checklist — Main Window Entry
+
+- [x] In `main_window.py`:
+  - [x] **File → Merge PDFs…** — after Save As, before Exit
+  - [x] Lazy-create one `MergeWindow` instance; show/raise on menu action (modeless)
+  - [x] User can keep editing main-window tabs while merge window is open
+
+### Checklist — Edge Cases & Polish
+
+- [x] Close merge window with non-empty list → optional “Discard file list?” prompt
+- [x] Add PDF that fails to load → dialog; do not add to list
+- [x] Merge to path that already exists → normal overwrite confirm via save dialog (same as Save As)
+- [x] Source PDFs on disk **unchanged** after merge (read-only inputs)
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Write `tests/core/test_pdf_merge.py`:
+  - [x] `test_add_remove_reorder_paths`
+  - [x] `test_move_up_down_at_bounds`
+  - [x] `test_display_name_returns_stem`
+- [x] Extend `tests/core/test_pdf_writer.py`:
+  - [x] `test_merge_pdf_files_preserves_file_order`
+  - [x] `test_merge_pdf_files_rejects_empty_list`
+  - [x] `test_merge_pdf_files_total_page_count`
+- [x] Write `tests/ui/test_merge_window.py`:
+  - [x] `test_add_files_populates_list_with_filenames`
+  - [x] `test_remove_and_reorder_updates_model`
+  - [x] `test_merge_disabled_when_empty`
+  - [x] `test_double_click_enters_preview_stack`
+  - [x] `test_escape_returns_to_list_from_preview`
+- [x] Write `tests/smoke/test_phase17_merge.py` — add 3 fixture PDFs → reorder → Merge Save As →
+  verify page order and counts with `pypdf`; source files byte-unchanged
+- [x] Run: `uv run pytest tests/core/test_pdf_merge.py tests/core/test_pdf_writer.py tests/ui/test_merge_window.py tests/smoke/test_phase17_merge.py -v`
+
+### ✅ Test Gate 17
+- [ ] **File → Merge PDFs…** opens separate window (main window still usable)
+- [ ] **Filenames visible** in list; tooltip shows full path
+- [ ] **Add / Remove / Move Up / Down** and **drag reorder** change merge order
+- [ ] **Double-click** → preview stack; **← →** navigates all pages of that file
+- [ ] **Esc** (or Back) returns to file list
+- [ ] **Merge…** writes correct combined PDF; **source files unchanged**
+- [ ] **Drop PDFs** onto list adds them (consistent with Phase 14)
+
+> **Out of scope for Phase 17:** page-level edit inside merge window, auto-open merged
+> file in editor tab, merge-from-current-tab shortcut, password-prompt UI.
 
 ---
 
@@ -970,7 +1094,7 @@ overwrite the original PDF.
 - [ ] **Exe opens** without "DLL not found" or similar errors
 - [ ] **Open a PDF** via the exe → thumbnails render
 - [ ] **Drag a page to a folder** → works exactly like the dev version
-- [ ] **Multi-tab and Save As** work in the built binary
+- [ ] **Multi-tab, Save As, and Merge PDFs** work in the built binary
 - [ ] **Test on a second machine** or VM that has never had Python installed
 
 ---
@@ -982,13 +1106,14 @@ Work through phases in this order. **Don't move on until the test gate for each 
 Each phase also has a **Test Scripts & Smoke Tests** checklist — write those tests as you go so regressions are caught before the manual test gate.
 
 ```
-Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 16 Exe
-     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Binary
+Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 17 Merge → 16 Exe
+     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Combine     Binary
 ```
 
 Phases 12–15 are sequential (each builds on `PdfEditModel`). Phase 11 should land before
-Phase 13 UI work. Phases 6–7 were the hardest in the original build; Phase 13–14 (dual drag
-types + drop indicator) will need similar care.
+Phase 13 UI work. Phase 17 is independent of `PdfEditModel` but should land after Phase 15
+(writer patterns) and before Phase 16 (exe packaging). Phases 6–7 were the hardest in the
+original build; Phase 13–14 (dual drag types + drop indicator) will need similar care.
 
 ---
 
@@ -1011,6 +1136,9 @@ types + drop indicator) will need similar care.
 | Save As overwrites original | Reject output path == `original_path`; no silent Save action |
 | Tab state leaks on switch | Route all toolbar/menu actions to active `PdfTab` only |
 | Drop during thumbnail load | Cancel or queue insert until render generation settles |
+| File merge vs page merge | Use `PdfMergeModel` + `merge_pdf_files()` for whole-file order; use `PdfEditModel` + `write_pdf()` for page-level tab edits — do not conflate |
+| Merge preview stuck on one page | Use `PagePreviewWidget.set_loader()` so all pages are in the model; double-click calls `show_page(0)`; Esc returns to list stack |
+| Merge list out of sync after drag | Sync `QListWidget` internal move back into `PdfMergeModel.reorder()` on `rowsMoved` or equivalent signal |
 
 ---
 

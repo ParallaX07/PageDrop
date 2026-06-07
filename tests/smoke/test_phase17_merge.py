@@ -45,11 +45,11 @@ def test_smoke_merge_reorder_save_as(qtbot, tmp_path, monkeypatch):
     window._add_paths([str(pdf_a), str(pdf_b), str(pdf_c)])
     assert window._model.file_count() == 3
 
-    window._list_widget.item(2).setSelected(True)
+    window._file_grid.selection_manager.select_single(2)
     window._move_up()
 
-    window._list_widget.clearSelection()
-    window._list_widget.item(1).setSelected(True)
+    window._file_grid.selection_manager.clear()
+    window._file_grid.selection_manager.select_single(1)
     window._move_up()
 
     expected_order = [pdf_c, pdf_a, pdf_b]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 INTERNAL_PAGE_MIME = "application/x-pagedrop-page"
+INTERNAL_MERGE_FILE_MIME = "application/x-pagedrop-merge-file"
 
 
 def encode_page_indices(indices: list[int]) -> bytes:

@@ -3,12 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QModelIndex, Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QStackedWidget,
@@ -20,49 +18,20 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.pdf_loader import PdfEmptyError, PdfLoadError, PdfLoader
 from pagedrop.core.pdf_merge import PdfMergeModel
 from pagedrop.core.pdf_writer import merge_pdf_files
+from pagedrop.ui.merge_file_grid import MergeFileGrid
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.ui.thumbnail_grid import ThumbnailGrid
-
-_PATH_ROLE = Qt.ItemDataRole.UserRole
-_PREVIEW_FOOTER_HINT = (
-    "← → change page · Ctrl+scroll zoom · Esc back to list"
+from pagedrop.ui.theme import (
+    DEFAULT_THUMBNAIL_WIDTH,
+    MAX_THUMBNAIL_WIDTH,
+    MIN_THUMBNAIL_WIDTH,
+    ZOOM_WHEEL_STEP,
 )
+from pagedrop.ui.zoom_controls import ZoomControls
 
-
-class MergeFileListWidget(QListWidget):
-    """File list with internal reordering and inbound PDF drops."""
-
-    files_dropped = pyqtSignal(list)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("MergeFileList")
-        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.setAlternatingRowColors(True)
-        self.setAcceptDrops(True)
-
-    def dragEnterEvent(self, event) -> None:
-        if ThumbnailGrid.pdf_paths_from_mime(event.mimeData()):
-            event.acceptProposedAction()
-            return
-        super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event) -> None:
-        if ThumbnailGrid.pdf_paths_from_mime(event.mimeData()):
-            event.acceptProposedAction()
-            return
-        super().dragMoveEvent(event)
-
-    def dropEvent(self, event) -> None:
-        paths = ThumbnailGrid.pdf_paths_from_mime(event.mimeData())
-        if paths:
-            self.files_dropped.emit(paths)
-            event.acceptProposedAction()
-            return
-        super().dropEvent(event)
+_PREVIEW_FOOTER_HINT = (
+    "← → change page · Ctrl+scroll zoom · Esc back to grid"
+)
 
 
 class MergeWindow(QMainWindow):
@@ -72,12 +41,11 @@ class MergeWindow(QMainWindow):
         super().__init__(parent)
         self._model = PdfMergeModel()
         self._page_counts: dict[str, int] = {}
-        self._list_syncing = False
         self._preview_loader: PdfLoader | None = None
 
         self.setWindowTitle(self.WINDOW_TITLE)
-        self.setMinimumSize(480, 360)
-        self.resize(560, 480)
+        self.setMinimumSize(640, 480)
+        self.resize(760, 560)
 
         self._build_central_widget()
         self._build_toolbar()
@@ -89,11 +57,11 @@ class MergeWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._stack.setObjectName("MergeContentStack")
 
-        self._list_widget = MergeFileListWidget()
+        self._file_grid = MergeFileGrid()
         self._preview_widget = PagePreviewWidget()
         self._preview_widget.set_footer_hint(_PREVIEW_FOOTER_HINT)
 
-        self._stack.addWidget(self._list_widget)
+        self._stack.addWidget(self._file_grid)
         self._stack.addWidget(self._preview_widget)
         self.setCentralWidget(self._stack)
 
@@ -104,7 +72,7 @@ class MergeWindow(QMainWindow):
 
         self._back_to_list_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
-            "Back to list",
+            "Back to grid",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
         self._back_to_list_action.setVisible(False)
@@ -133,6 +101,23 @@ class MergeWindow(QMainWindow):
         )
         self._move_down_action.triggered.connect(self._move_down)
 
+        from PyQt6.QtWidgets import QSizePolicy
+
+        spacer = QWidget()
+        spacer.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        toolbar.addWidget(spacer)
+
+        self._zoom_controls = ZoomControls(
+            min_width=MIN_THUMBNAIL_WIDTH,
+            max_width=MAX_THUMBNAIL_WIDTH,
+            step=ZOOM_WHEEL_STEP,
+            initial=DEFAULT_THUMBNAIL_WIDTH,
+        )
+        toolbar.addWidget(self._zoom_controls)
+
         self._merge_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
             "Merge…",
@@ -143,15 +128,17 @@ class MergeWindow(QMainWindow):
             merge_button.setObjectName("ToolbarPrimary")
 
     def _connect_signals(self) -> None:
-        self._list_widget.itemSelectionChanged.connect(self._update_actions)
-        self._list_widget.itemDoubleClicked.connect(self._on_list_item_double_clicked)
-        self._list_widget.files_dropped.connect(self._add_paths)
-        self._list_widget.model().rowsMoved.connect(self._on_rows_moved)
+        self._file_grid.selection_changed.connect(self._update_actions)
+        self._file_grid.preview_requested.connect(self._open_preview)
+        self._file_grid.files_dropped.connect(self._add_paths)
+        self._file_grid.files_reordered.connect(self._on_files_reordered)
+        self._file_grid.zoom_changed.connect(self._on_zoom_changed)
+        self._zoom_controls.zoom_requested.connect(self._file_grid.set_thumbnail_zoom)
         self._preview_widget.page_changed.connect(self._update_status)
         self._preview_widget.closed.connect(self._close_preview)
 
     def _selected_indices(self) -> list[int]:
-        return sorted(self._list_widget.row(item) for item in self._list_widget.selectedItems())
+        return self._file_grid.selected_indices()
 
     def _can_move_up(self) -> bool:
         indices = self._selected_indices()
@@ -173,20 +160,20 @@ class MergeWindow(QMainWindow):
         self._move_up_action.setVisible(not in_preview)
         self._move_down_action.setVisible(not in_preview)
         self._merge_action.setVisible(not in_preview)
+        self._zoom_controls.setVisible(not in_preview)
 
         self._remove_action.setEnabled(has_selection)
         self._move_up_action.setEnabled(self._can_move_up())
         self._move_down_action.setEnabled(self._can_move_down())
         self._merge_action.setEnabled(has_files)
+        self._zoom_controls.setEnabled(has_files and not in_preview)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
 
-    def _on_list_item_double_clicked(self, item: QListWidgetItem) -> None:
-        path = item.data(_PATH_ROLE)
-        if not path:
-            return
-        self._open_preview(str(path))
+    def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
+        self._zoom_controls.set_value(thumbnail_width_px)
+        self.statusBar().showMessage(f"Thumbnail size: {thumbnail_width_px} px")
 
     def _open_preview(self, path: str) -> None:
         if self._preview_loader is not None:
@@ -222,7 +209,7 @@ class MergeWindow(QMainWindow):
     def _close_preview(self) -> None:
         if not self._is_preview_visible():
             return
-        self._stack.setCurrentWidget(self._list_widget)
+        self._stack.setCurrentWidget(self._file_grid)
         if self._preview_loader is not None:
             self._preview_loader.close()
             self._preview_loader = None
@@ -245,45 +232,40 @@ class MergeWindow(QMainWindow):
         else:
             self.statusBar().showMessage(f"{count} files")
 
-    def _format_item_text(self, filename: str, page_count: int | None) -> str:
-        if page_count is None:
-            return filename
-        noun = "page" if page_count == 1 else "pages"
-        return f"{filename}\n{page_count} {noun}"
+    def _selected_paths(self) -> set[str]:
+        return {
+            self._model.path_at(index)
+            for index in self._selected_indices()
+            if 0 <= index < self._model.file_count()
+        }
 
-    def _make_list_item(self, path: str) -> QListWidgetItem:
-        filename = Path(path).name
-        page_count = self._page_counts.get(path)
-        item = QListWidgetItem(self._format_item_text(filename, page_count))
-        item.setData(_PATH_ROLE, path)
-        item.setToolTip(path)
-        return item
-
-    def _refresh_list(self, *, preserve_selection: list[int] | None = None) -> None:
-        selected_paths: list[str] = []
+    def _refresh_grid(self, *, preserve_selection: list[int] | None = None) -> None:
         if preserve_selection is not None:
-            for index in preserve_selection:
-                if 0 <= index < self._model.file_count():
-                    selected_paths.append(self._model.path_at(index))
+            selected_paths = {
+                self._model.path_at(index)
+                for index in preserve_selection
+                if 0 <= index < self._model.file_count()
+            }
         else:
-            for index in self._selected_indices():
-                if 0 <= index < self._model.file_count():
-                    selected_paths.append(self._model.path_at(index))
+            selected_paths = self._selected_paths()
 
-        self._list_syncing = True
-        try:
-            self._list_widget.clear()
-            for index in range(self._model.file_count()):
-                self._list_widget.addItem(self._make_list_item(self._model.path_at(index)))
+        paths = [self._model.path_at(i) for i in range(self._model.file_count())]
+        self._file_grid.set_files(
+            paths,
+            self._page_counts,
+            selected_paths=selected_paths,
+        )
+        self._zoom_controls.set_value(self._file_grid.thumbnail_width_px)
+        self._update_actions()
+        self._update_status()
 
-            if selected_paths:
-                for row in range(self._list_widget.count()):
-                    item = self._list_widget.item(row)
-                    if item.data(_PATH_ROLE) in selected_paths:
-                        item.setSelected(True)
-        finally:
-            self._list_syncing = False
+    def _sync_model_from_grid(self, paths: list[str]) -> None:
+        while self._model.file_count() > 0:
+            self._model.remove_at(0)
+        self._model.add_files(paths)
 
+    def _on_files_reordered(self, paths: list[str]) -> None:
+        self._sync_model_from_grid(paths)
         self._update_actions()
         self._update_status()
 
@@ -323,7 +305,7 @@ class MergeWindow(QMainWindow):
             return
 
         self._model.add_files(accepted)
-        self._refresh_list()
+        self._refresh_grid()
         noun = "file" if len(accepted) == 1 else "files"
         self.statusBar().showMessage(f"Added {len(accepted)} {noun}")
 
@@ -345,7 +327,7 @@ class MergeWindow(QMainWindow):
         if not indices:
             return
         self._model.remove_indices(indices)
-        self._refresh_list()
+        self._refresh_grid()
         noun = "file" if len(indices) == 1 else "files"
         self.statusBar().showMessage(f"Removed {len(indices)} {noun}")
 
@@ -354,40 +336,14 @@ class MergeWindow(QMainWindow):
         if not indices or not self._can_move_up():
             return
         self._model.move_up(indices)
-        self._refresh_list(preserve_selection=indices)
+        self._refresh_grid(preserve_selection=indices)
 
     def _move_down(self) -> None:
         indices = self._selected_indices()
         if not indices or not self._can_move_down():
             return
         self._model.move_down(indices)
-        self._refresh_list(preserve_selection=indices)
-
-    def _on_rows_moved(
-        self,
-        parent: QModelIndex,
-        start: int,
-        end: int,
-        destination: QModelIndex,
-        row: int,
-    ) -> None:
-        del parent, destination
-        if self._list_syncing:
-            return
-
-        if start == end:
-            self._model.reorder(start, row)
-        else:
-            paths = [
-                self._list_widget.item(i).data(_PATH_ROLE)
-                for i in range(self._list_widget.count())
-            ]
-            while self._model.file_count() > 0:
-                self._model.remove_at(0)
-            self._model.add_files(paths)
-
-        self._update_actions()
-        self._update_status()
+        self._refresh_grid(preserve_selection=indices)
 
     def _default_merge_path(self) -> str:
         first_path = Path(self._model.path_at(0))
@@ -467,7 +423,7 @@ class MergeWindow(QMainWindow):
         self._page_counts.clear()
         if self._is_preview_visible():
             self._close_preview()
-        self._refresh_list()
+        self._refresh_grid()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._model.file_count() > 0:
@@ -480,4 +436,5 @@ class MergeWindow(QMainWindow):
             self._preview_loader.close()
             self._preview_loader = None
 
+        self._file_grid.cancel_rendering()
         super().closeEvent(event)
