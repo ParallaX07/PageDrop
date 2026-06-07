@@ -186,7 +186,10 @@ class TabManager(QTabWidget):
             self.add_blank_tab()
 
     def update_tab_title(self, tab: PdfTab) -> None:
-        index = self.indexOf(tab)
+        try:
+            index = self.indexOf(tab)
+        except RuntimeError:
+            return
         if index >= 0:
             self.setTabText(index, tab.tab_title)
 

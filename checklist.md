@@ -6,6 +6,8 @@ cover the read-only single-document workflow. **Phases 11–15** extend the app 
 multi-tab editing, page reorder/delete, inbound PDF drop, and Save As. **Phase 17**
 adds a separate Merge PDFs window for whole-file combine workflows. **Phase 18**
 adds detachable tab windows and cross-window page drag (copy by default, Shift+drop to move).
+**Phase 19** adds a separate Create PDF window for converting raster images into one
+combined PDF or individual PDFs per image.
 
 ---
 
@@ -44,6 +46,9 @@ pagedrop/
         │   ├── tab_manager.py    # QTabWidget wrapper + tab lifecycle   [Phase 11]
         │   ├── pdf_tab.py        # per-tab state container widget        [Phase 11]
         │   ├── merge_window.py   # modeless Merge PDFs window            [Phase 17]
+        │   ├── convert_window.py # modeless Create PDF window            [Phase 19]
+        │   ├── convert_file_grid.py  # image grid for Create PDF       [Phase 19]
+        │   ├── convert_file_card.py  # single image card               [Phase 19]
         │   ├── thumbnail_grid.py # scrollable grid of pages
         │   ├── page_preview.py   # single-page preview + arrow navigation
         │   └── page_card.py      # individual page widget + drag logic
@@ -54,6 +59,8 @@ pagedrop/
         │   ├── pdf_editor.py     # PdfEditModel + PageRef dataclass      [Phase 12]
         │   ├── pdf_merge.py      # PdfMergeModel — ordered file list     [Phase 17]
         │   ├── pdf_writer.py     # write_pdf() + merge_pdf_files()       [Phase 15/17]
+        │   ├── image_to_pdf.py   # images → single or individual PDFs    [Phase 19]
+        │   ├── supported_formats.py  # image extension registry          [Phase 19]
         │   └── page_extractor.py # write selected pages to temp PDFs
         └── utils/
             ├── __init__.py
@@ -1077,110 +1084,252 @@ across separate PDFs feels as natural as dragging within one tab.
 
 ### Checklist — Multi-Window Shell
 
-- [ ] Add `ui/window_manager.py` — registry of open `MainWindow`s:
-  - [ ] `open_new_window(initial_tab: PdfTab | None = None) -> MainWindow`
-  - [ ] `window_for_widget(widget) -> MainWindow | None`
-  - [ ] Track window count; emit `last_window_closing` or call `QApplication.quit()` when appropriate
-- [ ] Update `main.py`:
-  - [ ] Create first window via `WindowManager`
-  - [ ] `QApplication.setQuitOnLastWindowClosed(False)`
-  - [ ] Quit when last editor window closes (document merge-window interaction)
-- [ ] Each `MainWindow` owns its own `TabManager` + `TempManager` (per-window temp cleanup on window close)
-- [ ] Window title / status bar remain **per active tab in that window** (reuse existing sync helpers)
-- [ ] **File → New Window** — spawns empty window with one blank tab
-- [ ] Optional shortcut: **Ctrl+Shift+N** for new window
-- [ ] Closing a window with multiple tabs — existing per-tab dirty prompts apply
-- [ ] Closing one window does not kill other open editor windows
+- [x] Add `ui/window_manager.py` — registry of open `MainWindow`s:
+  - [x] `open_new_window(initial_tab: PdfTab | None = None) -> MainWindow`
+  - [x] `window_for_widget(widget) -> MainWindow | None`
+  - [x] Track window count; emit `last_window_closing` or call `QApplication.quit()` when appropriate
+- [x] Update `main.py`:
+  - [x] Create first window via `WindowManager`
+  - [x] `QApplication.setQuitOnLastWindowClosed(False)`
+  - [x] Quit when last editor window closes (document merge-window interaction)
+- [x] Each `MainWindow` owns its own `TabManager` + `TempManager` (per-window temp cleanup on window close)
+- [x] Window title / status bar remain **per active tab in that window** (reuse existing sync helpers)
+- [x] **File → New Window** — spawns empty window with one blank tab
+- [x] Optional shortcut: **Ctrl+Shift+N** for new window
+- [x] Closing a window with multiple tabs — existing per-tab dirty prompts apply
+- [x] Closing one window does not kill other open editor windows
 
 ### Checklist — Tab Tear-Off (Detach to Window)
 
-- [ ] Extend tab-bar drag beyond `QTabWidget.setMovable(True)` — distinguish **reorder within bar**
+- [x] Extend tab-bar drag beyond `QTabWidget.setMovable(True)` — distinguish **reorder within bar**
   vs **detach threshold** (pixel threshold + drag outside window geometry)
-- [ ] On detach:
-  - [ ] Remove tab from source `TabManager`
-  - [ ] Reparent `PdfTab` into new `MainWindow`'s `TabManager` via `WindowManager.open_new_window(tab)`
-  - [ ] Show and raise the new window
-- [ ] Source window after detach: if zero tabs → spawn blank tab (Phase 11 rule)
-- [ ] Detached tab keeps loader cache, `PdfEditModel`, dirty flag, zoom, scroll, preview stack state
-- [ ] Rebind render workers / grid signals to new parent window (no stale `MainWindow` references)
-- [ ] Optional visual: ghost tab / cursor hint while dragging tab for detach affordance
-- [ ] Context menu fallback: **Move to New Window** on tab right-click (accessibility / precision alternative to drag)
+- [x] On detach:
+  - [x] Remove tab from source `TabManager`
+  - [x] Reparent `PdfTab` into new `MainWindow`'s `TabManager` via `WindowManager.open_new_window(tab)`
+  - [x] Show and raise the new window
+- [x] Source window after detach: if zero tabs → spawn blank tab (Phase 11 rule)
+- [x] Detached tab keeps loader cache, `PdfEditModel`, dirty flag, zoom, scroll, preview stack state
+- [x] Rebind render workers / grid signals to new parent window (no stale `MainWindow` references)
+- [x] Optional visual: ghost tab / cursor hint while dragging tab for detach affordance
+- [x] Context menu fallback: **Move to New Window** on tab right-click (accessibility / precision alternative to drag)
 
 ### Checklist — Open Target Prompt (extend Phase 11)
 
-- [ ] Extend `_ask_open_target()` — third button **Open in new window**
-- [ ] **Open in new window** → `WindowManager.open_new_window()` + load PDF into its first tab
-- [ ] Blank current tab + *current tab* choice — unchanged Phase 11 behavior
-- [ ] **Multi-select Open** — prompt or submenu: *each in new tab* (current default) vs *each in new window*
-- [ ] Phase 18 test gate covers new open targets — do **not** retroactively change Phase 11 checkboxes
+- [x] Extend `_ask_open_target()` — third button **Open in new window**
+- [x] **Open in new window** → `WindowManager.open_new_window()` + load PDF into its first tab
+- [x] Blank current tab + *current tab* choice — unchanged Phase 11 behavior
+- [x] **Multi-select Open** — prompt or submenu: *each in new tab* (current default) vs *each in new window*
+- [x] Phase 18 test gate covers new open targets — do **not** retroactively change Phase 11 checkboxes
 
 ### Checklist — Cross-Window Page Drag (`drag_mime.py` + grid drop routing)
 
-- [ ] Add `application/x-pagedrop-page-transfer` in `core/drag_mime.py`:
-  - [ ] Encode **list of `PageRef`** (`source_path`, `source_index`) — not logical indices
-  - [ ] Optional `transfer_mode: copy|move` in payload (or infer move from Shift on drop)
-  - [ ] Helpers: `encode_page_refs(refs) -> bytes`, `decode_page_refs(data) -> list[PageRef]`
-- [ ] Outbound drag from `PageCard` includes transfer payload whenever drag may leave the source grid
+- [x] Add `application/x-pagedrop-page-transfer` in `core/drag_mime.py`:
+  - [x] Encode **list of `PageRef`** (`source_path`, `source_index`) — not logical indices
+  - [x] Optional `transfer_mode: copy|move` in payload (or infer move from Shift on drop)
+  - [x] Helpers: `encode_page_refs(refs) -> bytes`, `decode_page_refs(data) -> list[PageRef]`
+- [x] Outbound drag from `PageCard` includes transfer payload whenever drag may leave the source grid
   (keep existing `file://` URLs for Explorer compatibility)
-- [ ] `ThumbnailGrid.dropEvent` routing:
-  - [ ] Same grid + `INTERNAL_PAGE_MIME` indices only → **reorder** (Phase 13, unchanged)
-  - [ ] Transfer payload from **different** top-level window → **insert** at drop index via `model.insert_pages()`
-  - [ ] **Default (no Shift):** copy — source model untouched; target dirty
-  - [ ] **Shift held on drop:** move — `remove_pages` on source for dragged logical indices, then insert in target; source dirty
-- [ ] Drop indicator (Phase 13) works when hovering over **another window's** grid
-- [ ] Target blank tab: auto-init model on first cross-window drop (align with Phase 14 blank-tab rule)
-- [ ] Status bar: `"Inserted N pages from other.pdf"` / `"Moved N pages to …"` with source filename
-- [ ] Reject transfer if source paths fail to load (corrupt/missing) — reuse Phase 14 error dialogs
+- [x] `ThumbnailGrid.dropEvent` routing:
+  - [x] Same grid + `INTERNAL_PAGE_MIME` indices only → **reorder** (Phase 13, unchanged)
+  - [x] Transfer payload from **different** top-level window → **insert** at drop index via `model.insert_pages()`
+  - [x] **Default (no Shift):** copy — source model untouched; target dirty
+  - [x] **Shift held on drop:** move — `remove_pages` on source for dragged logical indices, then insert in target; source dirty
+- [x] Drop indicator (Phase 13) works when hovering over **another window's** grid
+- [x] Target blank tab: auto-init model on first cross-window drop (align with Phase 14 blank-tab rule)
+- [x] Status bar: `"Inserted N pages from other.pdf"` / `"Moved N pages to …"` with source filename
+- [x] Reject transfer if source paths fail to load (corrupt/missing) — reuse Phase 14 error dialogs
 
 ### Checklist — Edge Cases & Polish
 
-- [ ] Drag pages from window A → drop on window A (same grid) — still internal reorder, not copy
-- [ ] Shift+drop on same window — Shift ignored; reorder only (no copy/move semantics)
-- [ ] Tear-off while tab in preview mode — preview state survives in new window
-- [ ] Tear-off dirty tab — dirty `*` travels with tab; unsaved prompt on close applies to correct window
-- [ ] Two windows, same PDF path open — allowed; cross-window copy may duplicate refs (Phase 14 precedent)
-- [ ] Merge window open + multiple editor windows — app stays alive until all closed
-- [ ] Explorer outbound drag still works from either window (unchanged `file://` protocol)
+- [x] Drag pages from window A → drop on window A (same grid) — still internal reorder, not copy
+- [x] Shift+drop on same window — Shift ignored; reorder only (no copy/move semantics)
+- [x] Tear-off while tab in preview mode — preview state survives in new window
+- [x] Tear-off dirty tab — dirty `*` travels with tab; unsaved prompt on close applies to correct window
+- [x] Two windows, same PDF path open — allowed; cross-window copy may duplicate refs (Phase 14 precedent)
+- [x] Merge window open + multiple editor windows — app stays alive until all closed
+- [x] Explorer outbound drag still works from either window (unchanged `file://` protocol)
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/ui/test_window_manager.py`:
-  - [ ] `test_open_new_window_spawns_second_main_window`
-  - [ ] `test_last_window_close_quits_app_when_only_one`
-  - [ ] `test_two_windows_independent_tab_state`
-- [ ] Write `tests/ui/test_tab_detach.py`:
-  - [ ] `test_detach_tab_creates_new_window_with_same_pdf`
-  - [ ] `test_detach_last_tab_spawns_blank_in_source_window`
-  - [ ] `test_move_to_new_window_context_menu`
-- [ ] Write `tests/ui/test_open_in_new_window.py`:
-  - [ ] `test_single_file_open_new_window_prompt`
-  - [ ] `test_open_in_new_window_loads_pdf`
-  - [ ] `test_multi_select_open_each_in_new_window`
-- [ ] Write `tests/ui/test_cross_window_page_drag.py`:
-  - [ ] `test_copy_pages_from_window_a_to_b`
-  - [ ] `test_shift_drop_moves_pages_between_windows`
-  - [ ] `test_same_window_drop_still_reorders`
-  - [ ] `test_cross_window_drop_marks_target_dirty`
-  - [ ] `test_move_marks_source_dirty`
-- [ ] Write `tests/smoke/test_phase18_multi_window.py` — open two windows with fixture PDFs,
+- [x] Write `tests/ui/test_window_manager.py`:
+  - [x] `test_open_new_window_spawns_second_main_window`
+  - [x] `test_last_window_close_quits_app_when_only_one`
+  - [x] `test_two_windows_independent_tab_state`
+- [x] Write `tests/ui/test_tab_detach.py`:
+  - [x] `test_detach_tab_creates_new_window_with_same_pdf`
+  - [x] `test_detach_last_tab_spawns_blank_in_source_window`
+  - [x] `test_move_to_new_window_context_menu`
+- [x] Write `tests/ui/test_open_in_new_window.py`:
+  - [x] `test_single_file_open_new_window_prompt`
+  - [x] `test_open_in_new_window_loads_pdf`
+  - [x] `test_multi_select_open_each_in_new_window`
+- [x] Write `tests/ui/test_cross_window_page_drag.py`:
+  - [x] `test_copy_pages_from_window_a_to_b`
+  - [x] `test_shift_drop_moves_pages_between_windows`
+  - [x] `test_same_window_drop_still_reorders`
+  - [x] `test_cross_window_drop_marks_target_dirty`
+  - [x] `test_move_marks_source_dirty`
+- [x] Write `tests/smoke/test_phase18_multi_window.py` — open two windows with fixture PDFs,
   copy pages A→B, Shift+move pages B→A, tear off tab, verify counts/order via `pypdf` after Save As
-- [ ] Run: `uv run pytest tests/ui/test_window_manager.py tests/ui/test_tab_detach.py tests/ui/test_open_in_new_window.py tests/ui/test_cross_window_page_drag.py tests/smoke/test_phase18_multi_window.py -v`
+- [x] Run: `uv run pytest tests/ui/test_window_manager.py tests/ui/test_tab_detach.py tests/ui/test_open_in_new_window.py tests/ui/test_cross_window_page_drag.py tests/smoke/test_phase18_multi_window.py -v`
 
 ### ✅ Test Gate 18
-- [ ] **File → Open** single PDF → **Open in new window** opens a second window with that PDF
-- [ ] **File → New Window** (or **Ctrl+Shift+N**) spawns an empty editor window
-- [ ] **Drag tab off tab bar** → new window; source window retains other tabs / blank tab rule
-- [ ] **Move to New Window** context menu on tab works as tear-off alternative
-- [ ] **Two windows side by side** → drag pages from A to B inserts at drop indicator (copy)
-- [ ] **Shift+drop** between windows → pages removed from source and appear in target
-- [ ] **Explorer outbound drag** still works from either window
-- [ ] **Internal reorder within one window** unchanged
-- [ ] **Dirty tab** tear-off + close → Save As / Discard prompt on correct window
-- [ ] **Close all editor windows** → app exits cleanly
+- [x] **File → Open** single PDF → **Open in new window** opens a second window with that PDF
+- [x] **File → New Window** (or **Ctrl+Shift+N**) spawns an empty editor window
+- [x] **Drag tab off tab bar** → new window; source window retains other tabs / blank tab rule
+- [x] **Move to New Window** context menu on tab works as tear-off alternative
+- [x] **Two windows side by side** → drag pages from A to B inserts at drop indicator (copy)
+- [x] **Shift+drop** between windows → pages removed from source and appear in target
+- [x] **Explorer outbound drag** still works from either window
+- [x] **Internal reorder within one window** unchanged
+- [x] **Dirty tab** tear-off + close → Save As / Discard prompt on correct window
+- [x] **Close all editor windows** → app exits cleanly
 
 > **Out of scope for Phase 18:** cross-tab drag within the **same** window without detach
 > (still reorder-only in one grid), syncing undo across windows, OS-level multi-instance
 > (second app process), auto-tile window layout.
+
+---
+
+## Phase 19 — Create PDF (Images → PDF)
+
+**Goal:** A **separate modeless window** where users add raster images in order, preview
+any image on double-click, then export as **one combined PDF** or **one PDF per image**.
+Stay in the Create PDF window after save — do **not** auto-open the result in the editor.
+
+> **Design decisions (locked in):**
+> - **Menubar entry:** top-level **Create PDF** beside **File** and **Merge PDFs** — not
+>   inside the File menu (same pattern as `menubar.addAction("Merge PDFs")`).
+> - **Inputs: raster images only** — PNG, JPEG, BMP, GIF, TIFF, WebP, etc. (PyMuPDF-openable).
+>   Reject PDFs on add/drop with hint to use **Merge PDFs**.
+> - **No LibreOffice**, no Office formats, no external converters — fully in-process PyMuPDF
+>   (exe-safe; no new PyInstaller deps beyond existing `fitz`).
+> - **Output mode:** **One PDF** (all images → one file, one page per image) or
+>   **Separate PDFs** (each image → `{stem}.pdf` in a chosen folder).
+> - File-order model — mirror Merge grid UX (add, remove, reorder, drop) but every row is
+>   a single image thumbnail (do **not** reuse stacked PDF thumbnails or `PdfMergeModel`).
+> - **Do not auto-open** converted PDF(s) in the editor tab (same as Phase 17 merge).
+> - **Source images unchanged** on disk after convert.
+> - **Allow duplicate paths** in the list (same as Phase 17).
+
+> **Merge vs Create PDF:**
+>
+> | Window | Inputs | Output |
+> |---|---|---|
+> | Merge PDFs | PDF files | Always one combined PDF |
+> | Create PDF | Image files | One combined PDF **or** one PDF per image |
+
+### Checklist — Supported formats (`supported_formats.py`)
+
+- [x] Write `core/supported_formats.py`:
+  - [x] `SUPPORTED_IMAGE_EXTENSIONS` — PNG, JPG, JPEG, BMP, GIF, TIFF, TIF, WebP, …
+  - [x] `is_supported_image(path) -> bool`
+  - [x] `image_dialog_filter() -> str` for `QFileDialog` (“Images (*.png *.jpg …)”)
+- [x] Reject non-image extensions on add/drop — dialog names the file and points to
+  **Merge PDFs** for PDFs
+
+### Checklist — Image-to-PDF writer (`image_to_pdf.py`)
+
+- [x] Write `core/image_to_pdf.py` with `ConvertModel`:
+  - [x] Internal state: `list[str]` of absolute image paths in order
+  - [x] `add_files(paths)` — append; resolve to absolute paths; filter to supported images
+  - [x] `remove_at(index)` / `remove_indices(indices)`
+  - [x] `move_up(indices)` / `move_down(indices)` — mirror `PdfMergeModel` move semantics
+  - [x] `reorder(from_index, to_index)` — for drag-drop sync from grid
+  - [x] Helpers: `file_count()`, `path_at(i)`, `display_name(i)`, `all_paths()`
+- [x] `images_to_single_pdf(paths, output_path) -> None`:
+  - [x] One PyMuPDF page per image in list order
+  - [x] Page size = image dimensions (preserve aspect ratio; no letter-size letterboxing in v1)
+- [x] `images_to_individual_pdfs(paths, output_dir) -> list[str]`:
+  - [x] Each image → `{stem}.pdf` one page
+- [x] Reject empty path list with clear error
+- [x] Corrupt/unreadable image → raise clear error (wrap `fitz` failures)
+- [x] Filename collision in output dir → append `_2`, `_3`, …
+
+### Checklist — Create PDF window UI (`convert_window.py`)
+
+- [x] Write `ui/convert_window.py` — `ConvertWindow(QMainWindow)`:
+  - [x] Window title: **Create PDF**
+  - [x] Central `QStackedWidget`:
+    - [x] Index 0: image grid (`ConvertFileGrid`)
+    - [x] Index 1: full-size image preview (lightweight `QLabel` + scroll or reuse preview pane)
+  - [x] `ConvertFileGrid` / `ConvertFileCard` — reuse merge grid layout patterns (zoom,
+    selection, internal reorder drag) from `MergeFileGrid`:
+    - [x] Each row: single-image thumbnail via `QPixmap` or PyMuPDF render
+    - [x] Row label: filename; tooltip optional dimensions
+  - [x] Toolbar: **Add Images…**, **Remove**, **Move Up**, **Move Down**
+  - [x] **Output mode** control: **One PDF** / **Separate PDFs** (radio or segmented toggle;
+    persist choice in session)
+  - [x] Primary action label changes with mode: **Save PDF…** vs **Choose folder…**
+  - [x] **Create** disabled when list empty or while worker running
+  - [x] Background worker (`QThreadPool`) + busy overlay (mirror `MergeWindow._MergeWorker`)
+  - [x] Status bar: image count, success/failure summary
+  - [x] Drop target accepts image `text/uri-list` only (filter through `is_supported_image`)
+  - [x] Close with non-empty list → optional “Discard file list?” prompt
+
+### Checklist — Image preview (double-click)
+
+- [x] **Double-click** grid row → full-size image in preview stack
+- [x] **Esc** / Back returns to grid; footer hint: “Esc back to grid”
+- [x] Optional toolbar **Back to grid** while preview visible
+
+### Checklist — Main window entry
+
+- [x] In `main_window.py` `_build_menu()` — add top-level **Create PDF** immediately after
+  **Merge PDFs**:
+  ```python
+  create_pdf_action = menubar.addAction("Create PDF")
+  create_pdf_action.triggered.connect(self._open_convert_window)
+  ```
+- [x] Menubar order: **File** | **Merge PDFs** | **Create PDF**
+- [x] Lazy-create one `ConvertWindow`; show/raise on action (modeless)
+- [x] `WindowManager` / app quit: convert window open keeps app alive (same rule as merge window)
+
+### Checklist — Edge cases & polish
+
+- [x] Drop/add PDF → reject: “Create PDF accepts images only. Use Merge PDFs for PDF files.”
+- [x] One corrupt image in batch → fail-fast dialog before write (no partial output without confirmation)
+- [x] Very large images → max dimension / memory guard before render
+- [x] EXIF orientation (JPEG) — verify PyMuPDF/Qt auto-correct; apply rotation if not
+- [x] **Separate PDFs** mode: confirm overwrite if `{stem}.pdf` exists in output folder
+- [x] Transparent PNG → document chosen background (white or transparent) in v1
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Write `tests/core/test_supported_formats.py`:
+  - [x] `test_supported_image_extensions`
+  - [x] `test_rejects_pdf_extension`
+- [x] Write `tests/core/test_image_to_pdf.py`:
+  - [x] `test_images_to_single_pdf_page_order`
+  - [x] `test_individual_pdfs_writes_one_file_per_image`
+  - [x] `test_rejects_empty_list`
+  - [x] `test_collision_suffix_on_duplicate_stem`
+  - [x] `test_corrupt_image_raises`
+- [x] Write `tests/ui/test_convert_window.py`:
+  - [x] `test_add_images_populates_grid`
+  - [x] `test_reject_pdf_on_add`
+  - [x] `test_output_mode_toggle_updates_action_label`
+  - [x] `test_convert_disabled_when_empty`
+  - [x] `test_separate_mode_uses_folder_dialog`
+  - [x] `test_menubar_create_pdf_beside_merge`
+- [x] Write `tests/smoke/test_phase19_create_pdf.py` — fixture PNGs/JPEGs → combine +
+  separate modes; verify page counts with `pypdf`
+- [x] Run: `uv run pytest tests/core/test_supported_formats.py tests/core/test_image_to_pdf.py tests/ui/test_convert_window.py tests/smoke/test_phase19_create_pdf.py -v`
+
+### ✅ Test Gate 19
+- [ ] **Create PDF** (menubar, beside Merge PDFs) opens separate window
+- [ ] **Add Images…** and **drop** PNG/JPEG — thumbnails appear in grid
+- [ ] **Drop PDF** → rejected with helpful message pointing to Merge PDFs
+- [ ] **One PDF** mode — N images → one PDF with N pages in list order
+- [ ] **Separate PDFs** mode — N images → N `{stem}.pdf` files in chosen folder
+- [ ] **Reorder** changes page order in combine mode
+- [ ] **Source images unchanged** on disk
+- [ ] **Double-click** → image preview; Esc back to grid
+- [ ] **Built exe** (Phase 16): Create PDF combine + separate modes work on clean VM
+
+> **Out of scope for Phase 19:** LibreOffice / Office document conversion, PDF files as
+> Create PDF inputs (use Merge PDFs), auto-open result in editor tab, OCR, compression
+> settings, custom page size / margins, converting **from** PDF to other formats.
 
 ---
 
@@ -1232,7 +1381,8 @@ across separate PDFs feels as natural as dragging within one tab.
 - [ ] **Exe opens** without "DLL not found" or similar errors
 - [ ] **Open a PDF** via the exe → thumbnails render
 - [ ] **Drag a page to a folder** → works exactly like the dev version
-- [ ] **Multi-tab, Save As, Merge PDFs, and multi-window drag** work in the built binary
+- [ ] **Multi-tab, Save As, Merge PDFs, Create PDF, and multi-window drag** work in the built binary
+- [ ] **Create PDF** — image combine + separate modes work in exe on a clean VM (no Python)
 - [ ] **Test on a second machine** or VM that has never had Python installed
 
 ---
@@ -1244,14 +1394,16 @@ Work through phases in this order. **Don't move on until the test gate for each 
 Each phase also has a **Test Scripts & Smoke Tests** checklist — write those tests as you go so regressions are caught before the manual test gate.
 
 ```
-Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 17 Merge → 18 Multi-Window → 16 Exe
-     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Combine    Detach/Drag   Binary
+Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 17 Merge → 18 Multi-Window → 19 Create PDF → 16 Exe
+     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Combine    Detach/Drag   Images→PDF  Binary
 ```
 
 Phases 12–15 are sequential (each builds on `PdfEditModel`). Phase 11 should land before
 Phase 13 UI work. Phase 17 is independent of `PdfEditModel` but should land after Phase 15
 (writer patterns). Phase 18 builds on Phases 11–14 (tabs, model, internal drag, inbound
-drop) and should land after Phase 17 and before Phase 16 (exe packaging). Phases 6–7 were
+drop) and should land after Phase 17 and before Phase 19 (Create PDF). Phase 19 is
+independent of `PdfEditModel` but should land after Phase 17 (writer/grid patterns) and
+before Phase 16 (exe packaging). Phases 6–7 were
 the hardest in the original build; Phase 13–14 (dual drag types + drop indicator) and
 Phase 18 (cross-window mime + tab tear-off) will need similar care.
 
@@ -1283,6 +1435,10 @@ Phase 18 (cross-window mime + tab tear-off) will need similar care.
 | Tab tear-off without rebinding workers/signals | Detach checklist: reparent `PdfTab`, rebind grid signals and render worker to new `MainWindow` |
 | `quitOnLastWindowClosed` kills app while second window open | `setQuitOnLastWindowClosed(False)`; quit explicitly when last editor window closes |
 | Cross-window drop treated as same-window reorder | Route by source vs target top-level window; transfer mime → `insert_pages`, internal mime → reorder |
+| Merge vs Create PDF conflated | Merge = PDF-only, one output; Create PDF = images-only, dual output modes — separate models and windows |
+| PDF dropped on Create PDF grid | Filter add/drop through `is_supported_image()`; reject PDFs with hint to use Merge PDFs |
+| Huge PNG exhausts memory on convert | Max dimension guard before PyMuPDF embed; worker on thread pool, not main thread |
+| JPEG appears rotated in output PDF | Verify EXIF orientation; rotate pixmap/page before embed if PyMuPDF does not auto-correct |
 
 ---
 

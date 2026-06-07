@@ -26,6 +26,7 @@ from pagedrop.core.pdf_loader import (
 )
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.merge_window import MergeWindow
+from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tab_manager import TabManager
@@ -67,6 +68,7 @@ class MainWindow(QMainWindow):
         self._initial_tab = initial_tab
         self._temp_manager = TempManager()
         self._merge_window: MergeWindow | None = None
+        self._convert_window: ConvertWindow | None = None
 
         self.setWindowTitle(self.APP_TITLE)
         self.setMinimumSize(720, 480)
@@ -140,6 +142,9 @@ class MainWindow(QMainWindow):
 
         merge_action = menubar.addAction("Merge PDFs")
         merge_action.triggered.connect(self._open_merge_window)
+
+        create_pdf_action = menubar.addAction("Create PDF")
+        create_pdf_action.triggered.connect(self._open_convert_window)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
@@ -796,6 +801,13 @@ class MainWindow(QMainWindow):
         self._merge_window.show()
         self._merge_window.raise_()
         self._merge_window.activateWindow()
+
+    def _open_convert_window(self) -> None:
+        if self._convert_window is None:
+            self._convert_window = ConvertWindow(parent=self)
+        self._convert_window.show()
+        self._convert_window.raise_()
+        self._convert_window.activateWindow()
 
     def _open_pdf(self) -> None:
         start_dir = last_directory()
