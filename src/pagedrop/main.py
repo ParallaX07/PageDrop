@@ -1,13 +1,13 @@
 import sys
 
-from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtWidgets import QApplication
+
+from pagedrop.ui.main_window import MainWindow
 
 
 def main():
     app = QApplication(sys.argv)
-    win = QMainWindow()
-    win.setWindowTitle("PageDrop")
-    win.resize(900, 650)
+    win = MainWindow()
     win.show()
     sys.exit(app.exec())
 
