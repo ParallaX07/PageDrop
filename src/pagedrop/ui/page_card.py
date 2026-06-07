@@ -23,8 +23,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from pagedrop.core.page_extractor import extract_pages_to_files
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.page_extractor import extract_page_refs_to_files
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.theme import (
     CARD_PADDING,
@@ -51,7 +51,7 @@ class PageCard(QFrame):
         self._hovered = False
         self._keyboard_focused = False
         self._drag_start_pos: QPoint | None = None
-        self._loader: PdfLoader | None = None
+        self._model: PdfEditModel | None = None
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
 
@@ -90,11 +90,11 @@ class PageCard(QFrame):
 
     def set_drag_context(
         self,
-        loader: PdfLoader,
+        model: PdfEditModel,
         selection_manager: SelectionManager,
         temp_manager: TempManager,
     ) -> None:
-        self._loader = loader
+        self._model = model
         self._selection_manager = selection_manager
         self._temp_manager = temp_manager
 
@@ -145,11 +145,11 @@ class PageCard(QFrame):
             super().mouseMoveEvent(event)
             return
         if (
-            self._loader is None
+            self._model is None
             or self._selection_manager is None
             or self._temp_manager is None
         ):
-            if self._loader is None:
+            if self._model is None:
                 window = self.window()
                 if hasattr(window, "statusBar"):
                     window.statusBar().showMessage("Open a PDF first")
@@ -204,21 +204,21 @@ class PageCard(QFrame):
         self._refresh_thumbnail_display(fast=fast)
 
     def _start_drag(self) -> None:
-        assert self._loader is not None
+        assert self._model is not None
         assert self._selection_manager is not None
         assert self._temp_manager is not None
 
         if self.page_index not in self._selection_manager.selection:
             self._selection_manager.select_single(self.page_index)
 
-        page_indices = sorted(self._selection_manager.selection)
-        base_name = Path(self._loader.path).stem
+        logical_indices = sorted(self._selection_manager.selection)
+        refs = [self._model.page_at(i) for i in logical_indices]
+        base_name = Path(self._model.original_path).stem
         output_dir = self._temp_manager.create_drag_dir()
 
         try:
-            temp_paths = extract_pages_to_files(
-                self._loader.path,
-                page_indices,
+            temp_paths = extract_page_refs_to_files(
+                refs,
                 output_dir,
                 base_name,
             )
@@ -244,7 +244,7 @@ class PageCard(QFrame):
         drag = QDrag(self)
         drag.setMimeData(mime)
 
-        pixmap = self._build_drag_pixmap(len(page_indices))
+        pixmap = self._build_drag_pixmap(len(logical_indices))
         if pixmap is not None:
             drag.setPixmap(pixmap)
             drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))

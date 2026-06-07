@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 
 import fitz
 
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader, render_page_png
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.theme import (
@@ -26,21 +27,23 @@ PREVIEW_RENDER_DEBOUNCE_MS = 150
 
 class PreviewRenderWorker(QRunnable):
     class Signals(QObject):
-        finished = pyqtSignal(int, int, int, bytes)  # generation, page, width, png
+        finished = pyqtSignal(int, int, int, bytes)  # generation, logical_page, width, png
         error = pyqtSignal(int, str)
 
     def __init__(
         self,
-        path: str,
-        page_index: int,
+        source_path: str,
+        source_index: int,
+        logical_page: int,
         width_px: int,
         generation: int,
         is_cancelled: Callable[[int], bool],
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
-        self._path = path
-        self._page_index = page_index
+        self._source_path = source_path
+        self._source_index = source_index
+        self._logical_page = logical_page
         self._width_px = width_px
         self._generation = generation
         self._is_cancelled = is_cancelled
@@ -51,15 +54,15 @@ class PreviewRenderWorker(QRunnable):
         try:
             if self._is_cancelled(self._generation):
                 return
-            doc = fitz.open(self._path)
+            doc = fitz.open(self._source_path)
             if self._is_cancelled(self._generation):
                 return
-            png = render_page_png(doc, self._page_index, width_px=self._width_px)
+            png = render_page_png(doc, self._source_index, width_px=self._width_px)
             if self._is_cancelled(self._generation):
                 return
             self.signals.finished.emit(
                 self._generation,
-                self._page_index,
+                self._logical_page,
                 self._width_px,
                 png,
             )
@@ -103,7 +106,8 @@ class PagePreviewWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._loader: PdfLoader | None = None
+        self._model: PdfEditModel | None = None
+        self._get_loader: Callable[[str], PdfLoader] | None = None
         self._current_page = 0
         self._render_width_px = 1200
         self._manual_zoom = False
@@ -161,27 +165,48 @@ class PagePreviewWidget(QWidget):
     def render_width_px(self) -> int:
         return self._render_width_px
 
-    def set_loader(self, loader: PdfLoader | None) -> None:
+    def set_model(
+        self,
+        model: PdfEditModel | None,
+        get_loader: Callable[[str], PdfLoader] | None,
+    ) -> None:
         self._cancel_render()
-        self._loader = loader
-        if loader is None:
+        self._model = model
+        self._get_loader = get_loader
+        if model is None:
             self._current_page = 0
             self._manual_zoom = False
             self._image_label.clear()
+
+    def set_loader(self, loader: PdfLoader | None) -> None:
+        """Convenience wrapper for tests — builds a single-source model."""
+        if loader is None:
+            self.set_model(None, None)
+            return
+        model = PdfEditModel(loader.path, loader.page_count)
+        cache: dict[str, PdfLoader] = {loader.path: loader}
+
+        def get_loader(path: str) -> PdfLoader:
+            if path not in cache:
+                cache[path] = PdfLoader(path)
+            return cache[path]
+
+        self.set_model(model, get_loader)
 
     def reset_zoom_to_fit(self) -> None:
         self._manual_zoom = False
         self._update_render_width()
 
     def show_page(self, page_index: int) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
-        self._current_page = max(0, min(page_index, self._loader.page_count - 1))
+        last = max(0, self._model.logical_count() - 1)
+        self._current_page = max(0, min(page_index, last))
         self._update_render_width()
         self._schedule_render()
 
     def zoom_by(self, step: int) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
         new_width = self._render_width_px + step
         new_width = max(
@@ -196,7 +221,7 @@ class PagePreviewWidget(QWidget):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        if self._loader is not None:
+        if self._model is not None:
             self._update_render_width()
             self._schedule_render()
         self.setFocus()
@@ -204,7 +229,7 @@ class PagePreviewWidget(QWidget):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._overlay._sync_geometry()
-        if self.isVisible() and self._loader is not None:
+        if self.isVisible() and self._model is not None:
             previous_width = self._render_width_px
             self._update_render_width()
             if self._render_width_px != previous_width:
@@ -236,9 +261,10 @@ class PagePreviewWidget(QWidget):
             self._render_width_px = self._fit_render_width()
 
     def _go_to_page(self, page_index: int) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
-        clamped = max(0, min(page_index, self._loader.page_count - 1))
+        last = max(0, self._model.logical_count() - 1)
+        clamped = max(0, min(page_index, last))
         if clamped == self._current_page:
             return
         self._current_page = clamped
@@ -246,19 +272,21 @@ class PagePreviewWidget(QWidget):
         self.page_changed.emit(self._current_page)
 
     def _schedule_render(self) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
         self._overlay.show_message("Rendering page…")
         self.busy_changed.emit(True, "Rendering page…")
         self._render_timer.start()
 
     def _start_render(self) -> None:
-        if self._loader is None:
+        if self._model is None or self._get_loader is None:
             return
+        ref = self._model.page_at(self._current_page)
         self._generation += 1
         generation = self._generation
         worker = PreviewRenderWorker(
-            self._loader.path,
+            ref.source_path,
+            ref.source_index,
             self._current_page,
             self._render_width_px,
             generation,
@@ -280,13 +308,13 @@ class PagePreviewWidget(QWidget):
     def _on_render_finished(
         self,
         generation: int,
-        page_index: int,
+        logical_page: int,
         width_px: int,
         png: bytes,
     ) -> None:
         if self._is_cancelled(generation):
             return
-        if page_index != self._current_page or width_px != self._render_width_px:
+        if logical_page != self._current_page or width_px != self._render_width_px:
             return
         pixmap = QPixmap()
         pixmap.loadFromData(png, "PNG")

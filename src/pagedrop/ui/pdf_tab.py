@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -25,7 +27,8 @@ class PdfTab(QWidget):
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager
-        self._loader: PdfLoader | None = None
+        self._edit_model: PdfEditModel | None = None
+        self._loader_cache: dict[str, PdfLoader] = {}
         self._pdf_path: str | None = None
         self._dirty = False
 
@@ -62,16 +65,28 @@ class PdfTab(QWidget):
         return self._content_stack
 
     @property
+    def edit_model(self) -> PdfEditModel | None:
+        return self._edit_model
+
+    @property
     def loader(self) -> PdfLoader | None:
-        return self._loader
+        if self._edit_model is None:
+            return None
+        return self.get_loader(self._edit_model.original_path)
 
     @property
     def pdf_path(self) -> str | None:
         return self._pdf_path
 
     @property
+    def original_path(self) -> str | None:
+        if self._edit_model is None:
+            return None
+        return self._edit_model.original_path
+
+    @property
     def is_blank(self) -> bool:
-        return self._loader is None
+        return self._edit_model is None
 
     @property
     def is_dirty(self) -> bool:
@@ -79,9 +94,10 @@ class PdfTab(QWidget):
 
     @property
     def tab_title(self) -> str:
-        if self._pdf_path is None:
+        if self._edit_model is None:
             return "New Tab"
-        filename = Path(self._pdf_path).name
+        display_path = self._edit_model.save_path or self._edit_model.original_path
+        filename = Path(display_path).name
         return f"{filename}*" if self._dirty else filename
 
     @property
@@ -95,7 +111,7 @@ class PdfTab(QWidget):
         return self._content_stack.currentWidget() is self._preview_widget
 
     def show_preview_at(self, page_index: int) -> None:
-        if self._loader is None:
+        if self._edit_model is None:
             return
         self._preview_widget.reset_zoom_to_fit()
         self._preview_widget.show_page(page_index)
@@ -106,35 +122,54 @@ class PdfTab(QWidget):
             return
         self._content_stack.setCurrentWidget(self._thumbnail_grid)
 
+    def get_loader(self, path: str) -> PdfLoader:
+        if path not in self._loader_cache:
+            self._loader_cache[path] = PdfLoader(path)
+        return self._loader_cache[path]
+
     def load_pdf(self, path: str) -> PdfLoader:
         """Open *path* in this tab. Raises PdfLoadError subclasses on failure."""
         self.close_preview()
         self._thumbnail_grid.cancel_rendering()
-        if self._loader is not None:
+        if self._edit_model is not None:
             self._thumbnail_grid.clear()
-            self._loader.close()
-            self._loader = None
+            self._close_loader_cache()
+            self._edit_model = None
             self._pdf_path = None
 
         loader = PdfLoader(path)
-        self._loader = loader
+        self._loader_cache[path] = loader
+        self._edit_model = PdfEditModel(path, loader.page_count)
         self._pdf_path = path
-        self._preview_widget.set_loader(loader)
-        self._thumbnail_grid.load_pdf(loader)
+        self._sync_dirty_from_model()
+
+        get_loader: Callable[[str], PdfLoader] = self.get_loader
+        self._preview_widget.set_model(self._edit_model, get_loader)
+        self._thumbnail_grid.load_model(self._edit_model, get_loader)
         self.pdf_loaded.emit()
         return loader
 
     def close_loader(self) -> None:
-        """Cancel rendering, release the loader, and reset to a blank tab."""
+        """Cancel rendering, release loaders, and reset to a blank tab."""
         self.close_preview()
         self._thumbnail_grid.cancel_rendering()
         self._thumbnail_grid.clear()
-        if self._loader is not None:
-            self._loader.close()
-            self._loader = None
+        self._close_loader_cache()
+        self._edit_model = None
         self._pdf_path = None
         if self._dirty:
             self._dirty = False
             self.dirty_changed.emit(False)
-        self._preview_widget.set_loader(None)
+        self._preview_widget.set_model(None, None)
         self.pdf_closed.emit()
+
+    def _close_loader_cache(self) -> None:
+        for loader in self._loader_cache.values():
+            loader.close()
+        self._loader_cache.clear()
+
+    def _sync_dirty_from_model(self) -> None:
+        dirty = self._edit_model.is_dirty() if self._edit_model is not None else False
+        if dirty != self._dirty:
+            self._dirty = dirty
+            self.dirty_changed.emit(dirty)

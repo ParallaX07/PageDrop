@@ -7,6 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
 
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
@@ -19,15 +20,16 @@ def _make_card(
     page_index: int = 0,
 ) -> tuple[PageCard, PdfLoader, SelectionManager, TempManager]:
     loader = PdfLoader(str(pdf_path))
+    model = PdfEditModel(loader.path, loader.page_count)
     selection_manager = SelectionManager()
-    selection_manager.set_page_count(loader.page_count)
+    selection_manager.set_page_count(model.logical_count())
     temp_manager = TempManager()
 
     card = PageCard(page_index)
     qtbot.addWidget(card)
     card.resize(200, 200)
     card.show()
-    card.set_drag_context(loader, selection_manager, temp_manager)
+    card.set_drag_context(model, selection_manager, temp_manager)
     return card, loader, selection_manager, temp_manager
 
 

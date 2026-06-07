@@ -699,7 +699,7 @@ reorder, delete, insert, and save.
 
 ### Checklist — Core Model
 
-- [ ] Write `core/pdf_editor.py`:
+- [x] Write `core/pdf_editor.py`:
   ```python
   @dataclass(frozen=True)
   class PageRef:
@@ -718,43 +718,43 @@ reorder, delete, insert, and save.
       def is_dirty(self) -> bool: ...
       def mark_saved(self, save_path: str) -> None: ...
   ```
-- [ ] Each `PdfTab` owns a `PdfEditModel`; initial model = all pages from opened file in order
-- [ ] Track `original_path` separately from any future Save As path
+- [x] Each `PdfTab` owns a `PdfEditModel`; initial model = all pages from opened file in order
+- [x] Track `original_path` separately from any future Save As path
 
 ### Checklist — Grid & Rendering Refactor
 
-- [ ] Refactor `ThumbnailGrid.load_pdf()` → `load_model(model, loader_cache)`:
-  - [ ] Cards reflect **logical** order; labels show `1…N` after edits
-  - [ ] `SelectionManager` indices are **logical** positions (re-document semantics)
-- [ ] Update `ThumbnailWorker` to render via `PageRef` (path + source_index), not single-path
-- [ ] Update `PagePreviewWidget` to resolve logical index → `PageRef` → render
-- [ ] Loader cache per tab: keyed by `source_path`, avoid duplicate `fitz.open()` handles
+- [x] Refactor `ThumbnailGrid.load_pdf()` → `load_model(model, loader_cache)`:
+  - [x] Cards reflect **logical** order; labels show `1…N` after edits
+  - [x] `SelectionManager` indices are **logical** positions (re-document semantics)
+- [x] Update `ThumbnailWorker` to render via `PageRef` (path + source_index), not single-path
+- [x] Update `PagePreviewWidget` to resolve logical index → `PageRef` → render
+- [x] Loader cache per tab: keyed by `source_path`, avoid duplicate `fitz.open()` handles
 
 ### Checklist — Outbound Drag Update
 
-- [ ] Update `page_extractor.py` (or add helper) to extract from `PageRef` list
-- [ ] Update `PageCard._start_drag()` to resolve selection through `PdfEditModel` so outbound
+- [x] Update `page_extractor.py` (or add helper) to extract from `PageRef` list
+- [x] Update `PageCard._start_drag()` to resolve selection through `PdfEditModel` so outbound
   drag exports the **edited logical order**, not raw source indices
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/core/test_pdf_editor.py`:
-  - [ ] `test_initial_model_matches_source_page_count`
-  - [ ] `test_insert_pages_at_index`
-  - [ ] `test_remove_pages`
-  - [ ] `test_move_pages_changes_order`
-  - [ ] `test_move_up_down`
-  - [ ] `test_is_dirty_after_edit`
-  - [ ] `test_mark_saved_clears_dirty`
-- [ ] Write `tests/smoke/test_phase12_edit_model.py` — open 5-page fixture, verify model,
+- [x] Write `tests/core/test_pdf_editor.py`:
+  - [x] `test_initial_model_matches_source_page_count`
+  - [x] `test_insert_pages_at_index`
+  - [x] `test_remove_pages`
+  - [x] `test_move_pages_changes_order`
+  - [x] `test_move_up_down`
+  - [x] `test_is_dirty_after_edit`
+  - [x] `test_mark_saved_clears_dirty`
+- [x] Write `tests/smoke/test_phase12_edit_model.py` — open 5-page fixture, verify model,
   thumbnails, and preview stay in sync
-- [ ] Run: `uv run pytest tests/core/test_pdf_editor.py tests/smoke/test_phase12_edit_model.py -v`
+- [x] Run: `uv run pytest tests/core/test_pdf_editor.py tests/smoke/test_phase12_edit_model.py -v`
 
 ### ✅ Test Gate 12
-- [ ] **Open 5-page PDF** → model count = 5, labels `1…5`
-- [ ] **Preview page 3** → shows correct source page after any model load
-- [ ] **Thumbnails** render from correct `PageRef` sources
-- [ ] **Outbound drag** still works and reflects logical selection
+- [x] **Open 5-page PDF** → model count = 5, labels `1…5`
+- [x] **Preview page 3** → shows correct source page after any model load
+- [x] **Thumbnails** render from correct `PageRef` sources
+- [x] **Outbound drag** still works and reflects logical selection
 
 ---
 
