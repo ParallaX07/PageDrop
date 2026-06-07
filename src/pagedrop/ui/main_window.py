@@ -20,6 +20,7 @@ from pagedrop.core.pdf_loader import (
     PdfLoader,
 )
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+from pagedrop.utils.temp_manager import TempManager
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +30,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.current_pdf_path: str | None = None
         self._loader: PdfLoader | None = None
+        self._temp_manager = TempManager()
 
         self.setWindowTitle(self.APP_TITLE)
         self.resize(900, 650)
@@ -74,7 +76,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._filename_label)
 
     def _build_central_widget(self) -> None:
-        self._thumbnail_grid = ThumbnailGrid()
+        self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
         self._thumbnail_grid.rendering_started.connect(self._on_rendering_started)
         self._thumbnail_grid.rendering_progress.connect(self._on_rendering_progress)
         self._thumbnail_grid.rendering_finished.connect(self._on_rendering_finished)
@@ -209,4 +211,5 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.clear()
         if self._loader is not None:
             self._loader.close()
+        self._temp_manager.cleanup()
         super().closeEvent(event)
