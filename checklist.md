@@ -314,50 +314,50 @@ class ThumbnailWorker(QRunnable):
 
 ### Checklist
 
-- [ ] Add a `SelectionManager` class (or manage in `ThumbnailGrid`):
-  - [ ] Stores `set[int]` of selected page indices
-  - [ ] `select_single(idx)` — clears others, selects one
-  - [ ] `toggle(idx)` — adds or removes from selection
-  - [ ] `select_range(start, end)` — selects a contiguous block
-  - [ ] `select_all()` / `clear()`
-  - [ ] Emits a `selection_changed` signal with the current selection set
-- [ ] Override `mousePressEvent` in `PageCard`:
-  - [ ] No modifier → `select_single`
-  - [ ] `Qt.KeyboardModifier.ControlModifier` → `toggle`
-  - [ ] `Qt.KeyboardModifier.ShiftModifier` → `select_range` from last clicked
-- [ ] Track `last_clicked_index` in the grid for shift-click anchor
-- [ ] Connect `selection_changed` → update every `PageCard.set_selected()`
-- [ ] Connect `selection_changed` → update status bar:
+- [x] Add a `SelectionManager` class (or manage in `ThumbnailGrid`):
+  - [x] Stores `set[int]` of selected page indices
+  - [x] `select_single(idx)` — clears others, selects one
+  - [x] `toggle(idx)` — adds or removes from selection
+  - [x] `select_range(start, end)` — selects a contiguous block
+  - [x] `select_all()` / `clear()`
+  - [x] Emits a `selection_changed` signal with the current selection set
+- [x] Override `mousePressEvent` in `PageCard`:
+  - [x] No modifier → `select_single`
+  - [x] `Qt.KeyboardModifier.ControlModifier` → `toggle`
+  - [x] `Qt.KeyboardModifier.ShiftModifier` → `select_range` from last clicked
+- [x] Track `last_clicked_index` in the grid for shift-click anchor
+- [x] Connect `selection_changed` → update every `PageCard.set_selected()`
+- [x] Connect `selection_changed` → update status bar:
   `"3 pages selected"` / `"No selection"`
-- [ ] Add keyboard shortcuts in `MainWindow`:
-  - [ ] `Ctrl+A` → `selection_manager.select_all()`
-  - [ ] `Escape` → `selection_manager.clear()`
+- [x] Add keyboard shortcuts in `MainWindow`:
+  - [x] `Ctrl+A` → `selection_manager.select_all()`
+  - [x] `Escape` → `selection_manager.clear()`
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/core/test_selection_manager.py` (pure logic, no Qt required if extracted):
-  - [ ] `test_select_single_clears_others`
-  - [ ] `test_toggle_adds_and_removes`
-  - [ ] `test_select_range_inclusive`
-  - [ ] `test_select_all_and_clear`
-  - [ ] `test_selection_changed_signal` — mock or spy emits correct set after each operation
-- [ ] Write `tests/ui/test_selection_interactions.py` with `pytest-qt`:
-  - [ ] Simulate click, Ctrl+click, Shift+click on cards; assert `set_selected(True/False)` state
-  - [ ] `Ctrl+A` shortcut → all cards selected
-  - [ ] `Escape` → none selected
-  - [ ] Status bar text matches selection count after each action
-- [ ] Write `tests/smoke/test_phase5_selection.py` — end-to-end on a 10-page fixture: run the full click / modifier / keyboard matrix from Test Gate 5 programmatically
-- [ ] Run: `uv run pytest tests/core/test_selection_manager.py tests/ui/test_selection_interactions.py tests/smoke/test_phase5_selection.py -v`
+- [x] Write `tests/core/test_selection_manager.py` (pure logic, no Qt required if extracted):
+  - [x] `test_select_single_clears_others`
+  - [x] `test_toggle_adds_and_removes`
+  - [x] `test_select_range_inclusive`
+  - [x] `test_select_all_and_clear`
+  - [x] `test_selection_changed_signal` — mock or spy emits correct set after each operation
+- [x] Write `tests/ui/test_selection_interactions.py` with `pytest-qt`:
+  - [x] Simulate click, Ctrl+click, Shift+click on cards; assert `set_selected(True/False)` state
+  - [x] `Ctrl+A` shortcut → all cards selected
+  - [x] `Escape` → none selected
+  - [x] Status bar text matches selection count after each action
+- [x] Write `tests/smoke/test_phase5_selection.py` — end-to-end on a 10-page fixture: run the full click / modifier / keyboard matrix from Test Gate 5 programmatically
+- [x] Run: `uv run pytest tests/core/test_selection_manager.py tests/ui/test_selection_interactions.py tests/smoke/test_phase5_selection.py -v`
 
 ### ✅ Test Gate 5
-- [ ] **Click page 1** → only page 1 highlighted
-- [ ] **Click page 3** → only page 3 highlighted (page 1 deselected)
-- [ ] **Ctrl+click pages 1, 3, 5** → all three highlighted, nothing else
-- [ ] **Click page 2, Shift+click page 6** → pages 2–6 all highlighted
-- [ ] **Ctrl+A** → all pages highlighted
-- [ ] **Escape** → all deselected
-- [ ] **Status bar** updates correctly in every scenario above
-- [ ] **No visual glitch** — deselected cards go back to their normal grey border
+- [x] **Click page 1** → only page 1 highlighted
+- [x] **Click page 3** → only page 3 highlighted (page 1 deselected)
+- [x] **Ctrl+click pages 1, 3, 5** → all three highlighted, nothing else
+- [x] **Click page 2, Shift+click page 6** → pages 2–6 all highlighted
+- [x] **Ctrl+A** → all pages highlighted
+- [x] **Escape** → all deselected
+- [x] **Status bar** updates correctly in every scenario above
+- [x] **No visual glitch** — deselected cards go back to their normal grey border
 
 ---
 
