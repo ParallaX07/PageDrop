@@ -165,6 +165,9 @@ class PagePreviewWidget(QWidget):
     def render_width_px(self) -> int:
         return self._render_width_px
 
+    def set_footer_hint(self, text: str) -> None:
+        self._hint_label.setText(text)
+
     def set_model(
         self,
         model: PdfEditModel | None,
