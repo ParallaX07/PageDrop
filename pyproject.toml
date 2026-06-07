@@ -1,0 +1,20 @@
+[project]
+name = "pagedrop"
+version = "0.1.0"
+description = "Drag PDF pages into folders from a thumbnail grid"
+requires-python = ">=3.11"
+dependencies = [
+    "PyQt6>=6.6.0",
+    "PyMuPDF>=1.24.0",
+    "pypdf>=4.2.0",
+]
+
+[project.scripts]
+pagedrop = "pagedrop.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pagedrop"]
