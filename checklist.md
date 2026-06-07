@@ -794,24 +794,24 @@ reorder, delete, insert, and save.
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/ui/test_page_reorder.py`:
-  - [ ] `test_delete_selected_pages`
-  - [ ] `test_delete_all_pages_shows_empty_state`
-  - [ ] `test_move_up_down_buttons`
-  - [ ] `test_labels_renumber_after_delete`
-- [ ] Write `tests/ui/test_internal_drag_reorder.py`:
-  - [ ] `test_drop_indicator_index`
-  - [ ] `test_multi_select_internal_move`
-  - [ ] `test_outbound_drag_still_uses_file_urls`
-- [ ] Update `tests/ui/test_drag_drop.py` for post-model outbound drag
-- [ ] Run: `uv run pytest tests/ui/test_page_reorder.py tests/ui/test_internal_drag_reorder.py -v`
+- [x] Write `tests/ui/test_page_reorder.py`:
+  - [x] `test_delete_selected_pages`
+  - [x] `test_delete_all_pages_shows_empty_state`
+  - [x] `test_move_up_down_buttons`
+  - [x] `test_labels_renumber_after_delete`
+- [x] Write `tests/ui/test_internal_drag_reorder.py`:
+  - [x] `test_drop_indicator_index`
+  - [x] `test_multi_select_internal_move`
+  - [x] `test_outbound_drag_still_uses_file_urls`
+- [x] Update `tests/ui/test_drag_drop.py` for post-model outbound drag
+- [x] Run: `uv run pytest tests/ui/test_page_reorder.py tests/ui/test_internal_drag_reorder.py -v`
 
 ### ✅ Test Gate 13
-- [ ] **Drag pages 3 and 5** to position 1 → order and labels correct
-- [ ] **Move selection down** with arrow buttons → order updates
-- [ ] **Delete page 2** → labels renumber, tab marked dirty
-- [ ] **Outbound drag** extracts pages in edited order
-- [ ] **Internal vs outbound drag** do not conflict
+- [x] **Drag pages 3 and 5** to position 1 → order and labels correct
+- [x] **Move selection down** with arrow buttons → order updates
+- [x] **Delete page 2** → labels renumber, tab marked dirty
+- [x] **Outbound drag** extracts pages in edited order
+- [x] **Internal vs outbound drag** do not conflict
 
 ---
 
