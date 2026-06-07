@@ -767,12 +767,12 @@ reorder, delete, insert, and save.
 
 ### Checklist — Delete Pages
 
-- [ ] Toolbar button: **Delete page(s)** (enabled when selection non-empty)
-- [ ] Context menu: **Delete selected pages**
-- [ ] `Delete` key shortcut
-- [ ] Call `PdfEditModel.remove_pages()`; refresh grid; mark tab dirty
-- [ ] Deleting all pages → empty grid message; tab stays open, marked dirty
-- [ ] No-op when nothing selected
+- [x] Toolbar button: **Delete page(s)** (enabled when selection non-empty)
+- [x] Context menu: **Delete selected pages**
+- [x] `Delete` key shortcut
+- [x] Call `PdfEditModel.remove_pages()`; refresh grid; mark tab dirty
+- [x] Deleting all pages → empty grid message; tab stays open, marked dirty
+- [x] No-op when nothing selected
 
 ### Checklist — Arrow Reorder
 
