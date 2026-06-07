@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/pagedrop/assets/logo.png" alt="PageDrop logo — documents dropping into a folder" width="128">
+</p>
+
 # PageDrop
 
 A desktop PDF utility for Windows, macOS, and Linux. Open a PDF, browse pages as thumbnails, and drag individual pages straight into your file manager — each drop becomes a separate PDF file. Edit documents in tabs, merge whole files, or convert images to PDF, all without leaving the app.
