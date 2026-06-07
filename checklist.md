@@ -523,17 +523,17 @@ class ThumbnailWorker(QRunnable):
 
 ### Checklist
 
-- [ ] **No PDF loaded** when drag starts → show status bar message
+- [x] **No PDF loaded** when drag starts → show status bar message
   `"Open a PDF first"`, cancel drag
-- [ ] **Corrupt PDF** on open → `QMessageBox.critical()` with filename and error
-- [ ] **Empty PDF** (0 pages) → show message, don't render grid
-- [ ] **Disk full** when extracting temp files → catch `OSError`, show dialog
-- [ ] **Very large pages** (e.g. engineering drawings at A0) → cap render DPI at
+- [x] **Corrupt PDF** on open → `QMessageBox.critical()` with filename and error
+- [x] **Empty PDF** (0 pages) → show message, don't render grid
+- [x] **Disk full** when extracting temp files → catch `OSError`, show dialog
+- [x] **Very large pages** (e.g. engineering drawings at A0) → cap render DPI at
   150, or cap `width_px` to a safe value
-- [ ] **PDF with only 1 page** → selection + drag still works correctly
-- [ ] **Rapid re-opens** (open PDF while one is still loading) → cancel previous
+- [x] **PDF with only 1 page** → selection + drag still works correctly
+- [x] **Rapid re-opens** (open PDF while one is still loading) → cancel previous
   worker thread before starting new one
-- [ ] Wrap `QRunnable.run()` body in `try/except` — surface errors to main thread
+- [x] Wrap `QRunnable.run()` body in `try/except` — surface errors to main thread
   via a signal, never let thread crash silently
 
 ### Checklist — Test Scripts & Smoke Tests
@@ -551,11 +551,11 @@ class ThumbnailWorker(QRunnable):
 - [ ] Run: `uv run pytest tests/core/test_pdf_loader_errors.py tests/ui/test_error_handling.py tests/smoke/test_phase8_edge_cases.py -v`
 
 ### ✅ Test Gate 8
-- [ ] **Rename a PDF to `.pdf` but put garbage inside** → open it, see a clean
+- [x] **Rename a PDF to `.pdf` but put garbage inside** → open it, see a clean
   error dialog
-- [ ] **Fill up a RAM disk / temp partition** (or mock the OSError) → verify
+- [x] **Fill up a RAM disk / temp partition** (or mock the OSError) → verify
   graceful failure
-- [ ] **Open → cancel → open again → cancel** → app stays stable after multiple
+- [x] **Open → cancel → open again → cancel** → app stays stable after multiple
   dialog cancellations
 
 ---

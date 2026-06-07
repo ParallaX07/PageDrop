@@ -1,5 +1,6 @@
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
+    PdfEmptyError,
     PdfLoadError,
     PdfLoader,
     PdfNotFoundError,
@@ -9,6 +10,7 @@ from pagedrop.core.pdf_loader import (
 
 __all__ = [
     "PdfCorruptError",
+    "PdfEmptyError",
     "PdfLoadError",
     "PdfLoader",
     "PdfNotFoundError",

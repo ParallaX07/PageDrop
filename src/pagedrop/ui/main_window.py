@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.pdf_loader import (
+    PdfEmptyError,
     PdfLoadError,
     PdfLoader,
 )
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.rendering_started.connect(self._on_rendering_started)
         self._thumbnail_grid.rendering_progress.connect(self._on_rendering_progress)
         self._thumbnail_grid.rendering_finished.connect(self._on_rendering_finished)
+        self._thumbnail_grid.rendering_error.connect(self._on_rendering_error)
         self._thumbnail_grid.selection_changed.connect(self._on_selection_changed)
         self.setCentralWidget(self._thumbnail_grid)
 
@@ -139,15 +141,32 @@ class MainWindow(QMainWindow):
         self._load_pdf(path)
 
     def _load_pdf(self, path: str) -> None:
+        self._thumbnail_grid.cancel_rendering()
+
         if self._loader is not None:
             self._thumbnail_grid.clear()
             self._loader.close()
             self._loader = None
 
+        filename = Path(path).name
+
         try:
             loader = PdfLoader(path)
+        except PdfEmptyError:
+            QMessageBox.warning(
+                self,
+                "Open PDF",
+                f"{filename} has no pages.",
+            )
+            self._reset_ui()
+            self.statusBar().showMessage("Ready")
+            return
         except PdfLoadError as exc:
-            QMessageBox.critical(self, "Open PDF", str(exc))
+            QMessageBox.critical(
+                self,
+                "Open PDF",
+                f"Could not open {filename}:\n{exc}",
+            )
             self._reset_ui()
             self.statusBar().showMessage("Ready")
             return
@@ -155,7 +174,6 @@ class MainWindow(QMainWindow):
         self._loader = loader
         self.current_pdf_path = path
 
-        filename = Path(path).name
         self.setWindowTitle(f"{self.APP_TITLE} — {filename}")
         self._filename_label.setText(filename)
         self._close_action.setEnabled(True)
@@ -196,6 +214,15 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self.statusBar().showMessage(f"Loaded {self._loader.page_count} pages")
+
+    def _on_rendering_error(self, message: str) -> None:
+        self._progress_bar.hide()
+        QMessageBox.critical(
+            self,
+            "Render Pages",
+            f"Could not render thumbnails:\n{message}",
+        )
+        self.statusBar().showMessage("Rendering failed")
 
     def _on_selection_changed(self, selection: set[int]) -> None:
         if selection:

@@ -17,6 +17,10 @@ class PdfCorruptError(PdfLoadError):
     """Raised when the file is empty or not a valid PDF."""
 
 
+class PdfEmptyError(PdfLoadError):
+    """Raised when the PDF is valid but contains no pages."""
+
+
 class PdfPasswordRequiredError(PdfLoadError):
     """Raised when the PDF is encrypted and no password was supplied."""
 
@@ -50,6 +54,10 @@ class PdfLoader:
                 self.doc.close()
                 raise PdfPasswordError(f"Incorrect password for PDF: {path}")
 
+        if len(self.doc) == 0:
+            self.doc.close()
+            raise PdfEmptyError(f"PDF has no pages: {path}")
+
     @property
     def page_count(self) -> int:
         return len(self.doc)
@@ -65,12 +73,25 @@ class PdfLoader:
         self._closed = True
 
 
+MAX_RENDER_DPI = 150
+MAX_RENDER_WIDTH_PX = 2048
+
+
 def render_page_png(
     doc: fitz.Document, page_index: int, width_px: int = 160
 ) -> bytes:
     """Render a page from an open PyMuPDF document to PNG bytes."""
     page = doc[page_index]
-    scale = width_px / page.rect.width
+    page_width = page.rect.width
+    if page_width <= 0:
+        raise ValueError(f"Page {page_index} has invalid width")
+
+    scale = width_px / page_width
+    max_scale = MAX_RENDER_DPI / 72.0
+    scale = min(scale, max_scale)
+    if page_width * scale > MAX_RENDER_WIDTH_PX:
+        scale = MAX_RENDER_WIDTH_PX / page_width
+
     mat = fitz.Matrix(scale, scale)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")
