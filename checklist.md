@@ -468,7 +468,7 @@ class ThumbnailWorker(QRunnable):
 
 ### Checklist
 
-- [ ] Write `utils/temp_manager.py`:
+- [x] Write `utils/temp_manager.py`:
   ```python
   import tempfile, atexit, shutil
   from pathlib import Path
@@ -485,34 +485,34 @@ class ThumbnailWorker(QRunnable):
           if self._dir.exists():
               shutil.rmtree(self._dir, ignore_errors=True)
   ```
-- [ ] Instantiate `TempManager` once at app startup, pass reference to
+- [x] Instantiate `TempManager` once at app startup, pass reference to
   `page_extractor`
-- [ ] After each drag completes (`drag.exec()` returns), clean up only the files
+- [x] After each drag completes (`drag.exec()` returns), clean up only the files
   from *that* drag (not all temp files — in case another drag is in progress)
-- [ ] On `MainWindow.closeEvent`, call `temp_manager.cleanup()` explicitly before
+- [x] On `MainWindow.closeEvent`, call `temp_manager.cleanup()` explicitly before
   the `atexit` handler fires
-- [ ] Consider a max temp dir size guard — if extracting hundreds of pages, disk
+- [x] Consider a max temp dir size guard — if extracting hundreds of pages, disk
   usage can spike
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/utils/test_temp_manager.py`:
-  - [ ] `test_creates_prefixed_dir` — dir name starts with `pagedrop_`
-  - [ ] `test_cleanup_removes_dir` — after `cleanup()`, dir no longer exists
-  - [ ] `test_cleanup_idempotent` — second `cleanup()` does not raise
-  - [ ] `test_atexit_registered` — optional: verify handler registered (or integration test via subprocess)
-- [ ] Write `tests/smoke/test_phase7_temp_cleanup.py`:
-  - [ ] Perform 5 simulated extractions, assert per-drag files removed while manager still alive
-  - [ ] After `TempManager.cleanup()`, `listdir(tempfile.gettempdir())` has no orphaned files from that run
-  - [ ] Subprocess smoke: start app, kill with `SIGKILL`/`taskkill /F`, count `pagedrop_*` dirs before/after (document acceptable baseline)
-- [ ] Run: `uv run pytest tests/utils/test_temp_manager.py tests/smoke/test_phase7_temp_cleanup.py -v`
+- [x] Write `tests/utils/test_temp_manager.py`:
+  - [x] `test_creates_prefixed_dir` — dir name starts with `pagedrop_`
+  - [x] `test_cleanup_removes_dir` — after `cleanup()`, dir no longer exists
+  - [x] `test_cleanup_idempotent` — second `cleanup()` does not raise
+  - [x] `test_atexit_registered` — optional: verify handler registered (or integration test via subprocess)
+- [x] Write `tests/smoke/test_phase7_temp_cleanup.py`:
+  - [x] Perform 5 simulated extractions, assert per-drag files removed while manager still alive
+  - [x] After `TempManager.cleanup()`, `listdir(tempfile.gettempdir())` has no orphaned files from that run
+  - [x] Subprocess smoke: start app, kill with `SIGKILL`/`taskkill /F`, count `pagedrop_*` dirs before/after (document acceptable baseline)
+- [x] Run: `uv run pytest tests/utils/test_temp_manager.py tests/smoke/test_phase7_temp_cleanup.py -v`
 
 ### ✅ Test Gate 7
-- [ ] **Do 5 drag operations** → check the temp dir, verify files are being
+- [x] **Do 5 drag operations** → check the temp dir, verify files are being
   cleaned up (not accumulating)
-- [ ] **Kill the app process** (task manager / `kill -9`) → relaunch and check
+- [x] **Kill the app process** (task manager / `kill -9`) → relaunch and check
   that the old temp dir was cleaned or is harmless
-- [ ] **`os.listdir(tempfile.gettempdir())`** → count `pagedrop_*` dirs, make
+- [x] **`os.listdir(tempfile.gettempdir())`** → count `pagedrop_*` dirs, make
   sure they don't pile up over multiple runs
 
 ---
