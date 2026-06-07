@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QWheelEvent
 from PyQt6.QtWidgets import QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout, QWidget
 
@@ -25,7 +25,10 @@ from pagedrop.ui.theme import (
 from pagedrop.utils.temp_manager import TempManager
 
 ZOOM_RENDER_DEBOUNCE_MS = 400
+SCROLL_RENDER_DEBOUNCE_MS = 150
 RENDER_POOL_DRAIN_MS = 3000
+VISIBLE_RENDER_BUFFER_ROWS = 2
+DEFERRED_THUMBNAIL_BATCH = 24
 
 
 class ThumbnailWorker(QRunnable):
@@ -37,7 +40,7 @@ class ThumbnailWorker(QRunnable):
     def __init__(
         self,
         path: str,
-        total_pages: int,
+        page_indices: list[int],
         generation: int,
         width_px: int,
         is_cancelled: Callable[[int], bool],
@@ -45,7 +48,7 @@ class ThumbnailWorker(QRunnable):
         super().__init__()
         self.signals = self.Signals()
         self._path = path
-        self._total_pages = total_pages
+        self._page_indices = page_indices
         self._generation = generation
         self._width_px = width_px
         self._is_cancelled = is_cancelled
@@ -55,7 +58,7 @@ class ThumbnailWorker(QRunnable):
         doc = None
         try:
             doc = fitz.open(self._path)
-            for i in range(self._total_pages):
+            for i in self._page_indices:
                 if self._is_cancelled(self._generation):
                     return
                 png = render_page_png(doc, i, width_px=self._width_px)
@@ -130,6 +133,7 @@ class ThumbnailGrid(QScrollArea):
         self._loader: PdfLoader | None = None
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
         self._card_width = CARD_WIDTH
+        self._page_render_width: list[int] = []
         self._last_rendered_width_px = 0
         self._grid_cols = 0
         self._generation = 0
@@ -140,6 +144,22 @@ class ThumbnailGrid(QScrollArea):
         self._zoom_render_timer.setSingleShot(True)
         self._zoom_render_timer.setInterval(ZOOM_RENDER_DEBOUNCE_MS)
         self._zoom_render_timer.timeout.connect(self._render_zoom_quality)
+        self._scroll_render_timer = QTimer(self)
+        self._scroll_render_timer.setSingleShot(True)
+        self._scroll_render_timer.setInterval(SCROLL_RENDER_DEBOUNCE_MS)
+        self._scroll_render_timer.timeout.connect(self._render_visible_quality)
+        self._background_render_timer = QTimer(self)
+        self._background_render_timer.setSingleShot(True)
+        self._background_render_timer.setInterval(200)
+        self._background_render_timer.timeout.connect(self._render_background_quality)
+        self._deferred_thumbnail_timer = QTimer(self)
+        self._deferred_thumbnail_timer.setSingleShot(True)
+        self._deferred_thumbnail_timer.timeout.connect(
+            self._process_deferred_thumbnail_refresh
+        )
+        self._pending_thumbnail_refresh: list[int] = []
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
         self._focused_index: int | None = None
         self.selection_manager = SelectionManager(
@@ -153,6 +173,7 @@ class ThumbnailGrid(QScrollArea):
         self._last_rendered_width_px = 0
 
         total = loader.page_count
+        self._page_render_width = [0] * total
         self._last_clicked_index = None
         self._focused_index = 0 if total else None
         self.selection_manager.set_page_count(total)
@@ -169,17 +190,32 @@ class ThumbnailGrid(QScrollArea):
         self._update_focus_highlight()
         self._start_rendering(silent=False)
 
-    def _start_rendering(self, *, silent: bool) -> None:
+    def _start_rendering(
+        self, *, silent: bool, page_indices: list[int] | None = None
+    ) -> None:
         if self._loader is None:
+            return
+
+        if page_indices is None:
+            page_indices = list(range(self._loader.page_count))
+        else:
+            page_indices = [
+                i
+                for i in page_indices
+                if 0 <= i < len(self._page_render_width)
+                and self._page_render_width[i] < self._thumbnail_width_px
+            ]
+
+        if not page_indices:
+            self._sync_rendered_width_state()
             return
 
         self._generation += 1
         self._silent_render = silent
         generation = self._generation
-        total = self._loader.page_count
         worker = ThumbnailWorker(
             self._loader.path,
-            total,
+            page_indices,
             generation,
             self._thumbnail_width_px,
             self._is_cancelled,
@@ -188,20 +224,54 @@ class ThumbnailGrid(QScrollArea):
         worker.signals.finished.connect(self._on_rendering_finished)
         worker.signals.error.connect(self._on_rendering_error)
         if not silent:
-            self.rendering_started.emit(total)
+            self.rendering_started.emit(len(page_indices))
         self._render_pool.start(worker)
 
     def _schedule_zoom_rerender(self) -> None:
-        if self._last_rendered_width_px >= self._thumbnail_width_px:
+        if not self._pages_needing_render():
             return
         self._zoom_render_timer.start()
 
     def _render_zoom_quality(self) -> None:
         if self._loader is None:
             return
-        if self._last_rendered_width_px >= self._thumbnail_width_px:
+        visible = self._visible_pages_needing_render()
+        if not visible:
+            needing = self._pages_needing_render()
+            if not needing:
+                return
+            cols = max(self._grid_cols, 1)
+            row_count = VISIBLE_RENDER_BUFFER_ROWS + 1
+            visible = needing[: cols * row_count]
+        self._start_rendering(silent=True, page_indices=visible)
+
+    def _render_visible_quality(self) -> None:
+        if self._loader is None:
             return
-        self._start_rendering(silent=True)
+        visible = self._visible_pages_needing_render()
+        if visible:
+            self._start_rendering(silent=True, page_indices=visible)
+
+    def _render_background_quality(self) -> None:
+        if self._loader is None:
+            return
+        if self._render_pool.activeThreadCount() > 0:
+            self._schedule_background_render()
+            return
+        background = self._background_pages_needing_render()
+        if background:
+            self._start_rendering(silent=True, page_indices=background)
+
+    def _schedule_background_render(self) -> None:
+        if not self._background_pages_needing_render():
+            return
+        self._background_render_timer.start()
+
+    def _on_scroll_changed(self, _value: int) -> None:
+        if self._loader is None or not self._pages_needing_render():
+            return
+        if self._visible_pages_needing_render():
+            self._scroll_render_timer.start()
 
     def cancel_rendering(self) -> None:
         """Invalidate the current render generation (e.g. before opening another PDF)."""
@@ -209,10 +279,15 @@ class ThumbnailGrid(QScrollArea):
 
     def clear(self) -> None:
         self._zoom_render_timer.stop()
+        self._scroll_render_timer.stop()
+        self._background_render_timer.stop()
+        self._deferred_thumbnail_timer.stop()
+        self._pending_thumbnail_refresh.clear()
         self._cancel_rendering()
         self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
         self._clear_cards()
         self._loader = None
+        self._page_render_width = []
         self._last_clicked_index = None
         self._focused_index = None
         self.selection_manager.set_page_count(0)
@@ -359,14 +434,94 @@ class ThumbnailGrid(QScrollArea):
     def _apply_zoom(self, thumbnail_width_px: int) -> None:
         self._thumbnail_width_px = thumbnail_width_px
         self._card_width = thumbnail_width_px + CARD_PADDING
-        for card in self._cards:
-            card.set_card_width(self._card_width, fast=True)
+        visible = set(self._get_visible_page_indices())
+        deferred: list[int] = []
+        for index, card in enumerate(self._cards):
+            in_view = index in visible
+            card.set_card_width(
+                self._card_width,
+                fast=True,
+                refresh_thumbnail=in_view,
+            )
+            if not in_view:
+                deferred.append(index)
+        if deferred:
+            self._schedule_deferred_thumbnail_refresh(deferred)
         self._reflow_grid()
         self.zoom_changed.emit(self._thumbnail_width_px)
         self._schedule_zoom_rerender()
 
+    def _schedule_deferred_thumbnail_refresh(self, indices: list[int]) -> None:
+        self._pending_thumbnail_refresh.extend(indices)
+        if not self._deferred_thumbnail_timer.isActive():
+            self._deferred_thumbnail_timer.start(0)
+
+    def _process_deferred_thumbnail_refresh(self) -> None:
+        batch = self._pending_thumbnail_refresh[:DEFERRED_THUMBNAIL_BATCH]
+        self._pending_thumbnail_refresh = self._pending_thumbnail_refresh[
+            DEFERRED_THUMBNAIL_BATCH:
+        ]
+        for index in batch:
+            if 0 <= index < len(self._cards):
+                self._cards[index].refresh_thumbnail_display(fast=True)
+        if self._pending_thumbnail_refresh:
+            self._deferred_thumbnail_timer.start(0)
+
+    def _get_visible_page_indices(
+        self, *, buffer_rows: int = VISIBLE_RENDER_BUFFER_ROWS
+    ) -> list[int]:
+        if not self._cards:
+            return []
+
+        top_left = self._container.mapFrom(self.viewport(), QPoint(0, 0))
+        bottom_right = self._container.mapFrom(
+            self.viewport(),
+            QPoint(self.viewport().width(), self.viewport().height()),
+        )
+        visible_top = min(top_left.y(), bottom_right.y())
+        visible_bottom = max(top_left.y(), bottom_right.y())
+
+        if buffer_rows > 0:
+            sample = self._cards[0]
+            row_stride = max(sample.height() + self._layout.spacing(), 1)
+            buffer_px = buffer_rows * row_stride
+            visible_top -= buffer_px
+            visible_bottom += buffer_px
+
+        indices: list[int] = []
+        for index, card in enumerate(self._cards):
+            card_top = card.y()
+            card_bottom = card_top + card.height()
+            if card_bottom >= visible_top and card_top <= visible_bottom:
+                indices.append(index)
+        return indices
+
+    def _pages_needing_render(self) -> list[int]:
+        target = self._thumbnail_width_px
+        return [
+            index
+            for index, width in enumerate(self._page_render_width)
+            if width < target
+        ]
+
+    def _visible_pages_needing_render(self) -> list[int]:
+        visible = set(self._get_visible_page_indices())
+        return [index for index in self._pages_needing_render() if index in visible]
+
+    def _background_pages_needing_render(self) -> list[int]:
+        visible = set(self._get_visible_page_indices())
+        return [index for index in self._pages_needing_render() if index not in visible]
+
+    def _sync_rendered_width_state(self) -> None:
+        if self._page_render_width and all(
+            width >= self._thumbnail_width_px for width in self._page_render_width
+        ):
+            self._last_rendered_width_px = self._thumbnail_width_px
+
     def _cancel_rendering(self) -> None:
         self._zoom_render_timer.stop()
+        self._scroll_render_timer.stop()
+        self._background_render_timer.stop()
         self._generation += 1
 
     def _is_cancelled(self, generation: int) -> bool:
@@ -422,15 +577,24 @@ class ThumbnailGrid(QScrollArea):
         if self._is_cancelled(generation):
             return
         self._cards[page_index].set_thumbnail(pixmap)
+        self._page_render_width[page_index] = self._thumbnail_width_px
+        self._sync_rendered_width_state()
         if not self._silent_render:
-            self.rendering_progress.emit(page_index + 1, len(self._cards))
+            rendered = sum(
+                1
+                for width in self._page_render_width
+                if width >= self._thumbnail_width_px
+            )
+            self.rendering_progress.emit(rendered, len(self._cards))
 
     def _on_rendering_finished(self, generation: int) -> None:
         if self._is_cancelled(generation):
             return
-        self._last_rendered_width_px = self._thumbnail_width_px
+        self._sync_rendered_width_state()
         if not self._silent_render:
             self.rendering_finished.emit()
+        elif self._background_pages_needing_render():
+            self._schedule_background_render()
 
     def _on_rendering_error(self, generation: int, message: str) -> None:
         if self._is_cancelled(generation):

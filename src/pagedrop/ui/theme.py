@@ -35,6 +35,7 @@ DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 80
 MAX_THUMBNAIL_WIDTH = 480
 ZOOM_WHEEL_STEP = 16
+MIN_PREVIEW_RENDER_WIDTH = 400
 CARD_WIDTH = DEFAULT_THUMBNAIL_WIDTH + CARD_PADDING
 
 
@@ -343,13 +344,13 @@ def app_stylesheet() -> str:
         border-color: {ACCENT_HOVER};
     }}
 
-    QDialog#PagePreviewDialog {{
-        background-color: {BG_BASE};
-    }}
-
     QScrollArea#PagePreviewScroll {{
         background-color: {BG_GRID};
         border: none;
+    }}
+
+    QWidget#PagePreview {{
+        background-color: {BG_BASE};
     }}
 
     QLabel#PagePreviewImage {{

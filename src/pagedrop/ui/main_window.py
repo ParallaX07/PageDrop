@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
+    QStackedWidget,
     QStyle,
     QToolBar,
     QWidget,
@@ -22,7 +23,7 @@ from pagedrop.core.pdf_loader import (
     PdfLoadError,
     PdfLoader,
 )
-from pagedrop.ui.page_preview import PagePreviewDialog
+from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -42,7 +43,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.current_pdf_path: str | None = None
         self._loader: PdfLoader | None = None
-        self._preview_dialog: PagePreviewDialog | None = None
+        self._preview_widget: PagePreviewWidget | None = None
         self._temp_manager = TempManager()
 
         self.setWindowTitle(self.APP_TITLE)
@@ -87,7 +88,9 @@ class MainWindow(QMainWindow):
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
             "Preview",
         )
-        self._preview_action.setToolTip("Preview selected page (double-click a card)")
+        self._preview_action.setToolTip(
+            "Preview selected page in this window (double-click a card)"
+        )
         self._preview_action.triggered.connect(self._open_preview)
         self._preview_action.setEnabled(False)
 
@@ -127,6 +130,9 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._zoom_controls)
 
     def _build_central_widget(self) -> None:
+        self._central_stack = QStackedWidget()
+        self._central_stack.setObjectName("CentralStack")
+
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
         self._thumbnail_grid.rendering_started.connect(self._on_rendering_started)
         self._thumbnail_grid.rendering_progress.connect(self._on_rendering_progress)
@@ -142,7 +148,14 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.extract_to_folder_requested.connect(
             self._extract_selected_to_folder
         )
-        self.setCentralWidget(self._thumbnail_grid)
+
+        self._preview_widget = PagePreviewWidget()
+        self._preview_widget.closed.connect(self._close_preview)
+        self._preview_widget.page_changed.connect(self._on_preview_page_changed)
+
+        self._central_stack.addWidget(self._thumbnail_grid)
+        self._central_stack.addWidget(self._preview_widget)
+        self.setCentralWidget(self._central_stack)
 
     def _build_status_widgets(self) -> None:
         self._progress_bar = QProgressBar()
@@ -157,11 +170,11 @@ class MainWindow(QMainWindow):
         select_all.triggered.connect(self._select_all_pages)
         self.addAction(select_all)
 
-        clear_selection = QAction(self)
-        clear_selection.setShortcut(QKeySequence.StandardKey.Cancel)
-        clear_selection.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
-        clear_selection.triggered.connect(self._clear_selection)
-        self.addAction(clear_selection)
+        self._clear_selection_action = QAction(self)
+        self._clear_selection_action.setShortcut(QKeySequence.StandardKey.Cancel)
+        self._clear_selection_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._clear_selection_action.triggered.connect(self._on_escape)
+        self.addAction(self._clear_selection_action)
 
     def _select_all_pages(self) -> None:
         self._thumbnail_grid.selection_manager.select_all()
@@ -169,39 +182,79 @@ class MainWindow(QMainWindow):
     def _clear_selection(self) -> None:
         self._thumbnail_grid.selection_manager.clear()
 
+    def _on_escape(self) -> None:
+        if self._thumbnail_grid.selection_manager.selection:
+            self._clear_selection()
+
     def _preview_start_page(self) -> int:
         selection = self._thumbnail_grid.selection_manager.selection
         if selection:
             return min(selection)
         return 0
 
+    def _is_preview_visible(self) -> bool:
+        return (
+            self._preview_widget is not None
+            and self._central_stack.currentWidget() is self._preview_widget
+        )
+
     def _open_preview(self) -> None:
         if self._loader is None:
+            return
+        if self._is_preview_visible():
+            self._close_preview()
             return
         self._open_preview_at(self._preview_start_page())
 
     def _open_preview_at(self, page_index: int) -> None:
-        if self._loader is None:
+        if self._loader is None or self._preview_widget is None:
             return
 
-        if self._preview_dialog is not None and self._preview_dialog.isVisible():
-            self._preview_dialog.close()
+        self._preview_widget.reset_zoom_to_fit()
+        self._preview_widget.show_page(page_index)
+        self._central_stack.setCurrentWidget(self._preview_widget)
+        self._update_preview_mode_ui()
+        self._update_preview_status()
 
-        dialog = PagePreviewDialog(
-            self._loader,
-            start_page=page_index,
-            on_page_changed=self._on_preview_page_changed,
-            parent=self,
+    def _close_preview(self) -> None:
+        if not self._is_preview_visible():
+            return
+        self._central_stack.setCurrentWidget(self._thumbnail_grid)
+        self._update_preview_mode_ui()
+        if self._thumbnail_grid.selection_manager.selection:
+            self._on_selection_changed(
+                self._thumbnail_grid.selection_manager.selection
+            )
+        elif self._loader is not None:
+            self.statusBar().showMessage(f"Loaded {self._loader.page_count} pages")
+
+    def _update_preview_mode_ui(self) -> None:
+        in_preview = self._is_preview_visible()
+        self._preview_action.setText("Back to grid" if in_preview else "Preview")
+        self._preview_action.setToolTip(
+            "Return to the thumbnail grid"
+            if in_preview
+            else "Preview selected page in this window (double-click a card)"
         )
-        dialog.finished.connect(self._on_preview_closed)
-        self._preview_dialog = dialog
-        dialog.showMaximized()
+        self._zoom_controls.setVisible(not in_preview)
+        self._clear_selection_action.setEnabled(not in_preview)
+        self._select_all_action.setEnabled(self._loader is not None and not in_preview)
+        self._deselect_all_action.setEnabled(
+            self._loader is not None
+            and not in_preview
+            and bool(self._thumbnail_grid.selection_manager.selection)
+        )
+
+    def _update_preview_status(self) -> None:
+        if self._loader is None or self._preview_widget is None:
+            return
+        page = self._preview_widget.current_page + 1
+        total = self._loader.page_count
+        self.statusBar().showMessage(f"Preview — page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
         self._thumbnail_grid.selection_manager.select_single(page_index)
-
-    def _on_preview_closed(self) -> None:
-        self._preview_dialog = None
+        self._update_preview_status()
 
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         if self._loader is not None:
@@ -217,11 +270,7 @@ class MainWindow(QMainWindow):
         ):
             return super().eventFilter(obj, event)
 
-        if event.matches(QKeySequence.StandardKey.Cancel):
-            if self._thumbnail_grid.selection_manager.selection:
-                self._clear_selection()
-                return True
-        elif event.matches(QKeySequence.StandardKey.SelectAll) and self._loader is not None:
+        if event.matches(QKeySequence.StandardKey.SelectAll) and self._loader is not None:
             self._select_all_pages()
             return True
         elif self._loader is not None and event.text() in {"+", "="}:
@@ -295,12 +344,15 @@ class MainWindow(QMainWindow):
         self._load_pdf(path)
 
     def _load_pdf(self, path: str) -> None:
+        self._close_preview()
         self._thumbnail_grid.cancel_rendering()
 
         if self._loader is not None:
             self._thumbnail_grid.clear()
             self._loader.close()
             self._loader = None
+        if self._preview_widget is not None:
+            self._preview_widget.set_loader(None)
 
         filename = Path(path).name
 
@@ -327,6 +379,7 @@ class MainWindow(QMainWindow):
 
         self._loader = loader
         self.current_pdf_path = path
+        self._preview_widget.set_loader(loader)
 
         self._update_window_title()
         self._filename_label.setText(filename)
@@ -343,10 +396,13 @@ class MainWindow(QMainWindow):
         self._thumbnail_grid.load_pdf(loader)
 
     def _close_pdf(self) -> None:
+        self._close_preview()
         self._thumbnail_grid.clear()
         if self._loader is not None:
             self._loader.close()
             self._loader = None
+        if self._preview_widget is not None:
+            self._preview_widget.set_loader(None)
 
         self.current_pdf_path = None
         self._reset_ui()
@@ -406,8 +462,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         pass  # TODO: confirm if there are unsaved operations
-        if self._preview_dialog is not None:
-            self._preview_dialog.close()
+        self._close_preview()
         QApplication.instance().removeEventFilter(self)
         self._thumbnail_grid.clear()
         if self._loader is not None:

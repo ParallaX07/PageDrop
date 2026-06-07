@@ -566,51 +566,51 @@ class ThumbnailWorker(QRunnable):
 
 ### Checklist — Quality of Life Features
 
-- [ ] **Tooltip on hover** over each card: `"Page 3 · 210×297 mm · Click to select"`
-- [ ] **Right-click context menu** on a card or grid:
+- [x] **Tooltip on hover** over each card: `"Page 3 · 210×297 mm · Click to select"`
+- [x] **Right-click context menu** on a card or grid:
   - `Extract selected pages to folder…` → `QFileDialog.getExistingDirectory`
     fallback for users who don't want to drag
-- [ ] **Keyboard navigation**: arrow keys move focus between cards, Space toggles
+- [x] **Keyboard navigation**: arrow keys move focus between cards, Space toggles
   selection of focused card
-- [ ] **Zoom controls**: `+` / `-` or a slider to change thumbnail size (adjust
+- [x] **Zoom controls**: `+` / `-` or a slider to change thumbnail size (adjust
   `width_px` and re-render)
-- [ ] **Page count badge** in window title: `"PageDrop — report.pdf (12 pages)"`
-- [ ] **Persist last-opened directory** via `QSettings` so the file dialog
+- [x] **Page count badge** in window title: `"PageDrop — report.pdf (12 pages)"`
+- [x] **Persist last-opened directory** via `QSettings` so the file dialog
   remembers where you were
-- [ ] **Drag count badge**: when dragging multiple pages, overlay a small circle
+- [x] **Drag count badge**: when dragging multiple pages, overlay a small circle
   with the count on the drag pixmap
-- [ ] **Select All / Deselect All** buttons in toolbar (supplement keyboard shortcut)
-- [ ] **Minimum window size** so the grid never becomes unusably small
+- [x] **Select All / Deselect All** buttons in toolbar (supplement keyboard shortcut)
+- [x] **Minimum window size** so the grid never becomes unusably small
 
 ### Checklist — Styling
 
-- [ ] Give `PageCard` a subtle drop shadow or rounded corner so it looks like
+- [x] Give `PageCard` a subtle drop shadow or rounded corner so it looks like
   an actual card
-- [ ] Hover state: slightly lighten/darken the card on mouse-over (before click)
-- [ ] Selected state: 3px accent-colour border (Qt blue or your own colour)
-- [ ] Use a dark grey background for the grid area so white PDF thumbnails
+- [x] Hover state: slightly lighten/darken the card on mouse-over (before click)
+- [x] Selected state: 3px accent-colour border (Qt blue or your own colour)
+- [x] Use a dark grey background for the grid area so white PDF thumbnails
   stand out
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/ui/test_ux_polish.py`:
-  - [ ] `test_card_tooltip` — hover (or `QToolTip.showText` trigger) shows page number and dimensions
-  - [ ] `test_context_menu_extract_action` — right-click → Extract triggers folder dialog mock and writes PDFs
-  - [ ] `test_arrow_keys_and_space` — focus moves between cards; Space toggles selection
-  - [ ] `test_zoom_changes_thumbnail_size` — `+`/`-` or slider updates card width
-  - [ ] `test_qsettings_remembers_directory` — two app sessions, second open dialog starts in same folder (use temp `QSettings` path in test)
-  - [ ] `test_minimum_window_size` — resize below minimum clamps correctly
-- [ ] Write `tests/smoke/test_phase9_ux.py` — visual/regression smoke checklist encoded as assertions where possible (title badge page count, toolbar buttons enabled/disabled states)
+- [x] Write `tests/ui/test_ux_polish.py`:
+  - [x] `test_card_tooltip` — hover (or `QToolTip.showText` trigger) shows page number and dimensions
+  - [x] `test_context_menu_extract_action` — right-click → Extract triggers folder dialog mock and writes PDFs
+  - [x] `test_arrow_keys_and_space` — focus moves between cards; Space toggles selection
+  - [x] `test_zoom_changes_thumbnail_size` — `+`/`-` or slider updates card width
+  - [x] `test_qsettings_remembers_directory` — two app sessions, second open dialog starts in same folder (use temp `QSettings` path in test)
+  - [x] `test_minimum_window_size` — resize below minimum clamps correctly
+- [x] Write `tests/smoke/test_phase9_ux.py` — visual/regression smoke checklist encoded as assertions where possible (title badge page count, toolbar buttons enabled/disabled states)
 - [ ] Optional: screenshot diff test for card states (selected / hover / default) — skip in CI if flaky; run locally before release
-- [ ] Run: `uv run pytest tests/ui/test_ux_polish.py tests/smoke/test_phase9_ux.py -v`
+- [x] Run: `uv run pytest tests/ui/test_ux_polish.py tests/smoke/test_phase9_ux.py -v`
 
 ### ✅ Test Gate 9
-- [ ] **Hover over a card** → tooltip appears after a short delay
-- [ ] **Right-click → Extract to folder** → PDF(s) land in the chosen folder
-- [ ] **Arrow keys** move between cards, Space selects
-- [ ] **Zoom in/out** → thumbnails resize, grid reflows
-- [ ] **Open app a second time** → file dialog opens in the last-used folder
-- [ ] **Visual check**: selected vs unselected vs hovered cards are all clearly
+- [x] **Hover over a card** → tooltip appears after a short delay
+- [x] **Right-click → Extract to folder** → PDF(s) land in the chosen folder
+- [x] **Arrow keys** move between cards, Space selects
+- [x] **Zoom in/out** → thumbnails resize, grid reflows
+- [x] **Open app a second time** → file dialog opens in the last-used folder
+- [x] **Visual check**: selected vs unselected vs hovered cards are all clearly
   distinguishable at a glance
 
 ---
