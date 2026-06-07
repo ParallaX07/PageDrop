@@ -776,11 +776,11 @@ reorder, delete, insert, and save.
 
 ### Checklist — Arrow Reorder
 
-- [ ] Toolbar: **Move up** / **Move down** (move selected block, preserve relative order)
-- [ ] Context menu entries mirroring toolbar
-- [ ] Shortcuts: `Ctrl+↑` / `Ctrl+↓`
-- [ ] After move: refresh grid, reselect moved pages at new logical positions
-- [ ] Disable at top/bottom boundary
+- [x] Toolbar: **Move up** / **Move down** (move selected block, preserve relative order)
+- [x] Context menu entries mirroring toolbar
+- [x] Shortcuts: `Ctrl+↑` / `Ctrl+↓`
+- [x] After move: refresh grid, reselect moved pages at new logical positions
+- [x] Disable at top/bottom boundary
 
 ### Checklist — Internal Drag-and-Drop Reorder
 

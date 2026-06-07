@@ -161,6 +161,30 @@ class PdfTab(QWidget):
         self._sync_dirty_from_model()
         return True
 
+    def move_selected_pages_up(self) -> bool:
+        """Move the current thumbnail selection up; no-op when not movable."""
+        if self._edit_model is None:
+            return False
+        if not self._thumbnail_grid.can_move_selection_up():
+            return False
+        self.close_preview()
+        if not self._thumbnail_grid.move_selection_up():
+            return False
+        self._sync_dirty_from_model()
+        return True
+
+    def move_selected_pages_down(self) -> bool:
+        """Move the current thumbnail selection down; no-op when not movable."""
+        if self._edit_model is None:
+            return False
+        if not self._thumbnail_grid.can_move_selection_down():
+            return False
+        self.close_preview()
+        if not self._thumbnail_grid.move_selection_down():
+            return False
+        self._sync_dirty_from_model()
+        return True
+
     def close_loader(self) -> None:
         """Cancel rendering, release loaders, and reset to a blank tab."""
         self.close_preview()

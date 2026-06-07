@@ -475,9 +475,15 @@ class ThumbnailGrid(QScrollArea):
             self._set_focused_index(min(len(self._cards) - 1, idx + 1))
             event.accept()
         elif key == Qt.Key.Key_Up:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                super().keyPressEvent(event)
+                return
             self._set_focused_index(max(0, idx - cols))
             event.accept()
         elif key == Qt.Key.Key_Down:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                super().keyPressEvent(event)
+                return
             self._set_focused_index(min(len(self._cards) - 1, idx + cols))
             event.accept()
         elif key in (Qt.Key.Key_Space, Qt.Key.Key_Select):
@@ -502,6 +508,13 @@ class ThumbnailGrid(QScrollArea):
         has_pdf = self._model is not None
         has_selection = bool(self.selection_manager.selection)
 
+        move_up_action = menu.addAction("Move up")
+        move_up_action.setEnabled(has_pdf and self.can_move_selection_up())
+        move_down_action = menu.addAction("Move down")
+        move_down_action.setEnabled(has_pdf and self.can_move_selection_down())
+
+        menu.addSeparator()
+
         delete_action = menu.addAction("Delete selected pages")
         delete_action.setEnabled(has_pdf and has_selection)
 
@@ -515,10 +528,60 @@ class ThumbnailGrid(QScrollArea):
             chosen = None
         else:
             chosen = menu.exec(global_pos)
-        if chosen is delete_action:
+        if chosen is move_up_action:
+            self.move_selection_up()
+        elif chosen is move_down_action:
+            self.move_selection_down()
+        elif chosen is delete_action:
             self.delete_selected_pages()
         elif chosen is extract_action:
             self.extract_to_folder_requested.emit()
+
+    def can_move_selection_up(self) -> bool:
+        if self._model is None:
+            return False
+        ordered = sorted(self.selection_manager.selection)
+        return bool(ordered) and ordered[0] > 0
+
+    def can_move_selection_down(self) -> bool:
+        if self._model is None:
+            return False
+        ordered = sorted(self.selection_manager.selection)
+        return bool(ordered) and ordered[-1] < self._model.logical_count() - 1
+
+    def move_selection_up(self) -> bool:
+        """Move selected pages up one position, preserving relative order."""
+        if self._model is None or self._get_loader is None:
+            return False
+        ordered = sorted(self.selection_manager.selection)
+        if not ordered or ordered[0] == 0:
+            return False
+
+        self._model.move_up(ordered)
+        self._restore_after_reorder({index - 1 for index in ordered})
+        return True
+
+    def move_selection_down(self) -> bool:
+        """Move selected pages down one position, preserving relative order."""
+        if self._model is None or self._get_loader is None:
+            return False
+        ordered = sorted(self.selection_manager.selection)
+        if not ordered or ordered[-1] >= self._model.logical_count() - 1:
+            return False
+
+        self._model.move_down(ordered)
+        self._restore_after_reorder({index + 1 for index in ordered})
+        return True
+
+    def _restore_after_reorder(self, new_selection: set[int]) -> None:
+        assert self._model is not None
+        assert self._get_loader is not None
+        self.load_model(self._model, self._get_loader)
+        self.selection_manager.set_selection(new_selection)
+        if new_selection:
+            anchor = min(new_selection)
+            self._last_clicked_index = anchor
+            self._set_focused_index(anchor)
 
     def delete_selected_pages(self) -> bool:
         """Remove selected logical pages from the model and refresh the grid."""
