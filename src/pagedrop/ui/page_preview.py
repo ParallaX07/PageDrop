@@ -75,12 +75,19 @@ class PagePreviewWidget(QWidget):
         self._scroll.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
         layout.addWidget(self._scroll, stretch=1)
 
+        self._footer = QWidget()
+        self._footer.setObjectName("PreviewFooter")
+        footer_layout = QVBoxLayout(self._footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(0)
+
         self._hint_label = QLabel(
-            "← → or ↑ ↓ to change pages  ·  Ctrl+scroll to zoom  ·  Esc to return to grid"
+            "← → or ↑ ↓ change page  ·  Ctrl+scroll zoom  ·  Esc back to grid"
         )
         self._hint_label.setObjectName("PagePreviewHint")
         self._hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._hint_label)
+        footer_layout.addWidget(self._hint_label)
+        layout.addWidget(self._footer)
 
     @property
     def current_page(self) -> int:

@@ -110,6 +110,9 @@ class MainWindow(QMainWindow):
             "Open",
         )
         open_action.triggered.connect(self._open_pdf)
+        open_button = toolbar.widgetForAction(open_action)
+        if open_button is not None:
+            open_button.setObjectName("ToolbarPrimary")
 
         self._preview_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
@@ -164,6 +167,7 @@ class MainWindow(QMainWindow):
         self._tab_manager.tab_closed.connect(lambda _: self._update_close_tab_action())
 
         new_tab_button = QToolButton()
+        new_tab_button.setObjectName("NewTabButton")
         new_tab_button.setText("+")
         new_tab_button.setToolTip("New tab (Ctrl+T)")
         new_tab_button.clicked.connect(self._new_blank_tab)
@@ -210,7 +214,7 @@ class MainWindow(QMainWindow):
         self.addAction(prev_tab)
 
         close_tab = QAction(self)
-        close_tab.setShortcut(QKeySequence.StandardKey.Close)
+        close_tab.setShortcut(QKeySequence("Ctrl+W"))
         close_tab.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         close_tab.triggered.connect(self._close_tab)
         self.addAction(close_tab)

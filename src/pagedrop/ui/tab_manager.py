@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QTabWidget, QWidget
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtWidgets import QTabBar, QTabWidget, QWidget
 
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.theme import tab_close_icon
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -25,6 +26,9 @@ class TabManager(QTabWidget):
         self.setObjectName("TabManager")
         self.setTabsClosable(True)
         self.setDocumentMode(True)
+        self.setMovable(True)
+        self.setUsesScrollButtons(True)
+        self.setElideMode(Qt.TextElideMode.ElideRight)
         self.tabCloseRequested.connect(self.close_tab)
         self.currentChanged.connect(self._on_current_changed)
 
@@ -38,6 +42,7 @@ class TabManager(QTabWidget):
             tab = PdfTab(temp_manager=self._temp_manager)
         index = self.addTab(tab, tab.tab_title)
         self._connect_tab(tab, index)
+        self._style_close_button(index)
         self.tab_added.emit(tab)
         return tab
 
@@ -82,3 +87,12 @@ class TabManager(QTabWidget):
         widget = self.widget(index)
         if isinstance(widget, PdfTab):
             self.active_tab_changed.emit(widget)
+
+    def _style_close_button(self, index: int) -> None:
+        btn = self.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide)
+        if btn is None:
+            return
+        btn.setIcon(tab_close_icon())
+        btn.setIconSize(QSize(14, 14))
+        btn.setToolTip("Close tab")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)

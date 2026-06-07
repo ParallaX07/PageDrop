@@ -39,7 +39,8 @@ class PdfTab(QWidget):
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
         self._thumbnail_grid.set_empty_state_message(
             "Open a PDF to begin",
-            show_hint=False,
+            hint="Choose a file or drop one onto the grid",
+            show_hint=True,
         )
         self._preview_widget = PagePreviewWidget()
         self._preview_widget.closed.connect(self.close_preview)

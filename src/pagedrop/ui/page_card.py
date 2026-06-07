@@ -31,6 +31,7 @@ from pagedrop.ui.theme import (
     CARD_WIDTH,
     accent_qcolor,
     page_card_stylesheet,
+    shadow_qcolor,
 )
 from pagedrop.utils.temp_manager import TempManager
 
@@ -60,11 +61,11 @@ class PageCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(14)
-        shadow.setOffset(0, 3)
-        shadow.setColor(QColor(0, 0, 0, 55))
-        self.setGraphicsEffect(shadow)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(14)
+        self._shadow.setOffset(0, 3)
+        self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
+        self.setGraphicsEffect(self._shadow)
 
         self._thumbnail_label = QLabel()
         self._thumbnail_label.setObjectName("PageCardThumbnail")
@@ -110,11 +111,17 @@ class PageCard(QFrame):
 
     def enterEvent(self, event: QEnterEvent) -> None:
         self._hovered = True
+        self._shadow.setBlurRadius(18)
+        self._shadow.setOffset(0, 4)
+        self._shadow.setColor(QColor(*shadow_qcolor(alpha=72)))
         self._apply_visual_state()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self._hovered = False
+        self._shadow.setBlurRadius(14)
+        self._shadow.setOffset(0, 3)
+        self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
         self._apply_visual_state()
         super().leaveEvent(event)
 

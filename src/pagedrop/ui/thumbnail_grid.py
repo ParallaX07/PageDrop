@@ -111,9 +111,11 @@ class ThumbnailGrid(QScrollArea):
         )
 
         self._empty_state = QWidget()
+        self._empty_state.setObjectName("EmptyStatePanel")
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setSpacing(4)
+        empty_layout.setSpacing(6)
+        empty_layout.setContentsMargins(32, 48, 32, 48)
 
         self._empty_title = QLabel("No document open")
         self._empty_title.setObjectName("GridEmptyState")
@@ -122,9 +124,15 @@ class ThumbnailGrid(QScrollArea):
         self._empty_hint = QLabel("Use File → Open PDF or the toolbar button to begin")
         self._empty_hint.setObjectName("GridEmptyHint")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+
+        self._empty_kbd = QLabel("Ctrl+O open  ·  Ctrl+A select all  ·  drag pages to export")
+        self._empty_kbd.setObjectName("GridEmptyKbd")
+        self._empty_kbd.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         empty_layout.addWidget(self._empty_title)
         empty_layout.addWidget(self._empty_hint)
+        empty_layout.addWidget(self._empty_kbd)
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
         self.setWidget(self._container)
@@ -172,6 +180,7 @@ class ThumbnailGrid(QScrollArea):
         *,
         hint: str | None = None,
         show_hint: bool = True,
+        show_shortcuts: bool = True,
     ) -> None:
         self._empty_title.setText(title)
         if hint is not None:
@@ -180,6 +189,10 @@ class ThumbnailGrid(QScrollArea):
             self._empty_hint.show()
         else:
             self._empty_hint.hide()
+        if show_shortcuts:
+            self._empty_kbd.show()
+        else:
+            self._empty_kbd.hide()
 
     def load_pdf(self, loader: PdfLoader) -> None:
         self._cancel_rendering()
