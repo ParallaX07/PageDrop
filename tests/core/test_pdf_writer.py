@@ -7,7 +7,9 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_writer import write_pdf
+import pytest
+
+from pagedrop.core.pdf_writer import merge_pdf_files, write_pdf
 
 
 def _write_distinct_pdf(path: Path, widths: list[int]) -> None:
@@ -69,3 +71,34 @@ def test_write_multi_source_refs(tmp_path):
     reader = PdfReader(str(output))
     assert len(reader.pages) == 5
     assert [_page_width(reader, i) for i in range(5)] == [111, 444, 555, 222, 333]
+
+
+def test_merge_pdf_files_preserves_file_order(tmp_path):
+    doc_a = tmp_path / "a.pdf"
+    doc_b = tmp_path / "b.pdf"
+    _write_distinct_pdf(doc_a, [100, 200])
+    _write_distinct_pdf(doc_b, [300, 400, 500])
+
+    output = tmp_path / "merged.pdf"
+    merge_pdf_files([str(doc_a), str(doc_b)], str(output))
+
+    reader = PdfReader(str(output))
+    assert [_page_width(reader, i) for i in range(5)] == [100, 200, 300, 400, 500]
+
+
+def test_merge_pdf_files_rejects_empty_list(tmp_path):
+    with pytest.raises(ValueError, match="No PDF files to merge"):
+        merge_pdf_files([], str(tmp_path / "out.pdf"))
+
+
+def test_merge_pdf_files_total_page_count(tmp_path):
+    doc_a = tmp_path / "a.pdf"
+    doc_b = tmp_path / "b.pdf"
+    _write_distinct_pdf(doc_a, [100])
+    _write_distinct_pdf(doc_b, [200, 300])
+
+    output = tmp_path / "merged.pdf"
+    merge_pdf_files([str(doc_a), str(doc_b)], str(output))
+
+    reader = PdfReader(str(output))
+    assert len(reader.pages) == 3

@@ -24,6 +24,7 @@ from pagedrop.core.pdf_loader import (
     PdfLoadError,
 )
 from pagedrop.core.pdf_writer import write_pdf
+from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tab_manager import TabManager
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._temp_manager = TempManager()
+        self._merge_window: MergeWindow | None = None
 
         self.setWindowTitle(self.APP_TITLE)
         self.setMinimumSize(720, 480)
@@ -101,6 +103,9 @@ class MainWindow(QMainWindow):
         self._save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self._save_as_action.triggered.connect(self._save_as)
         self._save_as_action.setEnabled(False)
+
+        merge_action = file_menu.addAction("Merge PDFs…")
+        merge_action.triggered.connect(self._open_merge_window)
 
         file_menu.addSeparator()
 
@@ -649,6 +654,13 @@ class MainWindow(QMainWindow):
         count = len(paths)
         noun = "page" if count == 1 else "pages"
         self.statusBar().showMessage(f"Extracted {count} {noun} to {folder}")
+
+    def _open_merge_window(self) -> None:
+        if self._merge_window is None:
+            self._merge_window = MergeWindow(parent=self)
+        self._merge_window.show()
+        self._merge_window.raise_()
+        self._merge_window.activateWindow()
 
     def _open_pdf(self) -> None:
         start_dir = last_directory()
