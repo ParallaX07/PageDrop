@@ -717,7 +717,15 @@ class ThumbnailGrid(QScrollArea):
         return sorted(paths)
 
     def insert_pdf_pages(self, paths: list[str], drop_index: int) -> bool:
-        """Insert all pages from *paths* at *drop_index*. Returns True on success."""
+        """Insert all pages from *paths* at *drop_index*. Returns True on success.
+
+        Edge cases (Phase 14):
+        - Same file as the tab primary source: duplicate ``PageRef`` rows are allowed.
+        - Multiple paths in one drop: processed in path-sorted order at the same index.
+        - Thumbnails still loading: ``_sync_grid_after_insert`` reloads the model
+          (cancel-then-insert) instead of patching cards mid-render.
+        - Blank tab (no model): inbound drops are rejected in ``dropEvent`` / drag handlers.
+        """
         if self._model is None or self._get_loader is None or not paths:
             return False
 
@@ -746,7 +754,7 @@ class ThumbnailGrid(QScrollArea):
     def _sync_grid_after_insert(self, insert_index: int, count: int) -> None:
         assert self._model is not None
         assert self._get_loader is not None
-        if self._pending_card_indices:
+        if self._pending_card_indices or self._pages_needing_render():
             self.load_model(self._model, self._get_loader)
             return
         if len(self._cards) + count != self._model.logical_count():

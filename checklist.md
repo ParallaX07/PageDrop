@@ -824,41 +824,41 @@ dropped file insert at the exact drop position (between thumbnails).
 
 ### Checklist — Drop Target
 
-- [ ] Enable `setAcceptDrops(True)` on `ThumbnailGrid` (or inner scroll container)
-- [ ] `dragEnterEvent`: accept `text/uri-list` with local `*.pdf` paths; reject non-PDF
-- [ ] `dragMoveEvent`: reuse Phase 13 **between-card insertion indicator**; compute drop index
-- [ ] `dropEvent`:
-  - [ ] Open dropped PDF via `PdfLoader` (corrupt/empty errors → existing dialogs)
-  - [ ] Create `PageRef` for **all pages** in dropped file
-  - [ ] `model.insert_pages(drop_index, refs)`; mark tab dirty
-  - [ ] Cache loader for dropped source path
-  - [ ] Queue thumbnail render for new pages
-- [ ] Status bar: `"Inserted N pages from other.pdf at position M"`
+- [x] Enable `setAcceptDrops(True)` on `ThumbnailGrid` (or inner scroll container)
+- [x] `dragEnterEvent`: accept `text/uri-list` with local `*.pdf` paths; reject non-PDF
+- [x] `dragMoveEvent`: reuse Phase 13 **between-card insertion indicator**; compute drop index
+- [x] `dropEvent`:
+  - [x] Open dropped PDF via `PdfLoader` (corrupt/empty errors → existing dialogs)
+  - [x] Create `PageRef` for **all pages** in dropped file
+  - [x] `model.insert_pages(drop_index, refs)`; mark tab dirty
+  - [x] Cache loader for dropped source path
+  - [x] Queue thumbnail render for new pages
+- [x] Status bar: `"Inserted N pages from other.pdf at position M"`
 
 ### Checklist — Edge Cases
 
-- [ ] Drop same file as tab's primary source → insert copies at position (duplicate refs OK)
-- [ ] Drop while thumbnails still loading → cancel-then-insert or queue (document choice)
-- [ ] Drop multiple files at once → insert in path-sorted order at same index
-- [ ] Reject drop on tab with no model (blank tab) or auto-init empty model first
+- [x] Drop same file as tab's primary source → insert copies at position (duplicate refs OK)
+- [x] Drop while thumbnails still loading → cancel-then-insert or queue (document choice)
+- [x] Drop multiple files at once → insert in path-sorted order at same index
+- [x] Reject drop on tab with no model (blank tab) or auto-init empty model first
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Write `tests/ui/test_inbound_pdf_drop.py`:
-  - [ ] `test_drop_pdf_inserts_all_pages_at_index`
-  - [ ] `test_drop_rejects_non_pdf`
-  - [ ] `test_drop_marks_tab_dirty`
-  - [ ] `test_drop_multiple_files_sorted`
-- [ ] Write `tests/smoke/test_phase14_inbound_drop.py` — drag `B.pdf` (3 pages) between
+- [x] Write `tests/ui/test_inbound_pdf_drop.py`:
+  - [x] `test_drop_pdf_inserts_all_pages_at_index`
+  - [x] `test_drop_rejects_non_pdf`
+  - [x] `test_drop_marks_tab_dirty`
+  - [x] `test_drop_multiple_files_sorted`
+- [x] Write `tests/smoke/test_phase14_inbound_drop.py` — drag `B.pdf` (3 pages) between
   pages 2 and 3 of open doc; verify logical order and thumbnails
-- [ ] Run: `uv run pytest tests/ui/test_inbound_pdf_drop.py tests/smoke/test_phase14_inbound_drop.py -v`
+- [x] Run: `uv run pytest tests/ui/test_inbound_pdf_drop.py tests/smoke/test_phase14_inbound_drop.py -v`
 
 ### ✅ Test Gate 14
-- [ ] **Drag 3-page PDF** between pages 2 and 3 →  logical order correct
-- [ ] **Thumbnails** appear for inserted pages
-- [ ] **Tab marked dirty** after drop
-- [ ] **Non-PDF drop** rejected gracefully
-- [ ] **Drop indicator** shows correct insertion point while hovering
+- [x] **Drag 3-page PDF** between pages 2 and 3 →  logical order correct
+- [x] **Thumbnails** appear for inserted pages
+- [x] **Tab marked dirty** after drop
+- [x] **Non-PDF drop** rejected gracefully
+- [x] **Drop indicator** shows correct insertion point while hovering
 
 ---
 
