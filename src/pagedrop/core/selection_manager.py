@@ -56,6 +56,13 @@ class SelectionManager:
         self._selected.clear()
         self._emit()
 
+    def set_selection(self, indices: set[int]) -> None:
+        clamped = {idx for idx in indices if 0 <= idx < self._page_count}
+        if clamped == self._selected:
+            return
+        self._selected = clamped
+        self._emit()
+
     def add_listener(self, callback: Callable[[set[int]], None]) -> None:
         self._listeners.append(callback)
 

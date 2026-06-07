@@ -136,6 +136,22 @@ class MainWindow(QMainWindow):
         self._deselect_all_action.triggered.connect(self._clear_selection)
         self._deselect_all_action.setEnabled(False)
 
+        self._move_up_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            "Move up",
+        )
+        self._move_up_action.setToolTip("Move selected pages up (Ctrl+↑)")
+        self._move_up_action.triggered.connect(self._move_selected_pages_up)
+        self._move_up_action.setEnabled(False)
+
+        self._move_down_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+            "Move down",
+        )
+        self._move_down_action.setToolTip("Move selected pages down (Ctrl+↓)")
+        self._move_down_action.triggered.connect(self._move_selected_pages_down)
+        self._move_down_action.setEnabled(False)
+
         self._delete_pages_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
             "Delete page(s)",
@@ -213,6 +229,18 @@ class MainWindow(QMainWindow):
         delete_pages.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         delete_pages.triggered.connect(self._delete_selected_pages)
         self.addAction(delete_pages)
+
+        move_up = QAction(self)
+        move_up.setShortcut(QKeySequence("Ctrl+Up"))
+        move_up.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        move_up.triggered.connect(self._move_selected_pages_up)
+        self.addAction(move_up)
+
+        move_down = QAction(self)
+        move_down.setShortcut(QKeySequence("Ctrl+Down"))
+        move_down.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        move_down.triggered.connect(self._move_selected_pages_down)
+        self.addAction(move_down)
 
     def _build_tab_shortcuts(self) -> None:
         next_tab = QAction(self)
@@ -312,6 +340,7 @@ class MainWindow(QMainWindow):
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
         self._update_delete_pages_action()
+        self._update_move_pages_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
         self._update_preview_mode_ui()
@@ -327,6 +356,8 @@ class MainWindow(QMainWindow):
         self._select_all_action.setEnabled(False)
         self._deselect_all_action.setEnabled(False)
         self._delete_pages_action.setEnabled(False)
+        self._move_up_action.setEnabled(False)
+        self._move_down_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
         self._progress_bar.hide()
@@ -341,6 +372,21 @@ class MainWindow(QMainWindow):
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
 
+    def _update_move_pages_actions(self) -> None:
+        tab = self._active_tab()
+        grid = tab.thumbnail_grid if tab is not None else None
+        enabled = (
+            tab is not None
+            and tab.edit_model is not None
+            and not tab.is_preview_visible()
+        )
+        self._move_up_action.setEnabled(
+            enabled and grid is not None and grid.can_move_selection_up()
+        )
+        self._move_down_action.setEnabled(
+            enabled and grid is not None and grid.can_move_selection_down()
+        )
+
     def _delete_selected_pages(self) -> None:
         tab = self._active_tab()
         if tab is None or tab.edit_model is None:
@@ -353,12 +399,41 @@ class MainWindow(QMainWindow):
             return
         self._tab_manager.update_tab_title(tab)
         self._update_delete_pages_action()
+        self._update_move_pages_actions()
         self._deselect_all_action.setEnabled(False)
         if tab.edit_model.logical_count() == 0:
             self.statusBar().showMessage("All pages deleted")
         else:
             noun = "page" if count == 1 else "pages"
             self.statusBar().showMessage(f"Deleted {count} {noun}")
+
+    def _move_selected_pages_up(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None:
+            return
+        if not tab.thumbnail_grid.can_move_selection_up():
+            return
+        if not tab.move_selected_pages_up():
+            return
+        self._tab_manager.update_tab_title(tab)
+        self._update_move_pages_actions()
+        count = len(tab.thumbnail_grid.selection_manager.selection)
+        noun = "page" if count == 1 else "pages"
+        self.statusBar().showMessage(f"Moved {count} {noun} up")
+
+    def _move_selected_pages_down(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None:
+            return
+        if not tab.thumbnail_grid.can_move_selection_down():
+            return
+        if not tab.move_selected_pages_down():
+            return
+        self._tab_manager.update_tab_title(tab)
+        self._update_move_pages_actions()
+        count = len(tab.thumbnail_grid.selection_manager.selection)
+        noun = "page" if count == 1 else "pages"
+        self.statusBar().showMessage(f"Moved {count} {noun} down")
 
     def _select_all_pages(self) -> None:
         tab = self._active_tab()
@@ -446,6 +521,7 @@ class MainWindow(QMainWindow):
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
         self._update_delete_pages_action()
+        self._update_move_pages_actions()
 
     def _update_preview_status(self) -> None:
         tab = self._active_tab()
@@ -740,6 +816,7 @@ class MainWindow(QMainWindow):
             and not tab.is_preview_visible()
         )
         self._update_delete_pages_action()
+        self._update_move_pages_actions()
         if selection:
             count = len(selection)
             noun = "page" if count == 1 else "pages"
