@@ -538,15 +538,15 @@ class ThumbnailWorker(QRunnable):
 
 ### Checklist — Test Scripts & Smoke Tests
 
-- [ ] Add fixtures: `corrupt.pdf` (text renamed to `.pdf`), `empty.pdf` (0 pages), `garbage.bin` with `.pdf` extension
-- [ ] Write `tests/core/test_pdf_loader_errors.py`:
-  - [ ] `test_corrupt_file_raises_clear_error`
-  - [ ] `test_empty_pdf_zero_pages`
-- [ ] Write `tests/ui/test_error_handling.py`:
-  - [ ] `test_open_corrupt_shows_message_box` — use `qtbot` + `QMessageBox` spy or mock
-  - [ ] `test_drag_without_pdf_shows_status_message`
-  - [ ] `test_disk_full_oserror` — mock `open()` or extractor to raise `OSError`, assert dialog not crash
-  - [ ] `test_rapid_reopen_cancels_worker` — open PDF A, immediately open PDF B, assert only B's cards remain
+- [x] Add fixtures: `corrupt.pdf` (text renamed to `.pdf`), `empty.pdf` (0 pages), `garbage.bin` with `.pdf` extension
+- [x] Write `tests/core/test_pdf_loader_errors.py`:
+  - [x] `test_corrupt_file_raises_clear_error`
+  - [x] `test_empty_pdf_zero_pages`
+- [x] Write `tests/ui/test_error_handling.py`:
+  - [x] `test_open_corrupt_shows_message_box` — use `qtbot` + `QMessageBox` spy or mock
+  - [x] `test_drag_without_pdf_shows_status_message`
+  - [x] `test_disk_full_oserror` — mock `open()` or extractor to raise `OSError`, assert dialog not crash
+  - [x] `test_rapid_reopen_cancels_worker` — open PDF A, immediately open PDF B, assert only B's cards remain
 - [ ] Write `tests/smoke/test_phase8_edge_cases.py` — runs the error-path matrix; each case asserts app process still alive and window visible after failure
 - [ ] Run: `uv run pytest tests/core/test_pdf_loader_errors.py tests/ui/test_error_handling.py tests/smoke/test_phase8_edge_cases.py -v`
 
