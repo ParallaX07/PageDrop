@@ -445,8 +445,7 @@ def app_stylesheet() -> str:
         color: {TEXT_PRIMARY};
         border: 1px solid {BORDER_DEFAULT};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px 16px;
-        min-width: 72px;
+        padding: 6px 20px;
     }}
 
     QMessageBox QPushButton:hover {{

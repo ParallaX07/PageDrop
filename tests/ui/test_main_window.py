@@ -31,7 +31,7 @@ def test_window_title_default(main_window):
 def test_menu_actions_exist(main_window):
     actions = _file_menu_actions(main_window)
     labels = {action.text().replace("&", "") for action in actions if not action.isSeparator()}
-    assert "Open PDF..." in labels
+    assert "Open PDF" in labels
     assert "Close Tab" in labels
     assert "Exit" in labels
 

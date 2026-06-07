@@ -552,7 +552,7 @@ class ThumbnailGrid(QScrollArea):
         delete_action.setEnabled(has_pdf and has_selection)
 
         menu.addSeparator()
-        extract_action = menu.addAction("Extract selected pages to folder…")
+        extract_action = menu.addAction("Extract selected pages to folder")
         extract_action.setEnabled(has_pdf and has_selection)
 
         if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get(

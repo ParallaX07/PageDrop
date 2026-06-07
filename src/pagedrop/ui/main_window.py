@@ -42,6 +42,17 @@ if TYPE_CHECKING:
     from pagedrop.ui.window_manager import WindowManager
 
 
+def _fit_message_box_buttons(message: QMessageBox) -> None:
+    """Size multi-action message boxes so button labels are not clipped."""
+    buttons = message.buttons()
+    if len(buttons) < 2:
+        return
+    widest = max(button.sizeHint().width() for button in buttons)
+    for button in buttons:
+        button.setMinimumWidth(widest)
+    message.setMinimumWidth(message.sizeHint().width())
+
+
 class MainWindow(QMainWindow):
     APP_TITLE = "PageDrop"
 
@@ -101,22 +112,20 @@ class MainWindow(QMainWindow):
         return tab.content_stack if tab is not None else None
 
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("&File")
 
-        open_action = file_menu.addAction("&Open PDF...")
+        open_action = file_menu.addAction("&Open PDF")
         open_action.triggered.connect(self._open_pdf)
 
         self._close_action = file_menu.addAction("&Close Tab")
         self._close_action.triggered.connect(self._close_tab)
         self._close_action.setEnabled(False)
 
-        self._save_as_action = file_menu.addAction("Save &As...")
+        self._save_as_action = file_menu.addAction("Save &As")
         self._save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self._save_as_action.triggered.connect(self._save_as)
         self._save_as_action.setEnabled(False)
-
-        merge_action = file_menu.addAction("Merge PDFs…")
-        merge_action.triggered.connect(self._open_merge_window)
 
         file_menu.addSeparator()
 
@@ -128,6 +137,9 @@ class MainWindow(QMainWindow):
 
         exit_action = file_menu.addAction("E&xit")
         exit_action.triggered.connect(self.close)
+
+        merge_action = menubar.addAction("Merge PDFs")
+        merge_action.triggered.connect(self._open_merge_window)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
@@ -879,6 +891,7 @@ class MainWindow(QMainWindow):
         cancel_button = message.addButton(
             QMessageBox.StandardButton.Cancel,
         )
+        _fit_message_box_buttons(message)
         message.exec()
         clicked = message.clickedButton()
         if clicked is cancel_button:
@@ -908,6 +921,7 @@ class MainWindow(QMainWindow):
         cancel_button = message.addButton(
             QMessageBox.StandardButton.Cancel,
         )
+        _fit_message_box_buttons(message)
         message.exec()
         clicked = message.clickedButton()
         if clicked is cancel_button:
@@ -1039,7 +1053,7 @@ class MainWindow(QMainWindow):
         message.setText(f'"{filename}" has unsaved changes.')
         message.setInformativeText("Save your changes before closing?")
         save_button = message.addButton(
-            "Save As...",
+            "Save As",
             QMessageBox.ButtonRole.AcceptRole,
         )
         discard_button = message.addButton(
@@ -1047,6 +1061,7 @@ class MainWindow(QMainWindow):
             QMessageBox.ButtonRole.DestructiveRole,
         )
         cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
+        _fit_message_box_buttons(message)
         message.exec()
         clicked = message.clickedButton()
         if clicked is save_button:
