@@ -48,7 +48,7 @@ def _reset_window_manager(qapp):
 
 
 def test_open_new_window_spawns_second_main_window(qtbot, qapp):
-    manager = _ensure_window_manager(qapp)
+    manager = _reset_window_manager(qapp)
     first = manager.open_new_window()
     qtbot.addWidget(first)
 

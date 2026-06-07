@@ -104,16 +104,19 @@ def _drain_render_workers_after_test(qtbot):
     yield
     from PyQt6.QtWidgets import QApplication
 
+    from pagedrop.ui.convert_file_grid import ConvertFileGrid
     from pagedrop.ui.merge_file_grid import MergeFileGrid
     from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 
     for widget in QApplication.allWidgets():
-        if isinstance(widget, (ThumbnailGrid, MergeFileGrid)):
+        if isinstance(widget, (ThumbnailGrid, MergeFileGrid, ConvertFileGrid)):
             widget.cancel_rendering()
     for widget in QApplication.allWidgets():
         if isinstance(widget, ThumbnailGrid):
             widget._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
         if isinstance(widget, MergeFileGrid):
+            widget._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
+        if isinstance(widget, ConvertFileGrid):
             widget._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
 
 

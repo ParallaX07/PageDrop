@@ -6,6 +6,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from pagedrop.ui.merge_window import MergeWindow
+from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.pdf_tab import PdfTab
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ class WindowManager(QObject):
 
     def _maybe_quit(self) -> None:
         for widget in self._app.topLevelWidgets():
-            if isinstance(widget, MergeWindow) and widget.isVisible():
+            if isinstance(widget, (MergeWindow, ConvertWindow)) and widget.isVisible():
                 return
         self.last_window_closing.emit()
         self._app.quit()

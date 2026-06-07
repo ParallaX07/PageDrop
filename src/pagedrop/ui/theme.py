@@ -541,6 +541,42 @@ def app_stylesheet() -> str:
         background-color: {BG_GRID};
     }}
 
+    QWidget#ConvertEmptyState {{
+        background-color: {BG_GRID};
+    }}
+
+    QLabel#ConvertEmptyLogo {{
+        background: transparent;
+        border: none;
+        padding: 0 0 12px 0;
+    }}
+
+    QLabel#ConvertEmptyTitle {{
+        color: {TEXT_SECONDARY};
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+    }}
+
+    QLabel#ConvertEmptyHint {{
+        color: {TEXT_MUTED};
+        font-size: 13px;
+        font-weight: 400;
+    }}
+
+    QScrollArea#ConvertFileGrid {{
+        background-color: {BG_GRID};
+        border: none;
+    }}
+
+    QWidget#ConvertFileGridContainer {{
+        background-color: {BG_GRID};
+    }}
+
+    QLabel#ConvertPreviewImage {{
+        background-color: #FAFAFA;
+    }}
+
     QFrame#DropIndicator {{
         background-color: {ACCENT};
         border-radius: 2px;
@@ -643,6 +679,41 @@ def merge_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
         font-weight: 600;
     }}
     QLabel#MergeFileCardSubtitle {{
+        color: {subtitle_color};
+        font-size: 11px;
+        font-weight: 500;
+    }}
+    """
+
+
+def convert_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
+    border_color = ACCENT if selected else BORDER_DEFAULT
+    if selected and hovered:
+        border_color = ACCENT_HOVER
+    elif hovered:
+        border_color = BORDER_HOVER
+
+    border_width = 3 if selected else 1
+    background = BG_CARD_HOVER if hovered else BG_CARD
+    title_color = TEXT_PRIMARY if selected else TEXT_PRIMARY
+    subtitle_color = TEXT_MUTED if not selected else TEXT_SECONDARY
+
+    return f"""
+    QFrame#ConvertFileCard {{
+        background-color: {background};
+        border: {border_width}px solid {border_color};
+        border-radius: {RADIUS_CARD}px;
+    }}
+    QLabel#ConvertFileCardThumbnail {{
+        background-color: transparent;
+        border: none;
+    }}
+    QLabel#ConvertFileCardTitle {{
+        color: {title_color};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#ConvertFileCardSubtitle {{
         color: {subtitle_color};
         font-size: 11px;
         font-weight: 500;
