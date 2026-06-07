@@ -111,7 +111,7 @@ pagedrop/
 
 ### Checklist
 
-- [ ] Write `core/pdf_loader.py` with a `PdfLoader` class:
+- [x] Write `core/pdf_loader.py` with a `PdfLoader` class:
   ```python
   import fitz  # PyMuPDF
 
@@ -135,7 +135,7 @@ pagedrop/
       def close(self):
           self.doc.close()
   ```
-- [ ] Write a quick sanity script (not part of the app, just a throwaway test):
+- [x] Write a quick sanity script (not part of the app, just a throwaway test):
   ```python
   # test_render.py — run with: uv run python test_render.py
   from pagedrop.core.pdf_loader import PdfLoader
@@ -147,15 +147,15 @@ pagedrop/
       f.write(png_bytes)
   print("Saved page_0.png")
   ```
-- [ ] Handle password-protected PDFs: catch `fitz.EmptyFileError` and bad
+- [x] Handle password-protected PDFs: catch `fitz.EmptyFileError` and bad
   password, show `QMessageBox` error later when wired to UI
-- [ ] Handle invalid path / corrupt file with a clear exception message
+- [x] Handle invalid path / corrupt file with a clear exception message
 
 ### ✅ Test Gate 2
-- [ ] **Run the sanity script** — `page_0.png` opens and looks correct
-- [ ] **Try a multi-page PDF** — print page count, render page 0 and the last page
-- [ ] **Try an invalid path** — verify it raises a clean exception, not a cryptic crash
-- [ ] **Delete the sanity script** once satisfied (keep the repo clean)
+- [x] **Run the sanity script** — `page_0.png` opens and looks correct
+- [x] **Try a multi-page PDF** — print page count, render page 0 and the last page
+- [x] **Try an invalid path** — verify it raises a clean exception, not a cryptic crash
+- [x] **Delete the sanity script** once satisfied (keep the repo clean)
 
 ---
 
@@ -165,26 +165,26 @@ pagedrop/
 
 ### Checklist
 
-- [ ] Write `ui/main_window.py` with `MainWindow(QMainWindow)`:
-  - [ ] **Menu bar**: `File → Open PDF`, `File → Close PDF`, `File → Exit`
-  - [ ] **Toolbar**: Open button (icon + text), separator, filename label
-  - [ ] **Status bar**: shows messages (page count, selection count, errors)
-  - [ ] **Central widget**: placeholder `QLabel("Open a PDF to begin")`
-  - [ ] **Window title**: `"PageDrop"` → updates to
+- [x] Write `ui/main_window.py` with `MainWindow(QMainWindow)`:
+  - [x] **Menu bar**: `File → Open PDF`, `File → Close PDF`, `File → Exit`
+  - [x] **Toolbar**: Open button (icon + text), separator, filename label
+  - [x] **Status bar**: shows messages (page count, selection count, errors)
+  - [x] **Central widget**: placeholder `QLabel("Open a PDF to begin")`
+  - [x] **Window title**: `"PageDrop"` → updates to
     `"PageDrop — filename.pdf"` after opening
-- [ ] Wire `File → Open PDF` to `QFileDialog.getOpenFileName` filtering for
+- [x] Wire `File → Open PDF` to `QFileDialog.getOpenFileName` filtering for
   `*.pdf`
-- [ ] Store the opened path in `self.current_pdf_path`
-- [ ] Update `main.py` to use `MainWindow` instead of bare `QMainWindow`
-- [ ] Add `closeEvent` to confirm if there are unsaved operations (skip for now,
+- [x] Store the opened path in `self.current_pdf_path`
+- [x] Update `main.py` to use `MainWindow` instead of bare `QMainWindow`
+- [x] Add `closeEvent` to confirm if there are unsaved operations (skip for now,
   add a `pass`-body as a placeholder)
 
 ### ✅ Test Gate 3
-- [ ] **Open → dialog appears**, filtered to PDF only
-- [ ] **Title bar updates** to reflect the filename after selection
-- [ ] **Status bar** shows "Loaded X pages" after selecting a file
-- [ ] **File → Exit** closes the app cleanly
-- [ ] **Cancel in dialog** leaves the app in its previous state (no crash)
+- [x] **Open → dialog appears**, filtered to PDF only
+- [x] **Title bar updates** to reflect the filename after selection
+- [x] **Status bar** shows "Loaded X pages" after selecting a file
+- [x] **File → Exit** closes the app cleanly
+- [x] **Cancel in dialog** leaves the app in its previous state (no crash)
 
 ---
 
