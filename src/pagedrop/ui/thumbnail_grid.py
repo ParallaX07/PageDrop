@@ -5,11 +5,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QWheelEvent
+from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEvent
 from PyQt6.QtWidgets import QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout, QWidget
 
 import fitz
 
+from pagedrop.assets import empty_state_logo_pixmap
 from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
@@ -122,6 +123,12 @@ class ThumbnailGrid(QScrollArea):
         empty_layout.setSpacing(6)
         empty_layout.setContentsMargins(32, 48, 32, 48)
 
+        self._empty_logo = QLabel()
+        self._empty_logo.setObjectName("GridEmptyLogo")
+        self._empty_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_logo.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._refresh_empty_logo()
+
         self._empty_title = QLabel("No document open")
         self._empty_title.setObjectName("GridEmptyState")
         self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -135,6 +142,7 @@ class ThumbnailGrid(QScrollArea):
         self._empty_kbd.setObjectName("GridEmptyKbd")
         self._empty_kbd.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        empty_layout.addWidget(self._empty_logo)
         empty_layout.addWidget(self._empty_title)
         empty_layout.addWidget(self._empty_hint)
         empty_layout.addWidget(self._empty_kbd)
@@ -403,6 +411,17 @@ class ThumbnailGrid(QScrollArea):
     @property
     def focused_index(self) -> int | None:
         return self._focused_index
+
+    def _refresh_empty_logo(self) -> None:
+        pixmap = empty_state_logo_pixmap(self.devicePixelRatioF())
+        if pixmap.isNull():
+            self._empty_logo.clear()
+        else:
+            self._empty_logo.setPixmap(pixmap)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._refresh_empty_logo()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

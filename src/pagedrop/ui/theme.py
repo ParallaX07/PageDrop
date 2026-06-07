@@ -310,6 +310,12 @@ def app_stylesheet() -> str:
         background-color: transparent;
     }}
 
+    QLabel#GridEmptyLogo {{
+        background: transparent;
+        border: none;
+        padding: 0 0 12px 0;
+    }}
+
     QLabel#GridEmptyState {{
         color: {TEXT_SECONDARY};
         font-size: 15px;
