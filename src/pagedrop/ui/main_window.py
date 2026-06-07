@@ -277,6 +277,8 @@ class MainWindow(QMainWindow):
         grid.selection_changed.connect(self._on_selection_changed)
         grid.preview_requested.connect(self._open_preview_at)
         grid.zoom_changed.connect(self._on_zoom_changed)
+        grid.pages_inserted.connect(self._on_pages_inserted)
+        grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
 
@@ -769,6 +771,39 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     f"Loaded {tab.loader.page_count} pages"
                 )
+
+    def _on_pages_inserted(
+        self, count: int, filename: str, position: int
+    ) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        noun = "page" if count == 1 else "pages"
+        self.statusBar().showMessage(
+            f"Inserted {count} {noun} from {filename} at position {position}"
+        )
+
+    def _on_pdf_drop_failed(self, exc: object) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        if isinstance(exc, PdfEmptyError):
+            QMessageBox.warning(
+                self,
+                "Insert PDF",
+                f"{exc}",
+            )
+        elif isinstance(exc, PdfLoadError):
+            QMessageBox.critical(
+                self,
+                "Insert PDF",
+                f"Could not open PDF:\n{exc}",
+            )
+        else:
+            QMessageBox.critical(
+                self,
+                "Insert PDF",
+                f"Could not insert PDF:\n{exc}",
+            )
+        self.statusBar().showMessage("Ready")
 
     def _on_rendering_error(self, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
