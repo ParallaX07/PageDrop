@@ -4,14 +4,35 @@
 
 # PageDrop
 
-A desktop PDF utility for Windows, macOS, and Linux. Open a PDF, browse pages as thumbnails, and drag individual pages straight into your file manager — each drop becomes a separate PDF file. Edit documents in tabs, merge whole files, or convert images to PDF, all without leaving the app.
+A free, open-source PDF desktop app built for people who actually organize documents — pulling pages from one PDF into another, reordering, merging, and dragging pages straight into your file manager.
+
+Adobe is expensive. Cracked tools aren’t worth the risk. Most free PDF apps get the job done but feel clunky. PageDrop is the opposite: a clean thumbnail grid, browser-style tabs, and drag-and-drop workflows designed around real multi-PDF editing — not just viewing a single file.
+
+## Download
+
+**Windows (recommended for most users)** — no Python or install required:
+
+1. Go to [**Releases**](https://github.com/ParallaX07/PageDrop/releases) and download `pagedrop.exe` (or the latest `PageDrop-v*-windows-x64.exe` asset).
+2. Double-click to run.
+
+> Windows may show a SmartScreen warning because the build is unsigned. Choose **More info → Run anyway** if prompted. First launch can take a few seconds while the app unpacks.
+
+macOS and Linux binaries are not published yet — run from source (below) or build your own with PyInstaller.
+
+## Quick start
+
+1. **Open a PDF** — File → Open PDF, or the toolbar Open button. Select multiple files to open each in its own tab.
+2. **Select pages** — click one; Ctrl+click to toggle; Shift+click for a range; Ctrl+A for all.
+3. **Drag to a folder** — drag selected thumbnails into Explorer, Finder, or any file manager. Each page becomes its own PDF (e.g. `report_page_0003.pdf`).
+4. **Edit across PDFs** — reorder or delete pages, drop another PDF onto the grid to insert pages, drag pages between windows (Shift+drop to move), then **File → Save As**.
+5. **Merge or convert** — **Merge PDFs** combines whole files; **Create PDF** turns images into PDFs.
 
 ## Features
 
 ### Thumbnail grid and drag-out
 
 - Open one or more PDFs and view every page as a scrollable thumbnail grid
-- **Drag pages to Explorer, Finder, Nautilus, Dolphin, etc.** — selected pages are extracted as individual PDF files (e.g. `report_page_0003.pdf`)
+- **Drag pages to Explorer, Finder, Nautilus, Dolphin, etc.** — selected pages are extracted as individual PDF files
 - Select pages with click, Ctrl+click, Shift+click, or Ctrl+A
 - Zoom thumbnails, double-click for full-page preview, and use arrow keys + Space for keyboard navigation
 - Right-click **Extract selected pages to folder…** if you prefer a save dialog over drag-and-drop
@@ -48,35 +69,6 @@ A separate window (**Create PDF** in the menu bar) for turning images into PDFs:
 - Export as **one combined PDF** (one page per image) or **separate PDFs** (one file per image)
 - Reorder images before exporting; double-click for full-size preview
 
-## Requirements
-
-- Python **3.11+** (project targets 3.12)
-- [uv](https://docs.astral.sh/uv/) for dependency management and running the app
-
-## Installation
-
-```bash
-git clone <repository-url>
-cd PageDrop
-uv sync
-```
-
-## Run
-
-```bash
-uv run pagedrop
-```
-
-No manual virtualenv activation is needed — `uv` handles the environment.
-
-## Quick start
-
-1. **Open a PDF** — File → Open PDF, or the toolbar Open button. With multiple files selected, each opens in its own tab.
-2. **Select pages** — click to select one; Ctrl+click to toggle; Shift+click for a range.
-3. **Drag to a folder** — drag selected thumbnails into any file manager window. Each page becomes its own PDF file.
-4. **Edit** — reorder or delete pages, drop other PDFs onto the grid to insert pages, then File → Save As to persist changes.
-5. **Merge or convert** — use **Merge PDFs** or **Create PDF** from the menu bar for whole-file combine or image-to-PDF workflows.
-
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -94,6 +86,21 @@ No manual virtualenv activation is needed — `uv` handles the environment.
 | Back to grid / list | Escape *(in preview)* |
 
 Cross-window page drag: drop to **copy**; **Shift+drop** to **move**.
+
+## Run from source
+
+For development or platforms without a published binary.
+
+**Requirements:** Python **3.11+** and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/ParallaX07/PageDrop.git
+cd PageDrop
+uv sync
+uv run pagedrop
+```
+
+No manual virtualenv activation is needed — `uv` handles the environment.
 
 ## Development
 
@@ -142,7 +149,7 @@ make test-phase4 # cumulative gate through a specific phase
 
 Test fixtures are generated on the fly — see `tests/fixtures/README.md` for details.
 
-### Building an executable (optional)
+### Building an executable
 
 Install dev dependencies (includes PyInstaller), then build:
 
@@ -184,6 +191,6 @@ Verify manually on a machine **without Python**: open a PDF, drag a page into th
 
 ## Status
 
-PageDrop is under active development. Phases 1–9 (core viewer and drag-out), 11–15 (multi-tab editing and Save As), 16 (PyInstaller packaging), 17 (merge), 18 (multi-window), and 19 (Create PDF) are implemented. Standalone executables can be built locally; release binaries are not yet published.
+**v0.1.0** — Windows standalone executable available on [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, Save As, merge, multi-window page transfer, and image-to-PDF conversion. macOS/Linux release binaries and code signing are planned.
 
 For the detailed implementation checklist and design decisions, see [`checklist.md`](checklist.md).
