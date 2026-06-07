@@ -784,13 +784,13 @@ reorder, delete, insert, and save.
 
 ### Checklist — Internal Drag-and-Drop Reorder
 
-- [ ] Distinguish **internal reorder drag** from **outbound file-manager drag**:
+- [x] Distinguish **internal reorder drag** from **outbound file-manager drag**:
   - Internal mime: `application/x-pagedrop-page` with logical index payload
   - Outbound mime: existing `file://` URLs (unchanged protocol for Explorer/Finder)
-- [ ] Show **drop indicator line** between cards while dragging (insertion index from cursor)
-- [ ] Multi-page drag: move selected pages as a block to drop index
-- [ ] Call `PdfEditModel.move_pages()`; re-render affected thumbnails; mark dirty
-- [ ] Reset `last_clicked_index` after reorder (same rule as reload)
+- [x] Show **drop indicator line** between cards while dragging (insertion index from cursor)
+- [x] Multi-page drag: move selected pages as a block to drop index
+- [x] Call `PdfEditModel.move_pages()`; re-render affected thumbnails; mark dirty
+- [x] Reset `last_clicked_index` after reorder (same rule as reload)
 
 ### Checklist — Test Scripts & Smoke Tests
 

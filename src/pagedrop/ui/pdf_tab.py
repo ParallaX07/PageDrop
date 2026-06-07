@@ -45,6 +45,7 @@ class PdfTab(QWidget):
             hint="Choose a file or drop one onto the grid",
             show_hint=True,
         )
+        self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._preview_widget = PagePreviewWidget()
         self._preview_widget.closed.connect(self.close_preview)
 
@@ -184,6 +185,10 @@ class PdfTab(QWidget):
             return False
         self._sync_dirty_from_model()
         return True
+
+    def _on_pages_reordered(self) -> None:
+        self.close_preview()
+        self._sync_dirty_from_model()
 
     def close_loader(self) -> None:
         """Cancel rendering, release loaders, and reset to a blank tab."""

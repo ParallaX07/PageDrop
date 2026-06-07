@@ -5,14 +5,23 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEvent
-from PyQt6.QtWidgets import QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtGui import (
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QKeyEvent,
+    QPixmap,
+    QResizeEvent,
+    QShowEvent,
+    QWheelEvent,
+)
+from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout, QWidget
 
 import fitz
 
 from pagedrop.assets import empty_state_logo_pixmap
-from collections.abc import Callable
-
+from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
@@ -20,6 +29,7 @@ from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.theme import (
+    ACCENT,
     CARD_PADDING,
     CARD_WIDTH,
     DEFAULT_THUMBNAIL_WIDTH,
@@ -95,6 +105,7 @@ class ThumbnailGrid(QScrollArea):
     preview_requested = pyqtSignal(int)
     zoom_changed = pyqtSignal(int)
     extract_to_folder_requested = pyqtSignal()
+    pages_reordered = pyqtSignal()
 
     def __init__(
         self,
@@ -109,6 +120,7 @@ class ThumbnailGrid(QScrollArea):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAcceptDrops(True)
 
         self._container = QWidget()
         self._container.setObjectName("ThumbnailContainer")
@@ -199,6 +211,14 @@ class ThumbnailGrid(QScrollArea):
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
         self._focused_index: int | None = None
+        self._drop_insertion_index: int | None = None
+        self._drop_indicator = QFrame(self._container)
+        self._drop_indicator.setObjectName("DropIndicator")
+        self._drop_indicator.setStyleSheet(
+            f"background-color: {ACCENT}; border: none; border-radius: 1px;"
+        )
+        self._drop_indicator.setFixedWidth(3)
+        self._drop_indicator.hide()
         self.selection_manager = SelectionManager(
             on_selection_changed=self._on_selection_changed,
         )
@@ -414,6 +434,7 @@ class ThumbnailGrid(QScrollArea):
         self._pending_layout_indices.clear()
         self._cancel_rendering()
         self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
+        self._hide_drop_indicator()
         self._clear_cards()
         self._model = None
         self._get_loader = None
@@ -582,6 +603,140 @@ class ThumbnailGrid(QScrollArea):
             anchor = min(new_selection)
             self._last_clicked_index = anchor
             self._set_focused_index(anchor)
+
+    def drop_index_at_pos(self, pos: QPoint) -> int:
+        """Return the logical insertion index (0…N) for a point in container coords."""
+        if not self._cards:
+            return 0
+
+        for index, card in enumerate(self._cards):
+            rect = card.geometry()
+            if not rect.contains(pos):
+                continue
+            local_x = pos.x() - rect.x()
+            if local_x < rect.width() / 2:
+                return index
+            return index + 1
+
+        nearest_index = 0
+        nearest_distance = float("inf")
+        for index, card in enumerate(self._cards):
+            rect = card.geometry()
+            center = rect.center()
+            distance = (pos.x() - center.x()) ** 2 + (pos.y() - center.y()) ** 2
+            if distance < nearest_distance:
+                nearest_distance = distance
+                nearest_index = index if pos.x() < center.x() else index + 1
+
+        return min(max(nearest_index, 0), len(self._cards))
+
+    def _hide_drop_indicator(self) -> None:
+        self._drop_insertion_index = None
+        self._drop_indicator.hide()
+
+    def _update_drop_indicator(self, insertion_index: int) -> None:
+        if not self._cards:
+            self._hide_drop_indicator()
+            return
+
+        self._drop_insertion_index = insertion_index
+        spacing = self._layout.spacing()
+
+        if insertion_index >= len(self._cards):
+            card = self._cards[-1]
+            x = card.x() + card.width() + max(spacing // 2, 2)
+        else:
+            card = self._cards[insertion_index]
+            x = max(card.x() - max(spacing // 2, 2), 0)
+
+        y = card.y()
+        height = card.height()
+        self._drop_indicator.setGeometry(x, y, 3, height)
+        self._drop_indicator.show()
+        self._drop_indicator.raise_()
+
+    def _new_selection_after_move(
+        self, indices: list[int], to_index: int
+    ) -> set[int]:
+        ordered = sorted(set(indices))
+        adjusted = to_index
+        for index in ordered:
+            if index < to_index:
+                adjusted -= 1
+        adjusted = max(0, min(adjusted, self._model.logical_count() - len(ordered)))
+        return set(range(adjusted, adjusted + len(ordered)))
+
+    def _would_move_change_order(self, indices: list[int], to_index: int) -> bool:
+        if self._model is None or not indices:
+            return False
+        before = [self._model.page_at(i) for i in range(self._model.logical_count())]
+        ordered = sorted(set(indices))
+        moving = [self._model.page_at(i) for i in ordered]
+        remove = set(ordered)
+        remaining = [
+            self._model.page_at(i)
+            for i in range(self._model.logical_count())
+            if i not in remove
+        ]
+        adjusted = to_index
+        for index in ordered:
+            if index < to_index:
+                adjusted -= 1
+        adjusted = max(0, min(adjusted, len(remaining)))
+        after = remaining[:adjusted] + moving + remaining[adjusted:]
+        return before != after
+
+    def reorder_pages_by_drop(self, indices: list[int], to_index: int) -> bool:
+        """Move *indices* to *to_index* via internal drag-and-drop."""
+        if self._model is None or self._get_loader is None or not indices:
+            return False
+
+        ordered = sorted(set(indices))
+        if not self._would_move_change_order(ordered, to_index):
+            return False
+
+        new_selection = self._new_selection_after_move(ordered, to_index)
+        self._model.move_pages(ordered, to_index)
+        self._last_clicked_index = None
+        self.load_model(self._model, self._get_loader)
+        self.selection_manager.set_selection(new_selection)
+        if new_selection:
+            self._set_focused_index(min(new_selection))
+        self.pages_reordered.emit()
+        return True
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasFormat(INTERNAL_PAGE_MIME):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if not event.mimeData().hasFormat(INTERNAL_PAGE_MIME):
+            event.ignore()
+            return
+        pos = self._container.mapFrom(self, event.position().toPoint())
+        self._update_drop_indicator(self.drop_index_at_pos(pos))
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._hide_drop_indicator()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self._hide_drop_indicator()
+        mime = event.mimeData()
+        if not mime.hasFormat(INTERNAL_PAGE_MIME):
+            event.ignore()
+            return
+
+        indices = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+        pos = self._container.mapFrom(self, event.position().toPoint())
+        to_index = self.drop_index_at_pos(pos)
+        if self.reorder_pages_by_drop(indices, to_index):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def delete_selected_pages(self) -> bool:
         """Remove selected logical pages from the model and refresh the grid."""
