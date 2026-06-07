@@ -24,7 +24,7 @@ def test_load_pdf_creates_cards(qtbot, five_page_pdf):
     grid.load_pdf(loader)
     assert len(grid._cards) == 5
     assert all(isinstance(card, PageCard) for card in grid._cards)
-    qtbot.waitSignal(grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
     loader.close()
 
 
@@ -38,14 +38,14 @@ def test_load_pdf_clears_previous(qtbot, one_page_pdf, five_page_pdf):
     assert len(grid._cards) == 1
     qtbot.waitUntil(
         lambda: _all_cards_have_thumbnails(grid._cards),
-        timeout=30000,
+        timeout=15000,
     )
 
     grid.load_pdf(loader_b)
     assert len(grid._cards) == 5
     qtbot.waitUntil(
         lambda: _all_cards_have_thumbnails(grid._cards),
-        timeout=30000,
+        timeout=15000,
     )
 
 
@@ -56,7 +56,7 @@ def test_page_ready_populates_card(qtbot, five_page_pdf):
     grid.load_pdf(loader)
     qtbot.waitUntil(
         lambda: _all_cards_have_thumbnails(grid._cards),
-        timeout=30000,
+        timeout=15000,
     )
 
     for card in grid._cards:
@@ -81,6 +81,6 @@ def test_progress_bar_visible_during_load(qtbot, five_page_pdf):
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
     qtbot.waitUntil(lambda: progress.isVisible(), timeout=5000)
-    qtbot.waitSignal(grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
     qtbot.waitUntil(lambda: not progress.isVisible(), timeout=5000)
     loader.close()

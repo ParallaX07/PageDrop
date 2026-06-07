@@ -33,7 +33,7 @@ def test_ctrl_scroll_zoom_increases_thumbnail_width(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
 
     initial = grid.thumbnail_width_px
     _ctrl_wheel(grid, 120)
@@ -48,7 +48,7 @@ def test_zoom_does_not_immediately_trigger_full_rerender(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
 
     with qtbot.waitSignal(
         grid.rendering_started, timeout=200, raising=False
@@ -65,7 +65,7 @@ def test_ctrl_scroll_zoom_out_decreases_thumbnail_width(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
 
     _ctrl_wheel(grid, -120)
     assert grid.thumbnail_width_px == DEFAULT_THUMBNAIL_WIDTH - ZOOM_WHEEL_STEP
@@ -86,7 +86,7 @@ def test_preview_button_disabled_without_pdf(main_window):
 
 def test_preview_button_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
 
     preview_action = None
     for toolbar in main_window.findChildren(QToolBar):
@@ -102,8 +102,8 @@ def test_preview_arrow_keys_change_page(qtbot, five_page_pdf):
     loader = PdfLoader(str(five_page_pdf))
     dialog = PagePreviewDialog(loader, start_page=0)
     qtbot.addWidget(dialog)
-    dialog.show()
-    qtbot.waitExposed(dialog)
+    dialog.showMinimized()
+    qtbot.waitExposed(dialog, timeout=5000)
 
     assert dialog._current_page == 0
     qtbot.keyClick(dialog, Qt.Key.Key_Right)
@@ -126,7 +126,7 @@ def test_zoom_controls_disabled_without_pdf(main_window):
 
 def test_zoom_controls_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
 
     zoom = main_window.findChild(ZoomControls)
     assert zoom is not None
@@ -135,7 +135,7 @@ def test_zoom_controls_enabled_with_pdf(main_window, five_page_pdf, qtbot):
 
 def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
 
     grid = main_window._thumbnail_grid
     zoom = main_window.findChild(ZoomControls)
@@ -148,7 +148,7 @@ def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qt
 
 def test_zoom_slider_changes_thumbnail_width(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
 
     grid = main_window._thumbnail_grid
     zoom = main_window.findChild(ZoomControls)
@@ -160,7 +160,7 @@ def test_zoom_slider_changes_thumbnail_width(main_window, five_page_pdf, qtbot):
 
 def test_open_preview_uses_selected_page(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
 
     main_window._thumbnail_grid.selection_manager.select_single(3)
     main_window._open_preview()

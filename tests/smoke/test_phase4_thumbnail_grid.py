@@ -25,7 +25,7 @@ def test_smoke_thumbnail_grid_five_pages(qtbot, five_page_pdf):
     window.showMinimized()
 
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=30000)
+    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
 
     cards = window._thumbnail_grid._cards
     assert len(cards) == 5

@@ -7,13 +7,7 @@ from PyQt6.QtCore import Qt
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
-
-
-def _show_window(qtbot, window) -> None:
-    window.show()
-    qtbot.waitExposed(window)
-    window.activateWindow()
-    window.setFocus()
+from tests.conftest import wait_for_grid_loaded, wait_for_pdf_loaded
 
 
 def _load_grid(qtbot, pdf_path) -> ThumbnailGrid:
@@ -22,7 +16,7 @@ def _load_grid(qtbot, pdf_path) -> ThumbnailGrid:
     grid.resize(900, 650)
     loader = PdfLoader(str(pdf_path))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=30000)
+    wait_for_grid_loaded(qtbot, grid)
     loader.close()
     return grid
 
@@ -81,9 +75,9 @@ def test_shift_click_selects_range(qtbot, five_page_pdf):
 def test_ctrl_a_selects_all(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)
-    _show_window(qtbot, window)
+    window.showMinimized()
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=30000)
+    wait_for_pdf_loaded(qtbot, window)
 
     qtbot.keyClick(
         window,
@@ -97,9 +91,9 @@ def test_ctrl_a_selects_all(qtbot, five_page_pdf):
 def test_escape_clears_selection(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)
-    _show_window(qtbot, window)
+    window.showMinimized()
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=30000)
+    wait_for_pdf_loaded(qtbot, window)
 
     qtbot.mouseClick(
         window._thumbnail_grid._cards[0],
@@ -113,9 +107,9 @@ def test_escape_clears_selection(qtbot, five_page_pdf):
 def test_status_bar_matches_selection(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)
-    _show_window(qtbot, window)
+    window.showMinimized()
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=30000)
+    wait_for_pdf_loaded(qtbot, window)
 
     cards = window._thumbnail_grid._cards
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
