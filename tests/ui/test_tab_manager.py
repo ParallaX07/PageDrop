@@ -67,6 +67,7 @@ def _open_multi(window: MainWindow, paths: list[Path], monkeypatch) -> None:
             "PDF Files (*.pdf)",
         ),
     )
+    monkeypatch.setattr(window, "_ask_multi_open_target", lambda _: "tabs")
     window._open_pdf()
 
 
@@ -280,3 +281,194 @@ def test_toolbar_routes_to_active_tab(
 
     assert tab_b.thumbnail_grid.selection_manager.selection == set(range(5))
     assert tab_a.thumbnail_grid.selection_manager.selection == {0}
+
+
+def _ensure_window_manager(qapp):
+    from pagedrop.ui.window_manager import WindowManager
+
+    manager = WindowManager.instance_or_none()
+    if manager is None:
+        manager = WindowManager.init(qapp)
+    return manager
+
+
+def _windows_added(manager, before: frozenset) -> list:
+    return [window for window in manager.windows if window not in before]
+
+
+def test_detach_tab_to_new_window(
+    one_page_pdf,
+    five_page_pdf,
+    monkeypatch,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.showMinimized()
+
+    tab_a = source._tab_manager.add_blank_tab()
+    source._load_pdf(str(one_page_pdf), tab=tab_a)
+    tab_b = source._tab_manager.add_blank_tab()
+    source._load_pdf(str(five_page_pdf), tab=tab_b)
+    source._tab_manager.removeTab(0)
+    _wait_for_tab_loaded(qtbot, tab_a)
+    _wait_for_tab_loaded(qtbot, tab_b)
+
+    tab_a.thumbnail_grid.selection_manager.select_single(0)
+    tab_a.set_zoom_level(140)
+    tab_b_index = source._tab_manager.indexOf(tab_b)
+
+    initial_count = len(manager.windows)
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(tab_b_index)
+    qtbot.waitUntil(
+        lambda: len(manager.windows) == initial_count + 1,
+        timeout=5000,
+    )
+
+    assert source._tab_manager.count() == 1
+    assert _tab_at(source, 0).pdf_path == str(one_page_pdf)
+
+    detached = _windows_added(manager, windows_before)[0]
+    qtbot.addWidget(detached)
+    assert detached._tab_manager.count() == 1
+    detached_tab = _tab_at(detached, 0)
+    assert detached_tab.pdf_path == str(five_page_pdf)
+    assert detached_tab.loader is tab_b.loader
+    assert detached_tab.zoom_level == tab_b.zoom_level
+    assert detached_tab.thumbnail_grid.selection_manager.selection == set()
+
+
+def test_detach_last_tab_spawns_blank_tab(
+    one_page_pdf,
+    monkeypatch,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.showMinimized()
+
+    tab = _tab_at(source, 0)
+    source._load_pdf(str(one_page_pdf), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+
+    initial_count = len(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(
+        lambda: len(manager.windows) == initial_count + 1,
+        timeout=5000,
+    )
+    qtbot.waitUntil(
+        lambda: source._tab_manager.count() == 1 and _tab_at(source, 0).is_blank,
+        timeout=5000,
+    )
+
+
+def test_move_to_new_window_context_menu(
+    one_page_pdf,
+    monkeypatch,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.showMinimized()
+
+    tab = _tab_at(source, 0)
+    source._load_pdf(str(one_page_pdf), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+
+    initial_count = len(manager.windows)
+    windows_before = frozenset(manager.windows)
+    source._tab_manager.move_to_new_window_requested.emit(0)
+    qtbot.waitUntil(
+        lambda: len(manager.windows) == initial_count + 1,
+        timeout=5000,
+    )
+
+    detached = _windows_added(manager, windows_before)[0]
+    assert _tab_at(detached, 0).pdf_path == str(one_page_pdf)
+
+
+def test_detach_blank_tab_to_new_window(qtbot, qapp):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+
+    assert _tab_at(source, 0).is_blank
+    initial_count = len(manager.windows)
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(
+        lambda: len(manager.windows) == initial_count + 1,
+        timeout=5000,
+    )
+
+    detached = _windows_added(manager, windows_before)[0]
+    assert _tab_at(detached, 0).is_blank
+    qtbot.waitUntil(
+        lambda: source._tab_manager.count() == 1 and _tab_at(source, 0).is_blank,
+        timeout=5000,
+    )
+
+
+def test_detach_dirty_tab_keeps_dirty_flag(
+    five_page_pdf,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+
+    tab = _tab_at(source, 0)
+    source._load_pdf(str(five_page_pdf), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+    tab.thumbnail_grid.reorder_pages_by_drop([4], 0)
+    assert tab.is_dirty
+
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(
+        lambda: len(manager.windows) == len(windows_before) + 1,
+        timeout=5000,
+    )
+
+    detached = _windows_added(manager, windows_before)[0]
+    detached_tab = _tab_at(detached, 0)
+    assert detached_tab.is_dirty
+    assert detached_tab.tab_title.endswith("*")
+
+
+def test_detach_tab_in_preview_mode(
+    five_page_pdf,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+
+    tab = _tab_at(source, 0)
+    source._load_pdf(str(five_page_pdf), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+    tab.show_preview_at(2)
+    assert tab.is_preview_visible()
+
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(
+        lambda: len(manager.windows) == len(windows_before) + 1,
+        timeout=5000,
+    )
+
+    detached = _windows_added(manager, windows_before)[0]
+    detached_tab = _tab_at(detached, 0)
+    assert detached_tab.is_preview_visible()
+    assert detached_tab.preview_widget.current_page == 2
+

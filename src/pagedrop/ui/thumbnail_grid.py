@@ -22,7 +22,12 @@ from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QScrollArea, QVB
 import fitz
 
 from pagedrop.assets import empty_state_logo_pixmap
-from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
+from pagedrop.core.drag_mime import (
+    INTERNAL_PAGE_MIME,
+    PAGE_TRANSFER_MIME,
+    decode_page_indices,
+    decode_page_refs,
+)
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, render_page_png
@@ -108,6 +113,9 @@ class ThumbnailGrid(QScrollArea):
     extract_to_folder_requested = pyqtSignal()
     pages_reordered = pyqtSignal()
     pages_inserted = pyqtSignal(int, str, int)  # count, filename, 1-based position
+    cross_window_pages_inserted = pyqtSignal(int, str)  # count, source filename
+    pages_moved_out = pyqtSignal(int, str)  # count, target filename
+    page_transfer_failed = pyqtSignal(str)
     pdf_drop_failed = pyqtSignal(object)
 
     def __init__(
@@ -792,6 +800,141 @@ class ThumbnailGrid(QScrollArea):
             page_indices=list(range(insert_index, insert_index + count)),
         )
 
+    def insert_page_refs(self, refs: list[PageRef], drop_index: int) -> bool:
+        """Insert explicit ``PageRef`` rows at *drop_index* (cross-window copy/move)."""
+        if self._model is None or self._get_loader is None or not refs:
+            return False
+
+        for ref in refs:
+            self._get_loader(ref.source_path)
+
+        self._model.insert_pages(drop_index, refs)
+        self._sync_grid_after_insert(drop_index, len(refs))
+        self._last_clicked_index = None
+        return True
+
+    def remove_pages_by_indices(self, logical_indices: list[int]) -> bool:
+        """Remove logical pages without using the selection manager (cross-window move)."""
+        if self._model is None or self._get_loader is None or not logical_indices:
+            return False
+
+        ordered = sorted(set(logical_indices))
+        self._model.remove_pages(ordered)
+        self._last_clicked_index = None
+        self._sync_grid_after_delete(ordered)
+        return True
+
+    @staticmethod
+    def _grid_for_widget(widget: QWidget | None) -> ThumbnailGrid | None:
+        current: QWidget | None = widget
+        while current is not None:
+            if isinstance(current, ThumbnailGrid):
+                return current
+            current = current.parentWidget()
+        return None
+
+    def _parent_tab(self):
+        from pagedrop.ui.pdf_tab import PdfTab
+
+        current: QWidget | None = self
+        while current is not None:
+            if isinstance(current, PdfTab):
+                return current
+            current = current.parentWidget()
+        return None
+
+    def _accepts_page_transfer(self, mime) -> bool:
+        if not mime.hasFormat(PAGE_TRANSFER_MIME):
+            return False
+        if self._model is not None:
+            return True
+        tab = self._parent_tab()
+        return tab is not None and tab.is_blank
+
+    def _rollback_cross_window_insert(
+        self,
+        refs: list[PageRef],
+        drop_index: int,
+        *,
+        inited_blank_tab: bool,
+    ) -> None:
+        """Undo a target insert after a failed cross-window move."""
+        tab = self._parent_tab()
+        if inited_blank_tab:
+            if tab is not None:
+                tab.close_loader()
+            return
+
+        if self._model is None:
+            return
+
+        inserted_indices = list(range(drop_index, drop_index + len(refs)))
+        self.remove_pages_by_indices(inserted_indices)
+        if tab is not None:
+            tab._sync_dirty_from_model()
+
+    def _handle_cross_window_drop(
+        self,
+        refs: list[PageRef],
+        drop_index: int,
+        *,
+        move: bool,
+        source_grid: ThumbnailGrid | None,
+        mime,
+    ) -> bool:
+        tab = self._parent_tab()
+        source_filename = Path(refs[0].source_path).name
+
+        move_indices: list[int] | None = None
+        if move and source_grid is not None and source_grid is not self:
+            move_indices = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+            if not move_indices:
+                self.page_transfer_failed.emit(
+                    "Could not move pages: invalid drag data."
+                )
+                return False
+            if source_grid._model is None or source_grid._get_loader is None:
+                self.page_transfer_failed.emit(
+                    "Could not move pages: source document unavailable."
+                )
+                return False
+
+        inited_blank_tab = False
+        if self._model is None:
+            if tab is None or not tab.is_blank:
+                return False
+            tab.init_from_page_refs(refs)
+            inited_blank_tab = True
+        elif not self.insert_page_refs(refs, drop_index):
+            return False
+        elif tab is not None:
+            tab._on_pages_inserted()
+
+        if move_indices is not None:
+            assert source_grid is not None
+            if not source_grid.remove_pages_by_indices(move_indices):
+                self._rollback_cross_window_insert(
+                    refs,
+                    drop_index,
+                    inited_blank_tab=inited_blank_tab,
+                )
+                self.page_transfer_failed.emit(
+                    "Could not move pages from the source document."
+                )
+                return False
+
+            source_tab = source_grid._parent_tab()
+            if source_tab is not None:
+                source_tab._sync_dirty_from_model()
+            target_name = ""
+            if tab is not None and tab.edit_model is not None:
+                display = tab.edit_model.save_path or tab.edit_model.original_path
+                target_name = Path(display).name
+            source_grid.pages_moved_out.emit(len(refs), target_name)
+
+        self.cross_window_pages_inserted.emit(len(refs), source_filename)
+        return True
+
     def drop_index_at_pos(self, pos: QPoint) -> int:
         """Return the logical insertion index (0…N) for a point in container coords."""
         if not self._cards:
@@ -901,6 +1044,9 @@ class ThumbnailGrid(QScrollArea):
         if mime.hasFormat(INTERNAL_PAGE_MIME):
             event.acceptProposedAction()
             return
+        if self._accepts_page_transfer(mime):
+            event.acceptProposedAction()
+            return
         if self._accepts_inbound_pdf_drop(mime):
             event.acceptProposedAction()
             return
@@ -908,7 +1054,11 @@ class ThumbnailGrid(QScrollArea):
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         mime = event.mimeData()
-        if mime.hasFormat(INTERNAL_PAGE_MIME) or self._accepts_inbound_pdf_drop(mime):
+        if (
+            mime.hasFormat(INTERNAL_PAGE_MIME)
+            or self._accepts_page_transfer(mime)
+            or self._accepts_inbound_pdf_drop(mime)
+        ):
             pos = self._container.mapFrom(self, event.position().toPoint())
             self._update_drop_indicator(self.drop_index_at_pos(pos))
             event.acceptProposedAction()
@@ -922,13 +1072,40 @@ class ThumbnailGrid(QScrollArea):
     def dropEvent(self, event: QDropEvent) -> None:
         self._hide_drop_indicator()
         mime = event.mimeData()
-        if mime.hasFormat(INTERNAL_PAGE_MIME):
+        source_grid = self._grid_for_widget(event.source())
+
+        if mime.hasFormat(INTERNAL_PAGE_MIME) and source_grid is self:
             indices = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
             pos = self._container.mapFrom(self, event.position().toPoint())
             to_index = self.drop_index_at_pos(pos)
             if self.reorder_pages_by_drop(indices, to_index):
                 event.acceptProposedAction()
             else:
+                event.ignore()
+            return
+
+        if mime.hasFormat(PAGE_TRANSFER_MIME) and source_grid is not self:
+            refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+            if not refs:
+                event.ignore()
+                return
+
+            move = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            pos = self._container.mapFrom(self, event.position().toPoint())
+            drop_index = self.drop_index_at_pos(pos)
+            try:
+                if self._handle_cross_window_drop(
+                    refs,
+                    drop_index,
+                    move=move,
+                    source_grid=source_grid,
+                    mime=mime,
+                ):
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
+            except PdfLoadError as exc:
+                self.pdf_drop_failed.emit(exc)
                 event.ignore()
             return
 

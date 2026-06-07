@@ -6,7 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
-from pagedrop.core.pdf_editor import PdfEditModel
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -194,6 +194,24 @@ class PdfTab(QWidget):
     def _on_pages_inserted(self) -> None:
         self.close_preview()
         self._sync_dirty_from_model()
+
+    def init_from_page_refs(self, refs: list[PageRef]) -> None:
+        """Initialize a blank tab from a cross-window page transfer."""
+        if not refs or self._edit_model is not None:
+            return
+
+        for ref in refs:
+            self.get_loader(ref.source_path)
+
+        primary = refs[0].source_path
+        self._edit_model = PdfEditModel.with_pages(primary, refs)
+        self._pdf_path = primary
+        self._sync_dirty_from_model()
+
+        get_loader: Callable[[str], PdfLoader] = self.get_loader
+        self._preview_widget.set_model(self._edit_model, get_loader)
+        self._thumbnail_grid.load_model(self._edit_model, get_loader)
+        self.pdf_loaded.emit()
 
     def close_loader(self) -> None:
         """Cancel rendering, release loaders, and reset to a blank tab."""
