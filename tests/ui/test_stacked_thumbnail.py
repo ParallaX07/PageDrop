@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pagedrop.ui.stacked_thumbnail import (
     MAX_STACK_PAGES,
+    MIN_STACK_OFFSET,
     build_stacked_pixmap,
     render_stacked_pdf_thumbnail,
+    stack_thumbnail_layout,
 )
 from tests.fixtures.generate_fixtures import generate_n_page
 
@@ -18,13 +20,22 @@ def test_build_stacked_pixmap_single_page(one_page_pdf):
 
 
 def test_render_stacked_pdf_thumbnail_uses_page_count(one_page_pdf, five_page_pdf):
-    one = render_stacked_pdf_thumbnail(str(one_page_pdf), 1)
-    five = render_stacked_pdf_thumbnail(str(five_page_pdf), 5)
+    target = 160
+    one = render_stacked_pdf_thumbnail(str(one_page_pdf), 1, width_px=target)
+    five = render_stacked_pdf_thumbnail(str(five_page_pdf), 5, width_px=target)
 
     assert not one.isNull()
     assert not five.isNull()
-    assert one.width() < five.width()
-    assert one.height() < five.height()
+    assert one.width() == target
+    assert five.width() == target
+    assert five.height() >= one.height()
+
+
+def test_stack_thumbnail_layout_fits_target_width():
+    layers, stack_offset, page_width = stack_thumbnail_layout(160, 5)
+    assert layers == MAX_STACK_PAGES
+    assert stack_offset >= MIN_STACK_OFFSET
+    assert page_width + stack_offset * (layers - 1) == 160
 
 
 def test_render_stacked_pdf_thumbnail_caps_at_three_pages(tmp_path):
@@ -40,3 +51,25 @@ def test_render_stacked_pdf_thumbnail_caps_at_three_pages(tmp_path):
 
 def test_build_stacked_pixmap_empty():
     assert build_stacked_pixmap([]).isNull()
+
+
+def test_build_stacked_pixmap_puts_first_page_on_top(tmp_path):
+    import fitz
+
+    pdf = tmp_path / "colored.pdf"
+    doc = fitz.open()
+    for color in [(1, 0, 0), (0, 1, 0), (0, 0, 1)]:
+        page = doc.new_page(width=200, height=280)
+        page.draw_rect(page.rect, color=color, fill=color)
+    doc.save(str(pdf))
+    doc.close()
+
+    pixmap = render_stacked_pdf_thumbnail(str(pdf), 3, width_px=160)
+    top_left = pixmap.toImage().pixelColor(20, 20)
+    assert top_left.red() > 200
+    assert top_left.green() < 50
+    assert top_left.blue() < 50
+
+    # Bottom-right corner belongs to the rearmost (blue) page peeking out.
+    back_corner = pixmap.toImage().pixelColor(pixmap.width() - 8, pixmap.height() - 8)
+    assert back_corner.blue() > 200

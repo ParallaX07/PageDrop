@@ -5,14 +5,76 @@ from __future__ import annotations
 import fitz
 from collections.abc import Callable
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 
 from pagedrop.core.pdf_loader import render_page_png
-from pagedrop.ui.theme import BORDER_DEFAULT
+from pagedrop.ui.theme import BORDER_HOVER
 
 MAX_STACK_PAGES = 3
 DEFAULT_PAGE_WIDTH_PX = 40
 DEFAULT_STACK_OFFSET = 4
+MIN_STACK_OFFSET = 8
+
+
+def stack_thumbnail_layout(
+    target_width_px: int,
+    page_count: int,
+) -> tuple[int, int, int]:
+    """Return ``(layer_count, stack_offset_px, page_render_width_px)``."""
+    layers = min(max(page_count, 0), MAX_STACK_PAGES)
+    if layers <= 1:
+        return layers, 0, target_width_px
+
+    stack_offset = max(MIN_STACK_OFFSET, round(target_width_px / 14))
+    page_width = target_width_px - stack_offset * (layers - 1)
+    page_width = max(page_width, target_width_px // 3)
+    return layers, stack_offset, page_width
+
+
+def _page_border_width(page_width: int) -> int:
+    return max(1, round(page_width / 80))
+
+
+def _stroke_page_border(
+    painter: QPainter,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    *,
+    pen_width: int,
+) -> None:
+    pen = QPen(QColor(BORDER_HOVER))
+    pen.setWidth(pen_width)
+    pen.setCosmetic(True)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    inset = pen_width // 2
+    painter.drawRect(
+        x + inset,
+        y + inset,
+        width - pen_width,
+        height - pen_width,
+    )
+
+
+def _frame_pixmap(pixmap: QPixmap) -> QPixmap:
+    pen_width = _page_border_width(pixmap.width())
+    canvas = QPixmap(pixmap.size())
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.drawPixmap(0, 0, pixmap)
+    _stroke_page_border(
+        painter,
+        0,
+        0,
+        pixmap.width(),
+        pixmap.height(),
+        pen_width=pen_width,
+    )
+    painter.end()
+    return canvas
 
 
 def build_stacked_pixmap(
@@ -34,22 +96,31 @@ def build_stacked_pixmap(
     ]
 
     if len(scaled) == 1:
-        return scaled[0]
+        return _frame_pixmap(scaled[0])
 
     layers = len(scaled)
     width = scaled[0].width() + stack_offset * (layers - 1)
     height = scaled[0].height() + stack_offset * (layers - 1)
+    pen_width = _page_border_width(scaled[0].width())
 
     canvas = QPixmap(width, height)
     canvas.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    for layer, pixmap in enumerate(scaled):
-        offset = (layers - 1 - layer) * stack_offset
-        painter.setPen(QColor(BORDER_DEFAULT))
-        painter.drawRect(offset, offset, pixmap.width() - 1, pixmap.height() - 1)
+    # Draw back-to-front so page 1 sits on top (offset 0) and later pages peek behind.
+    for layer in range(layers - 1, -1, -1):
+        pixmap = scaled[layer]
+        offset = layer * stack_offset
         painter.drawPixmap(offset, offset, pixmap)
+        _stroke_page_border(
+            painter,
+            offset,
+            offset,
+            pixmap.width(),
+            pixmap.height(),
+            pen_width=pen_width,
+        )
     painter.end()
     return canvas
 
@@ -83,10 +154,17 @@ def render_stacked_pdf_thumbnail(
     page_count: int,
     *,
     width_px: int = DEFAULT_PAGE_WIDTH_PX,
-    stack_offset: int = DEFAULT_STACK_OFFSET,
+    stack_offset: int | None = None,
 ) -> QPixmap:
     """Render the first 1–3 pages of a PDF as a stacked thumbnail."""
-    page_pngs = render_stacked_page_pngs(path, page_count, width_px=width_px)
+    _layers, auto_offset, page_render_width = stack_thumbnail_layout(width_px, page_count)
+    if stack_offset is None:
+        stack_offset = auto_offset
+    page_pngs = render_stacked_page_pngs(
+        path,
+        page_count,
+        width_px=page_render_width,
+    )
     if not page_pngs:
         return QPixmap()
 

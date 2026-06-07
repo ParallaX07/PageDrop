@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
+from PyQt6.QtGui import QCloseEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
     QMainWindow,
@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.pdf_loader import PdfEmptyError, PdfLoadError, PdfLoader
 from pagedrop.core.pdf_merge import PdfMergeModel
 from pagedrop.core.pdf_writer import merge_pdf_files
+from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.merge_file_grid import MergeFileGrid
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -34,6 +35,31 @@ _PREVIEW_FOOTER_HINT = (
 )
 
 
+class _MergeWorker(QRunnable):
+    class Signals(QObject):
+        succeeded = pyqtSignal(str)
+        failed = pyqtSignal(str)
+
+    def __init__(self, file_paths: list[str], output_path: str) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._file_paths = file_paths
+        self._output_path = output_path
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            merge_pdf_files(self._file_paths, self._output_path)
+        except PdfLoadError as exc:
+            self.signals.failed.emit(f"Could not read a source PDF:\n{exc}")
+        except OSError as exc:
+            self.signals.failed.emit(f"Could not write PDF:\n{exc}")
+        except Exception as exc:
+            self.signals.failed.emit(f"Could not merge PDFs:\n{exc}")
+        else:
+            self.signals.succeeded.emit(self._output_path)
+
+
 class MergeWindow(QMainWindow):
     WINDOW_TITLE = "Merge PDFs"
 
@@ -42,6 +68,9 @@ class MergeWindow(QMainWindow):
         self._model = PdfMergeModel()
         self._page_counts: dict[str, int] = {}
         self._preview_loader: PdfLoader | None = None
+        self._merging = False
+        self._merge_pool = QThreadPool(self)
+        self._merge_pool.setMaxThreadCount(1)
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setMinimumSize(640, 480)
@@ -64,6 +93,8 @@ class MergeWindow(QMainWindow):
         self._stack.addWidget(self._file_grid)
         self._stack.addWidget(self._preview_widget)
         self.setCentralWidget(self._stack)
+
+        self._busy_overlay = BusyOverlay(self._stack)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Merge", self)
@@ -162,11 +193,13 @@ class MergeWindow(QMainWindow):
         self._merge_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
-        self._remove_action.setEnabled(has_selection)
-        self._move_up_action.setEnabled(self._can_move_up())
-        self._move_down_action.setEnabled(self._can_move_down())
-        self._merge_action.setEnabled(has_files)
-        self._zoom_controls.setEnabled(has_files and not in_preview)
+        toolbar_enabled = not self._merging
+        self._add_action.setEnabled(toolbar_enabled)
+        self._remove_action.setEnabled(has_selection and toolbar_enabled)
+        self._move_up_action.setEnabled(self._can_move_up() and toolbar_enabled)
+        self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
+        self._merge_action.setEnabled(has_files and not self._merging)
+        self._zoom_controls.setEnabled(has_files and not in_preview and not self._merging)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -365,35 +398,43 @@ class MergeWindow(QMainWindow):
         if not path.lower().endswith(".pdf"):
             path = f"{path}.pdf"
 
-        try:
-            merge_pdf_files(self._model.all_paths(), path)
-        except PdfLoadError as exc:
-            QMessageBox.critical(
-                self,
-                "Merge PDFs",
-                f"Could not read a source PDF:\n{exc}",
-            )
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Merge PDFs",
-                f"Could not write PDF:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Merge PDFs",
-                f"Could not merge PDFs:\n{exc}",
-            )
-            return
+        self._start_merge(self._model.all_paths(), path)
 
+    def _start_merge(self, file_paths: list[str], output_path: str) -> None:
+        self._merging = True
+        self._busy_overlay.show_message("Merging PDFs…")
+        self.statusBar().showMessage("Merging PDFs…")
+        self._update_actions()
+
+        worker = _MergeWorker(file_paths, output_path)
+        worker.signals.succeeded.connect(self._on_merge_succeeded)
+        worker.signals.failed.connect(self._on_merge_failed)
+        self._merge_pool.start(worker)
+
+    def _finish_merge(self) -> None:
+        self._merging = False
+        self._busy_overlay.hide_overlay()
+        self._update_actions()
+
+    def _on_merge_succeeded(self, path: str) -> None:
+        self._finish_merge()
         remember_directory(path)
         filename = Path(path).name
         file_count = self._model.file_count()
         noun = "file" if file_count == 1 else "files"
         self.statusBar().showMessage(f"Merged {file_count} {noun} to {filename}")
+
+    def _on_merge_failed(self, message: str) -> None:
+        self._finish_merge()
+        self.statusBar().showMessage("Merge failed")
+        QMessageBox.critical(self, "Merge PDFs", message)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_busy_overlay"):
+            parent = self._busy_overlay.parentWidget()
+            if parent is not None:
+                self._busy_overlay.setGeometry(parent.rect())
 
     def _prompt_discard_file_list(self) -> str:
         """Return ``discard`` or ``cancel``."""
@@ -426,6 +467,10 @@ class MergeWindow(QMainWindow):
         self._refresh_grid()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._merging:
+            event.ignore()
+            return
+
         if self._model.file_count() > 0:
             if self._prompt_discard_file_list() != "discard":
                 event.ignore()

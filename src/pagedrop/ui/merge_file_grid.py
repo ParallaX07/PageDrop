@@ -25,6 +25,7 @@ from pagedrop.ui.merge_file_card import MergeFileCard
 from pagedrop.ui.stacked_thumbnail import (
     build_stacked_pixmap,
     render_stacked_page_pngs,
+    stack_thumbnail_layout,
 )
 from pagedrop.ui.theme import (
     ACCENT,
@@ -66,10 +67,14 @@ class _MergeThumbnailWorker(QRunnable):
         if self._is_cancelled(self._generation):
             return
         try:
+            _layers, _stack_offset, page_width = stack_thumbnail_layout(
+                self._width_px,
+                self._page_count,
+            )
             page_pngs = render_stacked_page_pngs(
                 self._path,
                 self._page_count,
-                width_px=self._width_px,
+                width_px=page_width,
                 should_cancel=lambda: self._is_cancelled(self._generation),
             )
         except Exception:
@@ -460,10 +465,14 @@ class MergeFileGrid(QScrollArea):
             for path, page_count in paths_to_render:
                 if generation != self._generation:
                     return
+                _layers, _stack_offset, page_width = stack_thumbnail_layout(
+                    target,
+                    page_count,
+                )
                 page_pngs = render_stacked_page_pngs(
                     path,
                     page_count,
-                    width_px=target,
+                    width_px=page_width,
                 )
                 self._on_thumbnail_ready(path, target, generation, page_pngs)
             return
@@ -499,7 +508,11 @@ class MergeFileGrid(QScrollArea):
     ) -> None:
         if generation != self._generation or not page_pngs:
             return
-        stack_offset = max(4, width_px // 32)
+        page_count = self._page_counts.get(path, len(page_pngs))
+        _layers, stack_offset, _page_width = stack_thumbnail_layout(
+            width_px,
+            page_count,
+        )
         pixmaps: list[QPixmap] = []
         for png in page_pngs:
             pixmap = QPixmap()
