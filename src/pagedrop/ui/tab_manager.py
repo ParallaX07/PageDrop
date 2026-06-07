@@ -1,11 +1,110 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtWidgets import QTabBar, QTabWidget, QWidget
+from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QWidget
 
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.theme import tab_close_icon
 from pagedrop.utils.temp_manager import TempManager
+
+
+class DetachableTabBar(QTabBar):
+    """Tab bar that supports in-bar reorder (``setMovable``) and tear-off to a new window."""
+
+    tab_detach_requested = pyqtSignal(int)
+    move_to_new_window_requested = pyqtSignal(int)
+
+    DETACH_THRESHOLD_PX = 20
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._drag_tab_index = -1
+        self._drag_start_global: QPoint | None = None
+        self._detach_armed = False
+        self._detach_hint_index = -1
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_tab_context_menu)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_tab_index = self.tabAt(event.pos())
+            self._drag_start_global = event.globalPosition().toPoint()
+            self._detach_armed = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if (
+            self._drag_tab_index >= 0
+            and self._drag_start_global is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            global_pos = event.globalPosition().toPoint()
+            if self._should_detach(global_pos):
+                if not self._detach_armed:
+                    self._detach_armed = True
+                    self._set_detach_hint(self._drag_tab_index, True)
+                self.setCursor(Qt.CursorShape.DragCopyCursor)
+                event.accept()
+                return
+            if self._detach_armed:
+                self._clear_detach_hint()
+                self._detach_armed = False
+                self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._detach_armed
+            and self._drag_tab_index >= 0
+        ):
+            index = self._drag_tab_index
+            self._reset_drag_state()
+            self.tab_detach_requested.emit(index)
+            event.accept()
+            return
+        self._reset_drag_state()
+        super().mouseReleaseEvent(event)
+
+    def _should_detach(self, global_pos: QPoint) -> bool:
+        if self._drag_start_global is None:
+            return False
+        if (global_pos - self._drag_start_global).manhattanLength() < self.DETACH_THRESHOLD_PX:
+            return False
+        window = self.window()
+        if window is None:
+            return False
+        return not window.frameGeometry().contains(global_pos)
+
+    def _set_detach_hint(self, index: int, enabled: bool) -> None:
+        if enabled:
+            self._detach_hint_index = index
+            self.setTabToolTip(index, "Release to open in new window")
+        else:
+            self._clear_detach_hint()
+
+    def _clear_detach_hint(self) -> None:
+        if self._detach_hint_index >= 0:
+            self.setTabToolTip(self._detach_hint_index, "")
+            self._detach_hint_index = -1
+
+    def _reset_drag_state(self) -> None:
+        self._clear_detach_hint()
+        self._drag_tab_index = -1
+        self._drag_start_global = None
+        self._detach_armed = False
+        self.unsetCursor()
+
+    def _show_tab_context_menu(self, pos: QPoint) -> None:
+        index = self.tabAt(pos)
+        if index < 0:
+            return
+        menu = QMenu(self)
+        move_action = menu.addAction("Move to New Window")
+        chosen = menu.exec(self.mapToGlobal(pos))
+        if chosen is move_action:
+            self.move_to_new_window_requested.emit(index)
 
 
 class TabManager(QTabWidget):
@@ -15,6 +114,8 @@ class TabManager(QTabWidget):
     tab_added = pyqtSignal(PdfTab)
     tab_closed = pyqtSignal(int)
     all_tabs_closed = pyqtSignal()
+    tab_detach_requested = pyqtSignal(int)
+    move_to_new_window_requested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -29,8 +130,22 @@ class TabManager(QTabWidget):
         self.setMovable(True)
         self.setUsesScrollButtons(True)
         self.setElideMode(Qt.TextElideMode.ElideRight)
+
+        self._detachable_tab_bar = DetachableTabBar(self)
+        self.setTabBar(self._detachable_tab_bar)
+        self._detachable_tab_bar.tab_detach_requested.connect(
+            self.tab_detach_requested.emit
+        )
+        self._detachable_tab_bar.move_to_new_window_requested.connect(
+            self.move_to_new_window_requested.emit
+        )
+
         self.tabCloseRequested.connect(self.close_tab)
         self.currentChanged.connect(self._on_current_changed)
+
+    @property
+    def detachable_tab_bar(self) -> DetachableTabBar:
+        return self._detachable_tab_bar
 
     @property
     def active_tab(self) -> PdfTab | None:

@@ -3,19 +3,20 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from pagedrop.assets import app_icon
-from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.theme import app_stylesheet
+from pagedrop.ui.window_manager import WindowManager
 
 
 def main():
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     app.setStyle("Fusion")
     app.setStyleSheet(app_stylesheet())
     icon = app_icon()
     app.setWindowIcon(icon)
-    win = MainWindow()
+    manager = WindowManager.init(app)
+    win = manager.open_new_window()
     win.setWindowIcon(icon)
-    win.show()
     sys.exit(app.exec())
 
 

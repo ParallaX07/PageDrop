@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
@@ -37,12 +38,22 @@ from pagedrop.ui.theme import (
 from pagedrop.ui.zoom_controls import ZoomControls
 from pagedrop.utils.temp_manager import TempManager
 
+if TYPE_CHECKING:
+    from pagedrop.ui.window_manager import WindowManager
+
 
 class MainWindow(QMainWindow):
     APP_TITLE = "PageDrop"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        window_manager: WindowManager | None = None,
+        initial_tab: PdfTab | None = None,
+    ) -> None:
         super().__init__()
+        self._window_manager = window_manager
+        self._initial_tab = initial_tab
         self._temp_manager = TempManager()
         self._merge_window: MergeWindow | None = None
 
@@ -53,9 +64,9 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_toolbar()
         self._build_status_widgets()
-        self._build_central_widget()
         self._build_selection_shortcuts()
         self._build_tab_shortcuts()
+        self._build_central_widget()
         QApplication.instance().installEventFilter(self)
         self.statusBar().showMessage("Ready")
         self._sync_toolbar_from_active_tab()
@@ -106,6 +117,12 @@ class MainWindow(QMainWindow):
 
         merge_action = file_menu.addAction("Merge PDFs…")
         merge_action.triggered.connect(self._open_merge_window)
+
+        file_menu.addSeparator()
+
+        self._new_window_action = file_menu.addAction("New &Window")
+        self._new_window_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        self._new_window_action.triggered.connect(self._new_window)
 
         file_menu.addSeparator()
 
@@ -203,6 +220,10 @@ class MainWindow(QMainWindow):
         self._tab_manager.tab_closed.connect(lambda _: self._update_close_tab_action())
         self._tab_manager.tabCloseRequested.disconnect(self._tab_manager.close_tab)
         self._tab_manager.tabCloseRequested.connect(self._on_tab_close_requested)
+        self._tab_manager.tab_detach_requested.connect(self._detach_tab_to_new_window)
+        self._tab_manager.move_to_new_window_requested.connect(
+            self._detach_tab_to_new_window
+        )
 
         new_tab_button = QToolButton()
         new_tab_button.setObjectName("NewTabButton")
@@ -214,7 +235,10 @@ class MainWindow(QMainWindow):
             Qt.Corner.TopRightCorner,
         )
 
-        self._tab_manager.add_blank_tab()
+        if self._initial_tab is not None:
+            self._adopt_tab(self._initial_tab)
+        else:
+            self._tab_manager.add_blank_tab()
         self.setCentralWidget(self._tab_manager)
 
     def _build_status_widgets(self) -> None:
@@ -292,10 +316,39 @@ class MainWindow(QMainWindow):
         grid.preview_requested.connect(self._open_preview_at)
         grid.zoom_changed.connect(self._on_zoom_changed)
         grid.pages_inserted.connect(self._on_pages_inserted)
+        grid.cross_window_pages_inserted.connect(self._on_cross_window_pages_inserted)
+        grid.pages_moved_out.connect(self._on_pages_moved_out)
+        grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.dirty_changed.connect(self._update_save_as_action)
+
+    def _disconnect_tab_signals(self, tab: PdfTab) -> None:
+        grid = tab.thumbnail_grid
+        preview = tab.preview_widget
+        for signal, slot in (
+            (grid.rendering_started, self._on_rendering_started),
+            (grid.rendering_progress, self._on_rendering_progress),
+            (grid.rendering_finished, self._on_rendering_finished),
+            (grid.rendering_error, self._on_rendering_error),
+            (grid.busy_changed, self._on_grid_busy_changed),
+            (grid.selection_changed, self._on_selection_changed),
+            (grid.preview_requested, self._open_preview_at),
+            (grid.zoom_changed, self._on_zoom_changed),
+            (grid.pages_inserted, self._on_pages_inserted),
+            (grid.cross_window_pages_inserted, self._on_cross_window_pages_inserted),
+            (grid.pages_moved_out, self._on_pages_moved_out),
+            (grid.page_transfer_failed, self._on_page_transfer_failed),
+            (grid.pdf_drop_failed, self._on_pdf_drop_failed),
+            (preview.page_changed, self._on_preview_page_changed),
+            (preview.busy_changed, self._on_preview_busy_changed),
+            (tab.dirty_changed, self._update_save_as_action),
+        ):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
 
     def _active_tab(self) -> PdfTab | None:
         return self._tab_manager.active_tab
@@ -308,6 +361,76 @@ class MainWindow(QMainWindow):
         tab = self._tab_manager.add_blank_tab()
         self._tab_manager.setCurrentWidget(tab)
         self._update_close_tab_action()
+
+    def _new_window(self) -> None:
+        from pagedrop.ui.window_manager import WindowManager
+
+        manager = WindowManager.instance_or_none()
+        if manager is None:
+            return
+        manager.open_new_window()
+
+    def _adopt_tab(self, tab: PdfTab) -> None:
+        preserve_preview = tab.is_preview_visible()
+        preview_page = tab.preview_widget.current_page if preserve_preview else None
+        source_window = None
+        source_manager = self._tab_manager_for_tab(tab)
+        if source_manager is not None and source_manager is not self._tab_manager:
+            source_window = self._window_for_widget(source_manager)
+            index = source_manager.indexOf(tab)
+            if index >= 0:
+                source_manager.tab_closed.emit(index)
+                source_manager.removeTab(index)
+                if source_manager.count() == 0:
+                    source_manager.all_tabs_closed.emit()
+                    source_manager.add_blank_tab()
+        self._tab_manager.add_tab(tab)
+        self._tab_manager.setCurrentWidget(tab)
+        if preserve_preview and preview_page is not None:
+            tab.show_preview_at(preview_page)
+        self._update_close_tab_action()
+        if source_window is not None and source_window is not self:
+            source_window._sync_toolbar_from_active_tab()
+
+    def _tab_manager_for_tab(self, tab: PdfTab) -> TabManager | None:
+        current: QWidget | None = tab
+        while current is not None:
+            if isinstance(current, TabManager):
+                return current
+            current = current.parentWidget()
+        return None
+
+    def _window_for_widget(self, widget: QWidget) -> MainWindow | None:
+        if self._window_manager is not None:
+            window = self._window_manager.window_for_widget(widget)
+            if window is not None:
+                return window
+        current: QWidget | None = widget
+        while current is not None:
+            if isinstance(current, MainWindow):
+                return current
+            current = current.parentWidget()
+        return None
+
+    def _detach_tab_to_new_window(self, index: int) -> None:
+        tab = self._tab_manager.widget(index)
+        if not isinstance(tab, PdfTab):
+            return
+
+        self._disconnect_tab_signals(tab)
+
+        from pagedrop.ui.window_manager import WindowManager
+
+        manager = WindowManager.instance_or_none()
+        if manager is not None:
+            new_window = manager.open_new_window(tab)
+        else:
+            new_window = MainWindow(initial_tab=tab)
+            new_window.show()
+
+        new_window.raise_()
+        new_window.activateWindow()
+        self._sync_toolbar_from_active_tab()
 
     def _switch_to_next_tab(self) -> None:
         count = self._tab_manager.count()
@@ -679,10 +802,17 @@ class MainWindow(QMainWindow):
             self._open_single_pdf(paths[0])
             return
 
-        for path in paths:
-            tab = self._tab_manager.add_blank_tab()
-            self._load_pdf(path, tab=tab)
-        self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
+        choice = self._ask_multi_open_target(len(paths))
+        if choice is None:
+            return
+        if choice == "tabs":
+            for path in paths:
+                tab = self._tab_manager.add_blank_tab()
+                self._load_pdf(path, tab=tab)
+            self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
+        else:
+            for path in paths:
+                self._open_in_new_window(path)
 
     def _open_single_pdf(self, path: str) -> None:
         active = self._active_tab()
@@ -697,6 +827,8 @@ class MainWindow(QMainWindow):
                 tab = self._tab_manager.add_blank_tab()
                 self._tab_manager.setCurrentWidget(tab)
                 self._load_pdf(path, tab=tab)
+            elif choice == "window":
+                self._open_in_new_window(path)
             return
 
         choice = self._ask_open_target(path)
@@ -706,6 +838,25 @@ class MainWindow(QMainWindow):
             tab = self._tab_manager.add_blank_tab()
             self._tab_manager.setCurrentWidget(tab)
             self._load_pdf(path, tab=tab)
+        elif choice == "window":
+            self._open_in_new_window(path)
+
+    def _open_in_new_window(self, path: str) -> None:
+        from pagedrop.ui.window_manager import WindowManager
+
+        manager = WindowManager.instance_or_none()
+        if manager is not None:
+            new_window = manager.open_new_window()
+        else:
+            new_window = MainWindow()
+            new_window.show()
+
+        tab = new_window._active_tab()
+        if tab is None or not tab.is_blank:
+            tab = new_window._tab_manager.add_blank_tab()
+        new_window._load_pdf(path, tab=tab)
+        new_window.raise_()
+        new_window.activateWindow()
 
     def _ask_open_target(self, path: str) -> str | None:
         filename = Path(path).name
@@ -721,6 +872,10 @@ class MainWindow(QMainWindow):
             "Open in new tab",
             QMessageBox.ButtonRole.AcceptRole,
         )
+        window_button = message.addButton(
+            "Open in new window",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
         cancel_button = message.addButton(
             QMessageBox.StandardButton.Cancel,
         )
@@ -732,6 +887,35 @@ class MainWindow(QMainWindow):
             return "current"
         if clicked is new_button:
             return "new"
+        if clicked is window_button:
+            return "window"
+        return None
+
+    def _ask_multi_open_target(self, count: int) -> str | None:
+        noun = "PDF" if count == 1 else "PDFs"
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Question)
+        message.setWindowTitle("Open PDFs")
+        message.setText(f"Where should {count} {noun} be opened?")
+        tabs_button = message.addButton(
+            "Each in new tab",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        windows_button = message.addButton(
+            "Each in new window",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = message.addButton(
+            QMessageBox.StandardButton.Cancel,
+        )
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is cancel_button:
+            return None
+        if clicked is tabs_button:
+            return "tabs"
+        if clicked is windows_button:
+            return "windows"
         return None
 
     def _load_pdf(self, path: str, *, tab: PdfTab | None = None) -> None:
@@ -945,6 +1129,32 @@ class MainWindow(QMainWindow):
             f"Inserted {count} {noun} from {filename} at position {position}"
         )
 
+    def _on_cross_window_pages_inserted(
+        self, count: int, filename: str
+    ) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        noun = "page" if count == 1 else "pages"
+        self.statusBar().showMessage(
+            f"Inserted {count} {noun} from {filename}"
+        )
+        self._sync_toolbar_from_active_tab()
+
+    def _on_pages_moved_out(self, count: int, target_filename: str) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        noun = "page" if count == 1 else "pages"
+        suffix = f" to {target_filename}" if target_filename else ""
+        self.statusBar().showMessage(
+            f"Moved {count} {noun}{suffix}"
+        )
+        self._sync_toolbar_from_active_tab()
+
+    def _on_page_transfer_failed(self, message: str) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        self.statusBar().showMessage(message)
+
     def _on_pdf_drop_failed(self, exc: object) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
@@ -1049,3 +1259,5 @@ class MainWindow(QMainWindow):
                 widget.close_loader()
         self._temp_manager.cleanup()
         super().closeEvent(event)
+        if event.isAccepted() and self._window_manager is not None:
+            self._window_manager.notify_window_closed(self)

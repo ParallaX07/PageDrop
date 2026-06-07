@@ -20,6 +20,16 @@ class PdfEditModel:
         ]
         self._dirty = False
 
+    @classmethod
+    def with_pages(cls, primary_path: str, pages: list[PageRef]) -> PdfEditModel:
+        """Create a model whose logical list is exactly *pages* (e.g. blank-tab init)."""
+        model = cls.__new__(cls)
+        model._original_path = primary_path
+        model._save_path = None
+        model._pages = list(pages)
+        model._dirty = True
+        return model
+
     @property
     def original_path(self) -> str:
         return self._original_path

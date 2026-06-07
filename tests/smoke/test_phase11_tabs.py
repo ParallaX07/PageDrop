@@ -46,6 +46,7 @@ def test_smoke_multi_tab_isolation(qtbot, pdf_fixtures_dir, monkeypatch):
             "PDF Files (*.pdf)",
         ),
     )
+    monkeypatch.setattr(window, "_ask_multi_open_target", lambda _: "tabs")
 
     window = MainWindow()
     qtbot.addWidget(window)
