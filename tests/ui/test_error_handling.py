@@ -8,6 +8,7 @@ from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import QMessageBox
 
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
@@ -65,15 +66,16 @@ def test_drag_without_pdf_shows_status_message(main_window, qtbot):
 
 def test_disk_full_oserror(qtbot, five_page_pdf, monkeypatch):
     loader = PdfLoader(str(five_page_pdf))
+    model = PdfEditModel(loader.path, loader.page_count)
     selection_manager = SelectionManager()
-    selection_manager.set_page_count(loader.page_count)
+    selection_manager.set_page_count(model.logical_count())
     temp_manager = TempManager()
 
     card = PageCard(0)
     qtbot.addWidget(card)
     card.resize(200, 200)
     card.show()
-    card.set_drag_context(loader, selection_manager, temp_manager)
+    card.set_drag_context(model, selection_manager, temp_manager)
     selection_manager.select_single(0)
 
     captured: list[tuple[str, str]] = []
@@ -90,7 +92,7 @@ def test_disk_full_oserror(qtbot, five_page_pdf, monkeypatch):
     monkeypatch.setattr(QDrag, "exec", fake_exec)
 
     with patch(
-        "pagedrop.ui.page_card.extract_pages_to_files",
+        "pagedrop.ui.page_card.extract_page_refs_to_files",
         side_effect=OSError(28, "No space left on device"),
     ):
         qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
@@ -119,15 +121,16 @@ def test_rapid_reopen_cancels_worker(main_window, five_page_pdf, one_page_pdf, q
 
 def test_single_page_pdf_selection_and_drag(qtbot, one_page_pdf, monkeypatch):
     loader = PdfLoader(str(one_page_pdf))
+    model = PdfEditModel(loader.path, loader.page_count)
     selection_manager = SelectionManager()
-    selection_manager.set_page_count(loader.page_count)
+    selection_manager.set_page_count(model.logical_count())
     temp_manager = TempManager()
 
     card = PageCard(0)
     qtbot.addWidget(card)
     card.resize(200, 200)
     card.show()
-    card.set_drag_context(loader, selection_manager, temp_manager)
+    card.set_drag_context(model, selection_manager, temp_manager)
 
     drag_started: list[bool] = []
 

@@ -80,7 +80,7 @@ def wait_for_grid_loaded(qtbot: QtBot, grid, *, timeout: int = RENDER_TIMEOUT_MS
     """Wait until a standalone ThumbnailGrid finishes its initial render."""
     qtbot.waitUntil(
         lambda: (
-            grid._loader is not None
+            grid._model is not None
             and grid._last_rendered_width_px == grid._thumbnail_width_px
             and grid._render_pool.activeThreadCount() == 0
         ),

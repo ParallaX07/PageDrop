@@ -11,7 +11,10 @@ from PyQt6.QtWidgets import QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout
 import fitz
 
 from pagedrop.assets import empty_state_logo_pixmap
-from pagedrop.core.page_extractor import extract_pages_to_files
+from collections.abc import Callable
+
+from pagedrop.core.page_extractor import extract_page_refs_to_files
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.busy_overlay import BusyOverlay
@@ -38,47 +41,47 @@ DEFERRED_LAYOUT_BATCH = 48
 
 class ThumbnailWorker(QRunnable):
     class Signals(QObject):
-        page_ready = pyqtSignal(int, int, QPixmap)  # generation, page_index, pixmap
+        page_ready = pyqtSignal(int, int, QPixmap)  # generation, logical_index, pixmap
         finished = pyqtSignal(int)  # generation
         error = pyqtSignal(int, str)  # generation, message
 
     def __init__(
         self,
-        path: str,
-        page_indices: list[int],
+        pages: list[tuple[int, PageRef]],
         generation: int,
         width_px: int,
         is_cancelled: Callable[[int], bool],
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
-        self._path = path
-        self._page_indices = page_indices
+        self._pages = pages
         self._generation = generation
         self._width_px = width_px
         self._is_cancelled = is_cancelled
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        doc = None
+        docs: dict[str, fitz.Document] = {}
         try:
-            doc = fitz.open(self._path)
-            for i in self._page_indices:
+            for logical_index, ref in self._pages:
                 if self._is_cancelled(self._generation):
                     return
-                png = render_page_png(doc, i, width_px=self._width_px)
+                if ref.source_path not in docs:
+                    docs[ref.source_path] = fitz.open(ref.source_path)
+                doc = docs[ref.source_path]
+                png = render_page_png(doc, ref.source_index, width_px=self._width_px)
                 if self._is_cancelled(self._generation):
                     return
                 pix = QPixmap()
                 pix.loadFromData(png, "PNG")
-                self.signals.page_ready.emit(self._generation, i, pix)
+                self.signals.page_ready.emit(self._generation, logical_index, pix)
             if not self._is_cancelled(self._generation):
                 self.signals.finished.emit(self._generation)
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))
         finally:
-            if doc is not None:
+            for doc in docs.values():
                 doc.close()
 
 
@@ -151,7 +154,8 @@ class ThumbnailGrid(QScrollArea):
         self.setWidget(self._container)
 
         self._cards: list[PageCard] = []
-        self._loader: PdfLoader | None = None
+        self._model: PdfEditModel | None = None
+        self._get_loader: Callable[[str], PdfLoader] | None = None
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
         self._card_width = CARD_WIDTH
         self._page_render_width: list[int] = []
@@ -219,13 +223,18 @@ class ThumbnailGrid(QScrollArea):
         else:
             self._empty_kbd.hide()
 
-    def load_pdf(self, loader: PdfLoader) -> None:
+    def load_model(
+        self,
+        model: PdfEditModel,
+        get_loader: Callable[[str], PdfLoader],
+    ) -> None:
         self._cancel_rendering()
         self._clear_cards()
-        self._loader = loader
+        self._model = model
+        self._get_loader = get_loader
         self._last_rendered_width_px = 0
 
-        total = loader.page_count
+        total = model.logical_count()
         self._page_render_width = [0] * total
         self._last_clicked_index = None
         self._focused_index = 0 if total else None
@@ -242,15 +251,30 @@ class ThumbnailGrid(QScrollArea):
         self._enter_busy("loading", f"Preparing {total} pages…")
         self._card_create_timer.start(0)
 
+    def load_pdf(self, loader: PdfLoader) -> None:
+        """Convenience wrapper for tests — builds a single-source model."""
+        model = PdfEditModel(loader.path, loader.page_count)
+        cache: dict[str, PdfLoader] = {loader.path: loader}
+
+        def get_loader(path: str) -> PdfLoader:
+            if path not in cache:
+                cache[path] = PdfLoader(path)
+            return cache[path]
+
+        self.load_model(model, get_loader)
+
     def _create_all_cards(self, indices: range | list[int]) -> None:
-        assert self._loader is not None
+        assert self._model is not None
+        assert self._get_loader is not None
         for i in indices:
             card = PageCard(i, self._container)
             card.set_card_width(self._card_width)
             card.set_drag_context(
-                self._loader, self.selection_manager, self._temp_manager
+                self._model, self.selection_manager, self._temp_manager
             )
-            width_mm, height_mm = self._loader.page_size_mm(i)
+            ref = self._model.page_at(i)
+            loader = self._get_loader(ref.source_path)
+            width_mm, height_mm = loader.page_size_mm(ref.source_index)
             card.set_page_tooltip(width_mm, height_mm)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)
@@ -258,7 +282,7 @@ class ThumbnailGrid(QScrollArea):
             self._cards.append(card)
 
     def _process_card_creation_batch(self) -> None:
-        if self._loader is None or not self._pending_card_indices:
+        if self._model is None or not self._pending_card_indices:
             return
 
         batch = self._pending_card_indices[:CARD_CREATE_BATCH]
@@ -280,11 +304,11 @@ class ThumbnailGrid(QScrollArea):
     def _start_rendering(
         self, *, silent: bool, page_indices: list[int] | None = None
     ) -> None:
-        if self._loader is None:
+        if self._model is None or self._get_loader is None:
             return
 
         if page_indices is None:
-            page_indices = list(range(self._loader.page_count))
+            page_indices = list(range(self._model.logical_count()))
         else:
             page_indices = [
                 i
@@ -297,12 +321,13 @@ class ThumbnailGrid(QScrollArea):
             self._sync_rendered_width_state()
             return
 
+        pages = [(i, self._model.page_at(i)) for i in page_indices]
+
         self._generation += 1
         self._silent_render = silent
         generation = self._generation
         worker = ThumbnailWorker(
-            self._loader.path,
-            page_indices,
+            pages,
             generation,
             self._thumbnail_width_px,
             self._is_cancelled,
@@ -325,7 +350,7 @@ class ThumbnailGrid(QScrollArea):
         self._zoom_render_timer.start()
 
     def _render_zoom_quality(self) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
         visible = self._visible_pages_needing_render()
         if not visible:
@@ -338,14 +363,14 @@ class ThumbnailGrid(QScrollArea):
         self._start_rendering(silent=True, page_indices=visible)
 
     def _render_visible_quality(self) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
         visible = self._visible_pages_needing_render()
         if visible:
             self._start_rendering(silent=True, page_indices=visible)
 
     def _render_background_quality(self) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
         if self._render_pool.activeThreadCount() > 0:
             self._schedule_background_render()
@@ -360,7 +385,7 @@ class ThumbnailGrid(QScrollArea):
         self._background_render_timer.start()
 
     def _on_scroll_changed(self, _value: int) -> None:
-        if self._loader is None:
+        if self._model is None:
             return
         visible = self._get_visible_page_indices()
         for index in visible:
@@ -390,7 +415,8 @@ class ThumbnailGrid(QScrollArea):
         self._cancel_rendering()
         self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
         self._clear_cards()
-        self._loader = None
+        self._model = None
+        self._get_loader = None
         self._page_render_width = []
         self._last_clicked_index = None
         self._focused_index = None
@@ -474,7 +500,7 @@ class ThumbnailGrid(QScrollArea):
     def _show_context_menu(self, global_pos) -> None:
         menu = QMenu(self)
         extract_action = menu.addAction("Extract selected pages to folder…")
-        has_pdf = self._loader is not None
+        has_pdf = self._model is not None
         has_selection = bool(self.selection_manager.selection)
         extract_action.setEnabled(has_pdf and has_selection)
 
@@ -489,15 +515,15 @@ class ThumbnailGrid(QScrollArea):
 
     def extract_selected_to_folder(self, output_dir) -> list:
         """Write selected pages to *output_dir*; returns paths or raises."""
-        if self._loader is None:
+        if self._model is None:
             return []
-        page_indices = sorted(self.selection_manager.selection)
-        if not page_indices:
+        logical_indices = sorted(self.selection_manager.selection)
+        if not logical_indices:
             return []
-        base_name = Path(self._loader.path).stem
-        return extract_pages_to_files(
-            self._loader.path,
-            page_indices,
+        refs = [self._model.page_at(i) for i in logical_indices]
+        base_name = Path(self._model.original_path).stem
+        return extract_page_refs_to_files(
+            refs,
             output_dir,
             base_name,
         )

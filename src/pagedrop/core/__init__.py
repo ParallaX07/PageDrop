@@ -1,3 +1,4 @@
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
     PdfEmptyError,
@@ -9,7 +10,9 @@ from pagedrop.core.pdf_loader import (
 )
 
 __all__ = [
+    "PageRef",
     "PdfCorruptError",
+    "PdfEditModel",
     "PdfEmptyError",
     "PdfLoadError",
     "PdfLoader",
