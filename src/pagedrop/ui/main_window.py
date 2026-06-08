@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QLabel,
+    QInputDialog,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -244,6 +245,7 @@ class MainWindow(QMainWindow):
         self._tab_manager.move_to_new_window_requested.connect(
             self._detach_tab_to_new_window
         )
+        self._tab_manager.tab_rename_requested.connect(self._rename_tab)
 
         new_tab_button = QToolButton()
         new_tab_button.setObjectName("NewTabButton")
@@ -1059,16 +1061,15 @@ class MainWindow(QMainWindow):
     def _default_save_as_path(self, tab: PdfTab) -> str:
         model = tab.edit_model
         assert model is not None
-        if tab.is_drop_initialized and model.save_path is None:
-            last_dir = last_directory()
-            start_dir = Path(last_dir) if last_dir else Path.home()
-            return str(start_dir / "untitled.pdf")
-        original = Path(model.original_path)
+        stem = tab.suggested_save_stem()
         if model.save_path is not None:
             start_dir = Path(model.save_path).parent
+        elif tab.is_drop_initialized:
+            last_dir = last_directory()
+            start_dir = Path(last_dir) if last_dir else Path.home()
         else:
-            start_dir = original.parent
-        return str(start_dir / f"{original.stem}_edited.pdf")
+            start_dir = Path(model.original_path).parent
+        return str(start_dir / f"{stem}.pdf")
 
     def _save_as(self, tab: PdfTab | None = None) -> bool:
         """Save the active tab (or *tab*) to a new path. Returns True on success."""
@@ -1120,12 +1121,41 @@ class MainWindow(QMainWindow):
 
         remember_directory(path)
         model.mark_saved(path)
+        target.clear_custom_tab_title()
         target._sync_dirty_from_model()
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
             self.statusBar().showMessage(f"Saved to {Path(path).name}")
         return True
+
+    def _rename_tab(self, index: int) -> None:
+        if index < 0 or index >= self._tab_manager.count():
+            return
+
+        tab = self._tab_manager.widget(index)
+        if not isinstance(tab, PdfTab) or not tab.can_rename_tab:
+            return
+
+        current = tab.tab_title.rstrip("*")
+        if current == "New Tab":
+            current = ""
+
+        name, ok = QInputDialog.getText(
+            self,
+            "Rename Tab",
+            "Tab name:",
+            text=current,
+        )
+        if not ok:
+            return
+
+        if not tab.set_custom_tab_title(name):
+            return
+
+        self._tab_manager.update_tab_title(tab)
+        if tab is self._active_tab():
+            self.statusBar().showMessage(f"Tab renamed to {tab.tab_title}")
 
     def _prompt_unsaved_changes(self, tab: PdfTab) -> str:
         """Return ``save``, ``discard``, or ``cancel``."""

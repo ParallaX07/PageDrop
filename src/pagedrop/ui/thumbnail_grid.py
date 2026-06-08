@@ -5,7 +5,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QDragEnterEvent,
     QDragLeaveEvent,
@@ -17,7 +17,16 @@ from PyQt6.QtGui import (
     QShowEvent,
     QWheelEvent,
 )
-from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGridLayout,
+    QLabel,
+    QMenu,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 import fitz
 
@@ -33,6 +42,7 @@ from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.busy_overlay import BusyOverlay
+from pagedrop.ui.drag_autoscroll import DragAutoScroller
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.theme import (
     ACCENT,
@@ -231,6 +241,10 @@ class ThumbnailGrid(QScrollArea):
         )
         self._drop_indicator.setFixedWidth(3)
         self._drop_indicator.hide()
+        self._drag_autoscroller = DragAutoScroller(self)
+        self._drag_autoscroller.set_scroll_callback(self._on_drag_autoscroll)
+        self._drag_over_grid = False
+        self._drag_filter_installed = False
         self.selection_manager = SelectionManager(
             on_selection_changed=self._on_selection_changed,
         )
@@ -447,6 +461,7 @@ class ThumbnailGrid(QScrollArea):
         self._pending_layout_indices.clear()
         self._cancel_rendering()
         self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
+        self._stop_drag_autoscroll()
         self._hide_drop_indicator()
         self._clear_cards()
         self._model = None
@@ -1002,6 +1017,32 @@ class ThumbnailGrid(QScrollArea):
 
         return min(max(nearest_index, 0), len(self._cards))
 
+    def _start_drag_autoscroll_tracking(self) -> None:
+        self._drag_over_grid = True
+        if self._drag_filter_installed:
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+            self._drag_filter_installed = True
+
+    def _stop_drag_autoscroll(self) -> None:
+        self._drag_over_grid = False
+        self._drag_autoscroller.stop()
+        if not self._drag_filter_installed:
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        self._drag_filter_installed = False
+
+    def _on_drag_autoscroll(self, pos_in_grid: QPoint) -> None:
+        self._update_drop_at_drag_pos(pos_in_grid)
+
+    def _update_drop_at_drag_pos(self, pos_in_grid: QPoint) -> None:
+        container_pos = self._container.mapFrom(self, pos_in_grid)
+        self._update_drop_indicator(self.drop_index_at_pos(container_pos))
+
     def _hide_drop_indicator(self) -> None:
         self._drop_insertion_index = None
         self._drop_indicator.hide()
@@ -1080,37 +1121,58 @@ class ThumbnailGrid(QScrollArea):
     def _accepts_inbound_pdf_drop(self, mime) -> bool:
         return bool(self.pdf_paths_from_mime(mime)) and self._model is not None
 
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+    def _accept_drag_over_grid(self, event: QDragEnterEvent | QDragMoveEvent) -> bool:
         mime = event.mimeData()
-        if mime.hasFormat(INTERNAL_PAGE_MIME):
-            event.acceptProposedAction()
-            return
-        if self._accepts_page_transfer(mime):
-            event.acceptProposedAction()
-            return
-        if self._accepts_inbound_pdf_drop(mime):
-            event.acceptProposedAction()
+        return bool(
+            mime.hasFormat(INTERNAL_PAGE_MIME)
+            or self._accepts_page_transfer(mime)
+            or self._accepts_inbound_pdf_drop(mime)
+        )
+
+    def _handle_drag_over_grid(self, event: QDragEnterEvent | QDragMoveEvent) -> None:
+        pos_in_grid = event.position().toPoint()
+        self._drag_autoscroller.update(pos_in_grid)
+        self._update_drop_at_drag_pos(pos_in_grid)
+        event.acceptProposedAction()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if not getattr(self, "_drag_over_grid", False):
+            return super().eventFilter(watched, event)
+        if event.type() == QEvent.Type.Wheel:
+            wheel = event
+            if isinstance(wheel, QWheelEvent) and not (
+                wheel.modifiers() & Qt.KeyboardModifier.ControlModifier
+            ):
+                local = self.mapFromGlobal(wheel.globalPosition().toPoint())
+                if self.rect().contains(local):
+                    self._drag_autoscroller.update(local)
+                    if self._drag_autoscroller.handle_wheel(wheel.angleDelta().y()):
+                        self._update_drop_at_drag_pos(local)
+                        wheel.accept()
+                        return True
+        return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._accept_drag_over_grid(event):
+            self._start_drag_autoscroll_tracking()
+            self._handle_drag_over_grid(event)
             return
         event.ignore()
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
-        mime = event.mimeData()
-        if (
-            mime.hasFormat(INTERNAL_PAGE_MIME)
-            or self._accepts_page_transfer(mime)
-            or self._accepts_inbound_pdf_drop(mime)
-        ):
-            pos = self._container.mapFrom(self, event.position().toPoint())
-            self._update_drop_indicator(self.drop_index_at_pos(pos))
-            event.acceptProposedAction()
+        if self._accept_drag_over_grid(event):
+            self._start_drag_autoscroll_tracking()
+            self._handle_drag_over_grid(event)
             return
         event.ignore()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._stop_drag_autoscroll()
         self._hide_drop_indicator()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:
+        self._stop_drag_autoscroll()
         self._hide_drop_indicator()
         mime = event.mimeData()
         source_grid = self._grid_for_widget(event.source())

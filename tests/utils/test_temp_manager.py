@@ -92,6 +92,20 @@ print(tm.get_dir())
     assert not temp_dir.exists()
 
 
+def test_enforce_max_size_tolerates_non_numeric_drag_dirs():
+    tm = TempManager(max_bytes=50)
+    try:
+        bad_dir = tm.get_dir() / "drag_foo"
+        bad_dir.mkdir()
+        (bad_dir / "stray.pdf").write_bytes(b"x" * 60)
+
+        drag_dir = tm.create_drag_dir()
+        assert drag_dir.exists()
+        assert not bad_dir.exists()
+    finally:
+        tm.cleanup()
+
+
 def test_enforce_max_size_removes_oldest_drag_dirs():
     tm = TempManager(max_bytes=100)
     try:

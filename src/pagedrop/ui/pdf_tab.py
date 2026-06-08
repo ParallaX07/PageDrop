@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,16 @@ from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
 
+_INVALID_TAB_TITLE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def sanitize_tab_title_stem(title: str) -> str:
+    """Return a filesystem-safe stem derived from a display tab title."""
+    cleaned = _INVALID_TAB_TITLE_CHARS.sub("_", title.strip())
+    if cleaned.lower().endswith(".pdf"):
+        cleaned = cleaned[:-4].rstrip()
+    return cleaned or "untitled"
+
 
 class PdfTab(QWidget):
     """Per-tab document workspace: thumbnail grid, preview pane, and zoom state."""
@@ -19,6 +30,7 @@ class PdfTab(QWidget):
     pdf_loaded = pyqtSignal()
     pdf_closed = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
+    tab_title_changed = pyqtSignal()
 
     def __init__(
         self,
@@ -32,6 +44,7 @@ class PdfTab(QWidget):
         self._pdf_path: str | None = None
         self._dirty = False
         self._drop_initialized = False
+        self._custom_tab_title: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -101,12 +114,61 @@ class PdfTab(QWidget):
         return self._dirty
 
     @property
+    def can_rename_tab(self) -> bool:
+        """True when the tab has no saved path yet (blank or unsaved document)."""
+        if self._edit_model is None:
+            return True
+        return self._edit_model.save_path is None
+
+    @property
+    def custom_tab_title(self) -> str | None:
+        return self._custom_tab_title
+
+    @property
     def tab_title(self) -> str:
         if self._edit_model is None:
-            return "New Tab"
-        display_path = self._edit_model.save_path or self._edit_model.original_path
-        filename = Path(display_path).name
+            return self._custom_tab_title or "New Tab"
+        if self._edit_model.save_path is not None:
+            filename = Path(self._edit_model.save_path).name
+            return f"{filename}*" if self._dirty else filename
+        if self._custom_tab_title is not None:
+            title = self._custom_tab_title
+            return f"{title}*" if self._dirty else title
+        filename = Path(self._edit_model.original_path).name
         return f"{filename}*" if self._dirty else filename
+
+    def suggested_save_stem(self) -> str:
+        if self._custom_tab_title is not None:
+            return sanitize_tab_title_stem(self._custom_tab_title)
+        if self._edit_model is None:
+            return "untitled"
+        if self._edit_model.save_path is not None:
+            return Path(self._edit_model.save_path).stem
+        if self._drop_initialized:
+            return "untitled"
+        return f"{Path(self._edit_model.original_path).stem}_edited"
+
+    def set_custom_tab_title(self, title: str | None) -> bool:
+        """Set a display title for an unsaved tab. Returns True when changed."""
+        if not self.can_rename_tab:
+            return False
+
+        cleaned = (title or "").strip()
+        if cleaned.lower().endswith(".pdf"):
+            cleaned = cleaned[:-4].rstrip()
+        cleaned = cleaned or None
+        if cleaned == self._custom_tab_title:
+            return False
+
+        self._custom_tab_title = cleaned
+        self.tab_title_changed.emit()
+        return True
+
+    def clear_custom_tab_title(self) -> None:
+        if self._custom_tab_title is None:
+            return
+        self._custom_tab_title = None
+        self.tab_title_changed.emit()
 
     @property
     def zoom_level(self) -> int:
@@ -142,8 +204,9 @@ class PdfTab(QWidget):
         if self._edit_model is not None:
             self._thumbnail_grid.clear()
             self._close_loader_cache()
-            self._edit_model = None
-            self._pdf_path = None
+        self._edit_model = None
+        self._pdf_path = None
+        self._custom_tab_title = None
 
         loader = PdfLoader(path)
         self._loader_cache[path] = loader
@@ -230,6 +293,7 @@ class PdfTab(QWidget):
         self._edit_model = None
         self._pdf_path = None
         self._drop_initialized = False
+        self._custom_tab_title = None
         if self._dirty:
             self._dirty = False
             self.dirty_changed.emit(False)
