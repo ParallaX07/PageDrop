@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QDrag
+from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt
+from PyQt6.QtGui import QDrag, QDropEvent
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -92,6 +92,108 @@ def test_page_transfer_mime_roundtrip():
         PageRef("/tmp/b.pdf", 2),
     ]
     assert decode_page_refs(encode_page_refs(refs)) == refs
+
+
+def test_cross_window_grid_drop_uses_insertion_index(qtbot, five_page_pdf):
+    """Grid drops keep cursor-based insertion (append_only=False), not tab-bar append."""
+    source = _load_grid(qtbot, five_page_pdf)
+    target = _load_grid(qtbot, five_page_pdf)
+    assert source._model is not None
+
+    ref = source._model.page_at(0)
+    mime = _transfer_mime([ref], [0])
+    assert target._handle_page_transfer(
+        [ref],
+        1,
+        move=False,
+        source_grid=source,
+        mime=mime,
+        append_only=False,
+    )
+
+    refs = _model_refs(target)
+    assert len(refs) == 6
+    assert refs[1] == (str(five_page_pdf), 0)
+    assert refs[-1] != (str(five_page_pdf), 0)
+
+
+def test_tab_bar_drop_emits_when_source_grid_is_none(qtbot, five_page_pdf):
+    """Successful tab-bar copy still notifies when source_grid is omitted."""
+    target_tab = _load_tab(qtbot, five_page_pdf)
+    target = target_tab.thumbnail_grid
+    assert target._model is not None
+
+    ref = target._model.page_at(0)
+    mime = _transfer_mime([ref], [0])
+    emitted: list[tuple[int, str, bool]] = []
+    target.pages_transferred_via_tab_bar.connect(
+        lambda count, name, moved: emitted.append((count, name, moved))
+    )
+
+    assert target.handle_tab_bar_page_drop(
+        [ref],
+        move=False,
+        source_grid=None,
+        mime=mime,
+    )
+    assert emitted == [(1, five_page_pdf.name, False)]
+
+
+def test_tab_bar_drop_appends_to_end_not_insertion_index(qtbot, five_page_pdf):
+    """Tab-bar drops use append_only=True even when grids differ (cross-window)."""
+    source_tab = _load_tab(qtbot, five_page_pdf)
+    target_tab = _load_tab(qtbot, five_page_pdf)
+    source = source_tab.thumbnail_grid
+    target = target_tab.thumbnail_grid
+    assert source._model is not None
+
+    ref = source._model.page_at(0)
+    mime = _transfer_mime([ref], [0])
+    assert target.handle_tab_bar_page_drop(
+        [ref],
+        move=False,
+        source_grid=source,
+        mime=mime,
+    )
+
+    refs = _model_refs(target)
+    assert len(refs) == 6
+    assert refs[-1] == (str(five_page_pdf), 0)
+    assert refs[1] != (str(five_page_pdf), 0)
+
+
+def test_cross_window_grid_drop_via_drop_event(qtbot, five_page_pdf, one_page_pdf, monkeypatch):
+    """Full grid dropEvent path still accepts cross-grid PAGE_TRANSFER_MIME."""
+    source = _load_grid(qtbot, five_page_pdf)
+    target = _load_grid(qtbot, one_page_pdf)
+    assert source._model is not None
+
+    refs = [source._model.page_at(1), source._model.page_at(3)]
+    mime = QMimeData()
+    mime.setData(PAGE_TRANSFER_MIME, encode_page_refs(refs))
+    mime.setData(INTERNAL_PAGE_MIME, encode_page_indices([1, 3]))
+    monkeypatch.setattr(
+        ThumbnailGrid,
+        "_grid_for_widget",
+        staticmethod(lambda _widget: source),
+    )
+    monkeypatch.setattr(target, "drop_index_at_pos", lambda _pos: 1)
+
+    drop = QDropEvent(
+        QPointF(10, 10),
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    target.dropEvent(drop)
+
+    assert drop.isAccepted()
+    assert _model_refs(target) == [
+        (str(one_page_pdf), 0),
+        (str(five_page_pdf), 1),
+        (str(five_page_pdf), 3),
+    ]
 
 
 def test_copy_pages_from_window_a_to_b(qtbot, five_page_pdf, one_page_pdf):

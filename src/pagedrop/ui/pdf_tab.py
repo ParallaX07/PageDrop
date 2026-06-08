@@ -31,6 +31,7 @@ class PdfTab(QWidget):
         self._loader_cache: dict[str, PdfLoader] = {}
         self._pdf_path: str | None = None
         self._dirty = False
+        self._drop_initialized = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -91,6 +92,11 @@ class PdfTab(QWidget):
         return self._edit_model is None
 
     @property
+    def is_drop_initialized(self) -> bool:
+        """True when this tab was created by dropping pages onto a blank tab."""
+        return self._drop_initialized
+
+    @property
     def is_dirty(self) -> bool:
         return self._dirty
 
@@ -143,6 +149,7 @@ class PdfTab(QWidget):
         self._loader_cache[path] = loader
         self._edit_model = PdfEditModel(path, loader.page_count)
         self._pdf_path = path
+        self._drop_initialized = False
         self._sync_dirty_from_model()
 
         get_loader: Callable[[str], PdfLoader] = self.get_loader
@@ -206,6 +213,7 @@ class PdfTab(QWidget):
         primary = refs[0].source_path
         self._edit_model = PdfEditModel.with_pages(primary, refs)
         self._pdf_path = primary
+        self._drop_initialized = True
         self._sync_dirty_from_model()
 
         get_loader: Callable[[str], PdfLoader] = self.get_loader
@@ -221,6 +229,7 @@ class PdfTab(QWidget):
         self._close_loader_cache()
         self._edit_model = None
         self._pdf_path = None
+        self._drop_initialized = False
         if self._dirty:
             self._dirty = False
             self.dirty_changed.emit(False)

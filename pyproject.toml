@@ -1,6 +1,6 @@
 [project]
 name = "pagedrop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Drag PDF pages into folders from a thumbnail grid"
 requires-python = ">=3.11"
 dependencies = [

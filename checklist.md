@@ -7,7 +7,8 @@ multi-tab editing, page reorder/delete, inbound PDF drop, and Save As. **Phase 1
 adds a separate Merge PDFs window for whole-file combine workflows. **Phase 18**
 adds detachable tab windows and cross-window page drag (copy by default, Shift+drop to move).
 **Phase 19** adds a separate Create PDF window for converting raster images into one
-combined PDF or individual PDFs per image.
+combined PDF or individual PDFs per image. **Phase 20** adds cross-tab page drag via
+tab-bar drop (append-only, Shift+drop to cut) and MRU-style **Ctrl+Tab** tab switching.
 
 ---
 
@@ -676,6 +677,8 @@ be closed** individually at any time.
 - [x] Window title reflects active tab (filename + page count)
 - [x] Route toolbar/menu actions (Select All, Preview, Zoom, Extract) to **active tab** only
 - [x] Keyboard: `Ctrl+Tab` / `Ctrl+Shift+Tab` switch tabs; **`Ctrl+W` closes active tab**
+  (Phase 20 extends `Ctrl+Tab` to MRU toggle between last two tabs; `Ctrl+Shift+Tab`
+  keeps cyclic backward switch)
 - [x] Launch with one blank tab showing empty state `"Open a PDF to begin"`
 - [x] **Closing the last tab** → spawn a new blank tab (do not quit the app)
 - [x] Optional: **Ctrl+T** or **+** button to open a new blank tab without a PDF
@@ -1185,9 +1188,9 @@ across separate PDFs feels as natural as dragging within one tab.
 - [x] **Dirty tab** tear-off + close → Save As / Discard prompt on correct window
 - [x] **Close all editor windows** → app exits cleanly
 
-> **Out of scope for Phase 18:** cross-tab drag within the **same** window without detach
-> (still reorder-only in one grid), syncing undo across windows, OS-level multi-instance
-> (second app process), auto-tile window layout.
+> **Out of scope for Phase 18:** cross-tab drag within the **same** window — deferred to
+> **Phase 20** (tab-bar drop, append-only). Also out of scope: syncing undo across windows,
+> OS-level multi-instance (second app process), auto-tile window layout.
 
 ---
 
@@ -1317,19 +1320,137 @@ Stay in the Create PDF window after save — do **not** auto-open the result in 
 - [x] Run: `uv run pytest tests/core/test_supported_formats.py tests/core/test_image_to_pdf.py tests/ui/test_convert_window.py tests/smoke/test_phase19_create_pdf.py -v`
 
 ### ✅ Test Gate 19
-- [ ] **Create PDF** (menubar, beside Merge PDFs) opens separate window
-- [ ] **Add Images…** and **drop** PNG/JPEG — thumbnails appear in grid
-- [ ] **Drop PDF** → rejected with helpful message pointing to Merge PDFs
-- [ ] **One PDF** mode — N images → one PDF with N pages in list order
-- [ ] **Separate PDFs** mode — N images → N `{stem}.pdf` files in chosen folder
-- [ ] **Reorder** changes page order in combine mode
-- [ ] **Source images unchanged** on disk
-- [ ] **Double-click** → image preview; Esc back to grid
-- [ ] **Built exe** (Phase 16): Create PDF combine + separate modes work on clean VM
+- [x] **Create PDF** (menubar, beside Merge PDFs) opens separate window
+- [x] **Add Images…** and **drop** PNG/JPEG — thumbnails appear in grid
+- [x] **Drop PDF** → rejected with helpful message pointing to Merge PDFs
+- [x] **One PDF** mode — N images → one PDF with N pages in list order
+- [x] **Separate PDFs** mode — N images → N `{stem}.pdf` files in chosen folder
+- [x] **Reorder** changes page order in combine mode
+- [x] **Source images unchanged** on disk
+- [x] **Double-click** → image preview; Esc back to grid
+- [x] **Built exe** (Phase 16): Create PDF combine + separate modes work on clean VM
 
 > **Out of scope for Phase 19:** LibreOffice / Office document conversion, PDF files as
 > Create PDF inputs (use Merge PDFs), auto-open result in editor tab, OCR, compression
 > settings, custom page size / margins, converting **from** PDF to other formats.
+
+---
+
+## Phase 20 — Cross-Tab Page Drag & MRU Tab Switch
+
+**Goal:** Drag pages from one tab onto **another tab's label** in the tab bar. Dropped
+pages are **always appended to the end** of the target document. A blank target tab
+becomes a new editable document (first page = dropped page). **Shift+drop** cuts from the
+source tab; plain drop copies. The active tab **does not change** after drop. **Ctrl+Tab**
+toggles between the current tab and the previously active tab (not a full tab cycle);
+**Ctrl+Shift+Tab** keeps Phase 11 cyclic backward switching.
+
+> **Design decisions (locked in):**
+> - **Cross-tab drop target** — tab bar label; highlight hovered tab during drag
+> - **Drop position** — always append (`drop_index = model.logical_count()`); no insertion
+>   indicator on tab bar
+> - **Blank target tab** — `init_from_page_refs()`; dropped page(s) are the first page(s)
+> - **Default drag** — copy: append to target, source unchanged, target marked dirty
+> - **Shift+drag** — cut: append to target, remove from source, both marked dirty
+> - **Focus after drop** — stay on source tab; do not call `setCurrentIndex` on target
+> - **Save As on drop-created doc** — reuse Phase 15; `mark_saved()` updates tab title
+> - **Ctrl+Tab** — MRU toggle between current tab and previously active tab
+> - **Ctrl+Shift+Tab** — cyclic backward through all tabs (Phase 11 behavior preserved)
+> - **Same-tab bar drop** — reject; status: *"Drop on another tab to append pages"*
+> - **Cross-window grid drop** — unchanged (Phase 18 insertion indicator at cursor)
+
+### Checklist — Tab Bar Drop Target
+
+- [x] `setAcceptDrops(True)` on `DetachableTabBar`; accept
+  `application/x-pagedrop-page-transfer` only (reject `file://` PDF drops and internal
+  reorder mime on tab bar)
+- [x] `dragMoveEvent`: `tabAt(pos)` → visual highlight on hovered tab (accent underline or
+  background); clear highlight on `dragLeaveEvent`
+- [x] `dropEvent`: resolve target `PdfTab` by tab index; reject if target tab is the
+  **source tab**
+- [x] Decode `PageRef`s + logical indices from mime (reuse `core/drag_mime.py`)
+- [x] Route to shared transfer helper on **target tab's** `ThumbnailGrid` with
+  `drop_index = logical_count` (or `0` for blank tab)
+- [x] **Do not** switch active tab after successful drop
+- [x] Status bar message on **active (source) window**: `"Appended N pages to other.pdf"` /
+  `"Moved N pages to other.pdf"`
+- [x] Target tab title `*` updates via existing `dirty_changed` / `update_tab_title()` even
+  while tab is inactive
+- [x] Distinguish page-over-tab-bar drag from tab tear-off mouse drag (tear-off unchanged)
+
+### Checklist — Transfer Helper Refactor
+
+Extend `ui/thumbnail_grid.py` (rename or generalize `_handle_cross_window_drop`):
+
+- [x] Accept transfers when `source_grid is not target_grid` **regardless of window**
+  (same-window cross-tab + cross-window)
+- [x] Add explicit `append_only: bool` — tab-bar drops always pass `True`; cross-window
+  **grid** drops keep insertion-index behavior (Phase 18 unchanged)
+- [x] Blank target: reuse `tab.init_from_page_refs(refs)` (creates editable dirty model)
+- [x] Shift+drop move: reuse rollback path if source `remove_pages` fails
+- [x] Reject drop onto source tab's own tab label (no self-append via tab bar)
+
+### Checklist — Save As & Tab Naming for Drop-Created Docs
+
+- [x] After cross-tab drop onto blank tab → tab title shows source filename + `*`
+  (via `original_path`)
+- [x] Save As → tab title updates to saved filename, `*` clears, model remains editable
+- [x] Optional polish: default Save As name for drop-init tabs → `untitled.pdf` in
+  last-used directory (instead of `{source_stem}_edited.pdf`) — chosen over source-stem
+  default so drop-created docs do not suggest overwriting the donor file's folder/name
+
+### Checklist — MRU Ctrl+Tab Toggle
+
+In `ui/main_window.py`:
+
+- [x] Track `_previous_tab_index: int | None` per window
+- [x] On `TabManager.currentChanged` (user click or keyboard): update `_previous_tab_index`
+  to the tab being left (skip when count ≤ 1)
+- [x] Replace `_switch_to_next_tab` (`Ctrl+Tab`): if `_previous_tab_index` valid and ≠
+  current → switch to it; else no-op or graceful fallback
+- [x] Each `Ctrl+Tab` toggles the pair (A→B updates previous=A; B→A updates previous=B)
+- [x] Keep `_switch_to_previous_tab` (`Ctrl+Shift+Tab`) as cyclic
+  `(current - 1) % count` — Phase 11 behavior preserved
+- [x] Closing a tab updates or clears `_previous_tab_index` if it pointed at the closed tab
+
+### Checklist — Test Scripts & Smoke Tests
+
+- [x] Write `tests/ui/test_cross_tab_page_drag.py`:
+  - [x] `test_drop_on_tab_bar_appends_to_end`
+  - [x] `test_drop_on_blank_tab_inits_model`
+  - [x] `test_shift_drop_moves_from_source_tab`
+  - [x] `test_drop_does_not_switch_active_tab`
+  - [x] `test_drop_on_source_tab_rejected`
+  - [x] `test_target_tab_title_shows_dirty_after_drop`
+- [x] Write `tests/ui/test_mru_ctrl_tab.py`:
+  - [x] `test_ctrl_tab_toggles_between_last_two`
+  - [x] `test_ctrl_tab_after_manual_switch_updates_pair`
+  - [x] `test_ctrl_shift_tab_still_cycles_backward`
+  - [x] `test_ctrl_tab_noop_with_one_tab`
+- [x] Write `tests/smoke/test_phase20_cross_tab.py` — two tabs + blank tab: copy append,
+  Shift cut, Save As on blank-init tab, Ctrl+Tab toggle
+- [x] Run: `uv run pytest tests/ui/test_cross_tab_page_drag.py tests/ui/test_mru_ctrl_tab.py tests/smoke/test_phase20_cross_tab.py -v`
+
+### ✅ Test Gate 20
+
+- [x] **Drag page(s) from tab A** → drop on tab B label → pages appended to end of B
+- [x] **Drag page(s)** → drop on blank tab label → tab shows page(s), marked dirty
+- [x] **Shift+drop between tabs** → pages removed from A, appended to B
+- [ ] **After drop, active tab stays A**; B's `*` visible on tab bar without switching
+- [x] **Save As on drop-created tab** → tab name updates to saved filename; further edits work
+- [x] **Ctrl+Tab toggles A↔B**; **Ctrl+Shift+Tab** cycles backward through all tabs
+- [x] **Cross-window grid drop** (Phase 18) still uses insertion indicator — unchanged
+
+### Version bump (after Phase 20 complete)
+
+- [x] Bump `pyproject.toml` and `README.md` version:
+  ```toml
+  version = "0.2.0"
+  ```
+
+> **Out of scope for Phase 20:** append-via-tab-bar on the **same** tab (use grid reorder
+> or inbound drop), auto-switch to target tab after drop, Ctrl+Tab cycling through all tabs,
+> changing cross-window grid drop to append-only.
 
 ---
 
@@ -1394,18 +1515,20 @@ Work through phases in this order. **Don't move on until the test gate for each 
 Each phase also has a **Test Scripts & Smoke Tests** checklist — write those tests as you go so regressions are caught before the manual test gate.
 
 ```
-Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 17 Merge → 18 Multi-Window → 19 Create PDF → 16 Exe
-     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Combine    Detach/Drag   Images→PDF  Binary
+Phase 1–9 (done) → 11 Tabs → 12 Model → 13 Reorder/Delete → 14 Inbound drop → 15 Save As → 17 Merge → 18 Multi-Window → 19 Create PDF → 20 Cross-Tab → 16 Exe
+     Setup…Polish      Multi-tab   PdfEditModel   Edit UI        Drop PDFs      Persist      Combine    Detach/Drag   Images→PDF  Tab-bar DnD  Binary
 ```
 
 Phases 12–15 are sequential (each builds on `PdfEditModel`). Phase 11 should land before
 Phase 13 UI work. Phase 17 is independent of `PdfEditModel` but should land after Phase 15
 (writer patterns). Phase 18 builds on Phases 11–14 (tabs, model, internal drag, inbound
 drop) and should land after Phase 17 and before Phase 19 (Create PDF). Phase 19 is
-independent of `PdfEditModel` but should land after Phase 17 (writer/grid patterns) and
-before Phase 16 (exe packaging). Phases 6–7 were
+independent of `PdfEditModel` but should land after Phase 17 (writer/grid patterns).
+Phase 20 builds on Phases 11–15 and 18 (tabs, model, transfer mime, blank-tab init) and
+should land after Phase 19 and before Phase 16 (exe packaging). Phases 6–7 were
 the hardest in the original build; Phase 13–14 (dual drag types + drop indicator) and
-Phase 18 (cross-window mime + tab tear-off) will need similar care.
+Phase 18 (cross-window mime + tab tear-off) will need similar care; Phase 20 adds tab-bar
+drop routing alongside tear-off on the same widget.
 
 ---
 
@@ -1439,6 +1562,11 @@ Phase 18 (cross-window mime + tab tear-off) will need similar care.
 | PDF dropped on Create PDF grid | Filter add/drop through `is_supported_image()`; reject PDFs with hint to use Merge PDFs |
 | Huge PNG exhausts memory on convert | Max dimension guard before PyMuPDF embed; worker on thread pool, not main thread |
 | JPEG appears rotated in output PDF | Verify EXIF orientation; rotate pixmap/page before embed if PyMuPDF does not auto-correct |
+| Tab-bar page drop vs tab tear-off | Page drag uses `QDrag` + `PAGE_TRANSFER_MIME`; tear-off uses tab-bar mouse drag outside window — keep handlers separate |
+| Cross-tab append vs grid insertion index | Tab-bar drops always `append_only=True` (`logical_count`); cross-window **grid** drops keep Phase 18 cursor-based index |
+| MRU tab index stale after close | Clear or remap `_previous_tab_index` when that tab is closed; no-op `Ctrl+Tab` when only one tab |
+| Cross-tab drop switches focus | Do not call `setCurrentIndex` on target after tab-bar drop; update target dirty/title only |
+| Same-tab bar drop appends to self | Reject drop when target tab index equals source tab; show status hint |
 
 ---
 
