@@ -3,16 +3,16 @@
 Skipped unless PAGEDROP_EXE points at a built binary:
 
     # Windows
-    $env:PAGEDROP_EXE = ".\\dist\\pagedrop.exe"
+    $env:PAGEDROP_EXE = ".\\dist\\pagedrop\\pagedrop.exe"
     uv run pytest tests/smoke/test_phase16_executable.py -v
 
     # Linux/macOS
-    PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
+    PAGEDROP_EXE=./dist/pagedrop/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
 
 Full release gate (run before tagging):
 
     uv run pytest tests/ -v --ignore=tests/smoke/test_phase16_executable.py
-    PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
+    PAGEDROP_EXE=./dist/pagedrop/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
 """
 
 from __future__ import annotations

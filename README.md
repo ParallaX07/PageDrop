@@ -158,7 +158,7 @@ uv sync --group dev
 uv run pyinstaller --noconfirm pagedrop.spec
 ```
 
-The binary is written to `dist/pagedrop` (Linux/macOS) or `dist/pagedrop.exe` (Windows).
+The onedir bundle is written to `dist/pagedrop/` — launch `dist/pagedrop/pagedrop` (Linux/macOS) or `dist/pagedrop/pagedrop.exe` (Windows). Zip that folder for distribution.
 
 Smoke-test the build (builds first unless `--skip-build` / `-SkipBuild`):
 
@@ -182,10 +182,10 @@ Before tagging a release, run the full suite plus the executable smoke test:
 
 ```bash
 uv run pytest tests/ -v --ignore=tests/smoke/test_phase16_executable.py
-PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
+PAGEDROP_EXE=./dist/pagedrop/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
 ```
 
-On Windows PowerShell, set `$env:PAGEDROP_EXE = ".\dist\pagedrop.exe"` instead of `PAGEDROP_EXE=...`.
+On Windows PowerShell, set `$env:PAGEDROP_EXE = ".\dist\pagedrop\pagedrop.exe"` instead of `PAGEDROP_EXE=...`.
 
 Verify manually on a machine **without Python**: open a PDF, drag a page into the file manager, and confirm extracted files appear.
 
