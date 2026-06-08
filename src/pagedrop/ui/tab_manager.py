@@ -25,6 +25,7 @@ class DetachableTabBar(QTabBar):
 
     tab_detach_requested = pyqtSignal(int)
     move_to_new_window_requested = pyqtSignal(int)
+    tab_rename_requested = pyqtSignal(int)
 
     DETACH_THRESHOLD_PX = 20
 
@@ -113,10 +114,24 @@ class DetachableTabBar(QTabBar):
         index = self.tabAt(pos)
         if index < 0:
             return
+
+        tab_manager = self.parent()
+        tab: PdfTab | None = None
+        if isinstance(tab_manager, QTabWidget):
+            widget = tab_manager.widget(index)
+            if isinstance(widget, PdfTab):
+                tab = widget
+
         menu = QMenu(self)
+        rename_action = None
+        if tab is not None and tab.can_rename_tab:
+            rename_action = menu.addAction("Rename Tab…")
+            menu.addSeparator()
         move_action = menu.addAction("Move to New Window")
         chosen = menu.exec(self.mapToGlobal(pos))
-        if chosen is move_action:
+        if chosen is rename_action:
+            self.tab_rename_requested.emit(index)
+        elif chosen is move_action:
             self.move_to_new_window_requested.emit(index)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -228,6 +243,7 @@ class TabManager(QTabWidget):
     all_tabs_closed = pyqtSignal()
     tab_detach_requested = pyqtSignal(int)
     move_to_new_window_requested = pyqtSignal(int)
+    tab_rename_requested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -250,6 +266,9 @@ class TabManager(QTabWidget):
         )
         self._detachable_tab_bar.move_to_new_window_requested.connect(
             self.move_to_new_window_requested.emit
+        )
+        self._detachable_tab_bar.tab_rename_requested.connect(
+            self.tab_rename_requested.emit
         )
 
         self.tabCloseRequested.connect(self.close_tab)
@@ -309,6 +328,7 @@ class TabManager(QTabWidget):
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))
         tab.pdf_closed.connect(lambda: self.update_tab_title(tab))
         tab.dirty_changed.connect(lambda _: self.update_tab_title(tab))
+        tab.tab_title_changed.connect(lambda: self.update_tab_title(tab))
         self.setTabText(index, tab.tab_title)
 
     def _on_current_changed(self, index: int) -> None:

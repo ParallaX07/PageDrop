@@ -46,14 +46,20 @@ class TempManager:
             path.stat().st_size for path in self._dir.rglob("*") if path.is_file()
         )
 
+    @staticmethod
+    def _drag_dir_sort_key(path: Path) -> tuple[float, int, str]:
+        suffix = path.name.removeprefix("drag_")
+        try:
+            counter = int(suffix)
+        except ValueError:
+            counter = -1
+        return (path.stat().st_mtime, counter, path.name)
+
     def _enforce_max_size(self) -> None:
         while self._dir_size() > self._max_bytes:
             drag_dirs = sorted(
                 (d for d in self._dir.glob("drag_*") if d.is_dir()),
-                key=lambda d: (
-                    d.stat().st_mtime,
-                    int(d.name.removeprefix("drag_")),
-                ),
+                key=self._drag_dir_sort_key,
             )
             if not drag_dirs:
                 break
