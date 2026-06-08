@@ -69,6 +69,8 @@ class MainWindow(QMainWindow):
         self._temp_manager = TempManager()
         self._merge_window: MergeWindow | None = None
         self._convert_window: ConvertWindow | None = None
+        self._previous_tab_index: int | None = None
+        self._last_tab_index: int = 0
 
         self.setWindowTitle(self.APP_TITLE)
         self.setMinimumSize(720, 480)
@@ -233,8 +235,9 @@ class MainWindow(QMainWindow):
     def _build_central_widget(self) -> None:
         self._tab_manager = TabManager(temp_manager=self._temp_manager)
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
+        self._tab_manager.currentChanged.connect(self._on_tab_index_changed)
         self._tab_manager.tab_added.connect(self._connect_tab_signals)
-        self._tab_manager.tab_closed.connect(lambda _: self._update_close_tab_action())
+        self._tab_manager.tab_closed.connect(self._on_tab_closed)
         self._tab_manager.tabCloseRequested.disconnect(self._tab_manager.close_tab)
         self._tab_manager.tabCloseRequested.connect(self._on_tab_close_requested)
         self._tab_manager.tab_detach_requested.connect(self._detach_tab_to_new_window)
@@ -257,6 +260,7 @@ class MainWindow(QMainWindow):
         else:
             self._tab_manager.add_blank_tab()
         self.setCentralWidget(self._tab_manager)
+        self._last_tab_index = self._tab_manager.currentIndex()
 
     def _build_status_widgets(self) -> None:
         self._progress_bar = QProgressBar()
@@ -381,6 +385,13 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         return tab is not None and grid is tab.thumbnail_grid
 
+    def _grid_belongs_to_window(self, grid) -> bool:
+        for index in range(self._tab_manager.count()):
+            tab = self._tab_manager.widget(index)
+            if isinstance(tab, PdfTab) and grid is tab.thumbnail_grid:
+                return True
+        return False
+
     def _new_blank_tab(self) -> None:
         tab = self._tab_manager.add_blank_tab()
         self._tab_manager.setCurrentWidget(tab)
@@ -456,11 +467,64 @@ class MainWindow(QMainWindow):
         new_window.activateWindow()
         self._sync_toolbar_from_active_tab()
 
+    def _on_tab_index_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        count = self._tab_manager.count()
+        if count <= 1:
+            self._previous_tab_index = None
+            self._last_tab_index = index
+            return
+        if self._last_tab_index < 0:
+            self._last_tab_index = index
+            return
+        if self._last_tab_index != index:
+            self._previous_tab_index = self._last_tab_index
+        self._last_tab_index = index
+
+    @staticmethod
+    def _remap_tab_index_after_close(
+        closed_index: int,
+        tab_index: int | None,
+    ) -> int | None:
+        if tab_index is None:
+            return None
+        if tab_index == closed_index:
+            return None
+        if tab_index > closed_index:
+            return tab_index - 1
+        return tab_index
+
+    def _on_tab_closed(self, closed_index: int) -> None:
+        self._previous_tab_index = self._remap_tab_index_after_close(
+            closed_index,
+            self._previous_tab_index,
+        )
+        if self._last_tab_index == closed_index:
+            self._last_tab_index = -1
+        else:
+            remapped = self._remap_tab_index_after_close(
+                closed_index,
+                self._last_tab_index,
+            )
+            if remapped is not None:
+                self._last_tab_index = remapped
+        self._update_close_tab_action()
+
     def _switch_to_next_tab(self) -> None:
         count = self._tab_manager.count()
         if count <= 1:
             return
-        self._tab_manager.setCurrentIndex((self._tab_manager.currentIndex() + 1) % count)
+        current = self._tab_manager.currentIndex()
+        previous = self._previous_tab_index
+        if (
+            previous is None
+            or previous == current
+            or previous < 0
+            or previous >= count
+        ):
+            return
+        self._tab_manager.setCurrentIndex(previous)
 
     def _switch_to_previous_tab(self) -> None:
         count = self._tab_manager.count()
@@ -995,6 +1059,10 @@ class MainWindow(QMainWindow):
     def _default_save_as_path(self, tab: PdfTab) -> str:
         model = tab.edit_model
         assert model is not None
+        if tab.is_drop_initialized and model.save_path is None:
+            last_dir = last_directory()
+            start_dir = Path(last_dir) if last_dir else Path.home()
+            return str(start_dir / "untitled.pdf")
         original = Path(model.original_path)
         if model.save_path is not None:
             start_dir = Path(model.save_path).parent
@@ -1187,7 +1255,8 @@ class MainWindow(QMainWindow):
     def _on_pages_transferred_via_tab_bar(
         self, count: int, target_filename: str, moved: bool
     ) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        sender = self.sender()
+        if sender is None or not self._grid_belongs_to_window(sender):
             return
         noun = "page" if count == 1 else "pages"
         verb = "Moved" if moved else "Appended"

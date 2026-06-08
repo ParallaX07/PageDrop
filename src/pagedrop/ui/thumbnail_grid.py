@@ -852,14 +852,14 @@ class ThumbnailGrid(QScrollArea):
         tab = self._parent_tab()
         return tab is not None and tab.is_blank
 
-    def _rollback_cross_window_insert(
+    def _rollback_page_transfer_insert(
         self,
         refs: list[PageRef],
         drop_index: int,
         *,
         inited_blank_tab: bool,
     ) -> None:
-        """Undo a target insert after a failed cross-window move."""
+        """Undo a target insert after a failed page transfer move."""
         tab = self._parent_tab()
         if inited_blank_tab:
             if tab is not None:
@@ -883,17 +883,14 @@ class ThumbnailGrid(QScrollArea):
         mime,
     ) -> bool:
         """Append page refs from a tab-bar drop (always end of target document)."""
-        tab = self._parent_tab()
-        drop_index = 0
-        if tab is not None and not tab.is_blank and self._model is not None:
-            drop_index = self._model.logical_count()
         return self._handle_page_transfer(
             refs,
-            drop_index,
+            0,
             move=move,
             source_grid=source_grid,
             mime=mime,
             via_tab_bar=True,
+            append_only=True,
         )
 
     def _handle_page_transfer(
@@ -905,12 +902,23 @@ class ThumbnailGrid(QScrollArea):
         source_grid: ThumbnailGrid | None,
         mime,
         via_tab_bar: bool = False,
+        append_only: bool = False,
     ) -> bool:
+        if source_grid is self:
+            return False
+
         tab = self._parent_tab()
         source_filename = Path(refs[0].source_path).name
 
+        # Tab-bar drops always append; grid drops (cross-window and same-window
+        # cross-tab) keep the caller-supplied insertion index (Phase 18).
+        if append_only:
+            drop_index = 0
+            if self._model is not None:
+                drop_index = self._model.logical_count()
+
         move_indices: list[int] | None = None
-        if move and source_grid is not None and source_grid is not self:
+        if move and source_grid is not None:
             move_indices = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
             if not move_indices:
                 self.page_transfer_failed.emit(
@@ -942,7 +950,7 @@ class ThumbnailGrid(QScrollArea):
         if move_indices is not None:
             assert source_grid is not None
             if not source_grid.remove_pages_by_indices(move_indices):
-                self._rollback_cross_window_insert(
+                self._rollback_page_transfer_insert(
                     refs,
                     drop_index,
                     inited_blank_tab=inited_blank_tab,
@@ -957,10 +965,10 @@ class ThumbnailGrid(QScrollArea):
                 source_tab._sync_dirty_from_model()
 
         if via_tab_bar:
-            if source_grid is not None:
-                source_grid.pages_transferred_via_tab_bar.emit(
-                    len(refs), target_name, move
-                )
+            notifier = source_grid if source_grid is not None else self
+            notifier.pages_transferred_via_tab_bar.emit(
+                len(refs), target_name, move
+            )
         else:
             if move_indices is not None:
                 assert source_grid is not None
@@ -1133,6 +1141,7 @@ class ThumbnailGrid(QScrollArea):
                     move=move,
                     source_grid=source_grid,
                     mime=mime,
+                    append_only=False,
                 ):
                     event.acceptProposedAction()
                 else:

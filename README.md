@@ -191,6 +191,6 @@ Verify manually on a machine **without Python**: open a PDF, drag a page into th
 
 ## Status
 
-**v0.1.0** — Windows standalone executable available on [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, Save As, merge, multi-window page transfer, and image-to-PDF conversion. macOS/Linux release binaries and code signing are planned.
+**v0.2.0** — Windows standalone executable available on [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, cross-tab page drag, Save As, merge, multi-window page transfer, image-to-PDF conversion, and MRU Ctrl+Tab switching. macOS/Linux release binaries and code signing are planned.
 
 For the detailed implementation checklist and design decisions, see [`checklist.md`](checklist.md).
