@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtGui import (
+    QColor,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QMouseEvent,
+    QPainter,
+)
 from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QWidget
 
+from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, decode_page_refs
+from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.theme import tab_close_icon
+from pagedrop.ui.theme import accent_qcolor, tab_close_icon
+from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -23,6 +34,8 @@ class DetachableTabBar(QTabBar):
         self._drag_start_global: QPoint | None = None
         self._detach_armed = False
         self._detach_hint_index = -1
+        self._drop_highlight_index = -1
+        self.setAcceptDrops(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_tab_context_menu)
 
@@ -105,6 +118,105 @@ class DetachableTabBar(QTabBar):
         chosen = menu.exec(self.mapToGlobal(pos))
         if chosen is move_action:
             self.move_to_new_window_requested.emit(index)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasFormat(PAGE_TRANSFER_MIME):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if not event.mimeData().hasFormat(PAGE_TRANSFER_MIME):
+            event.ignore()
+            return
+
+        index = self.tabAt(event.position().toPoint())
+        if index != self._drop_highlight_index:
+            self._drop_highlight_index = index
+            self.update()
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._clear_drop_highlight()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self._clear_drop_highlight()
+        mime = event.mimeData()
+        if not mime.hasFormat(PAGE_TRANSFER_MIME):
+            event.ignore()
+            return
+
+        index = self.tabAt(event.position().toPoint())
+        if index < 0:
+            event.ignore()
+            return
+
+        tab_manager = self.parent()
+        if not isinstance(tab_manager, QTabWidget):
+            event.ignore()
+            return
+
+        target_widget = tab_manager.widget(index)
+        if not isinstance(target_widget, PdfTab):
+            event.ignore()
+            return
+
+        source_grid = ThumbnailGrid._grid_for_widget(event.source())
+        if source_grid is None:
+            event.ignore()
+            return
+
+        source_tab = source_grid._parent_tab()
+        if source_tab is target_widget:
+            source_grid.page_transfer_failed.emit(
+                "Drop on another tab to append pages"
+            )
+            event.ignore()
+            return
+
+        refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        if not refs:
+            event.ignore()
+            return
+
+        move = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        target_grid = target_widget.thumbnail_grid
+        try:
+            if target_grid.handle_tab_bar_page_drop(
+                refs,
+                move=move,
+                source_grid=source_grid,
+                mime=mime,
+            ):
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+        except PdfLoadError as exc:
+            target_grid.pdf_drop_failed.emit(exc)
+            event.ignore()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._drop_highlight_index < 0:
+            return
+
+        rect = self.tabRect(self._drop_highlight_index)
+        if not rect.isValid():
+            return
+
+        r, g, b = accent_qcolor()
+        painter = QPainter(self)
+        painter.fillRect(rect, QColor(r, g, b, 48))
+        pen = QColor(r, g, b)
+        painter.setPen(pen)
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        painter.end()
+
+    def _clear_drop_highlight(self) -> None:
+        if self._drop_highlight_index >= 0:
+            self._drop_highlight_index = -1
+            self.update()
 
 
 class TabManager(QTabWidget):

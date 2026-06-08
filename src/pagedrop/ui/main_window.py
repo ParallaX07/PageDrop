@@ -335,6 +335,9 @@ class MainWindow(QMainWindow):
         grid.pages_inserted.connect(self._on_pages_inserted)
         grid.cross_window_pages_inserted.connect(self._on_cross_window_pages_inserted)
         grid.pages_moved_out.connect(self._on_pages_moved_out)
+        grid.pages_transferred_via_tab_bar.connect(
+            self._on_pages_transferred_via_tab_bar
+        )
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
@@ -356,6 +359,10 @@ class MainWindow(QMainWindow):
             (grid.pages_inserted, self._on_pages_inserted),
             (grid.cross_window_pages_inserted, self._on_cross_window_pages_inserted),
             (grid.pages_moved_out, self._on_pages_moved_out),
+            (
+                grid.pages_transferred_via_tab_bar,
+                self._on_pages_transferred_via_tab_bar,
+            ),
             (grid.page_transfer_failed, self._on_page_transfer_failed),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (preview.page_changed, self._on_preview_page_changed),
@@ -1175,6 +1182,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Moved {count} {noun}{suffix}"
         )
+        self._sync_toolbar_from_active_tab()
+
+    def _on_pages_transferred_via_tab_bar(
+        self, count: int, target_filename: str, moved: bool
+    ) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        noun = "page" if count == 1 else "pages"
+        verb = "Moved" if moved else "Appended"
+        suffix = f" to {target_filename}" if target_filename else ""
+        self.statusBar().showMessage(f"{verb} {count} {noun}{suffix}")
         self._sync_toolbar_from_active_tab()
 
     def _on_page_transfer_failed(self, message: str) -> None:
