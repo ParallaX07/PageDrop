@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for PageDrop — one-file GUI executable."""
+"""PyInstaller spec for PageDrop — onedir GUI executable."""
 
 from __future__ import annotations
 
@@ -19,18 +19,28 @@ binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = [
     "fitz",
     "pypdf",
+    "PyQt6.sip",
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
 ]
 
-for package in ("PyQt6", "fitz", "pypdf"):
+# PyQt6: widget stack only — skip WebEngine, Bluetooth, Multimedia, etc.
+for qt_mod in ("PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets"):
+    hiddenimports += collect_submodules(qt_mod)
+
+# Qt DLLs, plugins (platforms/styles/imageformats), and translations are
+# collected by PyInstaller's hook-PyQt6.Qt* hooks via add_qt6_dependencies.
+
+# Native PDF libs (keep collect_all — bundled binaries and crypto extras).
+for package in ("fitz", "pypdf"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
 hiddenimports += collect_submodules("pagedrop")
+hiddenimports = list(dict.fromkeys(hiddenimports))
 
 a = Analysis(
     [str(ENTRY)],
@@ -50,14 +60,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="pagedrop",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -66,4 +75,14 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="pagedrop",
 )
