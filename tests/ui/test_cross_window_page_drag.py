@@ -77,7 +77,7 @@ def _cross_window_drop(
     assert source._model is not None
     refs = [source._model.page_at(i) for i in logical_indices]
     mime = _transfer_mime(refs, logical_indices)
-    return target._handle_cross_window_drop(
+    return target._handle_page_transfer(
         refs,
         drop_index,
         move=shift,

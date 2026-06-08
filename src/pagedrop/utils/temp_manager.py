@@ -50,7 +50,10 @@ class TempManager:
         while self._dir_size() > self._max_bytes:
             drag_dirs = sorted(
                 (d for d in self._dir.glob("drag_*") if d.is_dir()),
-                key=lambda d: d.stat().st_mtime,
+                key=lambda d: (
+                    d.stat().st_mtime,
+                    int(d.name.removeprefix("drag_")),
+                ),
             )
             if not drag_dirs:
                 break

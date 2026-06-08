@@ -115,6 +115,7 @@ class ThumbnailGrid(QScrollArea):
     pages_inserted = pyqtSignal(int, str, int)  # count, filename, 1-based position
     cross_window_pages_inserted = pyqtSignal(int, str)  # count, source filename
     pages_moved_out = pyqtSignal(int, str)  # count, target filename
+    pages_transferred_via_tab_bar = pyqtSignal(int, str, bool)  # count, target filename, moved
     page_transfer_failed = pyqtSignal(str)
     pdf_drop_failed = pyqtSignal(object)
 
@@ -873,7 +874,29 @@ class ThumbnailGrid(QScrollArea):
         if tab is not None:
             tab._sync_dirty_from_model()
 
-    def _handle_cross_window_drop(
+    def handle_tab_bar_page_drop(
+        self,
+        refs: list[PageRef],
+        *,
+        move: bool,
+        source_grid: ThumbnailGrid | None,
+        mime,
+    ) -> bool:
+        """Append page refs from a tab-bar drop (always end of target document)."""
+        tab = self._parent_tab()
+        drop_index = 0
+        if tab is not None and not tab.is_blank and self._model is not None:
+            drop_index = self._model.logical_count()
+        return self._handle_page_transfer(
+            refs,
+            drop_index,
+            move=move,
+            source_grid=source_grid,
+            mime=mime,
+            via_tab_bar=True,
+        )
+
+    def _handle_page_transfer(
         self,
         refs: list[PageRef],
         drop_index: int,
@@ -881,6 +904,7 @@ class ThumbnailGrid(QScrollArea):
         move: bool,
         source_grid: ThumbnailGrid | None,
         mime,
+        via_tab_bar: bool = False,
     ) -> bool:
         tab = self._parent_tab()
         source_filename = Path(refs[0].source_path).name
@@ -910,6 +934,11 @@ class ThumbnailGrid(QScrollArea):
         elif tab is not None:
             tab._on_pages_inserted()
 
+        target_name = ""
+        if tab is not None and tab.edit_model is not None:
+            display = tab.edit_model.save_path or tab.edit_model.original_path
+            target_name = Path(display).name
+
         if move_indices is not None:
             assert source_grid is not None
             if not source_grid.remove_pages_by_indices(move_indices):
@@ -926,13 +955,17 @@ class ThumbnailGrid(QScrollArea):
             source_tab = source_grid._parent_tab()
             if source_tab is not None:
                 source_tab._sync_dirty_from_model()
-            target_name = ""
-            if tab is not None and tab.edit_model is not None:
-                display = tab.edit_model.save_path or tab.edit_model.original_path
-                target_name = Path(display).name
-            source_grid.pages_moved_out.emit(len(refs), target_name)
 
-        self.cross_window_pages_inserted.emit(len(refs), source_filename)
+        if via_tab_bar:
+            if source_grid is not None:
+                source_grid.pages_transferred_via_tab_bar.emit(
+                    len(refs), target_name, move
+                )
+        else:
+            if move_indices is not None:
+                assert source_grid is not None
+                source_grid.pages_moved_out.emit(len(refs), target_name)
+            self.cross_window_pages_inserted.emit(len(refs), source_filename)
         return True
 
     def drop_index_at_pos(self, pos: QPoint) -> int:
@@ -1094,7 +1127,7 @@ class ThumbnailGrid(QScrollArea):
             pos = self._container.mapFrom(self, event.position().toPoint())
             drop_index = self.drop_index_at_pos(pos)
             try:
-                if self._handle_cross_window_drop(
+                if self._handle_page_transfer(
                     refs,
                     drop_index,
                     move=move,
