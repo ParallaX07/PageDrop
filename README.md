@@ -12,10 +12,15 @@ Adobe is expensive. Cracked tools aren’t worth the risk. Most free PDF apps ge
 
 **Windows (recommended for most users)** — no Python or install required:
 
-1. Go to [**Releases**](https://github.com/ParallaX07/PageDrop/releases) and download `pagedrop.exe` (or the latest `PageDrop-v*-windows-x64.exe` asset).
-2. Double-click to run.
+1. Go to [**Releases**](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-v*-windows-x64.zip` asset.
+2. Extract the zip to a folder (e.g. `PageDrop\`). You should see `pagedrop.exe` alongside an `_internal\` folder.
+3. Double-click `pagedrop.exe` to run.
 
-> Windows may show a SmartScreen warning because the build is unsigned. Choose **More info → Run anyway** if prompted. First launch can take a few seconds while the app unpacks.
+> **Keep the folder intact.** The app is a folder bundle, not a single portable `.exe`. Do not move only `pagedrop.exe` out of the folder — it needs `_internal\` beside it. You can put the whole folder anywhere (Desktop, `Program Files`, a USB drive) or pin `pagedrop.exe` to the taskbar/Start menu from there.
+>
+> Windows may show a SmartScreen warning because the build is unsigned. Choose **More info → Run anyway** if prompted.
+
+Older releases shipped a single `PageDrop-v*-windows-x64.exe` that unpacked itself on every launch. Current releases use a zip bundle for faster startup.
 
 macOS and Linux binaries are not published yet — run from source (below) or build your own with PyInstaller.
 
@@ -158,7 +163,7 @@ uv sync --group dev
 uv run pyinstaller --noconfirm pagedrop.spec
 ```
 
-The onedir bundle is written to `dist/pagedrop/` — launch `dist/pagedrop/pagedrop` (Linux/macOS) or `dist/pagedrop/pagedrop.exe` (Windows). Zip that folder for distribution.
+The onedir bundle is written to `dist/pagedrop/` — launch `dist/pagedrop/pagedrop` (Linux/macOS) or `dist/pagedrop/pagedrop.exe` (Windows).
 
 Smoke-test the build (builds first unless `--skip-build` / `-SkipBuild`):
 
@@ -191,6 +196,6 @@ Verify manually on a machine **without Python**: open a PDF, drag a page into th
 
 ## Status
 
-**v0.2.0** — Windows standalone executable available on [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, cross-tab page drag, Save As, merge, multi-window page transfer, image-to-PDF conversion, and MRU Ctrl+Tab switching. macOS/Linux release binaries and code signing are planned.
+**v0.2.0** — Windows zip bundle available on [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, cross-tab page drag, Save As, merge, multi-window page transfer, image-to-PDF conversion, and MRU Ctrl+Tab switching. macOS/Linux release binaries and code signing are planned.
 
 For the detailed implementation checklist and design decisions, see [`checklist.md`](checklist.md).
