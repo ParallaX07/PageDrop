@@ -8,6 +8,32 @@ A free, open-source PDF desktop app built for people who actually organize docum
 
 Adobe is expensive. Cracked tools aren’t worth the risk. Most free PDF apps get the job done but feel clunky. PageDrop is the opposite: a clean thumbnail grid, browser-style tabs, and drag-and-drop workflows designed around real multi-PDF editing — not just viewing a single file.
 
+## See it in action
+
+### Drag pages to your file manager
+
+Select thumbnails and drop them into Explorer, Finder, or any file manager — each page becomes its own PDF.
+
+![Drag PDF pages into Explorer](demos/hero_clip.gif)
+
+### Multi-tab editing
+
+Reorder pages, insert another PDF, delete pages, and **Save As** without overwriting the original.
+
+![Multi-tab PDF editing in PageDrop](demos/multi-tab-editing.gif)
+
+### Cross-window page transfer
+
+Copy pages between windows, or hold **Shift** while dropping to move them from one document to another.
+
+![Copy and move pages between PageDrop windows](demos/cross-window-page-transfer.gif)
+
+### Drop a PDF onto the grid
+
+Drag a PDF from your file manager onto the thumbnail grid to insert its pages at the cursor position.
+
+![Insert pages by dropping a PDF onto the grid](demos/drop-pdf-onto-grid.gif)
+
 ## Download
 
 **Windows (recommended for most users)** — no Python or install required:
