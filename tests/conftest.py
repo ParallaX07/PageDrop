@@ -92,6 +92,20 @@ def wait_for_grid_loaded(qtbot: QtBot, grid, *, timeout: int = RENDER_TIMEOUT_MS
     )
 
 
+@pytest.fixture
+def isolated_settings(tmp_path, monkeypatch):
+    """Route PageDrop QSettings to a temp ini so tests do not touch user prefs."""
+    from PyQt6.QtCore import QSettings
+
+    ini = tmp_path / "pagedrop-test-settings.ini"
+
+    def _settings() -> QSettings:
+        return QSettings(str(ini), QSettings.Format.IniFormat)
+
+    monkeypatch.setattr("pagedrop.ui.settings._settings", _settings)
+    return tmp_path
+
+
 @pytest.fixture(autouse=True)
 def _limit_qtbot_default_timeout(qtbot):
     qtbot._default_timeout = RENDER_TIMEOUT_MS

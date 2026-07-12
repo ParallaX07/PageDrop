@@ -95,12 +95,12 @@ def test_rename_cannot_rename_after_save(
 
 
 def test_custom_title_used_for_default_save_as_path(
-    main_window, five_page_pdf, tmp_path, qtbot
+    main_window, five_page_pdf, tmp_path, isolated_settings, qtbot
 ):
-    from tests.ui.test_save_as import remember_directory
+    from pagedrop.ui.settings import remember_directory
 
-    remember_directory(str(tmp_path))
     blank = _drop_init_blank_tab(main_window, five_page_pdf, qtbot)
+    remember_directory(str(tmp_path))
     blank.set_custom_tab_title("Quarterly Report")
 
     assert main_window._default_save_as_path(blank) == str(

@@ -120,10 +120,11 @@ def test_drop_init_save_as_updates_tab_title_and_stays_editable(
 
 
 def test_drop_init_default_save_as_path_uses_untitled_in_last_directory(
-    main_window, five_page_pdf, tmp_path, qtbot
+    main_window, five_page_pdf, tmp_path, isolated_settings, qtbot
 ):
-    remember_directory(str(tmp_path))
+    # Set last-dir after drop-init setup so earlier opens cannot clobber it.
     blank = _drop_init_blank_tab(main_window, five_page_pdf, qtbot)
+    remember_directory(str(tmp_path))
 
     assert blank.is_drop_initialized
     assert main_window._default_save_as_path(blank) == str(tmp_path / "untitled.pdf")
