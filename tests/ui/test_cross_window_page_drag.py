@@ -350,7 +350,7 @@ def test_outbound_drag_includes_transfer_payload(qtbot, five_page_pdf, monkeypat
 def test_two_windows_same_pdf_allowed(qtbot, five_page_pdf, qapp):
     from pagedrop.ui.window_manager import WindowManager
 
-    manager = WindowManager.instance_or_none() or WindowManager.init(qapp)
+    manager = WindowManager(qapp)
     window_a = manager.open_new_window()
     window_b = manager.open_new_window()
     qtbot.addWidget(window_a)
@@ -381,7 +381,7 @@ def test_merge_window_keeps_app_alive(qtbot, five_page_pdf, qapp, monkeypatch):
     from pagedrop.ui.merge_window import MergeWindow
     from pagedrop.ui.window_manager import WindowManager
 
-    manager = WindowManager.instance_or_none() or WindowManager.init(qapp)
+    manager = WindowManager(qapp)
     editor = manager.open_new_window()
     qtbot.addWidget(editor)
     tab = editor._tab_manager.widget(0)

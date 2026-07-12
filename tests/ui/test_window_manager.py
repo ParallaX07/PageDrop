@@ -29,22 +29,20 @@ def _wait_for_tab_loaded(qtbot, tab: PdfTab, *, timeout: int = RENDER_TIMEOUT_MS
 def _ensure_window_manager(qapp):
     from pagedrop.ui.window_manager import WindowManager
 
-    manager = WindowManager.instance_or_none()
-    if manager is None:
-        manager = WindowManager.init(qapp)
-    return manager
+    return WindowManager(qapp)
 
 
 def _reset_window_manager(qapp):
+    from PyQt6.QtWidgets import QApplication
+
+    from pagedrop.ui.main_window import MainWindow
     from pagedrop.ui.window_manager import WindowManager
 
-    manager = WindowManager.instance_or_none()
-    if manager is not None:
-        for window in list(manager.windows):
-            window.close()
+    for widget in QApplication.topLevelWidgets():
+        if isinstance(widget, MainWindow):
+            widget.close()
             qapp.processEvents()
-    WindowManager._instance = None
-    return WindowManager.init(qapp)
+    return WindowManager(qapp)
 
 
 def test_open_new_window_spawns_second_main_window(qtbot, qapp):

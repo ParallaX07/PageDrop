@@ -18,27 +18,10 @@ class WindowManager(QObject):
 
     last_window_closing = pyqtSignal()
 
-    _instance: WindowManager | None = None
-
     def __init__(self, app: QApplication) -> None:
         super().__init__()
         self._app = app
         self._windows: set[MainWindow] = set()
-
-    @classmethod
-    def init(cls, app: QApplication) -> WindowManager:
-        cls._instance = cls(app)
-        return cls._instance
-
-    @classmethod
-    def instance(cls) -> WindowManager:
-        if cls._instance is None:
-            raise RuntimeError("WindowManager.init() has not been called")
-        return cls._instance
-
-    @classmethod
-    def instance_or_none(cls) -> WindowManager | None:
-        return cls._instance
 
     @property
     def windows(self) -> frozenset[MainWindow]:
