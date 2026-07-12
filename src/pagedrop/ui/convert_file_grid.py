@@ -22,16 +22,21 @@ from pagedrop.core.drag_mime import (
     decode_page_indices,
 )
 from pagedrop.core.selection_manager import SelectionManager
-from pagedrop.core.supported_formats import image_paths_from_mime, is_supported_image
+from pagedrop.core.supported_formats import image_paths_from_mime
 from pagedrop.ui.convert_file_card import ConvertFileCard
+from pagedrop.ui.grid_helpers import (
+    ctrl_wheel_zoom_step,
+    drop_index_at_pos,
+    drop_indicator_rect,
+)
 from pagedrop.ui.theme import (
     CARD_PADDING,
     CARD_WIDTH,
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
-    ZOOM_WHEEL_STEP,
 )
+from pagedrop.utils.list_utils import move_items
 
 ZOOM_RENDER_DEBOUNCE_MS = 200
 RENDER_POOL_DRAIN_MS = 2000
@@ -241,29 +246,24 @@ class ConvertFileGrid(QScrollArea):
         self._reflow_grid()
 
     def wheelEvent(self, event) -> None:
-        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+        step = ctrl_wheel_zoom_step(event)
+        if step is None:
             super().wheelEvent(event)
             return
 
-        delta = event.angleDelta().y()
-        if delta == 0:
-            super().wheelEvent(event)
-            return
-
-        step = ZOOM_WHEEL_STEP if delta > 0 else -ZOOM_WHEEL_STEP
         self.set_thumbnail_zoom(self._thumbnail_width_px + step)
         event.accept()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         mime = event.mimeData()
-        if mime.hasFormat(INTERNAL_MERGE_FILE_MIME) or self._image_paths_from_mime(mime):
+        if mime.hasFormat(INTERNAL_MERGE_FILE_MIME) or image_paths_from_mime(mime):
             event.acceptProposedAction()
             return
         super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         mime = event.mimeData()
-        if mime.hasFormat(INTERNAL_MERGE_FILE_MIME) or self._image_paths_from_mime(mime):
+        if mime.hasFormat(INTERNAL_MERGE_FILE_MIME) or image_paths_from_mime(mime):
             pos = self._container.mapFrom(self, event.position().toPoint())
             self._update_drop_indicator(self._drop_index_at_pos(pos))
             event.acceptProposedAction()
@@ -286,21 +286,13 @@ class ConvertFileGrid(QScrollArea):
                 event.acceptProposedAction()
             return
 
-        paths = self._image_paths_from_mime(mime)
+        paths = image_paths_from_mime(mime)
         if paths:
             self.files_dropped.emit(paths)
             event.acceptProposedAction()
             return
 
         super().dropEvent(event)
-
-    @staticmethod
-    def _image_paths_from_mime(mime) -> list[str]:
-        return [
-            path
-            for path in image_paths_from_mime(mime)
-            if is_supported_image(path)
-        ]
 
     def _on_selection_changed(self, _selection: set[int]) -> None:
         for index, card in enumerate(self._cards):
@@ -368,52 +360,22 @@ class ConvertFileGrid(QScrollArea):
         self._empty_state.hide()
 
     def _drop_index_at_pos(self, pos: QPoint) -> int:
-        if not self._cards:
-            return 0
-
-        for index, card in enumerate(self._cards):
-            rect = card.geometry()
-            if not rect.contains(pos):
-                continue
-            local_x = pos.x() - rect.x()
-            if local_x < rect.width() / 2:
-                return index
-            return index + 1
-
-        nearest_index = 0
-        nearest_distance = float("inf")
-        for index, card in enumerate(self._cards):
-            rect = card.geometry()
-            center = rect.center()
-            distance = (pos.x() - center.x()) ** 2 + (pos.y() - center.y()) ** 2
-            if distance < nearest_distance:
-                nearest_distance = distance
-                nearest_index = index if pos.x() < center.x() else index + 1
-
-        return min(max(nearest_index, 0), len(self._cards))
+        return drop_index_at_pos(self._cards, pos)
 
     def _hide_drop_indicator(self) -> None:
         self._drop_insertion_index = None
         self._drop_indicator.hide()
 
     def _update_drop_indicator(self, insertion_index: int) -> None:
-        if not self._cards:
+        rect = drop_indicator_rect(
+            self._cards, self._layout.spacing(), insertion_index
+        )
+        if rect is None:
             self._hide_drop_indicator()
             return
 
         self._drop_insertion_index = insertion_index
-        spacing = self._layout.spacing()
-
-        if insertion_index >= len(self._cards):
-            card = self._cards[-1]
-            x = card.x() + card.width() + max(spacing // 2, 2)
-        else:
-            card = self._cards[insertion_index]
-            x = max(card.x() - max(spacing // 2, 2), 0)
-
-        y = card.y()
-        height = card.height()
-        self._drop_indicator.setGeometry(x, y, 3, height)
+        self._drop_indicator.setGeometry(rect)
         self._drop_indicator.show()
         self._drop_indicator.raise_()
 
@@ -421,27 +383,17 @@ class ConvertFileGrid(QScrollArea):
         if not indices or not self._paths:
             return False
 
-        ordered = sorted(set(indices))
-        moving = [self._paths[i] for i in ordered]
-        remaining = [
-            path for index, path in enumerate(self._paths) if index not in set(ordered)
-        ]
-        adjusted = to_index
-        for index in ordered:
-            if index < to_index:
-                adjusted -= 1
-        adjusted = max(0, min(adjusted, len(remaining)))
-        new_paths = remaining[:adjusted] + moving + remaining[adjusted:]
-
+        new_paths, adjusted = move_items(self._paths, indices, to_index)
         if new_paths == self._paths:
             return False
 
+        ordered = sorted(set(indices))
         path_to_card = {card.path: card for card in self._cards}
         self._paths = new_paths
         self._cards = [path_to_card[path] for path in new_paths]
         for index, card in enumerate(self._cards):
             card.set_file_index(index)
-        new_selection = set(range(adjusted, adjusted + len(moving)))
+        new_selection = set(range(adjusted, adjusted + len(ordered)))
         self._reflow_grid(force=True)
         self.selection_manager.set_selection(new_selection)
         self.files_reordered.emit(new_paths)

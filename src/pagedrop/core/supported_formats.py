@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 SUPPORTED_IMAGE_EXTENSIONS: frozenset[str] = frozenset(
@@ -35,7 +36,12 @@ def image_dialog_filter() -> str:
     return f"Images ({extensions});;All Files (*)"
 
 
-def image_paths_from_mime(mime) -> list[str]:
+def local_paths_from_mime(
+    mime,
+    *,
+    accept: Callable[[str], bool] | None = None,
+    sort: bool = False,
+) -> list[str]:
     """Return local file paths from a file-manager drag payload."""
     paths: list[str] = []
     if not mime.hasUrls():
@@ -43,5 +49,18 @@ def image_paths_from_mime(mime) -> list[str]:
     for url in mime.urls():
         if not url.isLocalFile():
             continue
-        paths.append(url.toLocalFile())
-    return paths
+        path = url.toLocalFile()
+        if accept is not None and not accept(path):
+            continue
+        paths.append(path)
+    return sorted(paths) if sort else paths
+
+
+def image_paths_from_mime(mime) -> list[str]:
+    """Return local supported-image paths from a file-manager drag payload."""
+    return local_paths_from_mime(mime, accept=is_supported_image)
+
+
+def pdf_paths_from_mime(mime) -> list[str]:
+    """Return sorted local *.pdf paths from a file-manager drag payload."""
+    return local_paths_from_mime(mime, accept=is_pdf_path, sort=True)

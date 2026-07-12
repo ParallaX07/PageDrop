@@ -41,8 +41,14 @@ from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, render_page_png
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.drag_autoscroll import DragAutoScroller
+from pagedrop.ui.grid_helpers import (
+    ctrl_wheel_zoom_step,
+    drop_index_at_pos as insertion_index_at_pos,
+    drop_indicator_rect,
+)
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.theme import (
     ACCENT,
@@ -51,8 +57,8 @@ from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
-    ZOOM_WHEEL_STEP,
 )
+from pagedrop.utils.list_utils import move_items
 from pagedrop.utils.temp_manager import TempManager
 
 ZOOM_RENDER_DEBOUNCE_MS = 400
@@ -729,16 +735,7 @@ class ThumbnailGrid(QScrollArea):
     @staticmethod
     def pdf_paths_from_mime(mime) -> list[str]:
         """Return sorted local *.pdf paths from a file-manager drag payload."""
-        paths: list[str] = []
-        if not mime.hasUrls():
-            return paths
-        for url in mime.urls():
-            if not url.isLocalFile():
-                continue
-            path = url.toLocalFile()
-            if path.lower().endswith(".pdf"):
-                paths.append(path)
-        return sorted(paths)
+        return pdf_paths_from_mime(mime)
 
     def insert_pdf_pages(self, paths: list[str], drop_index: int) -> bool:
         """Insert all pages from *paths* at *drop_index*. Returns True on success.
@@ -993,29 +990,7 @@ class ThumbnailGrid(QScrollArea):
 
     def drop_index_at_pos(self, pos: QPoint) -> int:
         """Return the logical insertion index (0…N) for a point in container coords."""
-        if not self._cards:
-            return 0
-
-        for index, card in enumerate(self._cards):
-            rect = card.geometry()
-            if not rect.contains(pos):
-                continue
-            local_x = pos.x() - rect.x()
-            if local_x < rect.width() / 2:
-                return index
-            return index + 1
-
-        nearest_index = 0
-        nearest_distance = float("inf")
-        for index, card in enumerate(self._cards):
-            rect = card.geometry()
-            center = rect.center()
-            distance = (pos.x() - center.x()) ** 2 + (pos.y() - center.y()) ** 2
-            if distance < nearest_distance:
-                nearest_distance = distance
-                nearest_index = index if pos.x() < center.x() else index + 1
-
-        return min(max(nearest_index, 0), len(self._cards))
+        return insertion_index_at_pos(self._cards, pos)
 
     def _start_drag_autoscroll_tracking(self) -> None:
         self._drag_over_grid = True
@@ -1048,55 +1023,33 @@ class ThumbnailGrid(QScrollArea):
         self._drop_indicator.hide()
 
     def _update_drop_indicator(self, insertion_index: int) -> None:
-        if not self._cards:
+        rect = drop_indicator_rect(
+            self._cards, self._layout.spacing(), insertion_index
+        )
+        if rect is None:
             self._hide_drop_indicator()
             return
 
         self._drop_insertion_index = insertion_index
-        spacing = self._layout.spacing()
-
-        if insertion_index >= len(self._cards):
-            card = self._cards[-1]
-            x = card.x() + card.width() + max(spacing // 2, 2)
-        else:
-            card = self._cards[insertion_index]
-            x = max(card.x() - max(spacing // 2, 2), 0)
-
-        y = card.y()
-        height = card.height()
-        self._drop_indicator.setGeometry(x, y, 3, height)
+        self._drop_indicator.setGeometry(rect)
         self._drop_indicator.show()
         self._drop_indicator.raise_()
 
     def _new_selection_after_move(
         self, indices: list[int], to_index: int
     ) -> set[int]:
-        ordered = sorted(set(indices))
-        adjusted = to_index
-        for index in ordered:
-            if index < to_index:
-                adjusted -= 1
-        adjusted = max(0, min(adjusted, self._model.logical_count() - len(ordered)))
-        return set(range(adjusted, adjusted + len(ordered)))
+        _, adjusted = move_items(
+            list(range(self._model.logical_count())),
+            indices,
+            to_index,
+        )
+        return set(range(adjusted, adjusted + len(set(indices))))
 
     def _would_move_change_order(self, indices: list[int], to_index: int) -> bool:
         if self._model is None or not indices:
             return False
         before = [self._model.page_at(i) for i in range(self._model.logical_count())]
-        ordered = sorted(set(indices))
-        moving = [self._model.page_at(i) for i in ordered]
-        remove = set(ordered)
-        remaining = [
-            self._model.page_at(i)
-            for i in range(self._model.logical_count())
-            if i not in remove
-        ]
-        adjusted = to_index
-        for index in ordered:
-            if index < to_index:
-                adjusted -= 1
-        adjusted = max(0, min(adjusted, len(remaining)))
-        after = remaining[:adjusted] + moving + remaining[adjusted:]
+        after, _ = move_items(before, indices, to_index)
         return before != after
 
     def reorder_pages_by_drop(self, indices: list[int], to_index: int) -> bool:
@@ -1290,20 +1243,12 @@ class ThumbnailGrid(QScrollArea):
         self.ensureWidgetVisible(card, 24, 24)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+        step = ctrl_wheel_zoom_step(event)
+        if step is None:
             super().wheelEvent(event)
             return
 
-        delta = event.angleDelta().y()
-        if delta == 0:
-            super().wheelEvent(event)
-            return
-
-        step = ZOOM_WHEEL_STEP if delta > 0 else -ZOOM_WHEEL_STEP
-        new_width = self._thumbnail_width_px + step
-        new_width = max(MIN_THUMBNAIL_WIDTH, min(MAX_THUMBNAIL_WIDTH, new_width))
-        if new_width != self._thumbnail_width_px:
-            self.set_thumbnail_zoom(new_width)
+        self.set_thumbnail_zoom(self._thumbnail_width_px + step)
         event.accept()
 
     def set_thumbnail_zoom(self, thumbnail_width_px: int) -> None:

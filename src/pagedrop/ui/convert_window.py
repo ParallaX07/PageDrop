@@ -38,6 +38,7 @@ from pagedrop.core.supported_formats import (
 )
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
+from pagedrop.ui.dialogs import prompt_discard_file_list
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -641,25 +642,13 @@ class ConvertWindow(QMainWindow):
                 self._busy_overlay.setGeometry(parent.rect())
 
     def _prompt_discard_file_list(self) -> str:
-        if os.environ.get("PAGEDROP_TESTING") == "1":
-            return "discard"
-
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Question)
-        message.setWindowTitle(self.WINDOW_TITLE)
-        message.setText("Discard file list?")
-        message.setInformativeText(
-            "Closing will remove all images from the Create PDF list."
+        return prompt_discard_file_list(
+            self,
+            window_title=self.WINDOW_TITLE,
+            informative_text=(
+                "Closing will remove all images from the Create PDF list."
+            ),
         )
-        discard_button = message.addButton(
-            "Discard",
-            QMessageBox.ButtonRole.DestructiveRole,
-        )
-        message.addButton(QMessageBox.StandardButton.Cancel)
-        message.exec()
-        if message.clickedButton() is discard_button:
-            return "discard"
-        return "cancel"
 
     def _clear_file_list(self) -> None:
         while self._model.file_count() > 0:

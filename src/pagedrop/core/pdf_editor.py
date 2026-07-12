@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pagedrop.utils.list_utils import move_items
+
 
 @dataclass(frozen=True)
 class PageRef:
@@ -61,18 +63,7 @@ class PdfEditModel:
     def move_pages(self, indices: list[int], to_index: int) -> None:
         if not indices:
             return
-        ordered = sorted(set(indices))
-        moving = [self._pages[i] for i in ordered]
-        remaining = [page for i, page in enumerate(self._pages) if i not in set(ordered)]
-
-        adjusted = to_index
-        for i in ordered:
-            if i < to_index:
-                adjusted -= 1
-        adjusted = max(0, min(adjusted, len(remaining)))
-
-        remaining[adjusted:adjusted] = moving
-        self._pages = remaining
+        self._pages, _ = move_items(self._pages, indices, to_index)
         self._dirty = True
 
     def move_up(self, indices: list[int]) -> None:
