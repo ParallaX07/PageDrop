@@ -55,9 +55,11 @@ def test_move_up_down_at_bounds(tmp_path):
     assert Path(model.path_at(2)).name == "c.pdf"
 
 
-def test_display_name_returns_stem(tmp_path):
+def test_path_at_returns_resolved_path(tmp_path):
     pdf = tmp_path / "report.pdf"
     pdf.touch()
     model = PdfMergeModel()
     model.add_files([str(pdf)])
-    assert model.display_name(0) == "report.pdf"
+    assert Path(model.path_at(0)).name == "report.pdf"
+    model.clear()
+    assert model.file_count() == 0

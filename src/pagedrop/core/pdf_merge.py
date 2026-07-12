@@ -46,14 +46,14 @@ class PdfMergeModel:
         item = self._paths.pop(from_index)
         self._paths.insert(to_index, item)
 
+    def clear(self) -> None:
+        self._paths.clear()
+
     def file_count(self) -> int:
         return len(self._paths)
 
     def path_at(self, index: int) -> str:
         return self._paths[index]
-
-    def display_name(self, index: int) -> str:
-        return Path(self._paths[index]).name
 
     def all_paths(self) -> list[str]:
         return list(self._paths)

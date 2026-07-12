@@ -293,8 +293,7 @@ class MergeWindow(QMainWindow):
         self._update_status()
 
     def _sync_model_from_grid(self, paths: list[str]) -> None:
-        while self._model.file_count() > 0:
-            self._model.remove_at(0)
+        self._model.clear()
         self._model.add_files(paths)
 
     def _on_files_reordered(self, paths: list[str]) -> None:
@@ -445,8 +444,7 @@ class MergeWindow(QMainWindow):
         )
 
     def _clear_file_list(self) -> None:
-        while self._model.file_count() > 0:
-            self._model.remove_at(0)
+        self._model.clear()
         self._page_counts.clear()
         if self._is_preview_visible():
             self._close_preview()
