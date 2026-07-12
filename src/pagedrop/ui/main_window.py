@@ -396,12 +396,9 @@ class MainWindow(QMainWindow):
         self._update_close_tab_action()
 
     def _new_window(self) -> None:
-        from pagedrop.ui.window_manager import WindowManager
-
-        manager = WindowManager.instance_or_none()
-        if manager is None:
+        if self._window_manager is None:
             return
-        manager.open_new_window()
+        self._window_manager.open_new_window()
 
     def _adopt_tab(self, tab: PdfTab) -> None:
         preserve_preview = tab.is_preview_visible()
@@ -452,11 +449,8 @@ class MainWindow(QMainWindow):
 
         self._disconnect_tab_signals(tab)
 
-        from pagedrop.ui.window_manager import WindowManager
-
-        manager = WindowManager.instance_or_none()
-        if manager is not None:
-            new_window = manager.open_new_window(tab)
+        if self._window_manager is not None:
+            new_window = self._window_manager.open_new_window(tab)
         else:
             new_window = MainWindow(initial_tab=tab)
             new_window.show()
@@ -935,11 +929,8 @@ class MainWindow(QMainWindow):
             self._open_in_new_window(path)
 
     def _open_in_new_window(self, path: str) -> None:
-        from pagedrop.ui.window_manager import WindowManager
-
-        manager = WindowManager.instance_or_none()
-        if manager is not None:
-            new_window = manager.open_new_window()
+        if self._window_manager is not None:
+            new_window = self._window_manager.open_new_window()
         else:
             new_window = MainWindow()
             new_window.show()

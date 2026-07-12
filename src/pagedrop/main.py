@@ -14,7 +14,7 @@ def main():
     app.setStyleSheet(app_stylesheet())
     icon = app_icon()
     app.setWindowIcon(icon)
-    manager = WindowManager.init(app)
+    manager = WindowManager(app)
     win = manager.open_new_window()
     win.setWindowIcon(icon)
     sys.exit(app.exec())

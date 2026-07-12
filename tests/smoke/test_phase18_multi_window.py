@@ -98,7 +98,7 @@ def test_smoke_multi_window_copy_move_detach_save_as(
 ):
     from pagedrop.ui.window_manager import WindowManager
 
-    manager = WindowManager.instance_or_none() or WindowManager.init(qapp)
+    manager = WindowManager(qapp)
     window_a = manager.open_new_window()
     window_b = manager.open_new_window()
     qtbot.addWidget(window_a)

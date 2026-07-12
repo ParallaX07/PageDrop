@@ -286,10 +286,7 @@ def test_toolbar_routes_to_active_tab(
 def _ensure_window_manager(qapp):
     from pagedrop.ui.window_manager import WindowManager
 
-    manager = WindowManager.instance_or_none()
-    if manager is None:
-        manager = WindowManager.init(qapp)
-    return manager
+    return WindowManager(qapp)
 
 
 def _windows_added(manager, before: frozenset) -> list:
