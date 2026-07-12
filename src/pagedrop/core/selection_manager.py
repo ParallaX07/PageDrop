@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 
 class SelectionManager:
-    """Tracks selected page indices and notifies listeners on change."""
+    """Tracks selected page indices and notifies on change."""
 
     def __init__(
         self,
@@ -13,9 +13,8 @@ class SelectionManager:
     ) -> None:
         self._page_count = page_count
         self._selected: set[int] = set()
-        self._listeners: list[Callable[[set[int]], None]] = []
-        if on_selection_changed is not None:
-            self._listeners.append(on_selection_changed)
+        # single callback; upgrade to list/signal if multi-listener needed
+        self._on_selection_changed = on_selection_changed
 
     @property
     def page_count(self) -> int:
@@ -63,10 +62,6 @@ class SelectionManager:
         self._selected = clamped
         self._emit()
 
-    def add_listener(self, callback: Callable[[set[int]], None]) -> None:
-        self._listeners.append(callback)
-
     def _emit(self) -> None:
-        current = set(self._selected)
-        for listener in self._listeners:
-            listener(current)
+        if self._on_selection_changed is not None:
+            self._on_selection_changed(set(self._selected))
