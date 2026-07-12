@@ -148,7 +148,6 @@ class _ConvertWorker(QRunnable):
 
     def run(self) -> None:
         try:
-            validate_images(self._paths)
             if self._output_mode == _OUTPUT_SINGLE:
                 assert self._output_path is not None
                 images_to_single_pdf(self._paths, self._output_path)

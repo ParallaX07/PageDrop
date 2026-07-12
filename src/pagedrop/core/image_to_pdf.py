@@ -75,21 +75,13 @@ class ConvertModel:
         return list(self._paths)
 
 
-def inspect_image(path: str) -> tuple[int, int]:
-    """Open *path* and return ``(width_px, height_px)``."""
-    filename = Path(path).name
-    try:
-        with fitz.open(path) as doc:
-            if doc.page_count == 0:
-                raise ImageConvertError(f"Image has no content: {filename}")
-            rect = doc[0].rect
-            width = int(round(rect.width))
-            height = int(round(rect.height))
-    except ImageConvertError:
-        raise
-    except Exception as exc:
-        raise ImageConvertError(f"Could not read image {filename}: {exc}") from exc
-
+def _check_image_doc(doc: fitz.Document, filename: str) -> tuple[int, int]:
+    """Validate an already-open image document; return ``(width_px, height_px)``."""
+    if doc.page_count == 0:
+        raise ImageConvertError(f"Image has no content: {filename}")
+    rect = doc[0].rect
+    width = int(round(rect.width))
+    height = int(round(rect.height))
     if width <= 0 or height <= 0:
         raise ImageConvertError(f"Invalid image dimensions: {filename}")
     if max(width, height) > MAX_IMAGE_DIMENSION_PX:
@@ -100,7 +92,24 @@ def inspect_image(path: str) -> tuple[int, int]:
     return width, height
 
 
+def inspect_image(path: str) -> tuple[int, int]:
+    """Open *path* and return ``(width_px, height_px)``."""
+    filename = Path(path).name
+    try:
+        with fitz.open(path) as doc:
+            return _check_image_doc(doc, filename)
+    except ImageConvertError:
+        raise
+    except Exception as exc:
+        raise ImageConvertError(f"Could not read image {filename}: {exc}") from exc
+
+
 def validate_images(paths: list[str]) -> None:
+    """Preflight: open every path and reject invalid/oversized images.
+
+    Write helpers validate check-as-you-write; call this only when you need
+    to fail before any output is created (e.g. UI confirm dialog).
+    """
     if not paths:
         raise ImageConvertError("No images to convert.")
     for path in paths:
@@ -108,7 +117,8 @@ def validate_images(paths: list[str]) -> None:
 
 
 def images_to_single_pdf(paths: list[str], output_path: str) -> None:
-    validate_images(paths)
+    if not paths:
+        raise ImageConvertError("No images to convert.")
     doc = fitz.open()
     try:
         for path in paths:
@@ -130,7 +140,8 @@ def images_to_individual_pdfs(
     *,
     overwrite: bool = False,
 ) -> list[str]:
-    validate_images(paths)
+    if not paths:
+        raise ImageConvertError("No images to convert.")
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -176,10 +187,12 @@ def planned_individual_outputs(paths: list[str], output_dir: str) -> list[Path]:
 
 def _append_image_pdf(doc: fitz.Document, path: str) -> None:
     filename = Path(path).name
-    imgdoc = fitz.open(path)
     try:
-        if imgdoc.page_count == 0:
-            raise ImageConvertError(f"Image has no content: {filename}")
+        imgdoc = fitz.open(path)
+    except Exception as exc:
+        raise ImageConvertError(f"Could not read image {filename}: {exc}") from exc
+    try:
+        _check_image_doc(imgdoc, filename)
         pdf_bytes = imgdoc.convert_to_pdf()
     except ImageConvertError:
         raise
