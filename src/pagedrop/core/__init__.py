@@ -5,8 +5,6 @@ from pagedrop.core.pdf_loader import (
     PdfLoadError,
     PdfLoader,
     PdfNotFoundError,
-    PdfPasswordError,
-    PdfPasswordRequiredError,
 )
 
 __all__ = [
@@ -17,6 +15,4 @@ __all__ = [
     "PdfLoadError",
     "PdfLoader",
     "PdfNotFoundError",
-    "PdfPasswordError",
-    "PdfPasswordRequiredError",
 ]

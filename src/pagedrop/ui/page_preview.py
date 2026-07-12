@@ -332,7 +332,3 @@ class PagePreviewWidget(QWidget):
         self._overlay.hide_overlay()
         self.busy_changed.emit(False, "")
         self._image_label.setText(f"Could not render page:\n{message}")
-
-
-# Backward-compatible alias for older imports.
-PagePreviewDialog = PagePreviewWidget

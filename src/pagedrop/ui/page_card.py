@@ -8,7 +8,6 @@ from PyQt6.QtGui import (
     QColor,
     QDrag,
     QEnterEvent,
-    QFocusEvent,
     QFont,
     QMouseEvent,
     QPainter,
@@ -46,7 +45,6 @@ class PageCard(QFrame):
     clicked = pyqtSignal(int, Qt.KeyboardModifier)
     double_clicked = pyqtSignal(int)
     context_menu_requested = pyqtSignal(int, QPoint)
-    CARD_WIDTH = CARD_WIDTH
 
     def __init__(self, page_index: int, parent=None) -> None:
         super().__init__(parent)
@@ -142,9 +140,6 @@ class PageCard(QFrame):
         self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
         self._apply_visual_state()
         super().leaveEvent(event)
-
-    def focusInEvent(self, event: QFocusEvent) -> None:
-        super().focusInEvent(event)
 
     def contextMenuEvent(self, event) -> None:
         self.context_menu_requested.emit(self.page_index, event.globalPos())
