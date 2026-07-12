@@ -584,15 +584,19 @@ def app_stylesheet() -> str:
     """
 
 
-def accent_qcolor() -> tuple[int, int, int]:
-    """RGB tuple for programmatic painting (drag badge, etc.)."""
-    return (47, 155, 230)
+def accent_qcolor() -> "QColor":
+    """Accent color for programmatic painting (drag badge, etc.)."""
+    from PyQt6.QtGui import QColor
+
+    return QColor(ACCENT)
 
 
-def shadow_qcolor(*, alpha: int = 55) -> tuple[int, int, int, int]:
-    """RGBA tuple for tinted drop shadows."""
+def shadow_qcolor(*, alpha: int = 55) -> "QColor":
+    """Tinted drop-shadow color."""
+    from PyQt6.QtGui import QColor
+
     r, g, b = SHADOW_RGB
-    return (r, g, b, alpha)
+    return QColor(r, g, b, alpha)
 
 
 def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":

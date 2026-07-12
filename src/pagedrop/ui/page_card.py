@@ -233,8 +233,7 @@ class PageCard(BaseFileCard):
         badge_x = canvas.width() - badge_w - 2
         badge_y = 2
 
-        accent = accent_qcolor()
-        painter.setBrush(QColor(*accent))
+        painter.setBrush(accent_qcolor())
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
         painter.setPen(QColor(255, 255, 255))
