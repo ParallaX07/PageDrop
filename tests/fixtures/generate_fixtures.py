@@ -4,31 +4,45 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pypdf import PdfWriter
+import fitz
 
 FIXTURE_NAMES = ("one_page", "five_page", "empty", "corrupt", "garbage")
 
+# fitz refuses to save zero-page docs; a minimal catalog is enough for PdfEmptyError.
+_EMPTY_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n"
+    b"2 0 obj<< /Type /Pages /Kids [] /Count 0 >>endobj\n"
+    b"xref\n0 3\n"
+    b"0000000000 65535 f \n"
+    b"0000000009 00000 n \n"
+    b"0000000058 00000 n \n"
+    b"trailer<< /Size 3 /Root 1 0 R >>\n"
+    b"startxref\n109\n%%EOF\n"
+)
+
+
+def _write_blank_pages(path: Path, page_count: int, *, width: float = 200) -> None:
+    doc = fitz.open()
+    try:
+        for _ in range(page_count):
+            doc.new_page(width=width, height=200)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
 
 def generate_one_page(path: Path) -> None:
-    writer = PdfWriter()
-    writer.add_blank_page(width=200, height=200)
-    with path.open("wb") as handle:
-        writer.write(handle)
+    _write_blank_pages(path, 1)
 
 
 def generate_five_page(path: Path) -> None:
-    writer = PdfWriter()
-    for _ in range(5):
-        writer.add_blank_page(width=200, height=200)
-    with path.open("wb") as handle:
-        writer.write(handle)
+    _write_blank_pages(path, 5)
 
 
 def generate_empty(path: Path) -> None:
     """Valid PDF structure with zero pages."""
-    writer = PdfWriter()
-    with path.open("wb") as handle:
-        writer.write(handle)
+    path.write_bytes(_EMPTY_PDF)
 
 
 def generate_corrupt(path: Path) -> None:
@@ -42,11 +56,7 @@ def generate_garbage(path: Path) -> None:
 
 
 def generate_n_page(path: Path, page_count: int) -> None:
-    writer = PdfWriter()
-    for _ in range(page_count):
-        writer.add_blank_page(width=200, height=200)
-    with path.open("wb") as handle:
-        writer.write(handle)
+    _write_blank_pages(path, page_count)
 
 
 def ensure_fixtures(directory: Path) -> None:

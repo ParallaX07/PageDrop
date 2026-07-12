@@ -4,22 +4,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import fitz
 from PyQt6.QtWidgets import QFileDialog
-from pypdf import PdfReader, PdfWriter
 
 from pagedrop.ui.merge_window import MergeWindow
 
 
 def _write_distinct_pdf(path: Path, widths: list[int]) -> None:
-    writer = PdfWriter()
-    for width in widths:
-        writer.add_blank_page(width=width, height=200)
-    with path.open("wb") as handle:
-        writer.write(handle)
+    doc = fitz.open()
+    try:
+        for width in widths:
+            doc.new_page(width=width, height=200)
+        doc.save(str(path))
+    finally:
+        doc.close()
 
 
-def _page_width(reader: PdfReader, page_index: int) -> float:
-    return float(reader.pages[page_index].mediabox.width)
+def _page_width(path: Path | str, page_index: int) -> float:
+    doc = fitz.open(str(path))
+    try:
+        return float(doc[page_index].rect.width)
+    finally:
+        doc.close()
 
 
 def test_smoke_merge_reorder_save_as(qtbot, tmp_path, monkeypatch):
@@ -66,10 +72,8 @@ def test_smoke_merge_reorder_save_as(qtbot, tmp_path, monkeypatch):
     window._merge_pdfs()
     qtbot.waitUntil(lambda: not window._merging, timeout=10000)
 
-    merged = PdfReader(str(output))
     expected_widths = [444, 555, 666, 111, 222, 333]
-    assert len(merged.pages) == len(expected_widths)
-    assert [_page_width(merged, index) for index in range(len(expected_widths))] == expected_widths
+    assert [_page_width(output, index) for index in range(len(expected_widths))] == expected_widths
 
     for path, data in original_bytes.items():
         assert Path(path).read_bytes() == data

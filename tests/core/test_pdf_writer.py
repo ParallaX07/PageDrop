@@ -4,24 +4,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
-
-from pagedrop.core.pdf_editor import PageRef, PdfEditModel
+import fitz
 import pytest
 
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_writer import merge_pdf_files, write_pdf
 
 
 def _write_distinct_pdf(path: Path, widths: list[int]) -> None:
-    writer = PdfWriter()
-    for width in widths:
-        writer.add_blank_page(width=width, height=200)
-    with path.open("wb") as handle:
-        writer.write(handle)
+    doc = fitz.open()
+    try:
+        for width in widths:
+            doc.new_page(width=width, height=200)
+        doc.save(str(path))
+    finally:
+        doc.close()
 
 
-def _page_width(reader: PdfReader, page_index: int) -> float:
-    return float(reader.pages[page_index].mediabox.width)
+def _page_width(path: Path | str, page_index: int) -> float:
+    doc = fitz.open(str(path))
+    try:
+        return float(doc[page_index].rect.width)
+    finally:
+        doc.close()
 
 
 def test_write_preserves_page_order(five_page_pdf, tmp_path):
@@ -30,11 +35,13 @@ def test_write_preserves_page_order(five_page_pdf, tmp_path):
 
     write_pdf(model, str(output))
 
-    reader = PdfReader(str(output))
-    source = PdfReader(str(five_page_pdf))
-    assert len(reader.pages) == 5
-    for index in range(5):
-        assert _page_width(reader, index) == _page_width(source, index)
+    out = fitz.open(str(output))
+    try:
+        assert out.page_count == 5
+        for index in range(5):
+            assert _page_width(output, index) == _page_width(five_page_pdf, index)
+    finally:
+        out.close()
 
 
 def test_write_after_reorder_delete_insert(tmp_path):
@@ -51,9 +58,7 @@ def test_write_after_reorder_delete_insert(tmp_path):
     output = tmp_path / "edited.pdf"
     write_pdf(model, str(output))
 
-    reader = PdfReader(str(output))
-    assert len(reader.pages) == 6
-    assert [_page_width(reader, i) for i in range(6)] == [200, 300, 600, 700, 400, 500]
+    assert [_page_width(output, i) for i in range(6)] == [200, 300, 600, 700, 400, 500]
 
 
 def test_write_multi_source_refs(tmp_path):
@@ -68,9 +73,7 @@ def test_write_multi_source_refs(tmp_path):
     output = tmp_path / "merged.pdf"
     write_pdf(model, str(output))
 
-    reader = PdfReader(str(output))
-    assert len(reader.pages) == 5
-    assert [_page_width(reader, i) for i in range(5)] == [111, 444, 555, 222, 333]
+    assert [_page_width(output, i) for i in range(5)] == [111, 444, 555, 222, 333]
 
 
 def test_merge_pdf_files_preserves_file_order(tmp_path):
@@ -82,8 +85,7 @@ def test_merge_pdf_files_preserves_file_order(tmp_path):
     output = tmp_path / "merged.pdf"
     merge_pdf_files([str(doc_a), str(doc_b)], str(output))
 
-    reader = PdfReader(str(output))
-    assert [_page_width(reader, i) for i in range(5)] == [100, 200, 300, 400, 500]
+    assert [_page_width(output, i) for i in range(5)] == [100, 200, 300, 400, 500]
 
 
 def test_merge_pdf_files_rejects_empty_list(tmp_path):
@@ -100,5 +102,8 @@ def test_merge_pdf_files_total_page_count(tmp_path):
     output = tmp_path / "merged.pdf"
     merge_pdf_files([str(doc_a), str(doc_b)], str(output))
 
-    reader = PdfReader(str(output))
-    assert len(reader.pages) == 3
+    doc = fitz.open(str(output))
+    try:
+        assert doc.page_count == 3
+    finally:
+        doc.close()

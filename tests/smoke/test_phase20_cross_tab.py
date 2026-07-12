@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QFileDialog
-from pypdf import PdfReader
+import fitz
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -156,7 +156,11 @@ def test_smoke_cross_tab_copy_cut_save_as_ctrl_tab(
     )
     assert window._save_as(blank) is True
     assert output.is_file()
-    assert len(PdfReader(str(output)).pages) == 2
+    doc = fitz.open(str(output))
+    try:
+        assert doc.page_count == 2
+    finally:
+        doc.close()
     assert not blank.is_dirty
     assert window._tab_manager.tabText(blank_index) == "blank_init.pdf"
 

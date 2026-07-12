@@ -6,7 +6,6 @@ from pathlib import Path
 
 import fitz
 from PyQt6.QtWidgets import QFileDialog
-from pypdf import PdfReader
 
 from pagedrop.core.image_to_pdf import images_to_individual_pdfs, images_to_single_pdf
 from pagedrop.ui.convert_window import ConvertWindow
@@ -23,6 +22,14 @@ def _write_test_image(path: Path, width: int, height: int) -> None:
         )
         pix = page.get_pixmap()
         pix.save(str(path))
+    finally:
+        doc.close()
+
+
+def _page_count(path: Path | str) -> int:
+    doc = fitz.open(str(path))
+    try:
+        return doc.page_count
     finally:
         doc.close()
 
@@ -44,13 +51,13 @@ def test_smoke_combine_and_separate_modes(qtbot, tmp_path, monkeypatch):
 
     combined = tmp_path / "all_images.pdf"
     images_to_single_pdf(paths, str(combined))
-    assert len(PdfReader(str(combined)).pages) == 3
+    assert _page_count(combined) == 3
 
     separate_dir = tmp_path / "separate"
     written = images_to_individual_pdfs(paths, str(separate_dir))
     assert len(written) == 3
     for path in written:
-        assert len(PdfReader(path).pages) == 1
+        assert _page_count(path) == 1
 
     window = ConvertWindow()
     qtbot.addWidget(window)
@@ -65,7 +72,7 @@ def test_smoke_combine_and_separate_modes(qtbot, tmp_path, monkeypatch):
     )
     window._create_pdfs()
     qtbot.waitUntil(lambda: not window._converting, timeout=10000)
-    assert len(PdfReader(str(ui_combined)).pages) == 3
+    assert _page_count(ui_combined) == 3
 
     ui_separate_dir = tmp_path / "ui_separate"
     monkeypatch.setattr(
@@ -80,7 +87,7 @@ def test_smoke_combine_and_separate_modes(qtbot, tmp_path, monkeypatch):
     ui_written = sorted(ui_separate_dir.glob("*.pdf"))
     assert len(ui_written) == 3
     for path in ui_written:
-        assert len(PdfReader(str(path)).pages) == 1
+        assert _page_count(path) == 1
 
     for path, data in original_bytes.items():
         assert Path(path).read_bytes() == data

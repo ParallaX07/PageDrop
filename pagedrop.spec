@@ -18,7 +18,6 @@ datas: list[tuple[str, str]] = [
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = [
     "fitz",
-    "pypdf",
     "PyQt6.sip",
     "PyQt6.QtCore",
     "PyQt6.QtGui",
@@ -32,8 +31,8 @@ for qt_mod in ("PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets"):
 # Qt DLLs, plugins (platforms/styles/imageformats), and translations are
 # collected by PyInstaller's hook-PyQt6.Qt* hooks via add_qt6_dependencies.
 
-# Native PDF libs (keep collect_all — bundled binaries and crypto extras).
-for package in ("fitz", "pypdf"):
+# Native PDF lib (keep collect_all — bundled binaries).
+for package in ("fitz",):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries

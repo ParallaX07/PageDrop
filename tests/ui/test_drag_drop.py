@@ -106,7 +106,7 @@ def test_outbound_drag_reflects_edit_model_order(
     qtbot, five_page_pdf, monkeypatch
 ):
     """Outbound drag extracts pages in logical (edited) order, not source order."""
-    from pypdf import PdfReader
+    import fitz
 
     card, loader, selection_manager, _ = _make_card(
         qtbot, five_page_pdf, page_index=0
@@ -121,19 +121,26 @@ def test_outbound_drag_reflects_edit_model_order(
 
     verified_sources: list[int] = []
 
+    def _page_size(path, page_index: int = 0) -> tuple[float, float]:
+        doc = fitz.open(str(path))
+        try:
+            rect = doc[page_index].rect
+            return (float(rect.width), float(rect.height))
+        finally:
+            doc.close()
+
     def capture_mime(drag: QDrag) -> None:
         mime = drag.mimeData()
         assert mime is not None
         assert decode_page_indices(mime.data(INTERNAL_PAGE_MIME)) == [0, 1]
-        source_reader = PdfReader(str(five_page_pdf))
         for url, source_index in zip(mime.urls(), [3, 4], strict=True):
             path = Path(url.toLocalFile())
-            reader = PdfReader(path)
-            assert len(reader.pages) == 1
-            source_box = source_reader.pages[source_index].mediabox
-            dropped_box = reader.pages[0].mediabox
-            assert float(dropped_box.width) == float(source_box.width)
-            assert float(dropped_box.height) == float(source_box.height)
+            doc = fitz.open(str(path))
+            try:
+                assert doc.page_count == 1
+                assert _page_size(path) == _page_size(five_page_pdf, source_index)
+            finally:
+                doc.close()
             verified_sources.append(source_index)
 
     _patch_drag_exec(monkeypatch, capture_mime)

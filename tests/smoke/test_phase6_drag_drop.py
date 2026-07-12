@@ -13,10 +13,19 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from pypdf import PdfReader
+import fitz
 
 from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.core.pdf_loader import PdfLoader
+
+
+def _page_size(path: Path | str, page_index: int = 0) -> tuple[float, float]:
+    doc = fitz.open(str(path))
+    try:
+        rect = doc[page_index].rect
+        return (float(rect.width), float(rect.height))
+    finally:
+        doc.close()
 
 
 def test_smoke_extract_pages_to_drop_folder(five_page_pdf, tmp_path):
@@ -40,14 +49,13 @@ def test_smoke_extract_pages_to_drop_folder(five_page_pdf, tmp_path):
     dropped_files = sorted(drop_dir.glob("*.pdf"))
     assert len(dropped_files) == len(selected_indices)
 
-    source_reader = PdfReader(str(five_page_pdf))
     for dropped, index in zip(dropped_files, sorted(selected_indices), strict=True):
-        reader = PdfReader(dropped)
-        assert len(reader.pages) == 1
-        source_box = source_reader.pages[index].mediabox
-        dropped_box = reader.pages[0].mediabox
-        assert float(dropped_box.width) == float(source_box.width)
-        assert float(dropped_box.height) == float(source_box.height)
+        doc = fitz.open(str(dropped))
+        try:
+            assert doc.page_count == 1
+            assert _page_size(dropped) == _page_size(five_page_pdf, index)
+        finally:
+            doc.close()
 
 
 def test_smoke_loader_and_extractor_integration(five_page_pdf):

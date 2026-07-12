@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog
-from pypdf import PdfReader
+import fitz
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -166,6 +166,10 @@ def test_smoke_multi_window_copy_move_detach_save_as(
 
     assert output_a.exists()
     assert output_c.exists()
-    assert len(PdfReader(str(output_a)).pages) == 6
-    assert len(PdfReader(str(output_c)).pages) == 1
+    for path, expected in ((output_a, 6), (output_c, 1)):
+        doc = fitz.open(str(path))
+        try:
+            assert doc.page_count == expected
+        finally:
+            doc.close()
     assert {Path(path).name for path in saved} == {"window_a.pdf", "window_c.pdf"}

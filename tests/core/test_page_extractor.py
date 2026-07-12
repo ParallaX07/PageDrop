@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pypdf import PdfReader
+import fitz
 
 from pagedrop.core.page_extractor import extract_pages_to_files
 
 
-def _mediabox(reader: PdfReader, page_index: int) -> tuple[float, float, float, float]:
-    box = reader.pages[page_index].mediabox
-    return (float(box.left), float(box.bottom), float(box.right), float(box.top))
+def _page_size(path: Path | str, page_index: int = 0) -> tuple[float, float]:
+    doc = fitz.open(str(path))
+    try:
+        rect = doc[page_index].rect
+        return (float(rect.width), float(rect.height))
+    finally:
+        doc.close()
 
 
 def test_extract_single_page(one_page_pdf, tmp_path):
@@ -27,8 +31,11 @@ def test_extract_single_page(one_page_pdf, tmp_path):
 
     assert len(paths) == 1
     assert paths[0].name == "report_page_0001.pdf"
-    reader = PdfReader(paths[0])
-    assert len(reader.pages) == 1
+    doc = fitz.open(str(paths[0]))
+    try:
+        assert doc.page_count == 1
+    finally:
+        doc.close()
 
 
 def test_extract_multiple_non_contiguous(pdf_fixtures_dir, tmp_path):
@@ -51,11 +58,13 @@ def test_extract_multiple_non_contiguous(pdf_fixtures_dir, tmp_path):
         "doc_page_0007.pdf",
     ]
 
-    source_reader = PdfReader(str(source))
     for path, index in zip(paths, sorted(indices), strict=True):
-        extracted = PdfReader(path)
-        assert len(extracted.pages) == 1
-        assert _mediabox(extracted, 0) == _mediabox(source_reader, index)
+        extracted = fitz.open(str(path))
+        try:
+            assert extracted.page_count == 1
+            assert _page_size(path) == _page_size(source, index)
+        finally:
+            extracted.close()
 
 
 def test_filename_zero_padding(pdf_fixtures_dir, tmp_path):
@@ -92,8 +101,10 @@ def test_extracted_content_matches_source(five_page_pdf, tmp_path):
         "report",
     )
 
-    source_reader = PdfReader(str(five_page_pdf))
     for path, index in zip(paths, sorted(indices), strict=True):
-        extracted = PdfReader(path)
-        assert len(extracted.pages) == 1
-        assert _mediabox(extracted, 0) == _mediabox(source_reader, index)
+        extracted = fitz.open(str(path))
+        try:
+            assert extracted.page_count == 1
+            assert _page_size(path) == _page_size(five_page_pdf, index)
+        finally:
+            extracted.close()

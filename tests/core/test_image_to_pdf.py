@@ -6,7 +6,6 @@ from pathlib import Path
 
 import fitz
 import pytest
-from pypdf import PdfReader
 
 from pagedrop.core.image_to_pdf import (
     ImageConvertError,
@@ -30,8 +29,20 @@ def _write_test_image(path: Path, width: int, height: int) -> None:
         doc.close()
 
 
-def _page_width(reader: PdfReader, page_index: int) -> float:
-    return float(reader.pages[page_index].mediabox.width)
+def _page_width(path: Path | str, page_index: int) -> float:
+    doc = fitz.open(str(path))
+    try:
+        return float(doc[page_index].rect.width)
+    finally:
+        doc.close()
+
+
+def _page_count(path: Path | str) -> int:
+    doc = fitz.open(str(path))
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
 
 
 def test_images_to_single_pdf_page_order(tmp_path):
@@ -47,8 +58,8 @@ def test_images_to_single_pdf_page_order(tmp_path):
     images_to_single_pdf(images, str(forward_out))
     images_to_single_pdf(list(reversed(images)), str(reverse_out))
 
-    forward_widths = [_page_width(PdfReader(str(forward_out)), i) for i in range(3)]
-    reverse_widths = [_page_width(PdfReader(str(reverse_out)), i) for i in range(3)]
+    forward_widths = [_page_width(forward_out, i) for i in range(3)]
+    reverse_widths = [_page_width(reverse_out, i) for i in range(3)]
 
     assert len(forward_widths) == len(widths)
     assert forward_widths == list(reversed(reverse_widths))
@@ -67,8 +78,7 @@ def test_individual_pdfs_writes_one_file_per_image(tmp_path):
     assert len(written) == 2
     assert {Path(path).name for path in written} == {"alpha.pdf", "bravo.pdf"}
     for path in written:
-        reader = PdfReader(path)
-        assert len(reader.pages) == 1
+        assert _page_count(path) == 1
 
 
 def test_rejects_empty_list(tmp_path):

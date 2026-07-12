@@ -151,8 +151,7 @@ tests/                   # unit, UI, and smoke tests
 | Role | Library |
 |---|---|
 | GUI + drag-and-drop | PyQt6 |
-| PDF rendering | PyMuPDF (fitz) |
-| PDF read/write/split | pypdf |
+| PDF read/write/split/render | PyMuPDF (fitz) |
 | Project manager | uv |
 
 PyQt6 is used for drag-and-drop because it supports `QDrag` with `file://` URLs — the protocol file managers expect when accepting dropped files.
