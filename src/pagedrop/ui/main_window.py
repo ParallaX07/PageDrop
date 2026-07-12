@@ -92,10 +92,6 @@ class MainWindow(QMainWindow):
         tab = self._tab_manager.active_tab
         return tab.pdf_path if tab is not None else None
 
-    @current_pdf_path.setter
-    def current_pdf_path(self, value: str | None) -> None:
-        pass  # legacy tests may assign; path lives on PdfTab
-
     @property
     def _loader(self):
         tab = self._tab_manager.active_tab
