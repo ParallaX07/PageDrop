@@ -93,7 +93,7 @@ class ThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # ponytail: fitz.Document is not thread-safe — never share PdfTab._loader_cache
+        # fitz.Document is not thread-safe — never share PdfTab._loader_cache
         # docs with this worker. One open per source path per run is enough; the open
         # cost is noise vs get_pixmap, and progressive batches cancel via generation.
         docs: dict[str, fitz.Document] = {}

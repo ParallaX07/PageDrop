@@ -109,3 +109,18 @@ def test_corrupt_image_raises(tmp_path):
     output = tmp_path / "out.pdf"
     with pytest.raises(ImageConvertError, match="Could not read image"):
         images_to_single_pdf([str(corrupt)], str(output))
+
+
+def test_oversized_image_rejected_during_write(tmp_path, monkeypatch):
+    """Dimension limit is enforced on the write open, not a separate pass."""
+    monkeypatch.setattr(
+        "pagedrop.core.image_to_pdf.MAX_IMAGE_DIMENSION_PX",
+        50,
+    )
+    huge = tmp_path / "huge.png"
+    _write_test_image(huge, 100, 40)
+
+    output = tmp_path / "out.pdf"
+    with pytest.raises(ImageConvertError, match="too large"):
+        images_to_single_pdf([str(huge)], str(output))
+    assert not output.exists()
