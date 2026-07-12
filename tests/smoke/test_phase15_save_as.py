@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from PyQt6.QtWidgets import QFileDialog
-from pypdf import PdfReader
+import fitz
 
 from pagedrop.ui.main_window import MainWindow
 from tests.conftest import wait_for_pdf_loaded
 from tests.fixtures.generate_fixtures import generate_n_page
+
+
+def _page_count(path) -> int:
+    doc = fitz.open(str(path))
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
 
 
 def test_smoke_edit_save_as_preserves_original(
@@ -48,6 +56,5 @@ def test_smoke_edit_save_as_preserves_original(
     assert window._save_as(tab) is True
     assert not tab.is_dirty
 
-    saved = PdfReader(str(output))
-    assert len(saved.pages) == model.logical_count()
+    assert _page_count(output) == model.logical_count()
     assert five_page_pdf.read_bytes() == original_bytes
