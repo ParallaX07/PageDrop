@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-from PyQt6.QtCore import QSettings, Qt, QEvent
+from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QFileDialog, QToolBar
 
@@ -12,18 +11,6 @@ from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import ZOOM_WHEEL_STEP
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
-
-
-@pytest.fixture
-def isolated_settings(tmp_path):
-    """Route QSettings to a temp directory for the test."""
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        str(tmp_path),
-    )
-    yield tmp_path
 
 
 def test_card_tooltip(qtbot, five_page_pdf):
