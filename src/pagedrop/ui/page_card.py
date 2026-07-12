@@ -4,23 +4,8 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import (
-    QColor,
-    QDrag,
-    QEnterEvent,
-    QFont,
-    QMouseEvent,
-    QPainter,
-    QPixmap,
-)
-from PyQt6.QtWidgets import (
-    QApplication,
-    QFrame,
-    QGraphicsDropShadowEffect,
-    QLabel,
-    QMessageBox,
-    QVBoxLayout,
-)
+from PyQt6.QtGui import QColor, QDrag, QFont, QMouseEvent, QPainter, QPixmap
+from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QVBoxLayout
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -31,51 +16,25 @@ from pagedrop.core.drag_mime import (
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.selection_manager import SelectionManager
-from pagedrop.ui.theme import (
-    CARD_PADDING,
-    CARD_WIDTH,
-    accent_qcolor,
-    page_card_stylesheet,
-    shadow_qcolor,
-)
+from pagedrop.ui.base_file_card import BaseFileCard
+from pagedrop.ui.theme import accent_qcolor, page_card_stylesheet
 from pagedrop.utils.temp_manager import TempManager
 
 
-class PageCard(QFrame):
-    clicked = pyqtSignal(int, Qt.KeyboardModifier)
-    double_clicked = pyqtSignal(int)
+class PageCard(BaseFileCard):
     context_menu_requested = pyqtSignal(int, QPoint)
 
     def __init__(self, page_index: int, parent=None) -> None:
         super().__init__(parent)
         self.page_index = page_index
-        self._card_width = CARD_WIDTH
-        self._source_pixmap: QPixmap | None = None
-        self._selected = False
-        self._hovered = False
         self._keyboard_focused = False
-        self._drag_start_pos: QPoint | None = None
         self._page_ref: PageRef | None = None
         self._model: PdfEditModel | None = None
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
 
         self.setObjectName("PageCard")
-        self.setFixedWidth(self._card_width)
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-        self._shadow = QGraphicsDropShadowEffect(self)
-        self._shadow.setBlurRadius(14)
-        self._shadow.setOffset(0, 3)
-        self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
-        self.setGraphicsEffect(self._shadow)
-
-        self._thumbnail_label = QLabel()
         self._thumbnail_label.setObjectName("PageCardThumbnail")
-        self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._thumbnail_label.setMinimumHeight(80)
 
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
@@ -88,6 +47,9 @@ class PageCard(QFrame):
         layout.addWidget(self._page_label)
 
         self.set_selected(False)
+
+    def _item_index(self) -> int:
+        return self.page_index
 
     @property
     def is_selected(self) -> bool:
@@ -125,74 +87,28 @@ class PageCard(QFrame):
             self._keyboard_focused = focused
             self._apply_visual_state()
 
-    def enterEvent(self, event: QEnterEvent) -> None:
-        self._hovered = True
-        self._shadow.setBlurRadius(18)
-        self._shadow.setOffset(0, 4)
-        self._shadow.setColor(QColor(*shadow_qcolor(alpha=72)))
-        self._apply_visual_state()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self._hovered = False
-        self._shadow.setBlurRadius(14)
-        self._shadow.setOffset(0, 3)
-        self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
-        self._apply_visual_state()
-        super().leaveEvent(event)
-
     def contextMenuEvent(self, event) -> None:
         self.context_menu_requested.emit(self.page_index, event.globalPos())
         event.accept()
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start_pos = event.pos()
-        super().mousePressEvent(event)
-
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            super().mouseMoveEvent(event)
-            return
-        if self._drag_start_pos is None:
-            super().mouseMoveEvent(event)
-            return
+        # Status hint when drag context is missing (open PDF first).
         if (
-            self._model is None
-            or self._selection_manager is None
-            or self._temp_manager is None
-        ):
-            if self._model is None:
-                window = self.window()
-                if hasattr(window, "statusBar"):
-                    window.statusBar().showMessage("Open a PDF first")
-            super().mouseMoveEvent(event)
-            return
-
-        distance = (event.pos() - self._drag_start_pos).manhattanLength()
-        if distance < QApplication.startDragDistance():
-            super().mouseMoveEvent(event)
-            return
-
-        self._drag_start_pos = None
-        self._start_drag()
-        event.accept()
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if (
-            event.button() == Qt.MouseButton.LeftButton
+            (event.buttons() & Qt.MouseButton.LeftButton)
             and self._drag_start_pos is not None
+            and self._model is None
         ):
-            self.clicked.emit(self.page_index, event.modifiers())
-        self._drag_start_pos = None
-        super().mouseReleaseEvent(event)
+            window = self.window()
+            if hasattr(window, "statusBar"):
+                window.statusBar().showMessage("Open a PDF first")
+        super().mouseMoveEvent(event)
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.double_clicked.emit(self.page_index)
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
+    def _can_start_drag(self) -> bool:
+        return (
+            self._model is not None
+            and self._selection_manager is not None
+            and self._temp_manager is not None
+        )
 
     def set_card_width(
         self,
@@ -333,30 +249,6 @@ class PageCard(QFrame):
         painter.end()
 
         return canvas
-
-    def set_thumbnail(self, pixmap: QPixmap) -> None:
-        self._source_pixmap = pixmap
-        self._refresh_thumbnail_display(fast=False)
-
-    def _refresh_thumbnail_display(self, *, fast: bool = False) -> None:
-        if self._source_pixmap is None or self._source_pixmap.isNull():
-            return
-        target_width = self._card_width - CARD_PADDING
-        mode = (
-            Qt.TransformationMode.FastTransformation
-            if fast
-            else Qt.TransformationMode.SmoothTransformation
-        )
-        if self._source_pixmap.width() == target_width:
-            display = self._source_pixmap
-        else:
-            display = self._source_pixmap.scaledToWidth(target_width, mode)
-        self._thumbnail_label.setPixmap(display)
-        self._thumbnail_label.setMinimumHeight(display.height())
-
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        self._apply_visual_state()
 
     def _apply_visual_state(self) -> None:
         self.setStyleSheet(
