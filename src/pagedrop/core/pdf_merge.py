@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pagedrop.utils.list_utils import move_items
+
 
 class PdfMergeModel:
     """Ordered list of whole PDF files to merge."""
@@ -28,7 +30,7 @@ class PdfMergeModel:
         ordered = sorted(set(indices))
         if ordered[0] == 0:
             return
-        self._move_files(ordered, ordered[0] - 1)
+        self._paths, _ = move_items(self._paths, ordered, ordered[0] - 1)
 
     def move_down(self, indices: list[int]) -> None:
         if not indices:
@@ -36,7 +38,7 @@ class PdfMergeModel:
         ordered = sorted(set(indices))
         if ordered[-1] >= len(self._paths) - 1:
             return
-        self._move_files(ordered, ordered[-1] + 2)
+        self._paths, _ = move_items(self._paths, ordered, ordered[-1] + 2)
 
     def reorder(self, from_index: int, to_index: int) -> None:
         if from_index == to_index:
@@ -55,17 +57,3 @@ class PdfMergeModel:
 
     def all_paths(self) -> list[str]:
         return list(self._paths)
-
-    def _move_files(self, indices: list[int], to_index: int) -> None:
-        ordered = sorted(set(indices))
-        moving = [self._paths[i] for i in ordered]
-        remaining = [path for i, path in enumerate(self._paths) if i not in set(ordered)]
-
-        adjusted = to_index
-        for i in ordered:
-            if i < to_index:
-                adjusted -= 1
-        adjusted = max(0, min(adjusted, len(remaining)))
-
-        remaining[adjusted:adjusted] = moving
-        self._paths = remaining
