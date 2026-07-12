@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QDrag, QEnterEvent, QMouseEvent, QPixmap
+from PyQt6.QtGui import QDrag, QEnterEvent, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -47,7 +47,7 @@ class BaseFileCard(QFrame):
         self._shadow = QGraphicsDropShadowEffect(self)
         self._shadow.setBlurRadius(14)
         self._shadow.setOffset(0, 3)
-        self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
+        self._shadow.setColor(shadow_qcolor(alpha=55))
         self.setGraphicsEffect(self._shadow)
 
         self._thumbnail_label = QLabel()
@@ -94,7 +94,7 @@ class BaseFileCard(QFrame):
         self._hovered = True
         self._shadow.setBlurRadius(18)
         self._shadow.setOffset(0, 4)
-        self._shadow.setColor(QColor(*shadow_qcolor(alpha=72)))
+        self._shadow.setColor(shadow_qcolor(alpha=72))
         self._apply_visual_state()
         super().enterEvent(event)
 
@@ -102,7 +102,7 @@ class BaseFileCard(QFrame):
         self._hovered = False
         self._shadow.setBlurRadius(14)
         self._shadow.setOffset(0, 3)
-        self._shadow.setColor(QColor(*shadow_qcolor(alpha=55)))
+        self._shadow.setColor(shadow_qcolor(alpha=55))
         self._apply_visual_state()
         super().leaveEvent(event)
 

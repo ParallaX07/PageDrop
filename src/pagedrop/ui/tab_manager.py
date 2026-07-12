@@ -220,11 +220,12 @@ class DetachableTabBar(QTabBar):
         if not rect.isValid():
             return
 
-        r, g, b = accent_qcolor()
+        accent = accent_qcolor()
+        fill = QColor(accent)
+        fill.setAlpha(48)
         painter = QPainter(self)
-        painter.fillRect(rect, QColor(r, g, b, 48))
-        pen = QColor(r, g, b)
-        painter.setPen(pen)
+        painter.fillRect(rect, fill)
+        painter.setPen(accent)
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.end()
 
