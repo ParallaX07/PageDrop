@@ -84,3 +84,36 @@ def test_progress_bar_visible_during_load(qtbot, five_page_pdf):
     qtbot.waitSignal(grid.rendering_finished, timeout=15000)
     qtbot.waitUntil(lambda: not progress.isVisible(), timeout=5000)
     loader.close()
+
+
+def test_progress_emitted_during_preparing(qtbot, five_page_pdf, monkeypatch):
+    """Large-PDF card creation should drive rendering_started/progress."""
+    import pagedrop.ui.thumbnail_grid as tg
+
+    monkeypatch.setattr(tg, "LARGE_PDF_PAGE_THRESHOLD", 2)
+    monkeypatch.setattr(tg, "CARD_CREATE_BATCH", 2)
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    started_totals: list[int] = []
+    preparing_progress: list[tuple[int, int]] = []
+
+    grid.rendering_started.connect(started_totals.append)
+
+    def _on_progress(current: int, total: int) -> None:
+        if "loading" in grid._busy_reasons:
+            preparing_progress.append((current, total))
+
+    grid.rendering_progress.connect(_on_progress)
+
+    loader = PdfLoader(str(five_page_pdf))
+    grid.load_pdf(loader)
+    qtbot.waitUntil(lambda: len(grid._cards) == 5, timeout=5000)
+    qtbot.waitUntil(lambda: not grid._pending_card_indices, timeout=5000)
+
+    assert started_totals and started_totals[0] == 5
+    assert preparing_progress
+    assert preparing_progress[-1][0] == 5
+    assert all(total == 5 for _, total in preparing_progress)
+    loader.close()
+    grid._temp_manager.cleanup()

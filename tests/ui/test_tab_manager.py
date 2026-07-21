@@ -86,6 +86,38 @@ def _trigger_shortcut(window: MainWindow, sequence: str) -> None:
     raise AssertionError(f"No action registered for {sequence}")
 
 
+def test_long_tab_title_elided_with_full_tooltip(main_window, qtbot):
+    """QSS-sized tabs ignore setElideMode, so titles are elided manually."""
+    tab = _tab_at(main_window, 0)
+    long_title = "Saalim_Saadman_Araf__Resume_With_A_Very_Long_Name"
+    assert tab.set_custom_tab_title(long_title)
+
+    tab_manager = main_window._tab_manager
+    shown = tab_manager.tabText(0)
+    assert shown.endswith("…")
+    assert long_title.startswith(shown[:-1])
+    assert tab_manager.tabToolTip(0) == tab.tab_title
+
+    metrics = tab_manager.tabBar().fontMetrics()
+    assert metrics.horizontalAdvance(shown) <= 185
+
+    # Short titles pass through untouched.
+    assert tab.set_custom_tab_title("Short")
+    assert tab_manager.tabText(0) == "Short"
+    assert tab_manager.tabToolTip(0) == "Short"
+
+
+def test_detach_hint_restores_title_tooltip(main_window):
+    tab = _tab_at(main_window, 0)
+    assert tab.set_custom_tab_title("My Document")
+    bar = main_window._tab_manager.detachable_tab_bar
+
+    bar._set_detach_hint(0, True)
+    assert bar.tabToolTip(0) == "Release to open in new window"
+    bar._clear_detach_hint()
+    assert bar.tabToolTip(0) == "My Document"
+
+
 def test_open_in_new_tab(main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot):
     _open_single(main_window, one_page_pdf, monkeypatch, target="current")
     _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))

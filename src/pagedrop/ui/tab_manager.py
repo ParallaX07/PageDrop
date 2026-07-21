@@ -35,6 +35,7 @@ class DetachableTabBar(QTabBar):
         self._drag_start_global: QPoint | None = None
         self._detach_armed = False
         self._detach_hint_index = -1
+        self._pre_hint_tooltip = ""
         self._drop_highlight_index = -1
         self.setAcceptDrops(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -94,13 +95,15 @@ class DetachableTabBar(QTabBar):
     def _set_detach_hint(self, index: int, enabled: bool) -> None:
         if enabled:
             self._detach_hint_index = index
+            self._pre_hint_tooltip = self.tabToolTip(index)
             self.setTabToolTip(index, "Release to open in new window")
         else:
             self._clear_detach_hint()
 
     def _clear_detach_hint(self) -> None:
         if self._detach_hint_index >= 0:
-            self.setTabToolTip(self._detach_hint_index, "")
+            self.setTabToolTip(self._detach_hint_index, self._pre_hint_tooltip)
+            self._pre_hint_tooltip = ""
             self._detach_hint_index = -1
 
     def _reset_drag_state(self) -> None:
@@ -323,14 +326,27 @@ class TabManager(QTabWidget):
         except RuntimeError:
             return
         if index >= 0:
-            self.setTabText(index, tab.tab_title)
+            self._apply_tab_title(index, tab.tab_title)
+
+    def _apply_tab_title(self, index: int, title: str) -> None:
+        # QSS-sized tabs ignore setElideMode and hard-clip long titles, so
+        # elide manually. ponytail: fixed width assumes the theme's 220px tab
+        # content box minus ~22px close button and a margin for the wider
+        # weight-600 selected font; recompute from the style if tab sizing
+        # ever becomes configurable.
+        metrics = self.tabBar().fontMetrics()
+        self.setTabText(
+            index,
+            metrics.elidedText(title, Qt.TextElideMode.ElideRight, 185),
+        )
+        self.setTabToolTip(index, title)
 
     def _connect_tab(self, tab: PdfTab, index: int) -> None:
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))
         tab.pdf_closed.connect(lambda: self.update_tab_title(tab))
         tab.dirty_changed.connect(lambda _: self.update_tab_title(tab))
         tab.tab_title_changed.connect(lambda: self.update_tab_title(tab))
-        self.setTabText(index, tab.tab_title)
+        self._apply_tab_title(index, tab.tab_title)
 
     def _on_current_changed(self, index: int) -> None:
         if index < 0:

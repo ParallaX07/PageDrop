@@ -72,6 +72,29 @@ def test_status_bar_shows_page_count(main_window, five_page_pdf, qtbot):
     assert "5" in message
 
 
+def test_progress_bar_visible_during_preparing(
+    main_window, five_page_pdf, monkeypatch, qtbot
+):
+    import pagedrop.ui.thumbnail_grid as tg
+
+    monkeypatch.setattr(tg, "LARGE_PDF_PAGE_THRESHOLD", 2)
+    monkeypatch.setattr(tg, "CARD_CREATE_BATCH", 2)
+
+    grid = main_window._thumbnail_grid
+    shown_during_prep: list[bool] = []
+
+    def _on_progress(current: int, total: int) -> None:
+        if "loading" in grid._busy_reasons:
+            # isHidden() is the local flag; isVisible() needs a shown window.
+            shown_during_prep.append(not main_window._progress_bar.isHidden())
+
+    grid.rendering_progress.connect(_on_progress)
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: len(grid._cards) == 5, timeout=10000)
+    assert shown_during_prep
+    assert any(shown_during_prep)
+
+
 def test_window_title_uses_logical_count_after_delete(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitUntil(

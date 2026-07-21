@@ -247,6 +247,15 @@ class ConvertWindow(QMainWindow):
         )
         toolbar.addWidget(spacer)
 
+        # Align with Merge: zoom group, then primary action (+ output mode).
+        self._zoom_controls = ZoomControls(
+            min_width=MIN_THUMBNAIL_WIDTH,
+            max_width=MAX_THUMBNAIL_WIDTH,
+            step=ZOOM_WHEEL_STEP,
+            initial=DEFAULT_THUMBNAIL_WIDTH,
+        )
+        toolbar.addWidget(self._zoom_controls)
+
         self._create_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
             "Save PDF…",
@@ -264,14 +273,6 @@ class ConvertWindow(QMainWindow):
         mode_group.addButton(self._separate_mode_action)
         toolbar.addWidget(self._single_mode_action)
         toolbar.addWidget(self._separate_mode_action)
-
-        self._zoom_controls = ZoomControls(
-            min_width=MIN_THUMBNAIL_WIDTH,
-            max_width=MAX_THUMBNAIL_WIDTH,
-            step=ZOOM_WHEEL_STEP,
-            initial=DEFAULT_THUMBNAIL_WIDTH,
-        )
-        toolbar.addWidget(self._zoom_controls)
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)

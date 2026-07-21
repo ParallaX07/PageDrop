@@ -59,6 +59,13 @@ def app_stylesheet() -> str:
         background-color: {BG_BASE};
     }}
 
+    QToolTip {{
+        background-color: {BG_CARD};
+        color: {TEXT_PRIMARY};
+        border: 1px solid {BORDER_DEFAULT};
+        padding: 4px 8px;
+    }}
+
     QMenuBar {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};

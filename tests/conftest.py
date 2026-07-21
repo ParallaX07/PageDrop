@@ -173,4 +173,6 @@ def main_window(qtbot):
 
     window = MainWindow()
     qtbot.addWidget(window)
-    return window
+    yield window
+    # qtbot may destroy without closeEvent; don't leave pagedrop_* orphans.
+    window._temp_manager.cleanup()

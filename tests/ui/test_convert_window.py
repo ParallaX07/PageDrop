@@ -126,3 +126,21 @@ def test_menubar_create_pdf_beside_merge(main_window, qtbot):
         timeout=5000,
     )
     assert main_window._convert_window.windowTitle() == "Create PDF"
+
+
+def test_toolbar_zoom_before_primary_action(qtbot):
+    """Convert matches Merge: after the spacer, zoom then Save PDF (+ radios)."""
+    from PyQt6.QtWidgets import QToolBar
+
+    window = _convert_window(qtbot)
+    toolbar = window.findChild(QToolBar)
+    assert toolbar is not None
+
+    create_btn = toolbar.widgetForAction(window._create_action)
+    assert create_btn is not None
+
+    children = list(toolbar.children())
+    zoom_i = children.index(window._zoom_controls)
+    create_i = children.index(create_btn)
+    radio_i = children.index(window._single_mode_action)
+    assert zoom_i < create_i < radio_i

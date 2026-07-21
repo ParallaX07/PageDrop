@@ -305,6 +305,7 @@ class ThumbnailGrid(QScrollArea):
 
         self._pending_card_indices = list(range(total))
         self._enter_busy("loading", f"Preparing {total} pages…")
+        self.rendering_started.emit(total)
         self._card_create_timer.start(0)
 
     def load_pdf(self, loader: PdfLoader) -> None:
@@ -348,7 +349,9 @@ class ThumbnailGrid(QScrollArea):
         self._reflow_grid(force=len(self._cards) <= CARD_CREATE_BATCH)
         remaining = len(self._pending_card_indices)
         total = len(self._cards) + remaining
-        self._enter_busy("loading", f"Preparing pages ({len(self._cards)}/{total})…")
+        created = len(self._cards)
+        self._enter_busy("loading", f"Preparing pages ({created}/{total})…")
+        self.rendering_progress.emit(created, total)
 
         if self._pending_card_indices:
             self._card_create_timer.start(0)

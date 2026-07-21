@@ -1284,6 +1284,10 @@ class MainWindow(QMainWindow):
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
         self._progress_bar.setValue(current)
+        # Preparing status comes from busy_changed; don't overwrite it.
+        busy_reasons = getattr(self.sender(), "_busy_reasons", None)
+        if busy_reasons is not None and "loading" in busy_reasons:
+            return
         self.statusBar().showMessage(f"Rendering page {current} of {total}…")
 
     def _on_rendering_finished(self) -> None:

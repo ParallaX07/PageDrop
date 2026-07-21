@@ -11,13 +11,17 @@ from pagedrop.core.page_extractor import extract_pages_to_files
 from pagedrop.utils.temp_manager import TempManager
 
 
-def _count_pagedrop_dirs() -> int:
+def _pagedrop_dirs() -> set[Path]:
     temp_root = Path(tempfile.gettempdir())
-    return sum(
-        1
+    return {
+        entry
         for entry in temp_root.iterdir()
         if entry.is_dir() and entry.name.startswith("pagedrop_")
-    )
+    }
+
+
+def _count_pagedrop_dirs() -> int:
+    return len(_pagedrop_dirs())
 
 
 def test_five_simulated_extractions_per_drag_cleanup(five_page_pdf):
@@ -61,7 +65,9 @@ def test_cleanup_removes_run_orphans_from_system_temp():
 
 
 def test_subprocess_normal_exit_cleans_temp_dir():
-    before = _count_pagedrop_dirs()
+    # Contract: this process's run dir is removed on normal close.
+    # Do not assert a global pagedrop_* count — other tests (and prior runs)
+    # leave orphans in the system temp dir until process atexit.
     code = """
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -73,7 +79,7 @@ from pagedrop.ui.main_window import MainWindow
 
 app = QApplication([])
 window = MainWindow()
-print(window._temp_manager.get_dir())
+print(window._temp_manager.get_dir(), flush=True)
 QTimer.singleShot(50, window.close)
 QTimer.singleShot(100, app.quit)
 app.exec()
@@ -87,11 +93,11 @@ app.exec()
     )
     assert result.returncode == 0, result.stderr
 
-    created_dir = Path(result.stdout.strip())
+    lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+    assert lines, f"expected temp dir on stdout, got {result.stdout!r}"
+    created_dir = Path(lines[-1])
+    assert created_dir.name.startswith("pagedrop_")
     assert not created_dir.exists()
-
-    after = _count_pagedrop_dirs()
-    assert after <= before
 
 
 def test_subprocess_force_kill_may_leave_orphan():
