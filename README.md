@@ -245,5 +245,3 @@ Verify manually on a machine **without Python**: open a PDF, drag a page into th
 ## Status
 
 **v0.2.0** — Windows Setup.exe and portable zip for [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, cross-tab page drag, Save As, merge, multi-window page transfer, image-to-PDF conversion, and MRU Ctrl+Tab switching. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
-
-For the detailed implementation checklist and design decisions, see [`checklist.md`](checklist.md).
