@@ -31,7 +31,7 @@ from pagedrop.ui.theme import (
 from pagedrop.ui.zoom_controls import ZoomControls
 
 _PREVIEW_FOOTER_HINT = (
-    "← → change page · Ctrl+scroll zoom · Esc back to grid"
+    "← → change page · Ctrl+scroll zoom · Esc back to list"
 )
 
 
@@ -103,7 +103,7 @@ class MergeWindow(QMainWindow):
 
         self._back_to_list_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
-            "Back to grid",
+            "Back to list",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
         self._back_to_list_action.setVisible(False)
@@ -122,13 +122,13 @@ class MergeWindow(QMainWindow):
 
         self._move_up_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
-            "Move Up",
+            "Move up",
         )
         self._move_up_action.triggered.connect(self._move_up)
 
         self._move_down_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
-            "Move Down",
+            "Move down",
         )
         self._move_down_action.triggered.connect(self._move_down)
 
@@ -219,14 +219,14 @@ class MergeWindow(QMainWindow):
         except PdfEmptyError:
             QMessageBox.warning(
                 self,
-                "Preview PDF",
+                "Preview",
                 f"{filename} has no pages.",
             )
             return
         except PdfLoadError as exc:
             QMessageBox.critical(
                 self,
-                "Preview PDF",
+                "Preview",
                 f"Could not open {filename}:\n{exc}",
             )
             return
@@ -254,7 +254,7 @@ class MergeWindow(QMainWindow):
         if self._is_preview_visible() and self._preview_loader is not None:
             page = self._preview_widget.current_page + 1
             total = self._preview_loader.page_count
-            self.statusBar().showMessage(f"Preview — page {page} of {total}")
+            self.statusBar().showMessage(f"Preview · page {page} of {total}")
             return
 
         count = self._model.file_count()
@@ -311,14 +311,14 @@ class MergeWindow(QMainWindow):
         except PdfEmptyError:
             QMessageBox.warning(
                 self,
-                "Add PDF",
+                "Add PDFs",
                 f"{filename} has no pages.",
             )
             return None
         except PdfLoadError as exc:
             QMessageBox.critical(
                 self,
-                "Add PDF",
+                "Add PDFs",
                 f"Could not open {filename}:\n{exc}",
             )
             return None

@@ -69,7 +69,7 @@ macOS and Linux binaries are not published yet — run from source (below) or bu
 ### Multi-tab editor
 
 - Browser-style tabs — multiple PDFs open at once, each in its own workspace
-- **Reorder** pages via internal drag-and-drop or Move Up / Move Down
+- **Reorder** pages via internal drag-and-drop or Move up / Move down
 - **Delete** unwanted pages
 - **Drop PDFs onto the grid** to insert all pages from another file at the cursor position
 - **Save As** writes your edited document to a new file — the original is never overwritten
@@ -102,17 +102,19 @@ A separate window (**Create PDF** in the menu bar) for turning images into PDFs:
 
 | Action | Shortcut |
 |---|---|
-| Open PDF | *(menu / toolbar)* |
+| Open PDF | Ctrl+O |
 | Save As | Ctrl+Shift+S |
 | New window | Ctrl+Shift+N |
 | New tab | Ctrl+T |
 | Close tab | Ctrl+W |
-| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Previous tab (MRU) / cycle backward | Ctrl+Tab / Ctrl+Shift+Tab |
 | Select all pages | Ctrl+A |
 | Clear selection | Escape |
 | Delete selected pages | Delete |
 | Move pages up / down | Ctrl+↑ / Ctrl+↓ |
 | Back to grid / list | Escape *(in preview)* |
+
+`Ctrl+Tab` toggles the most recently used previous tab (not sequential next). `Ctrl+Shift+Tab` cycles backward through all tabs.
 
 Cross-window page drag: drop to **copy**; **Shift+drop** to **move**.
 

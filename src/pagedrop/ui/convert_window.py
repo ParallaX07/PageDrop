@@ -38,7 +38,7 @@ from pagedrop.core.supported_formats import (
 )
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
-from pagedrop.ui.dialogs import prompt_discard_file_list
+from pagedrop.ui.dialogs import fit_message_box_buttons, prompt_discard_file_list
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -230,13 +230,13 @@ class ConvertWindow(QMainWindow):
 
         self._move_up_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
-            "Move Up",
+            "Move up",
         )
         self._move_up_action.triggered.connect(self._move_up)
 
         self._move_down_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
-            "Move Down",
+            "Move down",
         )
         self._move_down_action.triggered.connect(self._move_down)
 
@@ -341,7 +341,7 @@ class ConvertWindow(QMainWindow):
             except ImageConvertError as exc:
                 QMessageBox.critical(
                     self,
-                    "Preview Image",
+                    "Preview",
                     f"Could not open {Path(path).name}:\n{exc}",
                 )
                 return
@@ -364,7 +364,7 @@ class ConvertWindow(QMainWindow):
             filename = Path(self._preview_widget._path).name
             width, height = self._preview_widget._dimensions
             self.statusBar().showMessage(
-                f"Preview — {filename} ({width} × {height} px)"
+                f"Preview · {filename} ({width} × {height} px)"
             )
             return
 
@@ -521,15 +521,19 @@ class ConvertWindow(QMainWindow):
         extra = ""
         if len(paths) > 5:
             extra = f"\n…and {len(paths) - 5} more"
-        reply = QMessageBox.question(
-            self,
-            self.WINDOW_TITLE,
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Question)
+        message.setWindowTitle(self.WINDOW_TITLE)
+        message.setText(
             f"The following file(s) already exist and will be overwritten:\n\n"
-            f"{names}{extra}\n\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            f"{names}{extra}\n\nContinue?"
         )
-        return reply == QMessageBox.StandardButton.Yes
+        message.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        message.setDefaultButton(QMessageBox.StandardButton.No)
+        fit_message_box_buttons(message)
+        return message.exec() == QMessageBox.StandardButton.Yes
 
     def _create_pdfs(self) -> None:
         if self._model.file_count() == 0:

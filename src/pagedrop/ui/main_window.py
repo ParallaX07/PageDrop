@@ -29,8 +29,9 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_writer import write_pdf
-from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.convert_window import ConvertWindow
+from pagedrop.ui.dialogs import fit_message_box_buttons
+from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tab_manager import TabManager
@@ -45,17 +46,6 @@ from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
     from pagedrop.ui.window_manager import WindowManager
-
-
-def _fit_message_box_buttons(message: QMessageBox) -> None:
-    """Size multi-action message boxes so button labels are not clipped."""
-    buttons = message.buttons()
-    if len(buttons) < 2:
-        return
-    widest = max(button.sizeHint().width() for button in buttons)
-    for button in buttons:
-        button.setMinimumWidth(widest)
-    message.setMinimumWidth(message.sizeHint().width())
 
 
 class MainWindow(QMainWindow):
@@ -120,6 +110,7 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu("&File")
 
         open_action = file_menu.addAction("&Open PDF")
+        open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._open_pdf)
 
         self._close_action = file_menu.addAction("&Close Tab")
@@ -772,7 +763,7 @@ class MainWindow(QMainWindow):
             return
         page = tab.preview_widget.current_page + 1
         total = tab.edit_model.logical_count()
-        self.statusBar().showMessage(f"Preview — page {page} of {total}")
+        self.statusBar().showMessage(f"Preview · page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
         tab = self._active_tab()
@@ -975,7 +966,7 @@ class MainWindow(QMainWindow):
         cancel_button = message.addButton(
             QMessageBox.StandardButton.Cancel,
         )
-        _fit_message_box_buttons(message)
+        fit_message_box_buttons(message)
         message.exec()
         clicked = message.clickedButton()
         if clicked is cancel_button:
@@ -1005,7 +996,7 @@ class MainWindow(QMainWindow):
         cancel_button = message.addButton(
             QMessageBox.StandardButton.Cancel,
         )
-        _fit_message_box_buttons(message)
+        fit_message_box_buttons(message)
         message.exec()
         clicked = message.clickedButton()
         if clicked is cancel_button:
@@ -1234,7 +1225,7 @@ class MainWindow(QMainWindow):
             QMessageBox.ButtonRole.DestructiveRole,
         )
         cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
-        _fit_message_box_buttons(message)
+        fit_message_box_buttons(message)
         message.exec()
         clicked = message.clickedButton()
         if clicked is save_button:
@@ -1388,7 +1379,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.hide()
         QMessageBox.critical(
             self,
-            "Render Pages",
+            "Render Thumbnails",
             f"Could not render thumbnails:\n{message}",
         )
         self.statusBar().showMessage("Rendering failed")
