@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
     QInputDialog,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -24,6 +25,8 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
+    PdfPasswordError,
+    PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.merge_window import MergeWindow
@@ -346,6 +349,7 @@ class MainWindow(QMainWindow):
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
+        tab.preview_widget.render_error.connect(self._on_preview_render_error)
         tab.dirty_changed.connect(self._update_save_as_action)
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
@@ -373,6 +377,7 @@ class MainWindow(QMainWindow):
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
+            (preview.render_error, self._on_preview_render_error),
             (tab.dirty_changed, self._update_save_as_action),
         ):
             try:
@@ -1011,35 +1016,70 @@ class MainWindow(QMainWindow):
             return "windows"
         return None
 
+    def _prompt_pdf_password(
+        self, filename: str, *, incorrect: bool = False
+    ) -> str | None:
+        """Ask for a PDF password. Returns None if the user cancels."""
+        if incorrect:
+            label = f'Incorrect password for "{filename}". Try again:'
+        else:
+            label = f'"{filename}" is password-protected.\nEnter password:'
+        text, ok = QInputDialog.getText(
+            self,
+            "Password Required",
+            label,
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            return None
+        return text
+
     def _load_pdf(self, path: str, *, tab: PdfTab | None = None) -> None:
         target = tab or self._active_tab()
         if target is None:
             target = self._tab_manager.add_blank_tab()
 
         filename = Path(path).name
+        password: str | None = None
 
-        try:
-            loader = target.load_pdf(path)
-        except PdfEmptyError:
-            QMessageBox.warning(
-                self,
-                "Open PDF",
-                f"{filename} has no pages.",
-            )
-            if target is self._active_tab():
-                self._sync_toolbar_from_active_tab()
-                self.statusBar().showMessage("Ready")
-            return
-        except PdfLoadError as exc:
-            QMessageBox.critical(
-                self,
-                "Open PDF",
-                f"Could not open {filename}:\n{exc}",
-            )
-            if target is self._active_tab():
-                self._sync_toolbar_from_active_tab()
-                self.statusBar().showMessage("Ready")
-            return
+        while True:
+            try:
+                loader = target.load_pdf(path, password=password)
+                break
+            except PdfPasswordRequiredError:
+                password = self._prompt_pdf_password(filename)
+                if password is None:
+                    if target is self._active_tab():
+                        self._sync_toolbar_from_active_tab()
+                        self.statusBar().showMessage("Ready")
+                    return
+            except PdfPasswordError:
+                password = self._prompt_pdf_password(filename, incorrect=True)
+                if password is None:
+                    if target is self._active_tab():
+                        self._sync_toolbar_from_active_tab()
+                        self.statusBar().showMessage("Ready")
+                    return
+            except PdfEmptyError:
+                QMessageBox.warning(
+                    self,
+                    "Open PDF",
+                    f"{filename} has no pages.",
+                )
+                if target is self._active_tab():
+                    self._sync_toolbar_from_active_tab()
+                    self.statusBar().showMessage("Ready")
+                return
+            except PdfLoadError as exc:
+                QMessageBox.critical(
+                    self,
+                    "Open PDF",
+                    f"Could not open {filename}:\n{exc}",
+                )
+                if target is self._active_tab():
+                    self._sync_toolbar_from_active_tab()
+                    self.statusBar().showMessage("Ready")
+                return
 
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
@@ -1226,6 +1266,7 @@ class MainWindow(QMainWindow):
 
     def _close_tab(self) -> None:
         if self._is_only_blank_tab():
+            self.statusBar().showMessage("Cannot close the last blank tab")
             return
         index = self._tab_manager.currentIndex()
         if index >= 0 and self._try_close_tab(index):
@@ -1235,6 +1276,7 @@ class MainWindow(QMainWindow):
     def _on_tab_close_requested(self, index: int) -> None:
         tab = self._tab_manager.widget(index)
         if isinstance(tab, PdfTab) and tab.is_blank and self._is_only_blank_tab():
+            self.statusBar().showMessage("Cannot close the last blank tab")
             return
         if self._try_close_tab(index):
             self._sync_toolbar_from_active_tab()
@@ -1314,6 +1356,7 @@ class MainWindow(QMainWindow):
     def _on_page_transfer_failed(self, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
+        QMessageBox.warning(self, "Page Transfer", message)
         self.statusBar().showMessage(message)
 
     def _on_pdf_drop_failed(self, exc: object) -> None:
@@ -1349,6 +1392,17 @@ class MainWindow(QMainWindow):
             f"Could not render thumbnails:\n{message}",
         )
         self.statusBar().showMessage("Rendering failed")
+
+    def _on_preview_render_error(self, message: str) -> None:
+        tab = self._active_tab()
+        if tab is None or self.sender() is not tab.preview_widget:
+            return
+        QMessageBox.critical(
+            self,
+            "Preview",
+            f"Could not render preview:\n{message}",
+        )
+        self.statusBar().showMessage("Preview rendering failed")
 
     def _on_grid_busy_changed(self, busy: bool, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):

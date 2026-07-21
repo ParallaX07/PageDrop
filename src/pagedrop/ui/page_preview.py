@@ -103,6 +103,7 @@ class PagePreviewWidget(QWidget):
     page_changed = pyqtSignal(int)
     closed = pyqtSignal()
     busy_changed = pyqtSignal(bool, str)
+    render_error = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -332,3 +333,4 @@ class PagePreviewWidget(QWidget):
         self._overlay.hide_overlay()
         self.busy_changed.emit(False, "")
         self._image_label.setText(f"Could not render page:\n{message}")
+        self.render_error.emit(message)

@@ -4,15 +4,30 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import fitz
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 from pagedrop.utils.temp_manager import TempManager
+
+
+def _encrypted_pdf(path, *, password: str = "secret") -> None:
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(
+            str(path),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw=password,
+            owner_pw="owner",
+        )
+    finally:
+        doc.close()
 
 
 def test_open_corrupt_shows_message_box(main_window, corrupt_pdf, monkeypatch):
@@ -49,6 +64,67 @@ def test_open_empty_pdf_shows_warning_no_grid(main_window, empty_pdf, monkeypatc
     assert empty_pdf.name in captured[0][1]
     assert main_window._loader is None
     assert len(main_window._thumbnail_grid._cards) == 0
+
+
+def test_open_password_pdf_prompts_retries_then_opens(
+    main_window, tmp_path, monkeypatch, qtbot
+):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+
+    prompts: list[str] = []
+    replies = iter([("wrong", True), ("secret", True)])
+
+    def fake_get_text(parent, title, label, *args, **kwargs):
+        prompts.append(label)
+        return next(replies)
+
+    monkeypatch.setattr(QInputDialog, "getText", fake_get_text)
+
+    main_window._load_pdf(str(enc))
+
+    assert len(prompts) == 2
+    assert "password-protected" in prompts[0]
+    assert "Incorrect password" in prompts[1]
+    assert main_window._loader is not None
+    assert main_window._loader.page_count == 1
+    qtbot.waitUntil(
+        lambda: len(main_window._thumbnail_grid._cards) == 1,
+        timeout=15000,
+    )
+
+
+def test_open_password_pdf_cancel_leaves_blank(main_window, tmp_path, monkeypatch):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc)
+
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("", False),
+    )
+
+    main_window._load_pdf(str(enc))
+
+    assert main_window._loader is None
+    assert main_window._active_tab() is not None
+    assert main_window._active_tab().is_blank
+
+
+def test_page_transfer_failed_shows_warning(main_window, five_page_pdf, monkeypatch):
+    main_window._load_pdf(str(five_page_pdf))
+    captured: list[tuple[str, str]] = []
+
+    def fake_warning(parent, title, text):
+        captured.append((title, text))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+
+    main_window._thumbnail_grid.page_transfer_failed.emit("Could not move pages")
+
+    assert captured == [("Page Transfer", "Could not move pages")]
+    assert main_window.statusBar().currentMessage() == "Could not move pages"
 
 
 def test_drag_without_pdf_shows_status_message(main_window, qtbot):

@@ -365,3 +365,27 @@ def test_open_preview_uses_selected_page(main_window, five_page_pdf, qtbot):
     )
     assert main_window._preview_widget.current_page == 3
     assert main_window._central_stack.currentWidget() is main_window._preview_widget
+
+
+def test_preview_render_error_shows_status_and_dialog(
+    main_window, five_page_pdf, monkeypatch, qtbot
+):
+    from PyQt6.QtWidgets import QMessageBox
+
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    main_window._open_preview()
+    qtbot.waitUntil(lambda: main_window._is_preview_visible(), timeout=5000)
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_critical(parent, title, text):
+        captured.append((title, text))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "critical", fake_critical)
+
+    main_window._preview_widget.render_error.emit("simulated failure")
+
+    assert captured == [("Preview", "Could not render preview:\nsimulated failure")]
+    assert main_window.statusBar().currentMessage() == "Preview rendering failed"

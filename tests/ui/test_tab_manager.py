@@ -182,6 +182,17 @@ def test_close_tab_via_ctrl_w(main_window, one_page_pdf, five_page_pdf, monkeypa
     assert _tab_at(main_window, 0).pdf_path == str(one_page_pdf)
 
 
+def test_ctrl_w_on_last_blank_tab_shows_status(main_window, qtbot):
+    assert main_window._tab_manager.count() == 1
+    assert _tab_at(main_window, 0).is_blank
+
+    _trigger_shortcut(main_window, "Ctrl+W")
+
+    assert main_window._tab_manager.count() == 1
+    assert _tab_at(main_window, 0).is_blank
+    assert "Cannot close the last blank tab" in main_window.statusBar().currentMessage()
+
+
 def test_close_last_tab_spawns_blank_tab(main_window, one_page_pdf, monkeypatch, qtbot):
     _open_single(main_window, one_page_pdf, monkeypatch, target="current")
     _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))

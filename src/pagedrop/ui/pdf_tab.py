@@ -197,7 +197,9 @@ class PdfTab(QWidget):
             self._loader_cache[path] = PdfLoader(path)
         return self._loader_cache[path]
 
-    def load_pdf(self, path: str) -> PdfLoader:
+    def load_pdf(
+        self, path: str, password: str | None = None
+    ) -> PdfLoader:
         """Open *path* in this tab. Raises PdfLoadError subclasses on failure."""
         self.close_preview()
         self._thumbnail_grid.cancel_rendering()
@@ -208,7 +210,7 @@ class PdfTab(QWidget):
         self._pdf_path = None
         self._custom_tab_title = None
 
-        loader = PdfLoader(path)
+        loader = PdfLoader(path, password=password)
         self._loader_cache[path] = loader
         self._edit_model = PdfEditModel(path, loader.page_count)
         self._pdf_path = path
