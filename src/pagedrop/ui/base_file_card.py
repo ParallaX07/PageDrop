@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core.drag_mime import INTERNAL_MERGE_FILE_MIME, encode_page_indices
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.theme import CARD_PADDING, CARD_WIDTH, shadow_qcolor
 
 
@@ -98,14 +99,16 @@ class BaseFileCard(QFrame):
 
     def enterEvent(self, event: QEnterEvent) -> None:
         self._hovered = True
-        self._shadow.setBlurRadius(18)
-        self._shadow.setOffset(0, 4)
-        self._shadow.setColor(shadow_qcolor(alpha=72))
+        if not prefers_reduce_motion():
+            self._shadow.setBlurRadius(18)
+            self._shadow.setOffset(0, 4)
+            self._shadow.setColor(shadow_qcolor(alpha=72))
         self._apply_visual_state()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self._hovered = False
+        # Always restore resting shadow (covers mid-hover reduce_motion flips).
         self._shadow.setBlurRadius(14)
         self._shadow.setOffset(0, 3)
         self._shadow.setColor(shadow_qcolor(alpha=55))

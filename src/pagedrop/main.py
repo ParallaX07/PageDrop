@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 from PyQt6.QtWidgets import QApplication
 
 from pagedrop.assets import app_icon
-from pagedrop.ui.theme import app_stylesheet
+from pagedrop.ui.accessibility import install_accessibility
 from pagedrop.ui.window_manager import WindowManager
 
 _APP_NAME = "PageDrop"
@@ -25,7 +25,7 @@ def main():
     app.setApplicationVersion(_app_version())
     app.setQuitOnLastWindowClosed(False)
     app.setStyle("Fusion")
-    app.setStyleSheet(app_stylesheet())
+    install_accessibility(app)
     icon = app_icon()
     app.setWindowIcon(icon)
     manager = WindowManager(app)

@@ -5,7 +5,17 @@ from collections import defaultdict, deque
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QObject,
+    QPoint,
+    QRunnable,
+    QThreadPool,
+    QTimer,
+    Qt,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QDragEnterEvent,
     QDragLeaveEvent,
@@ -73,7 +83,8 @@ DEFERRED_LAYOUT_BATCH = 48
 
 class ThumbnailWorker(QRunnable):
     class Signals(QObject):
-        page_ready = pyqtSignal(int, int, QPixmap)  # generation, logical_index, pixmap
+        # PNG bytes — QPixmap is GUI-thread only (see PreviewRenderWorker).
+        page_ready = pyqtSignal(int, int, bytes)  # generation, logical_index, png
         finished = pyqtSignal(int)  # generation
         error = pyqtSignal(int, str)  # generation, message
 
@@ -107,9 +118,7 @@ class ThumbnailWorker(QRunnable):
                 png = render_page_png(doc, ref.source_index, width_px=self._width_px)
                 if self._is_cancelled(self._generation):
                     return
-                pix = QPixmap()
-                pix.loadFromData(png, "PNG")
-                self.signals.page_ready.emit(self._generation, logical_index, pix)
+                self.signals.page_ready.emit(self._generation, logical_index, png)
             if not self._is_cancelled(self._generation):
                 self.signals.finished.emit(self._generation)
         except Exception as exc:
@@ -165,6 +174,10 @@ class ThumbnailGrid(QScrollArea):
 
         self._empty_state = QWidget()
         self._empty_state.setObjectName("EmptyStatePanel")
+        self._empty_state.setAccessibleName("No document open")
+        self._empty_state.setAccessibleDescription(
+            "Use File → Open PDF or the toolbar button to begin"
+        )
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.setSpacing(6)
@@ -174,6 +187,7 @@ class ThumbnailGrid(QScrollArea):
         self._empty_logo.setObjectName("GridEmptyLogo")
         self._empty_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_logo.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._empty_logo.setAccessibleName("PageDrop logo")
         self._refresh_empty_logo()
 
         self._empty_title = QLabel("No document open")
@@ -209,6 +223,8 @@ class ThumbnailGrid(QScrollArea):
         self._silent_render = False
         self._render_pool = QThreadPool(self)
         self._render_pool.setMaxThreadCount(1)
+        # Keep Signals QObjects alive until drain; autoDelete drops the QRunnable.
+        self._worker_signals: list[ThumbnailWorker.Signals] = []
         self._zoom_render_timer = QTimer(self)
         self._zoom_render_timer.setSingleShot(True)
         self._zoom_render_timer.setInterval(ZOOM_RENDER_DEBOUNCE_MS)
@@ -268,8 +284,10 @@ class ThumbnailGrid(QScrollArea):
         show_shortcuts: bool = True,
     ) -> None:
         self._empty_title.setText(title)
+        self._empty_state.setAccessibleName(title)
         if hint is not None:
             self._empty_hint.setText(hint)
+            self._empty_state.setAccessibleDescription(hint)
         if show_hint:
             self._empty_hint.show()
         else:
@@ -284,7 +302,7 @@ class ThumbnailGrid(QScrollArea):
         model: PdfEditModel,
         get_loader: Callable[[str], PdfLoader],
     ) -> None:
-        self._cancel_rendering()
+        self.cancel_rendering()
         self._clear_cards()
         self._model = model
         self._get_loader = get_loader
@@ -395,6 +413,7 @@ class ThumbnailGrid(QScrollArea):
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)
         worker.signals.error.connect(self._on_rendering_error)
+        self._worker_signals.append(worker.signals)
         self._busy_render_generation = generation
         message = (
             "Updating thumbnails…" if silent else "Rendering thumbnails…"
@@ -459,8 +478,15 @@ class ThumbnailGrid(QScrollArea):
                 self._scroll_render_timer.start()
 
     def cancel_rendering(self) -> None:
-        """Invalidate the current render generation (e.g. before opening another PDF)."""
+        """Invalidate in-flight workers and drain the pool before teardown/reload."""
         self._cancel_rendering()
+        self._drain_render_pool()
+
+    def _drain_render_pool(self) -> None:
+        self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
+        # Worker signals are queued to this object; flush them before cards go away.
+        QCoreApplication.sendPostedEvents(self, QEvent.Type.MetaCall)
+        self._worker_signals.clear()
 
     def clear(self) -> None:
         self._zoom_render_timer.stop()
@@ -473,7 +499,7 @@ class ThumbnailGrid(QScrollArea):
         self._pending_card_indices.clear()
         self._pending_layout_indices.clear()
         self._cancel_rendering()
-        self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
+        self._drain_render_pool()
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
         self._clear_cards()
@@ -1455,11 +1481,14 @@ class ThumbnailGrid(QScrollArea):
         self._update_empty_state()
 
     def _on_page_ready(
-        self, generation: int, page_index: int, pixmap: QPixmap
+        self, generation: int, page_index: int, png: bytes
     ) -> None:
         if self._is_cancelled(generation):
             return
         if page_index >= len(self._cards):
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(png, "PNG") or pixmap.isNull():
             return
         self._cards[page_index].set_thumbnail(pixmap)
         self._page_render_width[page_index] = self._thumbnail_width_px

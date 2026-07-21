@@ -33,6 +33,7 @@ class ZoomControls(QWidget):
 
         self.setObjectName("ZoomControls")
         self.setToolTip("Thumbnail size (Ctrl+scroll)")
+        self.setAccessibleName("Thumbnail zoom")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 4, 8, 4)
@@ -44,11 +45,13 @@ class ZoomControls(QWidget):
         self._zoom_out = QPushButton("−")
         self._zoom_out.setObjectName("ZoomButton")
         self._zoom_out.setToolTip("Zoom out (−)")
+        self._zoom_out.setAccessibleName("Zoom out")
         self._zoom_out.setFixedSize(28, 28)
         self._zoom_out.clicked.connect(self._on_zoom_out)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setObjectName("ZoomSlider")
+        self._slider.setAccessibleName("Thumbnail size")
         self._slider.setFixedWidth(128)
         self._slider.setRange(0, (max_width - min_width) // step)
         self._slider.valueChanged.connect(self._on_slider_changed)
@@ -56,6 +59,7 @@ class ZoomControls(QWidget):
         self._zoom_in = QPushButton("+")
         self._zoom_in.setObjectName("ZoomButton")
         self._zoom_in.setToolTip("Zoom in (+)")
+        self._zoom_in.setAccessibleName("Zoom in")
         self._zoom_in.setFixedSize(28, 28)
         self._zoom_in.clicked.connect(self._on_zoom_in)
 

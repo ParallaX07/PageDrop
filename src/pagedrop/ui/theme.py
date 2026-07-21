@@ -23,7 +23,7 @@ ACCENT_PRESSED = "#1F7FCC"
 
 TEXT_PRIMARY = "#F2F2F4"
 TEXT_SECONDARY = "#A8A8B3"
-TEXT_MUTED = "#6E6E7A"
+TEXT_MUTED = "#82828E"
 
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
@@ -47,7 +47,24 @@ MIN_PREVIEW_RENDER_WIDTH = 400
 CARD_WIDTH = DEFAULT_THUMBNAIL_WIDTH + CARD_PADDING
 
 
-def app_stylesheet() -> str:
+def relative_luminance(hex_color: str) -> float:
+    """WCAG relative luminance for a #RRGGBB color."""
+    h = hex_color.lstrip("#")
+    channels = [int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4)]
+
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (_lin(c) for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def app_stylesheet(*, high_contrast: bool = False) -> str:
+    # HC overrides under distinct locals so we never shadow module token names.
+    text_muted = TEXT_SECONDARY if high_contrast else TEXT_MUTED
+    border_default = BORDER_HOVER if high_contrast else BORDER_DEFAULT
+    border_subtle = BORDER_DEFAULT if high_contrast else BORDER_SUBTLE
+    focus_width = 3 if high_contrast else 2
     return f"""
     * {{
         font-family: {FONT_UI};
@@ -62,14 +79,14 @@ def app_stylesheet() -> str:
     QToolTip {{
         background-color: {BG_CARD};
         color: {TEXT_PRIMARY};
-        border: 1px solid {BORDER_DEFAULT};
+        border: 1px solid {border_default};
         padding: 4px 8px;
     }}
 
     QMenuBar {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
-        border-bottom: 1px solid {BORDER_SUBTLE};
+        border-bottom: 1px solid {border_subtle};
         padding: 2px 0;
     }}
 
@@ -77,16 +94,19 @@ def app_stylesheet() -> str:
         background: transparent;
         padding: 6px 12px;
         border-radius: {RADIUS_CONTROL}px;
+        border: {focus_width}px solid transparent;
     }}
 
-    QMenuBar::item:selected {{
+    QMenuBar::item:selected,
+    QMenuBar::item:focus {{
         background-color: {BG_CARD_HOVER};
+        border-color: {ACCENT};
     }}
 
     QMenu {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         padding: 4px;
     }}
@@ -94,22 +114,25 @@ def app_stylesheet() -> str:
     QMenu::item {{
         padding: 8px 28px 8px 16px;
         border-radius: 6px;
+        border: {focus_width}px solid transparent;
     }}
 
-    QMenu::item:selected {{
+    QMenu::item:selected,
+    QMenu::item:focus {{
         background-color: {BG_CARD_HOVER};
+        border-color: {ACCENT};
     }}
 
     QMenu::separator {{
         height: 1px;
-        background: {BORDER_SUBTLE};
+        background: {border_subtle};
         margin: 4px 8px;
     }}
 
     QToolBar {{
         background-color: {BG_TOOLBAR};
         border: none;
-        border-bottom: 1px solid {BORDER_SUBTLE};
+        border-bottom: 1px solid {border_subtle};
         spacing: 8px;
         padding: 8px 12px;
     }}
@@ -117,7 +140,7 @@ def app_stylesheet() -> str:
     QToolBar QToolButton {{
         background-color: {BG_CARD};
         color: {TEXT_PRIMARY};
-        border: 1px solid {BORDER_DEFAULT};
+        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 14px;
         font-weight: 600;
@@ -130,6 +153,10 @@ def app_stylesheet() -> str:
 
     QToolBar QToolButton:pressed {{
         background-color: {BG_BASE};
+    }}
+
+    QToolBar QToolButton:focus {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QToolBar QToolButton#ToolbarPrimary {{
@@ -149,10 +176,14 @@ def app_stylesheet() -> str:
         border-color: {ACCENT_PRESSED};
     }}
 
+    QToolBar QToolButton#ToolbarPrimary:focus {{
+        border: {focus_width}px solid #FFFFFF;
+    }}
+
     QToolButton#NewTabButton {{
         background-color: transparent;
         color: {TEXT_SECONDARY};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         font-size: 16px;
         font-weight: 600;
@@ -173,6 +204,11 @@ def app_stylesheet() -> str:
         background-color: {BG_BASE};
     }}
 
+    QToolButton#NewTabButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+        color: {TEXT_PRIMARY};
+    }}
+
     QLabel#ToolbarFilename {{
         color: {TEXT_SECONDARY};
         font-weight: 500;
@@ -185,12 +221,12 @@ def app_stylesheet() -> str:
 
     QWidget#ZoomControls {{
         background-color: {BG_CARD};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
 
     QLabel#ZoomCaption {{
-        color: {TEXT_MUTED};
+        color: {text_muted};
         font-size: 11px;
         font-weight: 600;
         padding: 0 2px 0 0;
@@ -199,7 +235,7 @@ def app_stylesheet() -> str:
     QPushButton#ZoomButton {{
         background-color: {BG_SURFACE};
         color: {TEXT_PRIMARY};
-        border: 1px solid {BORDER_DEFAULT};
+        border: 1px solid {border_default};
         border-radius: 6px;
         font-size: 15px;
         font-weight: 600;
@@ -216,9 +252,13 @@ def app_stylesheet() -> str:
         background-color: {BG_BASE};
     }}
 
+    QPushButton#ZoomButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
     QPushButton#ZoomButton:disabled {{
-        color: {TEXT_MUTED};
-        border-color: {BORDER_SUBTLE};
+        color: {text_muted};
+        border-color: {border_subtle};
     }}
 
     QSlider#ZoomSlider {{
@@ -227,7 +267,7 @@ def app_stylesheet() -> str:
 
     QSlider#ZoomSlider::groove:horizontal {{
         background: {BG_BASE};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         height: 4px;
         border-radius: 2px;
     }}
@@ -241,7 +281,7 @@ def app_stylesheet() -> str:
 
     QSlider#ZoomSlider::add-page:horizontal {{
         background: {BG_BASE};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         height: 4px;
         border-radius: 2px;
     }}
@@ -260,16 +300,32 @@ def app_stylesheet() -> str:
         border-color: {ACCENT_HOVER};
     }}
 
+    QSlider#ZoomSlider:focus {{
+        background: transparent;
+    }}
+
+    QSlider#ZoomSlider:focus::groove:horizontal {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QSlider#ZoomSlider:focus::handle:horizontal {{
+        background: {ACCENT};
+        border: 2px solid #FFFFFF;
+        width: 14px;
+        height: 14px;
+        margin: -6px 0;
+    }}
+
     QSlider#ZoomSlider:disabled::groove:horizontal,
     QSlider#ZoomSlider:disabled::sub-page:horizontal,
     QSlider#ZoomSlider:disabled::add-page:horizontal {{
         background: {BG_SURFACE};
-        border-color: {BORDER_SUBTLE};
+        border-color: {border_subtle};
     }}
 
     QSlider#ZoomSlider:disabled::handle:horizontal {{
-        background: {BORDER_DEFAULT};
-        border-color: {BORDER_SUBTLE};
+        background: {border_default};
+        border-color: {border_subtle};
     }}
 
     QLabel#ZoomValueLabel {{
@@ -282,7 +338,7 @@ def app_stylesheet() -> str:
     QStatusBar {{
         background-color: {BG_STATUS};
         color: {TEXT_SECONDARY};
-        border-top: 1px solid {BORDER_SUBTLE};
+        border-top: 1px solid {border_subtle};
     }}
 
     QStatusBar QLabel {{
@@ -291,10 +347,10 @@ def app_stylesheet() -> str:
 
     QProgressBar {{
         background-color: {BG_CARD};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         text-align: center;
-        color: {TEXT_MUTED};
+        color: {text_muted};
         min-height: 8px;
         max-height: 8px;
     }}
@@ -332,14 +388,14 @@ def app_stylesheet() -> str:
     }}
 
     QLabel#GridEmptyHint {{
-        color: {TEXT_MUTED};
+        color: {text_muted};
         font-size: 13px;
         font-weight: 400;
         padding: 0;
     }}
 
     QLabel#GridEmptyKbd {{
-        color: {TEXT_MUTED};
+        color: {text_muted};
         font-family: {FONT_MONO};
         font-size: 11px;
         padding: 8px 0 0 0;
@@ -353,12 +409,12 @@ def app_stylesheet() -> str:
 
     QTabWidget#TabManager > QTabBar {{
         background-color: {BG_TAB_BAR};
-        border-bottom: 1px solid {BORDER_SUBTLE};
+        border-bottom: 1px solid {border_subtle};
     }}
 
     QTabWidget#TabManager > QTabBar::tab {{
         background-color: transparent;
-        color: {TEXT_MUTED};
+        color: {text_muted};
         border: none;
         border-bottom: 2px solid transparent;
         padding: 8px 14px 7px 14px;
@@ -399,6 +455,10 @@ def app_stylesheet() -> str:
         background-color: {CLOSE_TAB_HOVER_BG};
     }}
 
+    QTabWidget#TabManager QTabBar QAbstractButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
     QScrollBar:vertical {{
         background: {BG_GRID};
         width: 10px;
@@ -406,7 +466,7 @@ def app_stylesheet() -> str:
     }}
 
     QScrollBar::handle:vertical {{
-        background: {BORDER_DEFAULT};
+        background: {border_default};
         border-radius: 5px;
         min-height: 32px;
     }}
@@ -426,7 +486,7 @@ def app_stylesheet() -> str:
     }}
 
     QScrollBar::handle:horizontal {{
-        background: {BORDER_DEFAULT};
+        background: {border_default};
         border-radius: 5px;
         min-width: 32px;
     }}
@@ -450,7 +510,7 @@ def app_stylesheet() -> str:
     QMessageBox QPushButton {{
         background-color: {BG_CARD};
         color: {TEXT_PRIMARY};
-        border: 1px solid {BORDER_DEFAULT};
+        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 20px;
     }}
@@ -458,6 +518,10 @@ def app_stylesheet() -> str:
     QMessageBox QPushButton:hover {{
         background-color: {BG_CARD_HOVER};
         border-color: {BORDER_HOVER};
+    }}
+
+    QMessageBox QPushButton:focus {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QMessageBox QPushButton:default {{
@@ -488,11 +552,11 @@ def app_stylesheet() -> str:
 
     QWidget#PreviewFooter {{
         background-color: {BG_PREVIEW_FOOTER};
-        border-top: 1px solid {BORDER_SUBTLE};
+        border-top: 1px solid {border_subtle};
     }}
 
     QLabel#PagePreviewHint {{
-        color: {TEXT_MUTED};
+        color: {text_muted};
         font-size: 11px;
         font-family: {FONT_MONO};
         padding: 10px 16px;
@@ -508,7 +572,7 @@ def app_stylesheet() -> str:
         font-weight: 600;
         padding: 16px 24px;
         background-color: {BG_SURFACE};
-        border: 1px solid {BORDER_SUBTLE};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
 
@@ -534,7 +598,7 @@ def app_stylesheet() -> str:
     }}
 
     QLabel#MergeEmptyHint {{
-        color: {TEXT_MUTED};
+        color: {text_muted};
         font-size: 13px;
         font-weight: 400;
     }}
@@ -566,7 +630,7 @@ def app_stylesheet() -> str:
     }}
 
     QLabel#ConvertEmptyHint {{
-        color: {TEXT_MUTED};
+        color: {text_muted};
         font-size: 13px;
         font-weight: 400;
     }}

@@ -9,6 +9,7 @@ from PyQt6.QtCore import QSettings
 ORGANIZATION = "PageDrop"
 APPLICATION = "PageDrop"
 KEY_LAST_DIRECTORY = "files/lastDirectory"
+KEY_REDUCE_MOTION = "accessibility/reduce_motion"
 
 
 def _settings() -> QSettings:
@@ -32,3 +33,12 @@ def remember_directory(path: str | Path) -> None:
     directory = resolved.parent if resolved.is_file() else resolved
     if directory.is_dir():
         _settings().setValue(KEY_LAST_DIRECTORY, str(directory))
+
+
+def reduce_motion() -> bool:
+    """User preference to minimize non-essential motion (default: False)."""
+    return _settings().value(KEY_REDUCE_MOTION, False, type=bool)
+
+
+def set_reduce_motion(enabled: bool) -> None:
+    _settings().setValue(KEY_REDUCE_MOTION, bool(enabled))

@@ -111,6 +111,8 @@ class BaseFileGrid(QScrollArea):
 
         self._empty_state = QWidget()
         self._empty_state.setObjectName(empty_object_name)
+        self._empty_state.setAccessibleName(empty_title)
+        self._empty_state.setAccessibleDescription(empty_hint)
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.setSpacing(8)
@@ -119,6 +121,7 @@ class BaseFileGrid(QScrollArea):
         self._empty_logo = QLabel()
         self._empty_logo.setObjectName(empty_logo_object_name)
         self._empty_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_logo.setAccessibleName("PageDrop logo")
         self._empty_logo.setPixmap(empty_state_logo_pixmap())
 
         self._empty_title = QLabel(empty_title)

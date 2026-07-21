@@ -248,6 +248,7 @@ class MainWindow(QMainWindow):
         new_tab_button.setObjectName("NewTabButton")
         new_tab_button.setText("+")
         new_tab_button.setToolTip("New tab (Ctrl+T)")
+        new_tab_button.setAccessibleName("New tab")
         new_tab_button.clicked.connect(self._new_blank_tab)
         self._tab_manager.setCornerWidget(
             new_tab_button,
@@ -270,6 +271,7 @@ class MainWindow(QMainWindow):
         self._progress_bar = QProgressBar()
         self._progress_bar.setMaximumWidth(200)
         self._progress_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._progress_bar.setAccessibleName("Page rendering progress")
         self._progress_bar.hide()
         self.statusBar().addPermanentWidget(self._progress_bar)
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1292,12 +1294,14 @@ class MainWindow(QMainWindow):
             return
         self._progress_bar.setRange(0, total_pages)
         self._progress_bar.setValue(0)
+        self._progress_bar.setAccessibleDescription(f"0 of {total_pages} pages")
         self._progress_bar.show()
 
     def _on_rendering_progress(self, current: int, total: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
         self._progress_bar.setValue(current)
+        self._progress_bar.setAccessibleDescription(f"{current} of {total} pages")
         # Preparing status comes from busy_changed; don't overwrite it.
         busy_reasons = getattr(self.sender(), "_busy_reasons", None)
         if busy_reasons is not None and "loading" in busy_reasons:
