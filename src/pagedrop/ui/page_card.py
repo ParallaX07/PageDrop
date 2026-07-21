@@ -27,7 +27,6 @@ class PageCard(BaseFileCard):
     def __init__(self, page_index: int, parent=None) -> None:
         super().__init__(parent)
         self.page_index = page_index
-        self._keyboard_focused = False
         self._page_ref: PageRef | None = None
         self._model: PdfEditModel | None = None
         self._selection_manager: SelectionManager | None = None
@@ -81,11 +80,6 @@ class PageCard(BaseFileCard):
         self.setToolTip(
             f"Page {page_num} · {width_mm}×{height_mm} mm · Click to select"
         )
-
-    def set_keyboard_focused(self, focused: bool) -> None:
-        if self._keyboard_focused != focused:
-            self._keyboard_focused = focused
-            self._apply_visual_state()
 
     def contextMenuEvent(self, event) -> None:
         self.context_menu_requested.emit(self.page_index, event.globalPos())

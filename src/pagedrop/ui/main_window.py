@@ -31,6 +31,10 @@ from pagedrop.core.pdf_loader import (
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.dialogs import fit_message_box_buttons
+from pagedrop.ui.keyboard_nav import (
+    enable_toolbar_keyboard_navigation,
+    set_content_tab_order,
+)
 from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -133,16 +137,17 @@ class MainWindow(QMainWindow):
         exit_action = file_menu.addAction("E&xit")
         exit_action.triggered.connect(self.close)
 
-        merge_action = menubar.addAction("Merge PDFs")
+        merge_action = menubar.addAction("&Merge PDFs")
         merge_action.triggered.connect(self._open_merge_window)
 
-        create_pdf_action = menubar.addAction("Create PDF")
+        create_pdf_action = menubar.addAction("&Create PDF")
         create_pdf_action.triggered.connect(self._open_convert_window)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
+        self._toolbar = toolbar
 
         open_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
@@ -158,7 +163,7 @@ class MainWindow(QMainWindow):
             "Preview",
         )
         self._preview_action.setToolTip(
-            "Preview selected page in this window (double-click a card)"
+            "Preview selected page (Enter or double-click a card)"
         )
         self._preview_action.triggered.connect(self._open_preview)
         self._preview_action.setEnabled(False)
@@ -223,6 +228,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._zoom_controls)
         self._zoom_controls.zoom_requested.connect(self._on_zoom_requested)
 
+        enable_toolbar_keyboard_navigation(toolbar)
+
     def _build_central_widget(self) -> None:
         self._tab_manager = TabManager(temp_manager=self._temp_manager)
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
@@ -253,12 +260,19 @@ class MainWindow(QMainWindow):
             self._tab_manager.add_blank_tab()
         self.setCentralWidget(self._tab_manager)
         self._last_tab_index = self._tab_manager.currentIndex()
+        set_content_tab_order(
+            self._toolbar,
+            self._tab_manager,
+            status_bar=self.statusBar(),
+        )
 
     def _build_status_widgets(self) -> None:
         self._progress_bar = QProgressBar()
         self._progress_bar.setMaximumWidth(200)
+        self._progress_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._progress_bar.hide()
         self.statusBar().addPermanentWidget(self._progress_bar)
+        self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def _build_selection_shortcuts(self) -> None:
         select_all = QAction(self)

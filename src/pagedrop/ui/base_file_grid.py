@@ -10,7 +10,14 @@ Merge/Convert share internal MIME reorder + external file drop via this base.
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QThreadPool, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QPixmap, QResizeEvent
+from PyQt6.QtGui import (
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QKeyEvent,
+    QPixmap,
+    QResizeEvent,
+)
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -76,6 +83,7 @@ class BaseFileGrid(QScrollArea):
         self._card_width = CARD_WIDTH
         self._generation = 0
         self._last_clicked_index: int | None = None
+        self._focused_index: int | None = None
         self._drop_insertion_index: int | None = None
         self._render_pool = QThreadPool(self)
         self._render_pool.setMaxThreadCount(1)
@@ -172,6 +180,8 @@ class BaseFileGrid(QScrollArea):
         self._paths = list(paths)
         self._generation += 1
         self._clear_cards()
+        self._last_clicked_index = None
+        self._focused_index = 0 if paths else None
 
         for index, path in enumerate(paths):
             card = self._create_card(index, path)
@@ -188,7 +198,12 @@ class BaseFileGrid(QScrollArea):
 
         self._reflow_grid(force=True)
         self._update_empty_state()
+        self._update_focus_highlight()
         self._schedule_thumbnails()
+
+    @property
+    def focused_index(self) -> int | None:
+        return self._focused_index
 
     def selected_indices(self) -> list[int]:
         return sorted(self.selection_manager.selection)
@@ -268,6 +283,47 @@ class BaseFileGrid(QScrollArea):
 
         super().dropEvent(event)
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self._cards:
+            super().keyPressEvent(event)
+            return
+
+        if self._focused_index is None:
+            self._set_focused_index(0)
+            event.accept()
+            return
+
+        cols = max(self._grid_cols, 1)
+        idx = self._focused_index
+        key = event.key()
+
+        if key == Qt.Key.Key_Left:
+            self._set_focused_index(max(0, idx - 1))
+            event.accept()
+        elif key == Qt.Key.Key_Right:
+            self._set_focused_index(min(len(self._cards) - 1, idx + 1))
+            event.accept()
+        elif key == Qt.Key.Key_Up:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                super().keyPressEvent(event)
+                return
+            self._set_focused_index(max(0, idx - cols))
+            event.accept()
+        elif key == Qt.Key.Key_Down:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                super().keyPressEvent(event)
+                return
+            self._set_focused_index(min(len(self._cards) - 1, idx + cols))
+            event.accept()
+        elif key in (Qt.Key.Key_Space, Qt.Key.Key_Select):
+            self.selection_manager.toggle(idx)
+            event.accept()
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._on_card_double_clicked(idx)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
     def _on_selection_changed(self, _selection: set[int]) -> None:
         for index, card in enumerate(self._cards):
             card.set_selected(index in self.selection_manager.selection)
@@ -285,16 +341,40 @@ class BaseFileGrid(QScrollArea):
         else:
             self.selection_manager.select_single(index)
         self._last_clicked_index = index
+        self._set_focused_index(index)
+        self.setFocus()
 
     def _on_card_double_clicked(self, index: int) -> None:
         if 0 <= index < len(self._paths):
             self.preview_requested.emit(self._paths[index])
+
+    def _set_focused_index(self, index: int) -> None:
+        if not self._cards:
+            self._focused_index = None
+            return
+        clamped = max(0, min(len(self._cards) - 1, index))
+        if self._focused_index == clamped:
+            return
+        self._focused_index = clamped
+        self._update_focus_highlight()
+        self._scroll_to_focused_card()
+
+    def _update_focus_highlight(self) -> None:
+        for index, card in enumerate(self._cards):
+            card.set_keyboard_focused(index == self._focused_index)
+
+    def _scroll_to_focused_card(self) -> None:
+        if self._focused_index is None or not self._cards:
+            return
+        card = self._cards[self._focused_index]
+        self.ensureWidgetVisible(card, 24, 24)
 
     def _clear_cards(self) -> None:
         for card in self._cards:
             card.setParent(None)
             card.deleteLater()
         self._cards.clear()
+        self._focused_index = None
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
@@ -370,6 +450,9 @@ class BaseFileGrid(QScrollArea):
         new_selection = set(range(adjusted, adjusted + len(ordered)))
         self._reflow_grid(force=True)
         self.selection_manager.set_selection(new_selection)
+        if self._focused_index is not None:
+            self._focused_index = min(self._focused_index, len(self._cards) - 1)
+            self._update_focus_highlight()
         self.files_reordered.emit(new_paths)
         return True
 

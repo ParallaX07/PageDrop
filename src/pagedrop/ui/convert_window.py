@@ -39,6 +39,10 @@ from pagedrop.core.supported_formats import (
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
 from pagedrop.ui.dialogs import fit_message_box_buttons, prompt_discard_file_list
+from pagedrop.ui.keyboard_nav import (
+    enable_toolbar_keyboard_navigation,
+    set_content_tab_order,
+)
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -273,6 +277,10 @@ class ConvertWindow(QMainWindow):
         mode_group.addButton(self._separate_mode_action)
         toolbar.addWidget(self._single_mode_action)
         toolbar.addWidget(self._separate_mode_action)
+
+        enable_toolbar_keyboard_navigation(toolbar)
+        set_content_tab_order(toolbar, self._stack, status_bar=self.statusBar())
+        self._toolbar = toolbar
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)

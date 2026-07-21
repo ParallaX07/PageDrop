@@ -43,6 +43,7 @@ class BaseFileCard(QFrame):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._keyboard_focused = False
 
         self._shadow = QGraphicsDropShadowEffect(self)
         self._shadow.setBlurRadius(14)
@@ -73,6 +74,11 @@ class BaseFileCard(QFrame):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self._apply_visual_state()
+
+    def set_keyboard_focused(self, focused: bool) -> None:
+        if self._keyboard_focused != focused:
+            self._keyboard_focused = focused
+            self._apply_visual_state()
 
     def _refresh_thumbnail_display(self, *, fast: bool = False) -> None:
         if self._source_pixmap is None or self._source_pixmap.isNull():
@@ -253,5 +259,6 @@ class InternalReorderFileCard(BaseFileCard):
             self._stylesheet_fn(
                 selected=self._selected,
                 hovered=self._hovered,
+                focused=self._keyboard_focused,
             )
         )

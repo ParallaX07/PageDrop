@@ -76,6 +76,20 @@ def test_arrow_keys_and_space(main_window, five_page_pdf, qtbot):
     assert grid.focused_index not in grid.selection_manager.selection
 
 
+def test_enter_opens_preview(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+
+    grid = main_window._thumbnail_grid
+    _press_key(grid, Qt.Key.Key_Right)
+    assert grid.focused_index == 1
+
+    previewed: list[int] = []
+    grid.preview_requested.connect(previewed.append)
+    _press_key(grid, Qt.Key.Key_Return)
+    assert previewed == [1]
+
+
 def test_zoom_changes_thumbnail_size(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)

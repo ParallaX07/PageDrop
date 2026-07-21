@@ -662,14 +662,18 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
     """
 
 
-def merge_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
+def merge_file_card_stylesheet(
+    *, selected: bool, hovered: bool, focused: bool = False
+) -> str:
     border_color = ACCENT if selected else BORDER_DEFAULT
     if selected and hovered:
         border_color = ACCENT_HOVER
     elif hovered:
         border_color = BORDER_HOVER
+    elif focused:
+        border_color = ACCENT
 
-    border_width = 3 if selected else 1
+    border_width = 3 if selected else (2 if focused else 1)
     background = BG_CARD_HOVER if hovered else BG_CARD
     title_color = TEXT_PRIMARY if selected else TEXT_PRIMARY
     subtitle_color = TEXT_MUTED if not selected else TEXT_SECONDARY
@@ -697,14 +701,18 @@ def merge_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
     """
 
 
-def convert_file_card_stylesheet(*, selected: bool, hovered: bool) -> str:
+def convert_file_card_stylesheet(
+    *, selected: bool, hovered: bool, focused: bool = False
+) -> str:
     border_color = ACCENT if selected else BORDER_DEFAULT
     if selected and hovered:
         border_color = ACCENT_HOVER
     elif hovered:
         border_color = BORDER_HOVER
+    elif focused:
+        border_color = ACCENT
 
-    border_width = 3 if selected else 1
+    border_width = 3 if selected else (2 if focused else 1)
     background = BG_CARD_HOVER if hovered else BG_CARD
     title_color = TEXT_PRIMARY if selected else TEXT_PRIMARY
     subtitle_color = TEXT_MUTED if not selected else TEXT_SECONDARY

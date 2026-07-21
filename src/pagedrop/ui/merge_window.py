@@ -19,6 +19,10 @@ from pagedrop.core.pdf_merge import PdfMergeModel
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.dialogs import prompt_discard_file_list
+from pagedrop.ui.keyboard_nav import (
+    enable_toolbar_keyboard_navigation,
+    set_content_tab_order,
+)
 from pagedrop.ui.merge_file_grid import MergeFileGrid
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -100,6 +104,7 @@ class MergeWindow(QMainWindow):
         toolbar = QToolBar("Merge", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
+        self._toolbar = toolbar
 
         self._back_to_list_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
@@ -157,6 +162,9 @@ class MergeWindow(QMainWindow):
         merge_button = toolbar.widgetForAction(self._merge_action)
         if merge_button is not None:
             merge_button.setObjectName("ToolbarPrimary")
+
+        enable_toolbar_keyboard_navigation(toolbar)
+        set_content_tab_order(toolbar, self._stack, status_bar=self.statusBar())
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)

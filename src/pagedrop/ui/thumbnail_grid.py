@@ -551,6 +551,9 @@ class ThumbnailGrid(QScrollArea):
         elif key in (Qt.Key.Key_Space, Qt.Key.Key_Select):
             self.selection_manager.toggle(idx)
             event.accept()
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.preview_requested.emit(idx)
+            event.accept()
         else:
             super().keyPressEvent(event)
 
