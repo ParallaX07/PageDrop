@@ -141,3 +141,40 @@ def test_drop_marks_tab_dirty(qtbot, five_page_pdf, one_page_pdf):
     assert tab.is_dirty
     assert tab.edit_model is not None
     assert tab.edit_model.is_dirty()
+
+
+def test_blank_tab_accepts_inbound_pdf_drop(main_window, five_page_pdf, qtbot):
+    from tests.conftest import wait_for_pdf_loaded
+
+    tab = main_window._active_tab()
+    assert tab is not None and tab.is_blank
+    grid = tab.thumbnail_grid
+
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(five_page_pdf))])
+    assert grid._accepts_inbound_pdf_drop(mime)
+
+    pos = QPoint(10, 10)
+    enter = QDragEnterEvent(
+        pos,
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    grid.dragEnterEvent(enter)
+    assert enter.isAccepted()
+
+    drop = QDropEvent(
+        QPointF(pos),
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    grid.dropEvent(drop)
+    assert drop.isAccepted()
+    wait_for_pdf_loaded(qtbot, main_window)
+    assert not tab.is_blank
+    assert tab.edit_model is not None
+    assert tab.edit_model.logical_count() == 5

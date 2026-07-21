@@ -137,6 +137,7 @@ class ThumbnailGrid(QScrollArea):
     pages_transferred_via_tab_bar = pyqtSignal(int, str, bool)  # count, target filename, moved
     page_transfer_failed = pyqtSignal(str)
     pdf_drop_failed = pyqtSignal(object)
+    open_pdfs_requested = pyqtSignal(list)  # blank-tab file-manager drops
 
     def __init__(
         self,
@@ -748,7 +749,7 @@ class ThumbnailGrid(QScrollArea):
         - Multiple paths in one drop: processed in path-sorted order at the same index.
         - Thumbnails still loading: ``_sync_grid_after_insert`` reloads the model
           (cancel-then-insert) instead of patching cards mid-render.
-        - Blank tab (no model): inbound drops are rejected in ``dropEvent`` / drag handlers.
+        - Blank tab (no model): ``dropEvent`` opens the PDF(s) via ``open_pdfs_requested``.
         """
         if self._model is None or self._get_loader is None or not paths:
             return False
@@ -1075,7 +1076,12 @@ class ThumbnailGrid(QScrollArea):
         return True
 
     def _accepts_inbound_pdf_drop(self, mime) -> bool:
-        return bool(self.pdf_paths_from_mime(mime)) and self._model is not None
+        if not self.pdf_paths_from_mime(mime):
+            return False
+        if self._model is not None:
+            return True
+        tab = self._parent_tab()
+        return tab is not None and tab.is_blank
 
     def _accept_drag_over_grid(self, event: QDragEnterEvent | QDragMoveEvent) -> bool:
         mime = event.mimeData()
@@ -1170,8 +1176,17 @@ class ThumbnailGrid(QScrollArea):
             return
 
         pdf_paths = self.pdf_paths_from_mime(mime)
-        if not pdf_paths or self._model is None:
+        if not pdf_paths:
             event.ignore()
+            return
+
+        if self._model is None:
+            tab = self._parent_tab()
+            if tab is None or not tab.is_blank:
+                event.ignore()
+                return
+            self.open_pdfs_requested.emit(pdf_paths)
+            event.acceptProposedAction()
             return
 
         pos = self._container.mapFrom(self, event.position().toPoint())

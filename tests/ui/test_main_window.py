@@ -72,6 +72,20 @@ def test_status_bar_shows_page_count(main_window, five_page_pdf, qtbot):
     assert "5" in message
 
 
+def test_window_title_uses_logical_count_after_delete(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(
+        lambda: "5 pages" in main_window.windowTitle(),
+        timeout=15000,
+    )
+    grid = main_window._thumbnail_grid
+    grid.selection_manager.select_single(0)
+    grid.selection_manager.toggle(1)
+    main_window._delete_selected_pages()
+    assert "3 pages" in main_window.windowTitle()
+    assert main_window._active_tab().edit_model.logical_count() == 3
+
+
 def test_exit_action_closes(main_window, qtbot):
     main_window.show()
     exit_action = _find_action_by_text(_file_menu_actions(main_window), "E&xit", "Exit")

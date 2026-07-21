@@ -306,6 +306,52 @@ def test_escape_closes_preview(main_window, five_page_pdf, qtbot):
     assert main_window._central_stack.currentWidget() is main_window._thumbnail_grid
 
 
+def test_preview_blocks_grid_shortcuts(main_window, five_page_pdf, qtbot):
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QKeyEvent, QKeySequence
+
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+
+    tab = main_window._active_tab()
+    grid = main_window._thumbnail_grid
+    grid.selection_manager.select_single(1)
+    main_window._open_preview()
+    qtbot.waitUntil(lambda: main_window._is_preview_visible(), timeout=5000)
+
+    before_count = tab.edit_model.logical_count()
+    before_zoom = grid.thumbnail_width_px
+    before_selection = set(grid.selection_manager.selection)
+
+    main_window._select_all_pages()
+    assert grid.selection_manager.selection == before_selection
+
+    main_window._delete_selected_pages()
+    assert tab.edit_model.logical_count() == before_count
+
+    main_window._move_selected_pages_up()
+    assert list(grid.selection_manager.selection) == list(before_selection)
+
+    plus = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Plus,
+        Qt.KeyboardModifier.NoModifier,
+        "+",
+    )
+    assert not main_window.eventFilter(main_window, plus)
+    assert grid.thumbnail_width_px == before_zoom
+
+    # SelectAll via eventFilter must also be ignored in preview.
+    select_all = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    assert select_all.matches(QKeySequence.StandardKey.SelectAll)
+    assert not main_window.eventFilter(main_window, select_all)
+    assert grid.selection_manager.selection == before_selection
+
+
 def test_open_preview_uses_selected_page(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)

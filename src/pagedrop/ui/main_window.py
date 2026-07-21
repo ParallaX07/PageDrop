@@ -342,6 +342,8 @@ class MainWindow(QMainWindow):
         )
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
+        grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
+        grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.dirty_changed.connect(self._update_save_as_action)
@@ -367,6 +369,8 @@ class MainWindow(QMainWindow):
             ),
             (grid.page_transfer_failed, self._on_page_transfer_failed),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
+            (grid.extract_to_folder_requested, self._extract_selected_to_folder),
+            (grid.open_pdfs_requested, self._on_open_pdfs_requested),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
             (tab.dirty_changed, self._update_save_as_action),
@@ -619,7 +623,7 @@ class MainWindow(QMainWindow):
 
     def _delete_selected_pages(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.edit_model is None:
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
             return
         selection = tab.thumbnail_grid.selection_manager.selection
         if not selection:
@@ -628,6 +632,7 @@ class MainWindow(QMainWindow):
         if not tab.delete_selected_pages():
             return
         self._tab_manager.update_tab_title(tab)
+        self._update_window_title()
         self._update_delete_pages_action()
         self._update_move_pages_actions()
         self._deselect_all_action.setEnabled(False)
@@ -640,7 +645,7 @@ class MainWindow(QMainWindow):
 
     def _move_selected_pages_up(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.edit_model is None:
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
             return
         if not tab.thumbnail_grid.can_move_selection_up():
             return
@@ -654,7 +659,7 @@ class MainWindow(QMainWindow):
 
     def _move_selected_pages_down(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.edit_model is None:
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
             return
         if not tab.thumbnail_grid.can_move_selection_down():
             return
@@ -668,7 +673,7 @@ class MainWindow(QMainWindow):
 
     def _select_all_pages(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.loader is None:
+        if tab is None or tab.loader is None or tab.is_preview_visible():
             return
         tab.thumbnail_grid.selection_manager.select_all()
 
@@ -708,12 +713,14 @@ class MainWindow(QMainWindow):
             return
         tab.close_preview()
         self._update_preview_mode_ui()
-        if tab.loader is not None:
+        if tab.edit_model is not None:
             selection = tab.thumbnail_grid.selection_manager.selection
             if selection:
                 self._on_selection_changed(selection)
             else:
-                self.statusBar().showMessage(f"Loaded {tab.loader.page_count} pages")
+                count = tab.edit_model.logical_count()
+                noun = "page" if count == 1 else "pages"
+                self.statusBar().showMessage(f"Loaded {count} {noun}")
 
     def _open_preview(self) -> None:
         tab = self._active_tab()
@@ -756,10 +763,10 @@ class MainWindow(QMainWindow):
 
     def _update_preview_status(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.loader is None or not tab.is_preview_visible():
+        if tab is None or tab.edit_model is None or not tab.is_preview_visible():
             return
         page = tab.preview_widget.current_page + 1
-        total = tab.loader.page_count
+        total = tab.edit_model.logical_count()
         self.statusBar().showMessage(f"Preview — page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
@@ -794,7 +801,7 @@ class MainWindow(QMainWindow):
             return super().eventFilter(obj, event)
 
         tab = self._active_tab()
-        if tab is None or tab.loader is None:
+        if tab is None or tab.loader is None or tab.is_preview_visible():
             return super().eventFilter(obj, event)
 
         if event.matches(QKeySequence.StandardKey.SelectAll):
@@ -811,11 +818,11 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.loader is None or tab.pdf_path is None:
+        if tab is None or tab.edit_model is None or tab.pdf_path is None:
             self.setWindowTitle(self.APP_TITLE)
             return
         filename = Path(tab.pdf_path).name
-        count = tab.loader.page_count
+        count = tab.edit_model.logical_count()
         noun = "page" if count == 1 else "pages"
         self.setWindowTitle(f"{self.APP_TITLE} — {filename} ({count} {noun})")
 
@@ -1037,7 +1044,29 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
-            self.statusBar().showMessage(f"Loading {loader.page_count} pages…")
+            count = (
+                target.edit_model.logical_count()
+                if target.edit_model is not None
+                else loader.page_count
+            )
+            noun = "page" if count == 1 else "pages"
+            self.statusBar().showMessage(f"Loading {count} {noun}…")
+
+    def _on_open_pdfs_requested(self, paths: list) -> None:
+        """Open PDFs dropped onto a blank tab (first into that tab, rest as new tabs)."""
+        if not paths or not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        tab = self._active_tab()
+        if tab is None or not tab.is_blank:
+            return
+
+        remember_directory(paths[0])
+        self._load_pdf(paths[0], tab=tab)
+        for path in paths[1:]:
+            new_tab = self._tab_manager.add_blank_tab()
+            self._load_pdf(path, tab=new_tab)
+        if len(paths) > 1:
+            self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
 
     def _same_path(self, left: str, right: str) -> bool:
         try:
@@ -1229,20 +1258,21 @@ class MainWindow(QMainWindow):
             return
         tab = self._active_tab()
         self._progress_bar.hide()
-        if tab is not None and tab.loader is not None:
+        if tab is not None and tab.edit_model is not None:
             selection = tab.thumbnail_grid.selection_manager.selection
             if selection:
                 self._on_selection_changed(selection)
             else:
-                self.statusBar().showMessage(
-                    f"Loaded {tab.loader.page_count} pages"
-                )
+                count = tab.edit_model.logical_count()
+                noun = "page" if count == 1 else "pages"
+                self.statusBar().showMessage(f"Loaded {count} {noun}")
 
     def _on_pages_inserted(
         self, count: int, filename: str, position: int
     ) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
+        self._update_window_title()
         noun = "page" if count == 1 else "pages"
         self.statusBar().showMessage(
             f"Inserted {count} {noun} from {filename} at position {position}"
@@ -1328,8 +1358,10 @@ class MainWindow(QMainWindow):
             return
         if busy and message:
             self.statusBar().showMessage(message)
-        elif tab.loader is not None and not self._progress_bar.isVisible():
-            self.statusBar().showMessage(f"Loaded {tab.loader.page_count} pages")
+        elif tab.edit_model is not None and not self._progress_bar.isVisible():
+            count = tab.edit_model.logical_count()
+            noun = "page" if count == 1 else "pages"
+            self.statusBar().showMessage(f"Loaded {count} {noun}")
 
     def _on_preview_busy_changed(self, busy: bool, message: str) -> None:
         tab = self._active_tab()
@@ -1337,9 +1369,9 @@ class MainWindow(QMainWindow):
             return
         if busy and message:
             self.statusBar().showMessage(message)
-        elif tab.loader is not None:
+        elif tab.edit_model is not None:
             page = tab.preview_widget.current_page + 1
-            total = tab.loader.page_count
+            total = tab.edit_model.logical_count()
             self.statusBar().showMessage(f"Preview · page {page} of {total}")
 
     def _on_selection_changed(self, selection: set[int]) -> None:

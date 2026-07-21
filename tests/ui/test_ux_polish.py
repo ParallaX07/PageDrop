@@ -43,7 +43,8 @@ def test_context_menu_extract_action(
         lambda *args, **kwargs: str(tmp_path),
     )
 
-    main_window._extract_selected_to_folder()
+    # Context menu emits the signal; verify wiring reaches the extract handler.
+    grid.extract_to_folder_requested.emit()
 
     pdfs = list(tmp_path.glob("*.pdf"))
     assert len(pdfs) == 2
