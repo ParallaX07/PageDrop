@@ -10,6 +10,11 @@ ORGANIZATION = "PageDrop"
 APPLICATION = "PageDrop"
 KEY_LAST_DIRECTORY = "files/lastDirectory"
 KEY_REDUCE_MOTION = "accessibility/reduce_motion"
+KEY_CONFIRM_DELETE_MULTIPLE = "safety/confirm_before_deleting_multiple_pages"
+KEY_CONFIRM_CLOSE_DIRTY = "safety/confirm_before_closing_dirty_tabs"
+
+# Confirm multi-page delete when selection size exceeds this (instant for ≤3).
+DELETE_CONFIRM_THRESHOLD = 3
 
 
 def _settings() -> QSettings:
@@ -42,3 +47,21 @@ def reduce_motion() -> bool:
 
 def set_reduce_motion(enabled: bool) -> None:
     _settings().setValue(KEY_REDUCE_MOTION, bool(enabled))
+
+
+def confirm_before_deleting_multiple_pages() -> bool:
+    """Ask before deleting more than DELETE_CONFIRM_THRESHOLD pages (default: True)."""
+    return _settings().value(KEY_CONFIRM_DELETE_MULTIPLE, True, type=bool)
+
+
+def set_confirm_before_deleting_multiple_pages(enabled: bool) -> None:
+    _settings().setValue(KEY_CONFIRM_DELETE_MULTIPLE, bool(enabled))
+
+
+def confirm_before_closing_dirty_tabs() -> bool:
+    """Ask before closing tabs with unsaved edits (default: True)."""
+    return _settings().value(KEY_CONFIRM_CLOSE_DIRTY, True, type=bool)
+
+
+def set_confirm_before_closing_dirty_tabs(enabled: bool) -> None:
+    _settings().setValue(KEY_CONFIRM_CLOSE_DIRTY, bool(enabled))

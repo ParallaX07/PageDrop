@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.ui.dialogs import confirm_delete_pages
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
@@ -227,11 +228,36 @@ class PdfTab(QWidget):
         """Delete the current thumbnail selection; no-op when nothing is selected."""
         if self._edit_model is None:
             return False
-        if not self._thumbnail_grid.selection_manager.selection:
+        selection = self._thumbnail_grid.selection_manager.selection
+        if not selection:
+            return False
+        if not confirm_delete_pages(self, len(selection)):
             return False
         self.close_preview()
         if not self._thumbnail_grid.delete_selected_pages():
             return False
+        self._sync_dirty_from_model()
+        return True
+
+    def undo_edit(self) -> bool:
+        """Undo the last page-list edit and refresh the grid."""
+        if self._edit_model is None or not self._edit_model.can_undo():
+            return False
+        self.close_preview()
+        if not self._edit_model.undo():
+            return False
+        self._thumbnail_grid.reload_from_model()
+        self._sync_dirty_from_model()
+        return True
+
+    def redo_edit(self) -> bool:
+        """Redo the last undone page-list edit and refresh the grid."""
+        if self._edit_model is None or not self._edit_model.can_redo():
+            return False
+        self.close_preview()
+        if not self._edit_model.redo():
+            return False
+        self._thumbnail_grid.reload_from_model()
         self._sync_dirty_from_model()
         return True
 

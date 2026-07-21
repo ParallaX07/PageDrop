@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict, deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import (
@@ -129,6 +130,58 @@ class ThumbnailWorker(QRunnable):
                 doc.close()
 
 
+@dataclass
+class _CrossWindowMoveUndo:
+    """Reverses a Shift+drop move while both undo stacks are still at capture depth."""
+
+    source_grid: ThumbnailGrid
+    target_grid: ThumbnailGrid
+    blank_init: bool
+    source_undo_depth: int
+    target_undo_depth: int
+
+    def still_valid(self) -> bool:
+        source_model = self.source_grid._model
+        if source_model is None or source_model.undo_depth() != self.source_undo_depth:
+            return False
+        if self.blank_init:
+            target_tab = self.target_grid._parent_tab()
+            return target_tab is not None and not target_tab.is_blank
+        target_model = self.target_grid._model
+        return (
+            target_model is not None
+            and target_model.undo_depth() == self.target_undo_depth
+        )
+
+    def undo(self) -> bool:
+        if not self.still_valid():
+            return False
+        source_model = self.source_grid._model
+        assert source_model is not None
+        if not source_model.undo():
+            return False
+        self.source_grid.reload_from_model()
+        source_tab = self.source_grid._parent_tab()
+        if source_tab is not None:
+            source_tab._sync_dirty_from_model()
+
+        if self.blank_init:
+            target_tab = self.target_grid._parent_tab()
+            if target_tab is not None:
+                target_tab.close_loader()
+            return True
+
+        target_model = self.target_grid._model
+        assert target_model is not None
+        if not target_model.undo():
+            return False
+        self.target_grid.reload_from_model()
+        target_tab = self.target_grid._parent_tab()
+        if target_tab is not None:
+            target_tab._sync_dirty_from_model()
+        return True
+
+
 class ThumbnailGrid(QScrollArea):
     rendering_started = pyqtSignal(int)
     rendering_progress = pyqtSignal(int, int)
@@ -142,8 +195,10 @@ class ThumbnailGrid(QScrollArea):
     pages_reordered = pyqtSignal()
     pages_inserted = pyqtSignal(int, str, int)  # count, filename, 1-based position
     cross_window_pages_inserted = pyqtSignal(int, str)  # count, source filename
-    pages_moved_out = pyqtSignal(int, str)  # count, target filename
-    pages_transferred_via_tab_bar = pyqtSignal(int, str, bool)  # count, target filename, moved
+    pages_moved_out = pyqtSignal(int, str, object)  # count, target filename, undo callable|None
+    pages_transferred_via_tab_bar = pyqtSignal(
+        int, str, bool, object
+    )  # count, target filename, moved, undo callable|None
     page_transfer_failed = pyqtSignal(str)
     pdf_drop_failed = pyqtSignal(object)
     open_pdfs_requested = pyqtSignal(list)  # blank-tab file-manager drops
@@ -337,6 +392,20 @@ class ThumbnailGrid(QScrollArea):
             return cache[path]
 
         self.load_model(model, get_loader)
+
+    def reload_from_model(self) -> None:
+        """Rebuild cards from the current model (e.g. after undo/redo)."""
+        if self._model is None or self._get_loader is None:
+            return
+        total = self._model.logical_count()
+        if total == 0:
+            self.set_empty_state_message(
+                "No pages in this document",
+                hint="Open another PDF or add pages to continue",
+                show_hint=True,
+                show_shortcuts=False,
+            )
+        self.load_model(self._model, self._get_loader)
 
     def _create_all_cards(self, indices: range | list[int]) -> None:
         assert self._model is not None
@@ -624,7 +693,11 @@ class ThumbnailGrid(QScrollArea):
         elif chosen is move_down_action:
             self.move_selection_down()
         elif chosen is delete_action:
-            self.delete_selected_pages()
+            tab = self._parent_tab()
+            if tab is not None:
+                tab.delete_selected_pages()
+            else:
+                self.delete_selected_pages()
         elif chosen is extract_action:
             self.extract_to_folder_requested.emit()
 
@@ -917,8 +990,10 @@ class ThumbnailGrid(QScrollArea):
         if self._model is None:
             return
 
-        inserted_indices = list(range(drop_index, drop_index + len(refs)))
-        self.remove_pages_by_indices(inserted_indices)
+        # Insert recorded an undo snapshot; pop it instead of remove+push.
+        if self._model.can_undo():
+            self._model.undo()
+            self.reload_from_model()
         if tab is not None:
             tab._sync_dirty_from_model()
 
@@ -1012,15 +1087,31 @@ class ThumbnailGrid(QScrollArea):
             if source_tab is not None:
                 source_tab._sync_dirty_from_model()
 
+            move_undo = _CrossWindowMoveUndo(
+                source_grid=source_grid,
+                target_grid=self,
+                blank_init=inited_blank_tab,
+                source_undo_depth=source_grid._model.undo_depth()
+                if source_grid._model is not None
+                else 0,
+                target_undo_depth=(
+                    0
+                    if inited_blank_tab or self._model is None
+                    else self._model.undo_depth()
+                ),
+            ).undo
+        else:
+            move_undo = None
+
         if via_tab_bar:
             notifier = source_grid if source_grid is not None else self
             notifier.pages_transferred_via_tab_bar.emit(
-                len(refs), target_name, move
+                len(refs), target_name, move, move_undo
             )
         else:
             if move_indices is not None:
                 assert source_grid is not None
-                source_grid.pages_moved_out.emit(len(refs), target_name)
+                source_grid.pages_moved_out.emit(len(refs), target_name, move_undo)
             self.cross_window_pages_inserted.emit(len(refs), source_filename)
         return True
 

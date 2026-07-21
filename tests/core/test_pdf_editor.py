@@ -68,3 +68,45 @@ def test_mark_saved_clears_dirty():
     model.mark_saved("/out/saved.pdf")
     assert not model.is_dirty()
     assert model.save_path == "/out/saved.pdf"
+
+
+def test_undo_redo_restore_pages_and_dirty():
+    model = PdfEditModel("/a.pdf", 5)
+    assert not model.can_undo()
+    assert not model.can_redo()
+
+    model.remove_pages([1, 3])
+    assert model.can_undo()
+    assert [model.page_at(i).source_index for i in range(3)] == [0, 2, 4]
+    assert model.is_dirty()
+
+    assert model.undo()
+    assert [model.page_at(i).source_index for i in range(5)] == [0, 1, 2, 3, 4]
+    assert not model.is_dirty()
+    assert model.can_redo()
+
+    assert model.redo()
+    assert [model.page_at(i).source_index for i in range(3)] == [0, 2, 4]
+    assert model.is_dirty()
+
+
+def test_undo_covers_insert_and_reorder():
+    model = PdfEditModel("/a.pdf", 3)
+    model.insert_pages(1, [PageRef("/b.pdf", 0)])
+    model.move_pages([3], 0)
+    assert [model.page_at(i).source_index for i in range(4)] == [2, 0, 0, 1]
+    assert model.page_at(0).source_path == "/a.pdf"
+    assert model.page_at(2).source_path == "/b.pdf"
+
+    assert model.undo()  # undo move
+    assert model.page_at(1).source_path == "/b.pdf"
+    assert model.undo()  # undo insert
+    assert model.logical_count() == 3
+    assert not model.can_undo()
+
+
+def test_record_undo_false_skips_stack():
+    model = PdfEditModel("/a.pdf", 3)
+    model.remove_pages([0], record_undo=False)
+    assert not model.can_undo()
+    assert model.logical_count() == 2

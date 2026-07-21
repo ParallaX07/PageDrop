@@ -4,17 +4,19 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QInputDialog,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QPushButton,
     QSizePolicy,
     QStyle,
     QToolBar,
@@ -37,7 +39,14 @@ from pagedrop.ui.keyboard_nav import (
 )
 from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.settings import last_directory, remember_directory
+from pagedrop.ui.settings import (
+    confirm_before_closing_dirty_tabs,
+    confirm_before_deleting_multiple_pages,
+    last_directory,
+    remember_directory,
+    set_confirm_before_closing_dirty_tabs,
+    set_confirm_before_deleting_multiple_pages,
+)
 from pagedrop.ui.tab_manager import TabManager
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -49,7 +58,12 @@ from pagedrop.ui.zoom_controls import ZoomControls
 from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pagedrop.ui.window_manager import WindowManager
+
+
+MOVE_UNDO_TIMEOUT_MS = 8000
 
 
 class MainWindow(QMainWindow):
@@ -69,6 +83,7 @@ class MainWindow(QMainWindow):
         self._convert_window: ConvertWindow | None = None
         self._previous_tab_index: int | None = None
         self._last_tab_index: int = 0
+        self._pending_move_undo: Callable[[], bool] | None = None
 
         self.setWindowTitle(self.APP_TITLE)
         self.setMinimumSize(720, 480)
@@ -136,6 +151,47 @@ class MainWindow(QMainWindow):
 
         exit_action = file_menu.addAction("E&xit")
         exit_action.triggered.connect(self.close)
+
+        edit_menu = menubar.addMenu("&Edit")
+
+        self._undo_action = edit_menu.addAction("&Undo")
+        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self._undo_action.triggered.connect(self._undo)
+        self._undo_action.setEnabled(False)
+
+        self._redo_action = edit_menu.addAction("&Redo")
+        self._redo_action.setShortcuts(
+            [
+                QKeySequence("Ctrl+Shift+Z"),
+                QKeySequence.StandardKey.Redo,
+            ]
+        )
+        self._redo_action.triggered.connect(self._redo)
+        self._redo_action.setEnabled(False)
+
+        edit_menu.addSeparator()
+
+        self._confirm_delete_action = edit_menu.addAction(
+            "Confirm before &deleting multiple pages"
+        )
+        self._confirm_delete_action.setCheckable(True)
+        self._confirm_delete_action.setChecked(
+            confirm_before_deleting_multiple_pages()
+        )
+        self._confirm_delete_action.toggled.connect(
+            set_confirm_before_deleting_multiple_pages
+        )
+
+        self._confirm_close_dirty_action = edit_menu.addAction(
+            "Confirm before closing dirty &tabs"
+        )
+        self._confirm_close_dirty_action.setCheckable(True)
+        self._confirm_close_dirty_action.setChecked(
+            confirm_before_closing_dirty_tabs()
+        )
+        self._confirm_close_dirty_action.toggled.connect(
+            set_confirm_before_closing_dirty_tabs
+        )
 
         merge_action = menubar.addAction("&Merge PDFs")
         merge_action.triggered.connect(self._open_merge_window)
@@ -273,39 +329,62 @@ class MainWindow(QMainWindow):
         self._progress_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._progress_bar.setAccessibleName("Page rendering progress")
         self._progress_bar.hide()
+
+        self._move_undo_widget = QWidget()
+        self._move_undo_widget.setObjectName("MoveUndoToast")
+        move_undo_layout = QHBoxLayout(self._move_undo_widget)
+        move_undo_layout.setContentsMargins(0, 0, 8, 0)
+        move_undo_layout.setSpacing(6)
+        self._move_undo_label = QLabel()
+        self._move_undo_button = QPushButton("Undo")
+        self._move_undo_button.setObjectName("MoveUndoButton")
+        self._move_undo_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._move_undo_button.setAccessibleName("Undo page move")
+        self._move_undo_button.clicked.connect(self._on_transient_move_undo)
+        move_undo_layout.addWidget(self._move_undo_label)
+        move_undo_layout.addWidget(self._move_undo_button)
+        self._move_undo_widget.hide()
+        self._move_undo_timer = QTimer(self)
+        self._move_undo_timer.setSingleShot(True)
+        self._move_undo_timer.timeout.connect(self._dismiss_move_undo)
+
+        self.statusBar().addPermanentWidget(self._move_undo_widget)
         self.statusBar().addPermanentWidget(self._progress_bar)
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def _build_selection_shortcuts(self) -> None:
+        # WindowShortcut, not ApplicationShortcut: with multiple windows open,
+        # app-wide contexts collide ("Ambiguous shortcut overload") and Qt
+        # fires neither action. Handlers act on this window's tab anyway.
         select_all = QAction(self)
         select_all.setShortcut(QKeySequence.StandardKey.SelectAll)
-        select_all.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        select_all.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         select_all.triggered.connect(self._select_all_pages)
         self.addAction(select_all)
 
         self._clear_selection_action = QAction(self)
         self._clear_selection_action.setShortcut(QKeySequence.StandardKey.Cancel)
         self._clear_selection_action.setShortcutContext(
-            Qt.ShortcutContext.ApplicationShortcut
+            Qt.ShortcutContext.WindowShortcut
         )
         self._clear_selection_action.triggered.connect(self._on_escape)
         self.addAction(self._clear_selection_action)
 
         delete_pages = QAction(self)
         delete_pages.setShortcut(QKeySequence(Qt.Key.Key_Delete))
-        delete_pages.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        delete_pages.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         delete_pages.triggered.connect(self._delete_selected_pages)
         self.addAction(delete_pages)
 
         move_up = QAction(self)
         move_up.setShortcut(QKeySequence("Ctrl+Up"))
-        move_up.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        move_up.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         move_up.triggered.connect(self._move_selected_pages_up)
         self.addAction(move_up)
 
         move_down = QAction(self)
         move_down.setShortcut(QKeySequence("Ctrl+Down"))
-        move_down.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        move_down.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         move_down.triggered.connect(self._move_selected_pages_down)
         self.addAction(move_down)
 
@@ -350,6 +429,7 @@ class MainWindow(QMainWindow):
         grid.pages_transferred_via_tab_bar.connect(
             self._on_pages_transferred_via_tab_bar
         )
+        grid.pages_reordered.connect(self._on_pages_reordered)
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
@@ -378,6 +458,7 @@ class MainWindow(QMainWindow):
                 grid.pages_transferred_via_tab_bar,
                 self._on_pages_transferred_via_tab_bar,
             ),
+            (grid.pages_reordered, self._on_pages_reordered),
             (grid.page_transfer_failed, self._on_page_transfer_failed),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
@@ -577,6 +658,7 @@ class MainWindow(QMainWindow):
         )
         self._update_delete_pages_action()
         self._update_move_pages_actions()
+        self._update_undo_redo_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
         self._update_preview_mode_ui()
@@ -595,6 +677,8 @@ class MainWindow(QMainWindow):
         self._delete_pages_action.setEnabled(False)
         self._move_up_action.setEnabled(False)
         self._move_down_action.setEnabled(False)
+        self._undo_action.setEnabled(False)
+        self._redo_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
         self._progress_bar.hide()
@@ -647,6 +731,7 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self._update_delete_pages_action()
         self._update_move_pages_actions()
+        self._update_undo_redo_actions()
         self._deselect_all_action.setEnabled(False)
         self._update_save_as_action()
         if tab.edit_model.logical_count() == 0:
@@ -665,6 +750,7 @@ class MainWindow(QMainWindow):
             return
         self._tab_manager.update_tab_title(tab)
         self._update_move_pages_actions()
+        self._update_undo_redo_actions()
         count = len(tab.thumbnail_grid.selection_manager.selection)
         noun = "page" if count == 1 else "pages"
         self.statusBar().showMessage(f"Moved {count} {noun} up")
@@ -679,9 +765,73 @@ class MainWindow(QMainWindow):
             return
         self._tab_manager.update_tab_title(tab)
         self._update_move_pages_actions()
+        self._update_undo_redo_actions()
         count = len(tab.thumbnail_grid.selection_manager.selection)
         noun = "page" if count == 1 else "pages"
         self.statusBar().showMessage(f"Moved {count} {noun} down")
+
+    def _undo(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.is_preview_visible():
+            return
+        if not tab.undo_edit():
+            return
+        self._dismiss_move_undo()
+        self._tab_manager.update_tab_title(tab)
+        self._update_window_title()
+        self._sync_toolbar_from_active_tab()
+        self.statusBar().showMessage("Undo")
+
+    def _redo(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.is_preview_visible():
+            return
+        if not tab.redo_edit():
+            return
+        self._dismiss_move_undo()
+        self._tab_manager.update_tab_title(tab)
+        self._update_window_title()
+        self._sync_toolbar_from_active_tab()
+        self.statusBar().showMessage("Redo")
+
+    def _update_undo_redo_actions(self) -> None:
+        tab = self._active_tab()
+        model = tab.edit_model if tab is not None else None
+        preview_blocking = tab is not None and tab.is_preview_visible()
+        self._undo_action.setEnabled(
+            model is not None and model.can_undo() and not preview_blocking
+        )
+        self._redo_action.setEnabled(
+            model is not None and model.can_redo() and not preview_blocking
+        )
+
+    def _offer_move_undo(self, count: int, undo: Callable[[], bool]) -> None:
+        self._pending_move_undo = undo
+        noun = "page" if count == 1 else "pages"
+        self._move_undo_label.setText(f"{count} {noun} moved ·")
+        self._move_undo_widget.show()
+        self.statusBar().clearMessage()
+        self._move_undo_timer.start(MOVE_UNDO_TIMEOUT_MS)
+
+    def _dismiss_move_undo(self) -> None:
+        self._move_undo_timer.stop()
+        self._pending_move_undo = None
+        self._move_undo_widget.hide()
+
+    def _on_transient_move_undo(self) -> None:
+        undo = self._pending_move_undo
+        self._dismiss_move_undo()
+        if undo is None:
+            return
+        if not undo():
+            self.statusBar().showMessage("Move undo is no longer available")
+            return
+        self._sync_toolbar_from_active_tab()
+        if self._window_manager is not None:
+            for window in self._window_manager.windows:
+                if window is not self:
+                    window._sync_toolbar_from_active_tab()
+        self.statusBar().showMessage("Move undone")
 
     def _select_all_pages(self) -> None:
         tab = self._active_tab()
@@ -1261,7 +1411,7 @@ class MainWindow(QMainWindow):
         if tab.is_blank:
             if self._is_only_blank_tab():
                 return False
-        elif tab.is_dirty:
+        elif tab.is_dirty and confirm_before_closing_dirty_tabs():
             choice = self._prompt_unsaved_changes(tab)
             if choice == "cancel":
                 return False
@@ -1328,10 +1478,17 @@ class MainWindow(QMainWindow):
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
         self._update_window_title()
+        self._update_undo_redo_actions()
         noun = "page" if count == 1 else "pages"
         self.statusBar().showMessage(
             f"Inserted {count} {noun} from {filename} at position {position}"
         )
+
+    def _on_pages_reordered(self) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        self._update_undo_redo_actions()
+        self._update_move_pages_actions()
 
     def _on_cross_window_pages_inserted(
         self, count: int, filename: str
@@ -1344,21 +1501,33 @@ class MainWindow(QMainWindow):
         )
         self._sync_toolbar_from_active_tab()
 
-    def _on_pages_moved_out(self, count: int, target_filename: str) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+    def _on_pages_moved_out(
+        self, count: int, target_filename: str, undo=None
+    ) -> None:
+        sender = self.sender()
+        if sender is not None and not self._grid_belongs_to_window(sender):
+            return
+        self._sync_toolbar_from_active_tab()
+        if callable(undo):
+            self._offer_move_undo(count, undo)
+            return
+        if sender is None or not self._grid_belongs_to_active_tab(sender):
             return
         noun = "page" if count == 1 else "pages"
         suffix = f" to {target_filename}" if target_filename else ""
         self.statusBar().showMessage(
             f"Moved {count} {noun}{suffix}"
         )
-        self._sync_toolbar_from_active_tab()
 
     def _on_pages_transferred_via_tab_bar(
-        self, count: int, target_filename: str, moved: bool
+        self, count: int, target_filename: str, moved: bool, undo=None
     ) -> None:
         sender = self.sender()
-        if sender is None or not self._grid_belongs_to_window(sender):
+        if sender is not None and not self._grid_belongs_to_window(sender):
+            return
+        if moved and callable(undo):
+            self._sync_toolbar_from_active_tab()
+            self._offer_move_undo(count, undo)
             return
         noun = "page" if count == 1 else "pages"
         verb = "Moved" if moved else "Appended"
@@ -1473,14 +1642,15 @@ class MainWindow(QMainWindow):
             ):
                 dirty_tabs.append(widget)
 
-        for tab in dirty_tabs:
-            choice = self._prompt_unsaved_changes(tab)
-            if choice == "cancel":
-                event.ignore()
-                return
-            if choice == "save" and not self._save_as(tab):
-                event.ignore()
-                return
+        if confirm_before_closing_dirty_tabs():
+            for tab in dirty_tabs:
+                choice = self._prompt_unsaved_changes(tab)
+                if choice == "cancel":
+                    event.ignore()
+                    return
+                if choice == "save" and not self._save_as(tab):
+                    event.ignore()
+                    return
 
         QApplication.instance().removeEventFilter(self)
         for index in range(self._tab_manager.count()):
