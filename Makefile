@@ -1,6 +1,6 @@
 # PageDrop test gates — cumulative through each phase (no venv activation needed)
 
-.PHONY: test-phase1 test-phase2 test-phase3 test-phase4 test build-exe smoke-exe test-release
+.PHONY: test-phase1 test-phase2 test-phase3 test-phase4 test build-exe smoke-exe test-release generate-icons build-installer
 
 BUILD_EXE := uv run pyinstaller --noconfirm pagedrop.spec
 PAGEDROP_EXE ?= ./dist/pagedrop/pagedrop
@@ -27,6 +27,13 @@ build-exe:
 
 smoke-exe: build-exe
 	./scripts/smoke_exe.sh
+
+generate-icons:
+	uv run --with pillow python scripts/generate_icons.py
+
+# Windows only — requires Inno Setup 6+ (iscc).
+build-installer:
+	pwsh -File scripts/build_windows_installer.ps1
 
 # Full suite before a release tag (exe smoke test is opt-in via PAGEDROP_EXE).
 test-release:

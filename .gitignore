@@ -12,3 +12,6 @@ __pycache__/
 build/
 dist/
 *.spec.bak
+
+# Windows installer output (publish via GitHub Releases, do not commit)
+installer/Output/

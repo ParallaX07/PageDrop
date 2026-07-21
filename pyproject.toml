@@ -1,7 +1,7 @@
 [project]
 name = "pagedrop"
 version = "0.2.0"
-description = "Drag PDF pages into folders from a thumbnail grid"
+description = "Grab PDF pages and drop them where they belong — folders, merges, multi-tab edits"
 requires-python = ">=3.11"
 dependencies = [
     "PyQt6>=6.6.0",

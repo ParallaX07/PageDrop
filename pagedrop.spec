@@ -38,6 +38,14 @@ for package in ("fitz",):
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
+# so importlib.metadata.version("pagedrop") works when frozen
+try:
+    from PyInstaller.utils.hooks import copy_metadata
+
+    datas += copy_metadata("pagedrop")
+except Exception:
+    pass
+
 hiddenimports += collect_submodules("pagedrop")
 hiddenimports = list(dict.fromkeys(hiddenimports))
 
@@ -56,6 +64,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+_icon = ASSETS / "app-icon.ico"
 exe = EXE(
     pyz,
     a.scripts,
@@ -74,6 +83,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(_icon) if _icon.is_file() else None,
 )
 
 coll = COLLECT(

@@ -36,17 +36,15 @@ Drag a PDF from your file manager onto the thumbnail grid to insert its pages at
 
 ## Download
 
-**Windows (recommended for most users)** — no Python or install required:
+**Microsoft Store** — install from the [Microsoft Store listing](https://apps.microsoft.com/detail/9PBS1QFP36C0).
 
-1. Go to [**Releases**](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-v*-windows-x64.zip` asset.
-2. Extract the zip to a folder (e.g. `PageDrop\`). You should see `pagedrop.exe` alongside an `_internal\` folder.
-3. Double-click `pagedrop.exe` to run.
+**Windows (GitHub Releases)** — no Python required:
 
-> **Keep the folder intact.** The app is a folder bundle, not a single portable `.exe`. Do not move only `pagedrop.exe` out of the folder — it needs `_internal\` beside it. You can put the whole folder anywhere (Desktop, `Program Files`, a USB drive) or pin `pagedrop.exe` to the taskbar/Start menu from there.
->
-> Windows may show a SmartScreen warning because the build is unsigned. Choose **More info → Run anyway** if prompted.
+1. Go to [**Releases**](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-*-Setup.exe` installer (or the `PageDrop-v*-windows-x64.zip` portable zip).
+2. Run the Setup.exe and follow the wizard (installs to Program Files, Start Menu shortcut).
+3. Or extract the zip and keep `pagedrop.exe` next to its `_internal\` folder, then double-click `pagedrop.exe`.
 
-Older releases shipped a single `PageDrop-v*-windows-x64.exe` that unpacked itself on every launch. Current releases use a zip bundle for faster startup.
+> Windows may show a SmartScreen warning on unsigned builds. Choose **More info → Run anyway** if prompted.
 
 macOS and Linux binaries are not published yet — run from source (below) or build your own with PyInstaller.
 
@@ -208,6 +206,31 @@ make smoke-exe          # Unix smoke script
 make test-release       # full pytest gate + exe smoke (set PAGEDROP_EXE if needed)
 ```
 
+### Windows installer (GitHub Releases)
+
+Version is read from `pyproject.toml`. Generate icons once (or after logo changes), then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isinfo.php), `iscc` on PATH or `$env:ISCC`):
+
+```powershell
+uv run --with pillow python scripts/generate_icons.py   # or: make generate-icons
+.\scripts\build_windows_installer.ps1                   # or: make build-installer
+# reuse existing dist: .\scripts\build_windows_installer.ps1 -SkipBuild
+uv run python scripts/check_packaging.py
+```
+
+Output: `installer/Output/PageDrop-<version>-Setup.exe` (gitignored — do not commit binaries).
+
+Publish to GitHub Releases (replace `X.Y.Z` with the `pyproject.toml` version):
+
+```powershell
+gh release create "vX.Y.Z" `
+  "installer/Output/PageDrop-X.Y.Z-Setup.exe" `
+  --repo ParallaX07/PageDrop `
+  --title "vX.Y.Z" `
+  --notes "Windows Setup.exe for PageDrop X.Y.Z."
+```
+
+Optionally attach a portable zip of `dist/pagedrop/` as `PageDrop-vX.Y.Z-windows-x64.zip` on the same release.
+
 Before tagging a release, run the full suite plus the executable smoke test:
 
 ```bash
@@ -221,6 +244,6 @@ Verify manually on a machine **without Python**: open a PDF, drag a page into th
 
 ## Status
 
-**v0.2.0** — Windows zip bundle available on [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, cross-tab page drag, Save As, merge, multi-window page transfer, image-to-PDF conversion, and MRU Ctrl+Tab switching. macOS/Linux release binaries and code signing are planned.
+**v0.2.0** — Windows Setup.exe and portable zip for [Releases](https://github.com/ParallaX07/PageDrop/releases). Core workflows are implemented: thumbnail drag-out, multi-tab editing, cross-tab page drag, Save As, merge, multi-window page transfer, image-to-PDF conversion, and MRU Ctrl+Tab switching. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
 
 For the detailed implementation checklist and design decisions, see [`checklist.md`](checklist.md).
