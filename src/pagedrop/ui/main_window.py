@@ -611,6 +611,7 @@ class MainWindow(QMainWindow):
         grid.selection_changed.connect(self._on_selection_changed)
         grid.preview_requested.connect(self._open_preview_at)
         grid.zoom_changed.connect(self._on_zoom_changed)
+        grid.zoom_render_pending.connect(self._on_zoom_render_pending)
         grid.pages_inserted.connect(self._on_pages_inserted)
         grid.cross_window_pages_inserted.connect(self._on_cross_window_pages_inserted)
         grid.pages_moved_out.connect(self._on_pages_moved_out)
@@ -644,6 +645,7 @@ class MainWindow(QMainWindow):
             (grid.selection_changed, self._on_selection_changed),
             (grid.preview_requested, self._open_preview_at),
             (grid.zoom_changed, self._on_zoom_changed),
+            (grid.zoom_render_pending, self._on_zoom_render_pending),
             (grid.pages_inserted, self._on_pages_inserted),
             (grid.cross_window_pages_inserted, self._on_cross_window_pages_inserted),
             (grid.pages_moved_out, self._on_pages_moved_out),
@@ -867,6 +869,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
+        self._zoom_controls.set_rendering(False)
         self._update_preview_mode_ui()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -894,6 +897,7 @@ class MainWindow(QMainWindow):
         self._zoom_controls.set_value(
             tab.zoom_level if tab is not None else thumbnail_zoom()
         )
+        self._zoom_controls.set_rendering(False)
         self._progress_bar.hide()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -1300,6 +1304,11 @@ class MainWindow(QMainWindow):
             self._transient_status(
                 f"Thumbnail size: {thumbnail_width_px} px"
             )
+
+    def _on_zoom_render_pending(self, pending: bool) -> None:
+        if not self._grid_belongs_to_active_tab(self.sender()):
+            return
+        self._zoom_controls.set_rendering(pending)
 
     def _on_light_theme_toggled(self, enabled: bool) -> None:
         set_light_theme(enabled)

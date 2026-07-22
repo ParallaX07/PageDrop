@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QFileDialog, QToolBar
+from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.main_window import MainWindow
@@ -19,9 +19,13 @@ def test_card_tooltip(qtbot, five_page_pdf):
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
 
-    width_mm, height_mm = loader.page_size_mm(2)
     card = grid._cards[2]
+    assert card.toolTip() == "Page 3 · Click to select"
+
+    width_mm, height_mm = loader.page_size_mm(2)
     expected = f"Page 3 · {width_mm}×{height_mm} mm · Click to select"
+    tip_event = QEvent(QEvent.Type.ToolTip)
+    QApplication.sendEvent(card, tip_event)
     assert card.toolTip() == expected
 
     loader.close()

@@ -70,8 +70,12 @@ def test_page_overlay_appears_when_zoomed_in(qtbot, five_page_pdf):
     grid = ThumbnailGrid()
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
-    grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    with qtbot.waitSignal(grid.rendering_finished, timeout=15000):
+        grid.load_pdf(loader)
+    qtbot.waitUntil(
+        lambda: all(not card._is_skeleton for card in grid._cards),
+        timeout=5000,
+    )
 
     card: PageCard = grid._cards[0]
     assert card._page_overlay.isHidden()

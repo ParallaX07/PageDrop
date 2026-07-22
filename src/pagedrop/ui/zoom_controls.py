@@ -82,6 +82,10 @@ class ZoomControls(QWidget):
         self.set_value(initial)
         self.setEnabled(False)
 
+    def set_rendering(self, pending: bool) -> None:
+        """Light affordance while zoom debounce / re-render is pending."""
+        self._caption.setText("Rendering…" if pending else "Zoom")
+
     def eventFilter(self, obj, event) -> bool:
         if (
             obj is self._slider
@@ -102,18 +106,25 @@ class ZoomControls(QWidget):
         self._update_button_states(clamped)
         self._syncing = False
 
+    def _emit_zoom(self, width_px: int) -> None:
+        """Update the readout immediately, then request the grid change."""
+        if width_px == self._current:
+            return
+        self._current = width_px
+        self._value_label.setText(f"{width_px}px")
+        self._update_button_states(width_px)
+        self.zoom_requested.emit(width_px)
+
     def _on_slider_changed(self, step_index: int) -> None:
         if self._syncing:
             return
-        width_px = self._min_width + step_index * self._step
-        if width_px != self._current:
-            self.zoom_requested.emit(width_px)
+        self._emit_zoom(self._min_width + step_index * self._step)
 
     def _on_zoom_out(self) -> None:
-        self.zoom_requested.emit(max(self._min_width, self._current - self._step))
+        self._emit_zoom(max(self._min_width, self._current - self._step))
 
     def _on_zoom_in(self) -> None:
-        self.zoom_requested.emit(min(self._max_width, self._current + self._step))
+        self._emit_zoom(min(self._max_width, self._current + self._step))
 
     def _update_button_states(self, width_px: int) -> None:
         self._zoom_out.setEnabled(width_px > self._min_width)

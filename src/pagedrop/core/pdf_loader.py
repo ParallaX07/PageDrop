@@ -68,6 +68,8 @@ class PdfLoader:
             self.doc.close()
             raise PdfEmptyError(f"PDF has no pages: {path}")
 
+        self._size_cache: dict[tuple[int, int], tuple[int, int]] = {}
+
     @property
     def page_count(self) -> int:
         return len(self.doc)
@@ -82,7 +84,12 @@ class PdfLoader:
 
     def page_size_mm(self, page_index: int, *, rotation: int = 0) -> tuple[int, int]:
         """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
-        return page_size_mm(self.doc, page_index, rotation=rotation)
+        key = (page_index, rotation % 360)
+        cached = self._size_cache.get(key)
+        if cached is None:
+            cached = page_size_mm(self.doc, page_index, rotation=rotation)
+            self._size_cache[key] = cached
+        return cached
 
 
     def close(self) -> None:

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QMimeData, QPoint, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QApplication,
+    QGraphicsOpacityEffect,
+    QLabel,
+    QMessageBox,
+    QVBoxLayout,
+)
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -17,8 +24,13 @@ from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.base_file_card import BaseFileCard
-from pagedrop.ui.theme import accent_qcolor, page_card_stylesheet
+from pagedrop.ui.theme import CARD_PADDING, accent_qcolor, page_card_stylesheet
 from pagedrop.utils.temp_manager import TempManager
+
+# Portrait placeholder while the real thumbnail is rendering.
+_SKELETON_ASPECT = 1.414
+_SKELETON_PULSE_DIM = 0.55
+_SKELETON_PULSE_BRIGHT = 1.0
 
 
 class PageCard(BaseFileCard):
@@ -31,6 +43,11 @@ class PageCard(BaseFileCard):
         self._model: PdfEditModel | None = None
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
+        self._is_skeleton = True
+        self._page_overlay_wanted = False
+        self._size_provider: Callable[[], tuple[int, int]] | None = None
+        self._size_cached: tuple[int, int] | None = None
+        self._skeleton_pulse_effect: QGraphicsOpacityEffect | None = None
 
         self.setObjectName("PageCard")
         self._thumbnail_label.setObjectName("PageCardThumbnail")
@@ -61,6 +78,9 @@ class PageCard(BaseFileCard):
         layout.addWidget(self._page_label)
 
         self.set_selected(False)
+        self._apply_skeleton_size()
+        self._sync_page_overlay_visibility()
+        self.setToolTip(f"Page {page_index + 1} · Click to select")
 
     def _item_index(self) -> int:
         return self.page_index
@@ -82,11 +102,84 @@ class PageCard(BaseFileCard):
         self._page_label.setText(f"Page {index + 1}")
         self._page_overlay.setText(str(index + 1))
         self._sync_page_overlay_geometry()
+        if self._size_cached is None:
+            self.setToolTip(f"Page {index + 1} · Click to select")
+        else:
+            self._apply_sized_tooltip(*self._size_cached)
 
     def set_page_overlay_visible(self, visible: bool) -> None:
+        self._page_overlay_wanted = visible
+        self._sync_page_overlay_visibility()
+
+    def set_thumbnail(self, pixmap: QPixmap) -> None:
+        self._is_skeleton = False
+        self.clear_skeleton_pulse()
+        super().set_thumbnail(pixmap)
+        self._sync_page_overlay_visibility()
+
+    def set_skeleton_pulse(self, dim: bool) -> None:
+        """Gentle opacity blink so placeholders read as loading, not blank."""
+        if not self._is_skeleton:
+            return
+        if self._skeleton_pulse_effect is None:
+            effect = QGraphicsOpacityEffect(self._thumbnail_label)
+            self._thumbnail_label.setGraphicsEffect(effect)
+            self._skeleton_pulse_effect = effect
+        self._skeleton_pulse_effect.setOpacity(
+            _SKELETON_PULSE_DIM if dim else _SKELETON_PULSE_BRIGHT
+        )
+
+    def clear_skeleton_pulse(self) -> None:
+        if self._skeleton_pulse_effect is None:
+            return
+        self._thumbnail_label.setGraphicsEffect(None)
+        self._skeleton_pulse_effect = None
+
+    def set_page_size_provider(
+        self, provider: Callable[[], tuple[int, int]] | None
+    ) -> None:
+        """Defer fitz page-size lookup until the tooltip is shown."""
+        self._size_provider = provider
+        self._size_cached = None
+        self.setToolTip(f"Page {self.page_index + 1} · Click to select")
+
+    def set_page_tooltip(self, width_mm: int, height_mm: int) -> None:
+        self._size_provider = None
+        self._size_cached = (width_mm, height_mm)
+        self._apply_sized_tooltip(width_mm, height_mm)
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            self._ensure_sized_tooltip()
+        return super().event(event)
+
+    def _ensure_sized_tooltip(self) -> None:
+        if self._size_cached is not None:
+            self._apply_sized_tooltip(*self._size_cached)
+            return
+        if self._size_provider is None:
+            return
+        self._size_cached = self._size_provider()
+        self._apply_sized_tooltip(*self._size_cached)
+
+    def _apply_sized_tooltip(self, width_mm: int, height_mm: int) -> None:
+        page_num = self.page_index + 1
+        self.setToolTip(
+            f"Page {page_num} · {width_mm}×{height_mm} mm · Click to select"
+        )
+
+    def _sync_page_overlay_visibility(self) -> None:
+        visible = self._page_overlay_wanted or self._is_skeleton
         self._page_overlay.setVisible(visible)
         if visible:
             self._sync_page_overlay_geometry()
+
+    def _apply_skeleton_size(self) -> None:
+        if not self._is_skeleton:
+            return
+        thumb_w = max(1, self._card_width - CARD_PADDING)
+        self._thumbnail_label.setMinimumHeight(max(80, int(thumb_w * _SKELETON_ASPECT)))
+        self._sync_page_overlay_geometry()
 
     def set_rotation_indicator(self, degrees: int) -> None:
         rot = degrees % 360
@@ -134,12 +227,6 @@ class PageCard(BaseFileCard):
         self._selection_manager = selection_manager
         self._temp_manager = temp_manager
 
-    def set_page_tooltip(self, width_mm: int, height_mm: int) -> None:
-        page_num = self.page_index + 1
-        self.setToolTip(
-            f"Page {page_num} · {width_mm}×{height_mm} mm · Click to select"
-        )
-
     def contextMenuEvent(self, event) -> None:
         self.context_menu_requested.emit(self.page_index, event.globalPos())
         event.accept()
@@ -180,6 +267,7 @@ class PageCard(BaseFileCard):
     def apply_layout_width(self) -> None:
         if self.width() != self._card_width:
             self.setFixedWidth(self._card_width)
+        self._apply_skeleton_size()
 
     def refresh_thumbnail_display(self, *, fast: bool = False) -> None:
         """Re-scale the cached source pixmap to the current card width."""

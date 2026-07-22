@@ -829,6 +829,7 @@ def _card_surface_colors() -> dict[str, str]:
         return {
             "BG_CARD": "#FFFFFF",
             "BG_CARD_HOVER": "#E4E6EB",
+            "BG_THUMB_EMPTY": "#D5D7DE",
             "BORDER_DEFAULT": "#B4B7C0",
             "BORDER_HOVER": "#8A8E99",
             "TEXT_PRIMARY": "#1A1A1F",
@@ -838,6 +839,7 @@ def _card_surface_colors() -> dict[str, str]:
     return {
         "BG_CARD": BG_CARD,
         "BG_CARD_HOVER": BG_CARD_HOVER,
+        "BG_THUMB_EMPTY": "#2A2A32",
         "BORDER_DEFAULT": BORDER_DEFAULT,
         "BORDER_HOVER": BORDER_HOVER,
         "TEXT_PRIMARY": TEXT_PRIMARY,
@@ -891,7 +893,7 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
         border-radius: {RADIUS_CARD}px;
     }}
     QLabel#PageCardThumbnail {{
-        background-color: #FAFAFA;
+        background-color: {c["BG_THUMB_EMPTY"]};
         border-radius: 6px;
     }}
     QLabel#PageCardLabel {{
