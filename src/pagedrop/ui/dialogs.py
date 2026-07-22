@@ -117,11 +117,13 @@ def confirm_delete_pages(parent: QWidget, count: int) -> bool:
     if os.environ.get("PAGEDROP_TESTING") == "1":
         return True
 
-    reply = QMessageBox.question(
-        parent,
-        "Delete Pages",
-        f"Delete {count} pages?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
+    message = QMessageBox(parent)
+    message.setIcon(QMessageBox.Icon.Question)
+    message.setWindowTitle("Delete Pages")
+    message.setText(f"Delete {count} pages?")
+    message.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
     )
-    return reply == QMessageBox.StandardButton.Yes
+    message.setDefaultButton(QMessageBox.StandardButton.No)
+    fit_message_box_buttons(message)
+    return message.exec() == QMessageBox.StandardButton.Yes

@@ -112,42 +112,52 @@ class MergeWindow(QMainWindow):
         self.addToolBar(toolbar)
         self._toolbar = toolbar
 
+        def tip(action, text: str) -> None:
+            action.setToolTip(text)
+            action.setStatusTip(text)
+
         self._back_to_list_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
             "Back to list",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
         self._back_to_list_action.setVisible(False)
+        tip(self._back_to_list_action, "Return to file list (Esc)")
 
         self._add_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
             "Add PDFs",
         )
         self._add_action.triggered.connect(self._add_pdfs)
+        tip(self._add_action, "Add PDF files to merge")
 
         self._add_folder_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
-            "Add Folder…",
+            "Add folder…",
         )
         self._add_folder_action.triggered.connect(self._add_folder)
+        tip(self._add_folder_action, "Add all PDFs from a folder")
 
         self._remove_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
             "Remove",
         )
         self._remove_action.triggered.connect(self._remove_selected)
+        tip(self._remove_action, "Remove selected files")
 
         self._move_up_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
             "Move up",
         )
         self._move_up_action.triggered.connect(self._move_up)
+        tip(self._move_up_action, "Move selected files up")
 
         self._move_down_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
             "Move down",
         )
         self._move_down_action.triggered.connect(self._move_down)
+        tip(self._move_down_action, "Move selected files down")
 
         from PyQt6.QtWidgets import QSizePolicy
 
@@ -171,6 +181,7 @@ class MergeWindow(QMainWindow):
             "Merge",
         )
         self._merge_action.triggered.connect(self._merge_pdfs)
+        tip(self._merge_action, "Merge files into one PDF")
         merge_button = toolbar.widgetForAction(self._merge_action)
         if merge_button is not None:
             merge_button.setObjectName("ToolbarPrimary")

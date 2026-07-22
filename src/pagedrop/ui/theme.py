@@ -78,7 +78,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border_hover = "#8A8E99"
         text_primary = "#1A1A1F"
         text_secondary = "#4A4A55"
-        text_muted_tok = "#6B6E78"
+        text_muted_tok = "#5A5D68"
         close_tab = "#D14343"
         close_tab_hover_bg = "#F5D6D6"
         busy_overlay_bg = "rgba(242, 243, 245, 200)"
@@ -862,7 +862,7 @@ def _card_surface_colors() -> dict[str, str]:
             "BORDER_HOVER": "#8A8E99",
             "TEXT_PRIMARY": "#1A1A1F",
             "TEXT_SECONDARY": "#4A4A55",
-            "TEXT_MUTED": "#6B6E78",
+            "TEXT_MUTED": "#5A5D68",
         }
     return {
         "BG_CARD": BG_CARD,

@@ -280,7 +280,7 @@ class MainWindow(QMainWindow):
         )
         self._select_all_action = actions.register(
             "select_all",
-            "Select All",
+            "Select all",
             slot=self._select_all_pages,
             shortcut=QKeySequence.StandardKey.SelectAll,
             tip="Select all pages (Ctrl+A)",
@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
         )
         self._deselect_all_action = actions.register(
             "deselect_all",
-            "Deselect All",
+            "Deselect all",
             slot=self._clear_selection,
             tip="Clear selection (Esc)",
             enabled=False,

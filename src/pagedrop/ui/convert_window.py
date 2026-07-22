@@ -352,36 +352,45 @@ class ConvertWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
+        def tip(action, text: str) -> None:
+            action.setToolTip(text)
+            action.setStatusTip(text)
+
         self._back_to_list_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
             "Back to grid",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
         self._back_to_list_action.setVisible(False)
+        tip(self._back_to_list_action, "Return to image grid (Esc)")
 
         self._add_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
-            "Add Images…",
+            "Add images…",
         )
         self._add_action.triggered.connect(self._add_images)
+        tip(self._add_action, "Add images to convert")
 
         self._remove_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
             "Remove",
         )
         self._remove_action.triggered.connect(self._remove_selected)
+        tip(self._remove_action, "Remove selected images")
 
         self._move_up_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
             "Move up",
         )
         self._move_up_action.triggered.connect(self._move_up)
+        tip(self._move_up_action, "Move selected images up")
 
         self._move_down_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
             "Move down",
         )
         self._move_down_action.triggered.connect(self._move_down)
+        tip(self._move_down_action, "Move selected images down")
 
         spacer = QWidget()
         spacer.setSizePolicy(
@@ -404,6 +413,7 @@ class ConvertWindow(QMainWindow):
             "Save PDF…",
         )
         self._create_action.triggered.connect(self._create_pdfs)
+        tip(self._create_action, "Save images as PDF")
         create_button = toolbar.widgetForAction(self._create_action)
         if create_button is not None:
             create_button.setObjectName("ToolbarPrimary")
@@ -450,7 +460,14 @@ class ConvertWindow(QMainWindow):
     def _on_output_mode_changed(self, single_checked: bool) -> None:
         self._output_mode = _OUTPUT_SINGLE if single_checked else _OUTPUT_SEPARATE
         label = "Save PDF…" if self._output_mode == _OUTPUT_SINGLE else "Choose folder…"
+        tip = (
+            "Save images as PDF"
+            if self._output_mode == _OUTPUT_SINGLE
+            else "Save each image as a separate PDF"
+        )
         self._create_action.setText(label)
+        self._create_action.setToolTip(tip)
+        self._create_action.setStatusTip(tip)
         self._update_actions()
 
     def _update_actions(self) -> None:

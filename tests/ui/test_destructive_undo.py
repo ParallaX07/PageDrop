@@ -45,7 +45,7 @@ def test_confirm_delete_pages_respects_preference(isolated_settings, monkeypatch
         return QMessageBox.StandardButton.No
 
     monkeypatch.delenv("PAGEDROP_TESTING", raising=False)
-    monkeypatch.setattr(QMessageBox, "question", boom)
+    monkeypatch.setattr(QMessageBox, "exec", boom)
     assert confirm_delete_pages(None, DELETE_CONFIRM_THRESHOLD + 1) is True
     assert not called
 
@@ -53,12 +53,12 @@ def test_confirm_delete_pages_respects_preference(isolated_settings, monkeypatch
 def test_confirm_delete_pages_prompts_when_enabled(isolated_settings, monkeypatch):
     answers = []
 
-    def fake_question(*_args, **_kwargs):
+    def fake_exec(self):
         answers.append(True)
         return QMessageBox.StandardButton.No
 
     monkeypatch.delenv("PAGEDROP_TESTING", raising=False)
-    monkeypatch.setattr(QMessageBox, "question", fake_question)
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
     assert confirm_delete_pages(None, DELETE_CONFIRM_THRESHOLD + 1) is False
     assert answers == [True]
 

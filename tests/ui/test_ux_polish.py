@@ -171,8 +171,8 @@ def _toolbar_action(window: MainWindow, label: str):
 
 
 def test_select_all_deselect_all_toolbar(main_window, five_page_pdf, qtbot):
-    select_all = _toolbar_action(main_window, "Select All")
-    deselect_all = _toolbar_action(main_window, "Deselect All")
+    select_all = _toolbar_action(main_window, "Select all")
+    deselect_all = _toolbar_action(main_window, "Deselect all")
     assert not select_all.isEnabled()
     assert not deselect_all.isEnabled()
 

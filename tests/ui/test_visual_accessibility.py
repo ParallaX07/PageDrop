@@ -19,6 +19,14 @@ def test_text_muted_meets_wcag_aa_on_bg_base():
     assert contrast_ratio(TEXT_MUTED, BG_BASE) >= 4.5
 
 
+def test_light_text_muted_meets_wcag_aa_on_bg_grid():
+    # Keep in sync with app_stylesheet(light=True) text_muted_tok / bg_grid.
+    light_muted = "#5A5D68"
+    light_bg_grid = "#EBEDF0"
+    assert contrast_ratio(light_muted, light_bg_grid) >= 4.5
+    assert light_muted in app_stylesheet(light=True)
+
+
 def test_high_contrast_stylesheet_strengthens_chrome():
     normal = app_stylesheet(high_contrast=False)
     high = app_stylesheet(high_contrast=True)

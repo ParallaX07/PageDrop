@@ -185,3 +185,15 @@ def test_image_preview_arrow_keys_and_zoom(qtbot, tmp_path):
 
     preview.reset_zoom_to_fit()
     assert not preview._manual_zoom
+
+
+def test_toolbar_actions_have_status_tips(qtbot):
+    window = _convert_window(qtbot)
+    labeled = [
+        a for a in window._toolbar.actions() if a.text() and not a.isSeparator()
+    ]
+    assert labeled
+    for action in labeled:
+        assert action.statusTip(), f"missing status tip on {action.text()!r}"
+        assert action.toolTip() == action.statusTip()
+    assert window._add_action.text() == "Add images…"

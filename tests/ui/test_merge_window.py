@@ -164,3 +164,15 @@ def test_add_folder_skips_invalid_pdfs(qtbot, one_page_pdf, tmp_path, monkeypatc
     assert window._model.file_count() == 1
     assert Path(window._model.path_at(0)).name == "good.pdf"
     assert "skipped 1" in window.statusBar().currentMessage()
+
+
+def test_toolbar_actions_have_status_tips(qtbot):
+    window = _merge_window(qtbot)
+    labeled = [
+        a for a in window._toolbar.actions() if a.text() and not a.isSeparator()
+    ]
+    assert labeled
+    for action in labeled:
+        assert action.statusTip(), f"missing status tip on {action.text()!r}"
+        assert action.toolTip() == action.statusTip()
+    assert window._add_folder_action.text() == "Add folder…"

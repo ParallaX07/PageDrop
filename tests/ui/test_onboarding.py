@@ -85,8 +85,8 @@ def test_keyboard_shortcuts_dialog_lists_categories(qtbot):
 _TOOLBAR_HINT_LABELS = {
     "Open PDF",
     "Preview",
-    "Select All",
-    "Deselect All",
+    "Select all",
+    "Deselect all",
     "Move up",
     "Move down",
     "Delete page(s)",
