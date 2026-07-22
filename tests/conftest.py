@@ -167,8 +167,8 @@ def garbage_pdf(pdf_fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
-def main_window(qtbot):
-    """Fresh MainWindow instance registered with qtbot."""
+def main_window(qtbot, isolated_settings):
+    """Fresh MainWindow instance registered with qtbot (isolated QSettings)."""
     from pagedrop.ui.main_window import MainWindow
 
     window = MainWindow()

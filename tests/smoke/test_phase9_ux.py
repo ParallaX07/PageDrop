@@ -86,7 +86,7 @@ def test_smoke_card_visual_states_differ(qtbot, five_page_pdf):
     window.close()
 
 
-def test_smoke_zoom_default_after_load(qtbot, five_page_pdf):
+def test_smoke_zoom_default_after_load(qtbot, five_page_pdf, isolated_settings):
     window = MainWindow()
     qtbot.addWidget(window)
     window._load_pdf(str(five_page_pdf))

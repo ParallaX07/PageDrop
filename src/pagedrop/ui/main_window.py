@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QTimer
-from PyQt6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QCloseEvent, QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -32,6 +32,7 @@ from pagedrop.core.pdf_loader import (
 )
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.busy_overlay import ToastOverlay
+from pagedrop.ui.command_palette import CommandPalette, collect_actions
 from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.dialogs import fit_message_box_buttons
 from pagedrop.ui.keyboard_nav import (
@@ -40,10 +41,12 @@ from pagedrop.ui.keyboard_nav import (
 )
 from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui.settings import (
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
     last_directory,
+    light_theme,
     load_window_geometry,
     recent_files,
     remember_directory,
@@ -52,7 +55,12 @@ from pagedrop.ui.settings import (
     save_window_geometry,
     set_confirm_before_closing_dirty_tabs,
     set_confirm_before_deleting_multiple_pages,
+    set_light_theme,
     set_remember_window_geometry,
+    set_thumbnail_quality,
+    set_thumbnail_zoom,
+    thumbnail_quality,
+    thumbnail_zoom,
 )
 from pagedrop.ui.tab_manager import TabManager
 from pagedrop.ui.theme import (
@@ -215,6 +223,37 @@ class MainWindow(QMainWindow):
             set_remember_window_geometry
         )
 
+        view_menu = menubar.addMenu("&View")
+
+        self._light_theme_action = view_menu.addAction("Toggle &Light Theme")
+        self._light_theme_action.setCheckable(True)
+        self._light_theme_action.setChecked(light_theme())
+        self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
+
+        quality_menu = view_menu.addMenu("Thumbnail &quality")
+        self._quality_action_group = QActionGroup(self)
+        self._quality_action_group.setExclusive(True)
+        current_quality = thumbnail_quality()
+        for value, label in (
+            ("low", "&Low"),
+            ("medium", "&Medium"),
+            ("high", "&High"),
+        ):
+            action = quality_menu.addAction(label)
+            action.setCheckable(True)
+            action.setData(value)
+            action.setChecked(value == current_quality)
+            self._quality_action_group.addAction(action)
+        self._quality_action_group.triggered.connect(
+            self._on_thumbnail_quality_triggered
+        )
+
+        view_menu.addSeparator()
+
+        self._command_palette_action = view_menu.addAction("Command &palette…")
+        self._command_palette_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        self._command_palette_action.triggered.connect(self._open_command_palette)
+
         merge_action = menubar.addAction("&Merge PDFs")
         merge_action.triggered.connect(self._open_merge_window)
 
@@ -320,7 +359,7 @@ class MainWindow(QMainWindow):
             min_width=MIN_THUMBNAIL_WIDTH,
             max_width=MAX_THUMBNAIL_WIDTH,
             step=ZOOM_WHEEL_STEP,
-            initial=DEFAULT_THUMBNAIL_WIDTH,
+            initial=thumbnail_zoom(),
         )
         toolbar.addWidget(self._zoom_controls)
         self._zoom_controls.zoom_requested.connect(self._on_zoom_requested)
@@ -357,6 +396,9 @@ class MainWindow(QMainWindow):
             self._adopt_tab(self._initial_tab)
         else:
             self._tab_manager.add_blank_tab()
+            tab = self._tab_manager.active_tab
+            if tab is not None:
+                tab.set_zoom_level(thumbnail_zoom())
         self.setCentralWidget(self._tab_manager)
         self._toast = ToastOverlay(self._tab_manager)
         self._last_tab_index = self._tab_manager.currentIndex()
@@ -617,6 +659,7 @@ class MainWindow(QMainWindow):
 
     def _new_blank_tab(self) -> None:
         tab = self._tab_manager.add_blank_tab()
+        tab.set_zoom_level(thumbnail_zoom())
         self._tab_manager.setCurrentWidget(tab)
         self._update_close_tab_action()
 
@@ -796,6 +839,7 @@ class MainWindow(QMainWindow):
         self._update_selection_status(tab.thumbnail_grid.selection_manager.selection)
 
     def _reset_toolbar_for_blank_tab(self) -> None:
+        tab = self._active_tab()
         self._update_window_title()
         self._filename_label.setText("No file open")
         self._filename_label.setProperty("active", False)
@@ -813,7 +857,9 @@ class MainWindow(QMainWindow):
         self._undo_action.setEnabled(False)
         self._redo_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
-        self._zoom_controls.set_value(DEFAULT_THUMBNAIL_WIDTH)
+        self._zoom_controls.set_value(
+            tab.zoom_level if tab is not None else thumbnail_zoom()
+        )
         self._progress_bar.hide()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -1196,12 +1242,55 @@ class MainWindow(QMainWindow):
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
+        set_thumbnail_zoom(thumbnail_width_px)
         tab = self._active_tab()
         if tab is not None and tab.loader is not None:
             self._zoom_controls.set_value(thumbnail_width_px)
             self._transient_status(
                 f"Thumbnail size: {thumbnail_width_px} px"
             )
+
+    def _on_light_theme_toggled(self, enabled: bool) -> None:
+        set_light_theme(enabled)
+        refresh_themed_widgets()
+        # Keep other windows' checkboxes in sync.
+        if self._window_manager is not None:
+            for window in self._window_manager.windows:
+                action = getattr(window, "_light_theme_action", None)
+                if action is not None and action.isChecked() != enabled:
+                    action.blockSignals(True)
+                    action.setChecked(enabled)
+                    action.blockSignals(False)
+
+    def _on_thumbnail_quality_triggered(self, action: QAction) -> None:
+        value = action.data()
+        if not isinstance(value, str):
+            return
+        set_thumbnail_quality(value)
+        if self._window_manager is not None:
+            for window in self._window_manager.windows:
+                window._sync_quality_menu(value)
+                window._refresh_all_thumbnail_quality()
+        else:
+            self._refresh_all_thumbnail_quality()
+
+    def _sync_quality_menu(self, value: str) -> None:
+        for action in self._quality_action_group.actions():
+            checked = action.data() == value
+            if action.isChecked() != checked:
+                action.blockSignals(True)
+                action.setChecked(checked)
+                action.blockSignals(False)
+
+    def _refresh_all_thumbnail_quality(self) -> None:
+        for index in range(self._tab_manager.count()):
+            tab = self._tab_manager.widget(index)
+            if isinstance(tab, PdfTab):
+                tab.thumbnail_grid.refresh_thumbnail_quality()
+
+    def _open_command_palette(self) -> None:
+        dialog = CommandPalette(collect_actions(self), self)
+        dialog.exec()
 
     def eventFilter(self, obj, event) -> bool:
         if (

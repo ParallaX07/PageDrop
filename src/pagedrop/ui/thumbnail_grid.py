@@ -318,6 +318,7 @@ class ThumbnailGrid(QScrollArea):
         self._busy_message = ""
         self._overlay = BusyOverlay(self)
         self._busy_render_generation = -1
+        self._busy_render_width = 0
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
@@ -468,11 +469,12 @@ class ThumbnailGrid(QScrollArea):
         if page_indices is None:
             page_indices = list(range(self._model.logical_count()))
         else:
+            target = self._target_render_width()
             page_indices = [
                 i
                 for i in page_indices
                 if 0 <= i < len(self._page_render_width)
-                and self._page_render_width[i] < self._thumbnail_width_px
+                and self._page_render_width[i] < target
             ]
 
         if not page_indices:
@@ -484,10 +486,12 @@ class ThumbnailGrid(QScrollArea):
         self._generation += 1
         self._silent_render = silent
         generation = self._generation
+        render_width = self._target_render_width()
+        self._busy_render_width = render_width
         worker = ThumbnailWorker(
             pages,
             generation,
-            self._thumbnail_width_px,
+            render_width,
             self._is_cancelled,
         )
         worker.signals.page_ready.connect(self._on_page_ready)
@@ -1625,8 +1629,20 @@ class ThumbnailGrid(QScrollArea):
                 indices.append(index)
         return indices
 
+    def _target_render_width(self) -> int:
+        from pagedrop.ui.settings import thumbnail_render_width
+
+        return thumbnail_render_width(self._thumbnail_width_px)
+
+    def refresh_thumbnail_quality(self) -> None:
+        """Re-render pages that are below the current quality band cap."""
+        if self._model is None:
+            return
+        if self._pages_needing_render():
+            self._schedule_zoom_rerender()
+
     def _pages_needing_render(self) -> list[int]:
-        target = self._thumbnail_width_px
+        target = self._target_render_width()
         return [
             index
             for index, width in enumerate(self._page_render_width)
@@ -1642,8 +1658,9 @@ class ThumbnailGrid(QScrollArea):
         return [index for index in self._pages_needing_render() if index not in visible]
 
     def _sync_rendered_width_state(self) -> None:
+        target = self._target_render_width()
         if self._page_render_width and all(
-            width >= self._thumbnail_width_px for width in self._page_render_width
+            width >= target for width in self._page_render_width
         ):
             self._last_rendered_width_px = self._thumbnail_width_px
 
@@ -1715,13 +1732,16 @@ class ThumbnailGrid(QScrollArea):
         if not pixmap.loadFromData(png, "PNG") or pixmap.isNull():
             return
         self._cards[page_index].set_thumbnail(pixmap)
-        self._page_render_width[page_index] = self._thumbnail_width_px
+        self._page_render_width[page_index] = (
+            self._busy_render_width or self._target_render_width()
+        )
         self._sync_rendered_width_state()
         if not self._silent_render:
+            target = self._target_render_width()
             rendered = sum(
                 1
                 for width in self._page_render_width
-                if width >= self._thumbnail_width_px
+                if width >= target
             )
             self.rendering_progress.emit(rendered, len(self._cards))
 

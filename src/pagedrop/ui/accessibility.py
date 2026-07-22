@@ -75,8 +75,27 @@ def apply_app_stylesheet(app: QApplication | None = None) -> None:
     target = app or QApplication.instance()
     if target is None:
         return
-    target.setStyleSheet(app_stylesheet(high_contrast=prefers_high_contrast()))
+    target.setStyleSheet(
+        app_stylesheet(
+            high_contrast=prefers_high_contrast(),
+            light=app_settings.light_theme(),
+        )
+    )
 
+
+def refresh_themed_widgets(app: QApplication | None = None) -> None:
+    """Re-apply app + per-card styles after a theme preference change."""
+    target = app or QApplication.instance()
+    apply_app_stylesheet(target)
+    if target is None:
+        return
+    from pagedrop.ui.base_file_card import InternalReorderFileCard
+    from pagedrop.ui.page_card import PageCard
+
+    for card in target.findChildren(PageCard):
+        card._apply_visual_state()
+    for card in target.findChildren(InternalReorderFileCard):
+        card._apply_visual_state()
 
 class _AccessibilityWatcher(QObject):
     """Re-apply chrome when the system palette changes (Qt < 6.10 fallback path)."""

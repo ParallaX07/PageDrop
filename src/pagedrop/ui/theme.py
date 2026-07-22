@@ -61,33 +61,72 @@ def relative_luminance(hex_color: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-def app_stylesheet(*, high_contrast: bool = False) -> str:
-    # HC overrides under distinct locals so we never shadow module token names.
-    text_muted = TEXT_SECONDARY if high_contrast else TEXT_MUTED
-    border_default = BORDER_HOVER if high_contrast else BORDER_DEFAULT
-    border_subtle = BORDER_DEFAULT if high_contrast else BORDER_SUBTLE
+def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
+    # Light / HC overrides under distinct locals so we never mutate module tokens.
+    if light:
+        bg_base = "#F2F3F5"
+        bg_surface = "#FFFFFF"
+        bg_grid = "#EBEDF0"
+        bg_card = "#FFFFFF"
+        bg_card_hover = "#E4E6EB"
+        bg_toolbar = "#FFFFFF"
+        bg_status = "#FFFFFF"
+        bg_tab_bar = "#F2F3F5"
+        bg_preview_footer = "#FFFFFF"
+        border_subtle_tok = "#D5D7DE"
+        border_default_tok = "#B4B7C0"
+        border_hover = "#8A8E99"
+        text_primary = "#1A1A1F"
+        text_secondary = "#4A4A55"
+        text_muted_tok = "#6B6E78"
+        close_tab = "#D14343"
+        close_tab_hover_bg = "#F5D6D6"
+        busy_overlay_bg = "rgba(242, 243, 245, 200)"
+    else:
+        bg_base = BG_BASE
+        bg_surface = BG_SURFACE
+        bg_grid = BG_GRID
+        bg_card = BG_CARD
+        bg_card_hover = BG_CARD_HOVER
+        bg_toolbar = BG_TOOLBAR
+        bg_status = BG_STATUS
+        bg_tab_bar = BG_TAB_BAR
+        bg_preview_footer = BG_PREVIEW_FOOTER
+        border_subtle_tok = BORDER_SUBTLE
+        border_default_tok = BORDER_DEFAULT
+        border_hover = BORDER_HOVER
+        text_primary = TEXT_PRIMARY
+        text_secondary = TEXT_SECONDARY
+        text_muted_tok = TEXT_MUTED
+        close_tab = CLOSE_TAB
+        close_tab_hover_bg = CLOSE_TAB_HOVER_BG
+        busy_overlay_bg = "rgba(19, 19, 22, 180)"
+
+    text_muted = text_secondary if high_contrast else text_muted_tok
+    border_default = border_hover if high_contrast else border_default_tok
+    border_subtle = border_default_tok if high_contrast else border_subtle_tok
     focus_width = 3 if high_contrast else 2
     return f"""
     * {{
         font-family: {FONT_UI};
         font-size: 13px;
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
     }}
 
     QMainWindow {{
-        background-color: {BG_BASE};
+        background-color: {bg_base};
     }}
 
     QToolTip {{
-        background-color: {BG_CARD};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_card};
+        color: {text_primary};
         border: 1px solid {border_default};
         padding: 4px 8px;
     }}
 
     QMenuBar {{
-        background-color: {BG_SURFACE};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_surface};
+        color: {text_primary};
         border-bottom: 1px solid {border_subtle};
         padding: 2px 0;
     }}
@@ -99,15 +138,15 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
         border: {focus_width}px solid transparent;
     }}
 
-    QMenuBar::item:selected,
-    QMenuBar::item:focus {{
-        background-color: {BG_CARD_HOVER};
+    /* ponytail: no ::item:focus — Qt marks every menubar item focused at once */
+    QMenuBar::item:selected {{
+        background-color: {bg_card_hover};
         border-color: {ACCENT};
     }}
 
     QMenu {{
-        background-color: {BG_SURFACE};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_surface};
+        color: {text_primary};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         padding: 4px;
@@ -119,9 +158,8 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
         border: {focus_width}px solid transparent;
     }}
 
-    QMenu::item:selected,
-    QMenu::item:focus {{
-        background-color: {BG_CARD_HOVER};
+    QMenu::item:selected {{
+        background-color: {bg_card_hover};
         border-color: {ACCENT};
     }}
 
@@ -131,8 +169,57 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
         margin: 4px 8px;
     }}
 
+    QDialog {{
+        background-color: {bg_base};
+        color: {text_primary};
+    }}
+
+    QLineEdit {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 8px 10px;
+        selection-background-color: {ACCENT};
+        selection-color: #FFFFFF;
+    }}
+
+    QLineEdit:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QListWidget {{
+        background-color: {bg_surface};
+        color: {text_primary};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+        outline: none;
+        padding: 4px;
+    }}
+
+    QListWidget::item {{
+        padding: 8px 10px;
+        border-radius: 6px;
+        color: {text_primary};
+    }}
+
+    QListWidget::item:selected {{
+        background-color: {ACCENT};
+        color: #FFFFFF;
+    }}
+
+    QListWidget::item:hover:!selected {{
+        background-color: {bg_card_hover};
+    }}
+
+    QLabel#CommandPaletteHint {{
+        color: {text_muted};
+        font-size: 11px;
+        font-family: {FONT_MONO};
+    }}
+
     QToolBar {{
-        background-color: {BG_TOOLBAR};
+        background-color: {bg_toolbar};
         border: none;
         border-bottom: 1px solid {border_subtle};
         spacing: 8px;
@@ -140,8 +227,8 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QToolBar QToolButton {{
-        background-color: {BG_CARD};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_card};
+        color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 14px;
@@ -149,12 +236,12 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QToolBar QToolButton:hover {{
-        background-color: {BG_CARD_HOVER};
-        border-color: {BORDER_HOVER};
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
     }}
 
     QToolBar QToolButton:pressed {{
-        background-color: {BG_BASE};
+        background-color: {bg_base};
     }}
 
     QToolBar QToolButton:focus {{
@@ -184,7 +271,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
 
     QToolButton#NewTabButton {{
         background-color: transparent;
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         font-size: 16px;
@@ -197,32 +284,32 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QToolButton#NewTabButton:hover {{
-        background-color: {BG_CARD_HOVER};
-        color: {TEXT_PRIMARY};
-        border-color: {BORDER_HOVER};
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
     }}
 
     QToolButton#NewTabButton:pressed {{
-        background-color: {BG_BASE};
+        background-color: {bg_base};
     }}
 
     QToolButton#NewTabButton:focus {{
         border: {focus_width}px solid {ACCENT};
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
     }}
 
     QLabel#ToolbarFilename {{
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
         font-weight: 500;
         padding: 0 4px;
     }}
 
     QLabel#ToolbarFilename[active="true"] {{
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
     }}
 
     QWidget#ZoomControls {{
-        background-color: {BG_CARD};
+        background-color: {bg_card};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -235,8 +322,8 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QPushButton#ZoomButton {{
-        background-color: {BG_SURFACE};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_surface};
+        color: {text_primary};
         border: 1px solid {border_default};
         border-radius: 6px;
         font-size: 15px;
@@ -245,13 +332,13 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QPushButton#ZoomButton:hover:enabled {{
-        background-color: {BG_CARD_HOVER};
-        border-color: {BORDER_HOVER};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+        color: {text_primary};
     }}
 
     QPushButton#ZoomButton:pressed:enabled {{
-        background-color: {BG_BASE};
+        background-color: {bg_base};
     }}
 
     QPushButton#ZoomButton:focus {{
@@ -268,7 +355,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::groove:horizontal {{
-        background: {BG_BASE};
+        background: {bg_base};
         border: 1px solid {border_subtle};
         height: 4px;
         border-radius: 2px;
@@ -282,14 +369,14 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::add-page:horizontal {{
-        background: {BG_BASE};
+        background: {bg_base};
         border: 1px solid {border_subtle};
         height: 4px;
         border-radius: 2px;
     }}
 
     QSlider#ZoomSlider::handle:horizontal {{
-        background: {TEXT_PRIMARY};
+        background: {text_primary};
         border: 2px solid {ACCENT};
         width: 12px;
         height: 12px;
@@ -321,7 +408,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     QSlider#ZoomSlider:disabled::groove:horizontal,
     QSlider#ZoomSlider:disabled::sub-page:horizontal,
     QSlider#ZoomSlider:disabled::add-page:horizontal {{
-        background: {BG_SURFACE};
+        background: {bg_surface};
         border-color: {border_subtle};
     }}
 
@@ -331,24 +418,24 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QLabel#ZoomValueLabel {{
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
         font-family: {FONT_MONO};
         font-size: 11px;
         font-weight: 600;
     }}
 
     QStatusBar {{
-        background-color: {BG_STATUS};
-        color: {TEXT_SECONDARY};
+        background-color: {bg_status};
+        color: {text_secondary};
         border-top: 1px solid {border_subtle};
     }}
 
     QStatusBar QLabel {{
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
     }}
 
     QProgressBar {{
-        background-color: {BG_CARD};
+        background-color: {bg_card};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         text-align: center;
@@ -363,12 +450,12 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollArea#ThumbnailGrid {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
         border: none;
     }}
 
     QWidget#ThumbnailContainer {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
     }}
 
     QWidget#EmptyStatePanel {{
@@ -382,7 +469,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QLabel#GridEmptyState {{
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
         font-size: 15px;
         font-weight: 600;
         letter-spacing: -0.2px;
@@ -405,12 +492,12 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
 
     QTabWidget#TabManager::pane {{
         border: none;
-        background-color: {BG_BASE};
+        background-color: {bg_base};
         top: -1px;
     }}
 
     QTabWidget#TabManager > QTabBar {{
-        background-color: {BG_TAB_BAR};
+        background-color: {bg_tab_bar};
         border-bottom: 1px solid {border_subtle};
     }}
 
@@ -427,19 +514,19 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QTabWidget#TabManager > QTabBar::tab:selected {{
-        color: {TEXT_PRIMARY};
-        background-color: {BG_SURFACE};
+        color: {text_primary};
+        background-color: {bg_surface};
         border-bottom: 2px solid {ACCENT};
         font-weight: 600;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:hover:!selected {{
-        color: {TEXT_SECONDARY};
-        background-color: {BG_CARD};
+        color: {text_secondary};
+        background-color: {bg_card};
     }}
 
     QTabWidget#TabManager > QTabBar::tab:selected:hover {{
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton {{
@@ -454,7 +541,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton:hover {{
-        background-color: {CLOSE_TAB_HOVER_BG};
+        background-color: {close_tab_hover_bg};
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton:focus {{
@@ -462,7 +549,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollBar:vertical {{
-        background: {BG_GRID};
+        background: {bg_grid};
         width: 10px;
         margin: 0;
     }}
@@ -474,7 +561,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollBar::handle:vertical:hover {{
-        background: {BORDER_HOVER};
+        background: {border_hover};
     }}
 
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
@@ -482,7 +569,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollBar:horizontal {{
-        background: {BG_GRID};
+        background: {bg_grid};
         height: 10px;
         margin: 0;
     }}
@@ -494,7 +581,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollBar::handle:horizontal:hover {{
-        background: {BORDER_HOVER};
+        background: {border_hover};
     }}
 
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
@@ -502,24 +589,24 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QMessageBox {{
-        background-color: {BG_SURFACE};
+        background-color: {bg_surface};
     }}
 
     QMessageBox QLabel {{
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
     }}
 
     QMessageBox QPushButton {{
-        background-color: {BG_CARD};
-        color: {TEXT_PRIMARY};
+        background-color: {bg_card};
+        color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 20px;
     }}
 
     QMessageBox QPushButton:hover {{
-        background-color: {BG_CARD_HOVER};
-        border-color: {BORDER_HOVER};
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
     }}
 
     QMessageBox QPushButton:focus {{
@@ -539,12 +626,12 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollArea#PagePreviewScroll {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
         border: none;
     }}
 
     QWidget#PagePreview {{
-        background-color: {BG_BASE};
+        background-color: {bg_base};
     }}
 
     QLabel#PagePreviewImage {{
@@ -553,7 +640,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QWidget#PreviewFooter {{
-        background-color: {BG_PREVIEW_FOOTER};
+        background-color: {bg_preview_footer};
         border-top: 1px solid {border_subtle};
     }}
 
@@ -565,15 +652,15 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QWidget#BusyOverlay {{
-        background-color: rgba(19, 19, 22, 180);
+        background-color: {busy_overlay_bg};
     }}
 
     QLabel#BusyOverlayMessage {{
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
         font-size: 14px;
         font-weight: 600;
         padding: 16px 24px;
-        background-color: {BG_SURFACE};
+        background-color: {bg_surface};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -583,21 +670,21 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QLabel#ToastOverlayMessage {{
-        color: {TEXT_PRIMARY};
+        color: {text_primary};
         font-size: 13px;
         font-weight: 600;
         padding: 12px 20px;
-        background-color: {BG_SURFACE};
+        background-color: {bg_surface};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
 
     QWidget#MergeListPane {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
     }}
 
     QWidget#MergeEmptyState {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
     }}
 
     QLabel#MergeEmptyLogo {{
@@ -607,7 +694,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QLabel#MergeEmptyTitle {{
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
         font-size: 15px;
         font-weight: 600;
         letter-spacing: -0.2px;
@@ -620,16 +707,16 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollArea#MergeFileGrid {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
         border: none;
     }}
 
     QWidget#MergeFileGridContainer {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
     }}
 
     QWidget#ConvertEmptyState {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
     }}
 
     QLabel#ConvertEmptyLogo {{
@@ -639,7 +726,7 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QLabel#ConvertEmptyTitle {{
-        color: {TEXT_SECONDARY};
+        color: {text_secondary};
         font-size: 15px;
         font-weight: 600;
         letter-spacing: -0.2px;
@@ -652,12 +739,12 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
     }}
 
     QScrollArea#ConvertFileGrid {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
         border: none;
     }}
 
     QWidget#ConvertFileGridContainer {{
-        background-color: {BG_GRID};
+        background-color: {bg_grid};
     }}
 
     QLabel#ConvertPreviewImage {{
@@ -682,8 +769,37 @@ def shadow_qcolor(*, alpha: int = 55) -> "QColor":
     """Tinted drop-shadow color."""
     from PyQt6.QtGui import QColor
 
+    from pagedrop.ui.settings import light_theme
+
+    if light_theme():
+        return QColor(30, 40, 60, min(alpha, 40))
     r, g, b = SHADOW_RGB
     return QColor(r, g, b, alpha)
+
+
+def _card_surface_colors() -> dict[str, str]:
+    """Surface / text / border tokens for per-card stylesheets."""
+    from pagedrop.ui.settings import light_theme
+
+    if light_theme():
+        return {
+            "BG_CARD": "#FFFFFF",
+            "BG_CARD_HOVER": "#E4E6EB",
+            "BORDER_DEFAULT": "#B4B7C0",
+            "BORDER_HOVER": "#8A8E99",
+            "TEXT_PRIMARY": "#1A1A1F",
+            "TEXT_SECONDARY": "#4A4A55",
+            "TEXT_MUTED": "#6B6E78",
+        }
+    return {
+        "BG_CARD": BG_CARD,
+        "BG_CARD_HOVER": BG_CARD_HOVER,
+        "BORDER_DEFAULT": BORDER_DEFAULT,
+        "BORDER_HOVER": BORDER_HOVER,
+        "TEXT_PRIMARY": TEXT_PRIMARY,
+        "TEXT_SECONDARY": TEXT_SECONDARY,
+        "TEXT_MUTED": TEXT_MUTED,
+    }
 
 
 def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
@@ -711,17 +827,18 @@ def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
 
 
 def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False) -> str:
-    border_color = ACCENT if selected else BORDER_DEFAULT
+    c = _card_surface_colors()
+    border_color = ACCENT if selected else c["BORDER_DEFAULT"]
     if selected and hovered:
         border_color = ACCENT_HOVER
     elif hovered:
-        border_color = BORDER_HOVER
+        border_color = c["BORDER_HOVER"]
     elif focused:
         border_color = ACCENT
 
     border_width = 3 if selected else (2 if focused else 1)
-    background = BG_CARD_HOVER if hovered else BG_CARD
-    label_color = TEXT_PRIMARY if selected else TEXT_SECONDARY
+    background = c["BG_CARD_HOVER"] if hovered else c["BG_CARD"]
+    label_color = c["TEXT_PRIMARY"] if selected else c["TEXT_SECONDARY"]
 
     return f"""
     QFrame#PageCard {{
@@ -762,18 +879,19 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
 def merge_file_card_stylesheet(
     *, selected: bool, hovered: bool, focused: bool = False
 ) -> str:
-    border_color = ACCENT if selected else BORDER_DEFAULT
+    c = _card_surface_colors()
+    border_color = ACCENT if selected else c["BORDER_DEFAULT"]
     if selected and hovered:
         border_color = ACCENT_HOVER
     elif hovered:
-        border_color = BORDER_HOVER
+        border_color = c["BORDER_HOVER"]
     elif focused:
         border_color = ACCENT
 
     border_width = 3 if selected else (2 if focused else 1)
-    background = BG_CARD_HOVER if hovered else BG_CARD
-    title_color = TEXT_PRIMARY if selected else TEXT_PRIMARY
-    subtitle_color = TEXT_MUTED if not selected else TEXT_SECONDARY
+    background = c["BG_CARD_HOVER"] if hovered else c["BG_CARD"]
+    title_color = c["TEXT_PRIMARY"]
+    subtitle_color = c["TEXT_MUTED"] if not selected else c["TEXT_SECONDARY"]
 
     return f"""
     QFrame#MergeFileCard {{
@@ -801,18 +919,19 @@ def merge_file_card_stylesheet(
 def convert_file_card_stylesheet(
     *, selected: bool, hovered: bool, focused: bool = False
 ) -> str:
-    border_color = ACCENT if selected else BORDER_DEFAULT
+    c = _card_surface_colors()
+    border_color = ACCENT if selected else c["BORDER_DEFAULT"]
     if selected and hovered:
         border_color = ACCENT_HOVER
     elif hovered:
-        border_color = BORDER_HOVER
+        border_color = c["BORDER_HOVER"]
     elif focused:
         border_color = ACCENT
 
     border_width = 3 if selected else (2 if focused else 1)
-    background = BG_CARD_HOVER if hovered else BG_CARD
-    title_color = TEXT_PRIMARY if selected else TEXT_PRIMARY
-    subtitle_color = TEXT_MUTED if not selected else TEXT_SECONDARY
+    background = c["BG_CARD_HOVER"] if hovered else c["BG_CARD"]
+    title_color = c["TEXT_PRIMARY"]
+    subtitle_color = c["TEXT_MUTED"] if not selected else c["TEXT_SECONDARY"]
 
     return f"""
     QFrame#ConvertFileCard {{

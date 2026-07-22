@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from PyQt6.QtCore import QByteArray, QSettings
 
@@ -15,10 +16,22 @@ KEY_CONFIRM_DELETE_MULTIPLE = "safety/confirm_before_deleting_multiple_pages"
 KEY_CONFIRM_CLOSE_DIRTY = "safety/confirm_before_closing_dirty_tabs"
 KEY_REMEMBER_GEOMETRY = "window/remember_geometry"
 KEY_WINDOW_GEOMETRY = "window/geometry"
+KEY_LIGHT_THEME = "view/light_theme"
+KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
+KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 
 # Confirm multi-page delete when selection size exceeds this (instant for ≤3).
 DELETE_CONFIRM_THRESHOLD = 3
 RECENT_FILES_MAX = 10
+
+ThumbnailQuality = Literal["low", "medium", "high"]
+THUMBNAIL_QUALITY_VALUES: tuple[ThumbnailQuality, ...] = ("low", "medium", "high")
+# Max PNG render width for each quality band (display zoom may be larger).
+THUMBNAIL_QUALITY_CAP_PX: dict[ThumbnailQuality, int] = {
+    "low": 160,
+    "medium": 320,
+    "high": 480,
+}
 
 
 def _settings() -> QSettings:
@@ -130,3 +143,61 @@ def load_window_geometry() -> QByteArray | None:
     if isinstance(value, (bytes, bytearray)) and value:
         return QByteArray(value)
     return None
+
+
+def light_theme() -> bool:
+    """Use the light app chrome (default: False / dark)."""
+    return _settings().value(KEY_LIGHT_THEME, False, type=bool)
+
+
+def set_light_theme(enabled: bool) -> None:
+    _settings().setValue(KEY_LIGHT_THEME, bool(enabled))
+
+
+def thumbnail_quality() -> ThumbnailQuality:
+    """User-visible thumbnail render quality band (default: high)."""
+    raw = str(_settings().value(KEY_THUMBNAIL_QUALITY, "high")).lower()
+    if raw in THUMBNAIL_QUALITY_CAP_PX:
+        return raw  # type: ignore[return-value]
+    return "high"
+
+
+def set_thumbnail_quality(quality: ThumbnailQuality | str) -> None:
+    value = str(quality).lower()
+    if value not in THUMBNAIL_QUALITY_CAP_PX:
+        raise ValueError(f"Unknown thumbnail quality: {quality!r}")
+    _settings().setValue(KEY_THUMBNAIL_QUALITY, value)
+
+
+def thumbnail_render_width(display_width_px: int) -> int:
+    """PNG render width for *display_width_px* under the current quality band."""
+    from pagedrop.ui.theme import MAX_THUMBNAIL_WIDTH, MIN_THUMBNAIL_WIDTH
+
+    cap = THUMBNAIL_QUALITY_CAP_PX[thumbnail_quality()]
+    return max(
+        MIN_THUMBNAIL_WIDTH,
+        min(int(display_width_px), cap, MAX_THUMBNAIL_WIDTH),
+    )
+
+
+def thumbnail_zoom() -> int:
+    """Last-used thumbnail display width in px (global default)."""
+    from pagedrop.ui.theme import (
+        DEFAULT_THUMBNAIL_WIDTH,
+        MAX_THUMBNAIL_WIDTH,
+        MIN_THUMBNAIL_WIDTH,
+    )
+
+    raw = _settings().value(KEY_THUMBNAIL_ZOOM, DEFAULT_THUMBNAIL_WIDTH)
+    try:
+        width = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_THUMBNAIL_WIDTH
+    return max(MIN_THUMBNAIL_WIDTH, min(width, MAX_THUMBNAIL_WIDTH))
+
+
+def set_thumbnail_zoom(width_px: int) -> None:
+    from pagedrop.ui.theme import MAX_THUMBNAIL_WIDTH, MIN_THUMBNAIL_WIDTH
+
+    clamped = max(MIN_THUMBNAIL_WIDTH, min(int(width_px), MAX_THUMBNAIL_WIDTH))
+    _settings().setValue(KEY_THUMBNAIL_ZOOM, clamped)
