@@ -26,15 +26,15 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
 
     cards = window._thumbnail_grid._cards
     assert len(cards) == 10
-    status = window.statusBar()
+    selection_status = window._selection_status
 
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     assert _selected_indices(cards) == {0}
-    assert status.currentMessage() == "1 page selected"
+    assert selection_status.text() == "1 page selected"
 
     qtbot.mouseClick(cards[2], Qt.MouseButton.LeftButton)
     assert _selected_indices(cards) == {2}
-    assert status.currentMessage() == "1 page selected"
+    assert selection_status.text() == "1 page selected"
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
     for index in (0, 2, 4):
@@ -44,7 +44,7 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
             modifier=Qt.KeyboardModifier.ControlModifier,
         )
     assert _selected_indices(cards) == {0, 2, 4}
-    assert status.currentMessage() == "3 pages selected"
+    assert selection_status.text() == "3 pages selected"
 
     qtbot.mouseClick(cards[1], Qt.MouseButton.LeftButton)
     qtbot.mouseClick(
@@ -53,7 +53,7 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
         modifier=Qt.KeyboardModifier.ShiftModifier,
     )
     assert _selected_indices(cards) == set(range(1, 6))
-    assert status.currentMessage() == "5 pages selected"
+    assert selection_status.text() == "5 pages selected"
 
     qtbot.keyClick(
         window,
@@ -61,10 +61,10 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
     assert _selected_indices(cards) == set(range(10))
-    assert status.currentMessage() == "10 pages selected"
+    assert selection_status.text() == "10 pages selected"
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
     assert _selected_indices(cards) == set()
-    assert status.currentMessage() == "No selection"
+    assert selection_status.text() == "No selection"
 
     window.close()

@@ -8,6 +8,7 @@ import pytest
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
     PdfEmptyError,
+    PdfLoadError,
     PdfLoader,
     PdfPasswordError,
     PdfPasswordRequiredError,
@@ -27,6 +28,30 @@ def test_garbage_file_raises_clear_error(garbage_pdf):
 def test_empty_pdf_zero_pages(empty_pdf):
     with pytest.raises(PdfEmptyError, match="no pages"):
         PdfLoader(str(empty_pdf))
+
+
+def test_oserror_on_open_becomes_pdf_load_error(tmp_path, monkeypatch):
+    path = tmp_path / "gone.pdf"
+    path.write_bytes(b"%PDF-1.4")
+
+    import fitz
+
+    monkeypatch.setattr(fitz, "open", lambda *_a, **_k: (_ for _ in ()).throw(OSError(5, "I/O error")))
+
+    with pytest.raises(PdfLoadError, match="drive disconnected|I/O error"):
+        PdfLoader(str(path))
+
+
+def test_oserror_on_is_file_becomes_pdf_load_error(tmp_path, monkeypatch):
+    path = tmp_path / "remote.pdf"
+
+    monkeypatch.setattr(
+        "pagedrop.core.pdf_loader.Path.is_file",
+        lambda self: (_ for _ in ()).throw(OSError(5, "Input/output error")),
+    )
+
+    with pytest.raises(PdfLoadError, match="drive disconnected|I/O error"):
+        PdfLoader(str(path))
 
 
 def test_password_required_and_incorrect(tmp_path):

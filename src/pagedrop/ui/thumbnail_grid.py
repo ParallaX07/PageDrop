@@ -232,7 +232,7 @@ class ThumbnailGrid(QScrollArea):
         self._empty_state.setObjectName("EmptyStatePanel")
         self._empty_state.setAccessibleName("No document open")
         self._empty_state.setAccessibleDescription(
-            "Use File → Open PDF or the toolbar button to begin"
+            "Choose a file or drop one onto the grid"
         )
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -250,7 +250,7 @@ class ThumbnailGrid(QScrollArea):
         self._empty_title.setObjectName("GridEmptyState")
         self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._empty_hint = QLabel("Use File → Open PDF or the toolbar button to begin")
+        self._empty_hint = QLabel("Choose a file or drop one onto the grid")
         self._empty_hint.setObjectName("GridEmptyHint")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_hint.setWordWrap(True)
@@ -547,6 +547,15 @@ class ThumbnailGrid(QScrollArea):
         if self._pages_needing_render():
             if self._visible_pages_needing_render():
                 self._scroll_render_timer.start()
+
+    def has_pending_work(self) -> bool:
+        """True when a load/render batch is still in flight."""
+        return (
+            self._busy_render_generation >= 0
+            or bool(self._busy_reasons)
+            or self._card_create_timer.isActive()
+            or bool(self._pending_card_indices)
+        )
 
     def cancel_rendering(self) -> None:
         """Invalidate in-flight workers and drain the pool before teardown/reload."""
@@ -1221,7 +1230,20 @@ class ThumbnailGrid(QScrollArea):
         pos_in_grid = event.position().toPoint()
         self._drag_autoscroller.update(pos_in_grid)
         self._update_drop_at_drag_pos(pos_in_grid)
+        self._show_drag_place_status()
         event.acceptProposedAction()
+
+    def _show_drag_place_status(self) -> None:
+        window = self.window()
+        status_bar = getattr(window, "statusBar", None)
+        if callable(status_bar):
+            status_bar().showMessage("Release to place pages")
+
+    def _restore_status_after_drag(self) -> None:
+        window = self.window()
+        restore = getattr(window, "_restore_document_status", None)
+        if callable(restore):
+            restore()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if not getattr(self, "_drag_over_grid", False):
@@ -1257,11 +1279,13 @@ class ThumbnailGrid(QScrollArea):
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
+        self._restore_status_after_drag()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
+        self._restore_status_after_drag()
         mime = event.mimeData()
         source_grid = self._grid_for_widget(event.source())
 

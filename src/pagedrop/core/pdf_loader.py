@@ -32,11 +32,21 @@ class PdfPasswordError(PdfLoadError):
 class PdfLoader:
     def __init__(self, path: str, password: str | None = None) -> None:
         self.path = path
-        if not Path(path).is_file():
-            raise PdfNotFoundError(f"PDF not found: {path}")
+        try:
+            if not Path(path).is_file():
+                raise PdfNotFoundError(f"PDF not found: {path}")
+        except OSError as exc:
+            # Removable / network volumes: is_file() itself can raise.
+            raise PdfLoadError(
+                f"Could not access PDF (drive disconnected or I/O error): {path}"
+            ) from exc
 
         try:
             self.doc = fitz.open(path)
+        except OSError as exc:
+            raise PdfLoadError(
+                f"Could not access PDF (drive disconnected or I/O error): {path}"
+            ) from exc
         except fitz.EmptyFileError as exc:
             raise PdfCorruptError(f"PDF file is empty: {path}") from exc
         except fitz.FileDataError as exc:

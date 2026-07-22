@@ -578,6 +578,20 @@ def app_stylesheet(*, high_contrast: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
     }}
 
+    QWidget#ToastOverlay {{
+        background-color: transparent;
+    }}
+
+    QLabel#ToastOverlayMessage {{
+        color: {TEXT_PRIMARY};
+        font-size: 13px;
+        font-weight: 600;
+        padding: 12px 20px;
+        background-color: {BG_SURFACE};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
     QWidget#MergeListPane {{
         background-color: {BG_GRID};
     }}

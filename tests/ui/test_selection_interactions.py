@@ -113,15 +113,16 @@ def test_status_bar_matches_selection(qtbot, five_page_pdf):
 
     cards = window._thumbnail_grid._cards
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
-    assert window.statusBar().currentMessage() == "1 page selected"
+    assert window._selection_status.text() == "1 page selected"
+    assert window._selection_status.isVisible()
 
     qtbot.mouseClick(
         cards[2],
         Qt.MouseButton.LeftButton,
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
-    assert window.statusBar().currentMessage() == "2 pages selected"
+    assert window._selection_status.text() == "2 pages selected"
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
-    assert window.statusBar().currentMessage() == "No selection"
+    assert window._selection_status.text() == "No selection"
     window.close()

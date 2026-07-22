@@ -195,6 +195,22 @@ def test_rapid_reopen_cancels_worker(main_window, five_page_pdf, one_page_pdf, q
     assert five_page_pdf.name not in main_window.windowTitle()
 
 
+def test_rapid_reopen_shows_cancelled_toast(main_window, five_page_pdf, one_page_pdf, monkeypatch):
+    main_window._load_pdf(str(five_page_pdf))
+    monkeypatch.setattr(
+        main_window._thumbnail_grid,
+        "has_pending_work",
+        lambda: True,
+    )
+    toasts: list[str] = []
+    monkeypatch.setattr(main_window, "_show_toast", toasts.append)
+
+    main_window._load_pdf(str(one_page_pdf))
+
+    assert toasts == ["Cancelled previous load"]
+    assert len(main_window._thumbnail_grid._cards) == 1
+
+
 def test_single_page_pdf_selection_and_drag(qtbot, one_page_pdf, monkeypatch):
     loader = PdfLoader(str(one_page_pdf))
     model = PdfEditModel(loader.path, loader.page_count)

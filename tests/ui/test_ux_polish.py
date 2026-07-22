@@ -164,3 +164,17 @@ def test_select_all_deselect_all_toolbar(main_window, five_page_pdf, qtbot):
 
     deselect_all.trigger()
     assert main_window._thumbnail_grid.selection_manager.selection == set()
+
+
+def test_toast_and_transient_status(main_window, qtbot):
+    main_window.showMinimized()
+    qtbot.waitExposed(main_window)
+    main_window._show_toast("Saved to demo.pdf")
+    assert main_window._toast.isVisible()
+    assert main_window._toast._message.text() == "Saved to demo.pdf"
+
+    main_window._transient_status("Tab closed")
+    assert main_window.statusBar().currentMessage() == "Tab closed"
+
+    main_window._persistent_status("Loaded 5 pages")
+    assert main_window.statusBar().currentMessage() == "Loaded 5 pages"

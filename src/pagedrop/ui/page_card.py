@@ -208,6 +208,10 @@ class PageCard(BaseFileCard):
             drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
 
         QApplication.setOverrideCursor(Qt.CursorShape.DragCopyCursor)
+        window = self.window()
+        status_bar = getattr(window, "statusBar", None)
+        if callable(status_bar):
+            status_bar().showMessage("Release to place pages")
         try:
             # Offscreen/test Qt has no drop target; exec() would block the event loop forever.
             # Under tests, conftest patches exec to return immediately. Offscreen
@@ -221,6 +225,9 @@ class PageCard(BaseFileCard):
         finally:
             QApplication.restoreOverrideCursor()
             self._temp_manager.cleanup_paths(temp_paths)
+            restore = getattr(window, "_restore_document_status", None)
+            if callable(restore):
+                restore()
 
     def _build_drag_pixmap(self, count: int) -> QPixmap | None:
         thumbnail = self._thumbnail_label.pixmap()

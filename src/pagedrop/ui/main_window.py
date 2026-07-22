@@ -31,6 +31,7 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_writer import write_pdf
+from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.dialogs import fit_message_box_buttons
 from pagedrop.ui.keyboard_nav import (
@@ -71,6 +72,7 @@ if TYPE_CHECKING:
 
 
 MOVE_UNDO_TIMEOUT_MS = 8000
+STATUS_TRANSIENT_MS = 5000
 
 
 class MainWindow(QMainWindow):
@@ -104,7 +106,7 @@ class MainWindow(QMainWindow):
         self._build_navigation_shortcuts()
         self._build_central_widget()
         QApplication.instance().installEventFilter(self)
-        self.statusBar().showMessage("Ready")
+        self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
 
     @property
@@ -337,6 +339,7 @@ class MainWindow(QMainWindow):
         else:
             self._tab_manager.add_blank_tab()
         self.setCentralWidget(self._tab_manager)
+        self._toast = ToastOverlay(self._tab_manager)
         self._last_tab_index = self._tab_manager.currentIndex()
         set_content_tab_order(
             self._toolbar,
@@ -344,12 +347,57 @@ class MainWindow(QMainWindow):
             status_bar=self.statusBar(),
         )
 
+    def _transient_status(self, message: str) -> None:
+        self.statusBar().showMessage(message, STATUS_TRANSIENT_MS)
+
+    def _persistent_status(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+
+    def _show_toast(self, message: str) -> None:
+        self._toast.show_toast(message)
+
+    def _restore_document_status(self) -> None:
+        """Restore sticky document status after a drag hint."""
+        tab = self._active_tab()
+        if tab is None:
+            self._persistent_status("Ready")
+            return
+        if tab.is_preview_visible() and tab.edit_model is not None:
+            self._update_preview_status()
+            return
+        if tab.edit_model is not None:
+            count = tab.edit_model.logical_count()
+            noun = "page" if count == 1 else "pages"
+            self._persistent_status(f"Loaded {count} {noun}")
+            return
+        self._persistent_status("Ready")
+
+    def _update_selection_status(self, selection: set[int]) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.loader is None:
+            self._selection_status.clear()
+            self._selection_status.hide()
+            return
+        if selection:
+            count = len(selection)
+            noun = "page" if count == 1 else "pages"
+            self._selection_status.setText(f"{count} {noun} selected")
+            self._selection_status.show()
+        else:
+            self._selection_status.setText("No selection")
+            self._selection_status.show()
+
     def _build_status_widgets(self) -> None:
         self._progress_bar = QProgressBar()
         self._progress_bar.setMaximumWidth(200)
         self._progress_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._progress_bar.setAccessibleName("Page rendering progress")
         self._progress_bar.hide()
+
+        self._selection_status = QLabel()
+        self._selection_status.setObjectName("SelectionStatusLabel")
+        self._selection_status.setAccessibleName("Selection count")
+        self._selection_status.hide()
 
         self._move_undo_widget = QWidget()
         self._move_undo_widget.setObjectName("MoveUndoToast")
@@ -369,6 +417,7 @@ class MainWindow(QMainWindow):
         self._move_undo_timer.setSingleShot(True)
         self._move_undo_timer.timeout.connect(self._dismiss_move_undo)
 
+        self.statusBar().addPermanentWidget(self._selection_status)
         self.statusBar().addPermanentWidget(self._move_undo_widget)
         self.statusBar().addPermanentWidget(self._progress_bar)
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -709,6 +758,7 @@ class MainWindow(QMainWindow):
         self._update_preview_mode_ui()
         self._update_close_tab_action()
         self._update_save_as_action()
+        self._update_selection_status(tab.thumbnail_grid.selection_manager.selection)
 
     def _reset_toolbar_for_blank_tab(self) -> None:
         self._update_window_title()
@@ -729,6 +779,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.hide()
         self._update_close_tab_action()
         self._update_save_as_action()
+        self._update_selection_status(set())
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
@@ -780,10 +831,10 @@ class MainWindow(QMainWindow):
         self._deselect_all_action.setEnabled(False)
         self._update_save_as_action()
         if tab.edit_model.logical_count() == 0:
-            self.statusBar().showMessage("All pages deleted")
+            self._transient_status("All pages deleted")
         else:
             noun = "page" if count == 1 else "pages"
-            self.statusBar().showMessage(f"Deleted {count} {noun}")
+            self._transient_status(f"Deleted {count} {noun}")
 
     def _move_selected_pages_up(self) -> None:
         tab = self._active_tab()
@@ -798,7 +849,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         count = len(tab.thumbnail_grid.selection_manager.selection)
         noun = "page" if count == 1 else "pages"
-        self.statusBar().showMessage(f"Moved {count} {noun} up")
+        self._transient_status(f"Moved {count} {noun} up")
 
     def _move_selected_pages_down(self) -> None:
         tab = self._active_tab()
@@ -813,7 +864,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         count = len(tab.thumbnail_grid.selection_manager.selection)
         noun = "page" if count == 1 else "pages"
-        self.statusBar().showMessage(f"Moved {count} {noun} down")
+        self._transient_status(f"Moved {count} {noun} down")
 
     def _undo(self) -> None:
         tab = self._active_tab()
@@ -825,7 +876,7 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(tab)
         self._update_window_title()
         self._sync_toolbar_from_active_tab()
-        self.statusBar().showMessage("Undo")
+        self._transient_status("Undo")
 
     def _redo(self) -> None:
         tab = self._active_tab()
@@ -837,7 +888,7 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(tab)
         self._update_window_title()
         self._sync_toolbar_from_active_tab()
-        self.statusBar().showMessage("Redo")
+        self._transient_status("Redo")
 
     def _update_undo_redo_actions(self) -> None:
         tab = self._active_tab()
@@ -869,14 +920,14 @@ class MainWindow(QMainWindow):
         if undo is None:
             return
         if not undo():
-            self.statusBar().showMessage("Move undo is no longer available")
+            self._transient_status("Move undo is no longer available")
             return
         self._sync_toolbar_from_active_tab()
         if self._window_manager is not None:
             for window in self._window_manager.windows:
                 if window is not self:
                     window._sync_toolbar_from_active_tab()
-        self.statusBar().showMessage("Move undone")
+        self._transient_status("Move undone")
 
     def _select_all_pages(self) -> None:
         tab = self._active_tab()
@@ -922,12 +973,10 @@ class MainWindow(QMainWindow):
         self._update_preview_mode_ui()
         if tab.edit_model is not None:
             selection = tab.thumbnail_grid.selection_manager.selection
-            if selection:
-                self._on_selection_changed(selection)
-            else:
-                count = tab.edit_model.logical_count()
-                noun = "page" if count == 1 else "pages"
-                self.statusBar().showMessage(f"Loaded {count} {noun}")
+            self._update_selection_status(selection)
+            count = tab.edit_model.logical_count()
+            noun = "page" if count == 1 else "pages"
+            self._persistent_status(f"Loaded {count} {noun}")
 
     def _open_preview(self) -> None:
         tab = self._active_tab()
@@ -974,7 +1023,7 @@ class MainWindow(QMainWindow):
             return
         page = tab.preview_widget.current_page + 1
         total = tab.edit_model.logical_count()
-        self.statusBar().showMessage(f"Preview · page {page} of {total}")
+        self._persistent_status(f"Preview · page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
         tab = self._active_tab()
@@ -1047,15 +1096,15 @@ class MainWindow(QMainWindow):
             return
         indices = parse_page_jump(text, count)
         if not indices:
-            self.statusBar().showMessage("Enter a page number or range like 12 or 1-5")
+            self._transient_status("Enter a page number or range like 12 or 1-5")
             return
         if tab.is_preview_visible():
             tab.close_preview()
         tab.thumbnail_grid.jump_to_pages(indices)
         if len(indices) == 1:
-            self.statusBar().showMessage(f"Jumped to page {indices[0] + 1}")
+            self._transient_status(f"Jumped to page {indices[0] + 1}")
         else:
-            self.statusBar().showMessage(
+            self._transient_status(
                 f"Selected pages {indices[0] + 1}–{indices[-1] + 1}"
             )
 
@@ -1065,7 +1114,7 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         if tab is not None and tab.loader is not None:
             self._zoom_controls.set_value(thumbnail_width_px)
-            self.statusBar().showMessage(
+            self._transient_status(
                 f"Thumbnail size: {thumbnail_width_px} px"
             )
 
@@ -1142,7 +1191,8 @@ class MainWindow(QMainWindow):
 
         count = len(paths)
         noun = "page" if count == 1 else "pages"
-        self.statusBar().showMessage(f"Extracted {count} {noun} to {folder}")
+        self._transient_status(f"Extracted {count} {noun} to {folder}")
+        self._show_toast(f"Extracted {count} {noun}")
 
     def _open_merge_window(self) -> None:
         if self._merge_window is None:
@@ -1365,6 +1415,7 @@ class MainWindow(QMainWindow):
 
         filename = Path(path).name
         password: str | None = None
+        cancelled_previous = target.thumbnail_grid.has_pending_work()
 
         while True:
             try:
@@ -1375,14 +1426,14 @@ class MainWindow(QMainWindow):
                 if password is None:
                     if target is self._active_tab():
                         self._sync_toolbar_from_active_tab()
-                        self.statusBar().showMessage("Ready")
+                        self._persistent_status("Ready")
                     return
             except PdfPasswordError:
                 password = self._prompt_pdf_password(filename, incorrect=True)
                 if password is None:
                     if target is self._active_tab():
                         self._sync_toolbar_from_active_tab()
-                        self.statusBar().showMessage("Ready")
+                        self._persistent_status("Ready")
                     return
             except PdfEmptyError:
                 QMessageBox.warning(
@@ -1392,7 +1443,7 @@ class MainWindow(QMainWindow):
                 )
                 if target is self._active_tab():
                     self._sync_toolbar_from_active_tab()
-                    self.statusBar().showMessage("Ready")
+                    self._persistent_status("Ready")
                 return
             except PdfLoadError as exc:
                 QMessageBox.critical(
@@ -1402,7 +1453,7 @@ class MainWindow(QMainWindow):
                 )
                 if target is self._active_tab():
                     self._sync_toolbar_from_active_tab()
-                    self.statusBar().showMessage("Ready")
+                    self._persistent_status("Ready")
                 return
 
         self._tab_manager.update_tab_title(target)
@@ -1415,7 +1466,9 @@ class MainWindow(QMainWindow):
                 else loader.page_count
             )
             noun = "page" if count == 1 else "pages"
-            self.statusBar().showMessage(f"Loading {count} {noun}…")
+            if cancelled_previous:
+                self._show_toast("Cancelled previous load")
+            self._persistent_status(f"Loading {count} {noun}…")
 
     def _on_open_pdfs_requested(self, paths: list) -> None:
         """Open PDFs dropped onto a blank tab (first into that tab, rest as new tabs)."""
@@ -1507,7 +1560,8 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
-            self.statusBar().showMessage(f"Saved to {Path(path).name}")
+            self._transient_status(f"Saved to {Path(path).name}")
+            self._show_toast(f"Saved to {Path(path).name}")
         return True
 
     def _rename_tab(self, index: int) -> None:
@@ -1536,7 +1590,7 @@ class MainWindow(QMainWindow):
 
         self._tab_manager.update_tab_title(tab)
         if tab is self._active_tab():
-            self.statusBar().showMessage(f"Tab renamed to {tab.tab_title}")
+            self._transient_status(f"Tab renamed to {tab.tab_title}")
 
     def _prompt_unsaved_changes(self, tab: PdfTab) -> str:
         """Return ``save``, ``discard``, or ``cancel``."""
@@ -1590,21 +1644,21 @@ class MainWindow(QMainWindow):
 
     def _close_tab(self) -> None:
         if self._is_only_blank_tab():
-            self.statusBar().showMessage("Cannot close the last blank tab")
+            self._transient_status("Cannot close the last blank tab")
             return
         index = self._tab_manager.currentIndex()
         if index >= 0 and self._try_close_tab(index):
             self._sync_toolbar_from_active_tab()
-            self.statusBar().showMessage("Tab closed")
+            self._transient_status("Tab closed")
 
     def _on_tab_close_requested(self, index: int) -> None:
         tab = self._tab_manager.widget(index)
         if isinstance(tab, PdfTab) and tab.is_blank and self._is_only_blank_tab():
-            self.statusBar().showMessage("Cannot close the last blank tab")
+            self._transient_status("Cannot close the last blank tab")
             return
         if self._try_close_tab(index):
             self._sync_toolbar_from_active_tab()
-            self.statusBar().showMessage("Tab closed")
+            self._transient_status("Tab closed")
 
     def _on_rendering_started(self, total_pages: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1623,7 +1677,7 @@ class MainWindow(QMainWindow):
         busy_reasons = getattr(self.sender(), "_busy_reasons", None)
         if busy_reasons is not None and "loading" in busy_reasons:
             return
-        self.statusBar().showMessage(f"Rendering page {current} of {total}…")
+        self._persistent_status(f"Rendering page {current} of {total}…")
 
     def _on_rendering_finished(self) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1631,13 +1685,12 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         self._progress_bar.hide()
         if tab is not None and tab.edit_model is not None:
-            selection = tab.thumbnail_grid.selection_manager.selection
-            if selection:
-                self._on_selection_changed(selection)
-            else:
-                count = tab.edit_model.logical_count()
-                noun = "page" if count == 1 else "pages"
-                self.statusBar().showMessage(f"Loaded {count} {noun}")
+            self._update_selection_status(
+                tab.thumbnail_grid.selection_manager.selection
+            )
+            count = tab.edit_model.logical_count()
+            noun = "page" if count == 1 else "pages"
+            self._persistent_status(f"Loaded {count} {noun}")
 
     def _on_pages_inserted(
         self, count: int, filename: str, position: int
@@ -1647,9 +1700,10 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self._update_undo_redo_actions()
         noun = "page" if count == 1 else "pages"
-        self.statusBar().showMessage(
+        self._transient_status(
             f"Inserted {count} {noun} from {filename} at position {position}"
         )
+        self._show_toast(f"Inserted {count} {noun}")
 
     def _on_pages_reordered(self) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1663,9 +1717,8 @@ class MainWindow(QMainWindow):
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
         noun = "page" if count == 1 else "pages"
-        self.statusBar().showMessage(
-            f"Inserted {count} {noun} from {filename}"
-        )
+        self._transient_status(f"Inserted {count} {noun} from {filename}")
+        self._show_toast(f"Inserted {count} {noun}")
         self._sync_toolbar_from_active_tab()
 
     def _on_pages_moved_out(
@@ -1682,9 +1735,7 @@ class MainWindow(QMainWindow):
             return
         noun = "page" if count == 1 else "pages"
         suffix = f" to {target_filename}" if target_filename else ""
-        self.statusBar().showMessage(
-            f"Moved {count} {noun}{suffix}"
-        )
+        self._transient_status(f"Moved {count} {noun}{suffix}")
 
     def _on_pages_transferred_via_tab_bar(
         self, count: int, target_filename: str, moved: bool, undo=None
@@ -1699,14 +1750,14 @@ class MainWindow(QMainWindow):
         noun = "page" if count == 1 else "pages"
         verb = "Moved" if moved else "Appended"
         suffix = f" to {target_filename}" if target_filename else ""
-        self.statusBar().showMessage(f"{verb} {count} {noun}{suffix}")
+        self._transient_status(f"{verb} {count} {noun}{suffix}")
         self._sync_toolbar_from_active_tab()
 
     def _on_page_transfer_failed(self, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
         QMessageBox.warning(self, "Page Transfer", message)
-        self.statusBar().showMessage(message)
+        self._transient_status(message)
 
     def _on_pdf_drop_failed(self, exc: object) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1729,7 +1780,7 @@ class MainWindow(QMainWindow):
                 "Insert PDF",
                 f"Could not insert PDF:\n{exc}",
             )
-        self.statusBar().showMessage("Ready")
+        self._persistent_status("Ready")
 
     def _on_rendering_error(self, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1740,7 +1791,7 @@ class MainWindow(QMainWindow):
             "Render Thumbnails",
             f"Could not render thumbnails:\n{message}",
         )
-        self.statusBar().showMessage("Rendering failed")
+        self._transient_status("Rendering failed")
 
     def _on_preview_render_error(self, message: str) -> None:
         tab = self._active_tab()
@@ -1751,7 +1802,7 @@ class MainWindow(QMainWindow):
             "Preview",
             f"Could not render preview:\n{message}",
         )
-        self.statusBar().showMessage("Preview rendering failed")
+        self._transient_status("Preview rendering failed")
 
     def _on_grid_busy_changed(self, busy: bool, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1760,22 +1811,22 @@ class MainWindow(QMainWindow):
         if tab is None or tab.is_preview_visible():
             return
         if busy and message:
-            self.statusBar().showMessage(message)
+            self._persistent_status(message)
         elif tab.edit_model is not None and not self._progress_bar.isVisible():
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self.statusBar().showMessage(f"Loaded {count} {noun}")
+            self._persistent_status(f"Loaded {count} {noun}")
 
     def _on_preview_busy_changed(self, busy: bool, message: str) -> None:
         tab = self._active_tab()
         if tab is None or self.sender() is not tab.preview_widget:
             return
         if busy and message:
-            self.statusBar().showMessage(message)
+            self._persistent_status(message)
         elif tab.edit_model is not None:
             page = tab.preview_widget.current_page + 1
             total = tab.edit_model.logical_count()
-            self.statusBar().showMessage(f"Preview · page {page} of {total}")
+            self._persistent_status(f"Preview · page {page} of {total}")
 
     def _on_selection_changed(self, selection: set[int]) -> None:
         sender = self.sender()
@@ -1791,12 +1842,7 @@ class MainWindow(QMainWindow):
         )
         self._update_delete_pages_action()
         self._update_move_pages_actions()
-        if selection:
-            count = len(selection)
-            noun = "page" if count == 1 else "pages"
-            self.statusBar().showMessage(f"{count} {noun} selected")
-        elif tab is not None and tab.loader is not None:
-            self.statusBar().showMessage("No selection")
+        self._update_selection_status(selection)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         dirty_tabs: list[PdfTab] = []
