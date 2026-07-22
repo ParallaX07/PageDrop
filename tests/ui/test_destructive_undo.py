@@ -9,6 +9,7 @@ from pagedrop.ui.settings import (
     DELETE_CONFIRM_THRESHOLD,
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
+    remember_window_geometry,
     set_confirm_before_closing_dirty_tabs,
     set_confirm_before_deleting_multiple_pages,
 )
@@ -20,6 +21,7 @@ from tests.ui.test_cross_window_page_drag import _cross_window_drop, _model_refs
 def test_confirm_prefs_default_true(isolated_settings):
     assert confirm_before_deleting_multiple_pages() is True
     assert confirm_before_closing_dirty_tabs() is True
+    assert remember_window_geometry() is True
 
 
 def test_confirm_prefs_round_trip(isolated_settings):

@@ -107,6 +107,26 @@ def test_long_tab_title_elided_with_full_tooltip(main_window, qtbot):
     assert tab_manager.tabToolTip(0) == "Short"
 
 
+def test_tab_tooltip_includes_logical_page_count(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))
+    tab = _tab_at(main_window, 0)
+    assert (
+        main_window._tab_manager.tabToolTip(0)
+        == f"{five_page_pdf.name} (5 pages)"
+    )
+
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    assert tab.delete_selected_pages()
+    main_window._tab_manager.update_tab_title(tab)
+    assert (
+        main_window._tab_manager.tabToolTip(0)
+        == f"{five_page_pdf.name}* (4 pages)"
+    )
+
+
 def test_detach_hint_restores_title_tooltip(main_window):
     tab = _tab_at(main_window, 0)
     assert tab.set_custom_tab_title("My Document")

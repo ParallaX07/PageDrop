@@ -30,6 +30,7 @@ def main():
     app.setWindowIcon(icon)
     manager = WindowManager(app)
     win = manager.open_new_window()
+    win.restore_saved_geometry()
     win.setWindowIcon(icon)
     sys.exit(app.exec())
 

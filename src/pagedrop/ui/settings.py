@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QByteArray, QSettings
 
 ORGANIZATION = "PageDrop"
 APPLICATION = "PageDrop"
 KEY_LAST_DIRECTORY = "files/lastDirectory"
+KEY_RECENT_FILES = "files/recent"
 KEY_REDUCE_MOTION = "accessibility/reduce_motion"
 KEY_CONFIRM_DELETE_MULTIPLE = "safety/confirm_before_deleting_multiple_pages"
 KEY_CONFIRM_CLOSE_DIRTY = "safety/confirm_before_closing_dirty_tabs"
+KEY_REMEMBER_GEOMETRY = "window/remember_geometry"
+KEY_WINDOW_GEOMETRY = "window/geometry"
 
 # Confirm multi-page delete when selection size exceeds this (instant for ≤3).
 DELETE_CONFIRM_THRESHOLD = 3
+RECENT_FILES_MAX = 10
 
 
 def _settings() -> QSettings:
@@ -38,6 +42,39 @@ def remember_directory(path: str | Path) -> None:
     directory = resolved.parent if resolved.is_file() else resolved
     if directory.is_dir():
         _settings().setValue(KEY_LAST_DIRECTORY, str(directory))
+
+
+def recent_files() -> list[str]:
+    """Most recently opened PDF paths (newest first), missing files omitted."""
+    raw = _settings().value(KEY_RECENT_FILES, [])
+    if not isinstance(raw, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        path = Path(str(item))
+        key = str(path.resolve()) if path.exists() else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(str(path))
+        if len(result) >= RECENT_FILES_MAX:
+            break
+    return result
+
+
+def remember_recent_file(path: str | Path) -> None:
+    """Prepend *path* to the recent-files list (deduped, capped)."""
+    resolved = Path(path)
+    if not resolved.is_file():
+        return
+    key = str(resolved.resolve())
+    existing = [
+        p
+        for p in recent_files()
+        if str(Path(p).resolve()) != key
+    ]
+    _settings().setValue(KEY_RECENT_FILES, [key, *existing][:RECENT_FILES_MAX])
 
 
 def reduce_motion() -> bool:
@@ -65,3 +102,31 @@ def confirm_before_closing_dirty_tabs() -> bool:
 
 def set_confirm_before_closing_dirty_tabs(enabled: bool) -> None:
     _settings().setValue(KEY_CONFIRM_CLOSE_DIRTY, bool(enabled))
+
+
+def remember_window_geometry() -> bool:
+    """Restore main-window size/position on launch (default: True)."""
+    return _settings().value(KEY_REMEMBER_GEOMETRY, True, type=bool)
+
+
+def set_remember_window_geometry(enabled: bool) -> None:
+    _settings().setValue(KEY_REMEMBER_GEOMETRY, bool(enabled))
+
+
+def save_window_geometry(geometry: QByteArray) -> None:
+    """Persist ``QWidget.saveGeometry()`` bytes when the preference is on."""
+    if not remember_window_geometry():
+        return
+    _settings().setValue(KEY_WINDOW_GEOMETRY, geometry)
+
+
+def load_window_geometry() -> QByteArray | None:
+    """Return saved geometry bytes, or None when unset / preference off."""
+    if not remember_window_geometry():
+        return None
+    value = _settings().value(KEY_WINDOW_GEOMETRY)
+    if isinstance(value, QByteArray) and not value.isEmpty():
+        return value
+    if isinstance(value, (bytes, bytearray)) and value:
+        return QByteArray(value)
+    return None

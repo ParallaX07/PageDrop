@@ -326,27 +326,33 @@ class TabManager(QTabWidget):
         except RuntimeError:
             return
         if index >= 0:
-            self._apply_tab_title(index, tab.tab_title)
+            self._apply_tab_title(index, tab)
 
-    def _apply_tab_title(self, index: int, title: str) -> None:
+    def _apply_tab_title(self, index: int, tab: PdfTab) -> None:
         # QSS-sized tabs ignore setElideMode and hard-clip long titles, so
-        # elide manually. ponytail: fixed width assumes the theme's 220px tab
+        # elide manually. fixed width assumes the theme's 220px tab
         # content box minus ~22px close button and a margin for the wider
         # weight-600 selected font; recompute from the style if tab sizing
         # ever becomes configurable.
+        title = tab.tab_title
         metrics = self.tabBar().fontMetrics()
         self.setTabText(
             index,
             metrics.elidedText(title, Qt.TextElideMode.ElideRight, 185),
         )
-        self.setTabToolTip(index, title)
+        if tab.edit_model is not None:
+            count = tab.edit_model.logical_count()
+            noun = "page" if count == 1 else "pages"
+            self.setTabToolTip(index, f"{title} ({count} {noun})")
+        else:
+            self.setTabToolTip(index, title)
 
     def _connect_tab(self, tab: PdfTab, index: int) -> None:
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))
         tab.pdf_closed.connect(lambda: self.update_tab_title(tab))
         tab.dirty_changed.connect(lambda _: self.update_tab_title(tab))
         tab.tab_title_changed.connect(lambda: self.update_tab_title(tab))
-        self._apply_tab_title(index, tab.tab_title)
+        self._apply_tab_title(index, tab)
 
     def _on_current_changed(self, index: int) -> None:
         if index < 0:

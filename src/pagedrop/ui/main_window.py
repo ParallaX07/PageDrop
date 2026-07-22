@@ -43,9 +43,15 @@ from pagedrop.ui.settings import (
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
     last_directory,
+    load_window_geometry,
+    recent_files,
     remember_directory,
+    remember_recent_file,
+    remember_window_geometry,
+    save_window_geometry,
     set_confirm_before_closing_dirty_tabs,
     set_confirm_before_deleting_multiple_pages,
+    set_remember_window_geometry,
 )
 from pagedrop.ui.tab_manager import TabManager
 from pagedrop.ui.theme import (
@@ -134,6 +140,9 @@ class MainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._open_pdf)
 
+        self._open_recent_menu = file_menu.addMenu("Open &Recent")
+        self._open_recent_menu.aboutToShow.connect(self._populate_open_recent_menu)
+
         self._close_action = file_menu.addAction("&Close Tab")
         self._close_action.triggered.connect(self._close_tab)
         self._close_action.setEnabled(False)
@@ -193,6 +202,15 @@ class MainWindow(QMainWindow):
         )
         self._confirm_close_dirty_action.toggled.connect(
             set_confirm_before_closing_dirty_tabs
+        )
+
+        self._remember_geometry_action = edit_menu.addAction(
+            "Remember window &size and position"
+        )
+        self._remember_geometry_action.setCheckable(True)
+        self._remember_geometry_action.setChecked(remember_window_geometry())
+        self._remember_geometry_action.toggled.connect(
+            set_remember_window_geometry
         )
 
         merge_action = menubar.addAction("&Merge PDFs")
@@ -459,7 +477,7 @@ class MainWindow(QMainWindow):
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
-        tab.dirty_changed.connect(self._update_save_as_action)
+        tab.dirty_changed.connect(self._on_tab_dirty_changed)
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -488,12 +506,17 @@ class MainWindow(QMainWindow):
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
             (preview.render_error, self._on_preview_render_error),
-            (tab.dirty_changed, self._update_save_as_action),
+            (tab.dirty_changed, self._on_tab_dirty_changed),
         ):
             try:
                 signal.disconnect(slot)
             except TypeError:
                 pass
+
+    def _on_tab_dirty_changed(self, _dirty: bool = False) -> None:
+        self._update_save_as_action()
+        if self.sender() is self._active_tab():
+            self._update_window_title()
 
     def _active_tab(self) -> PdfTab | None:
         return self._tab_manager.active_tab
@@ -1075,10 +1098,12 @@ class MainWindow(QMainWindow):
         if tab is None or tab.edit_model is None or tab.pdf_path is None:
             self.setWindowTitle(self.APP_TITLE)
             return
-        filename = Path(tab.pdf_path).name
+        # tab.tab_title already includes dirty * and save-path / custom names.
         count = tab.edit_model.logical_count()
         noun = "page" if count == 1 else "pages"
-        self.setWindowTitle(f"{self.APP_TITLE} — {filename} ({count} {noun})")
+        self.setWindowTitle(
+            f"{self.APP_TITLE} — {tab.tab_title} ({count} {noun})"
+        )
 
     def _extract_selected_to_folder(self) -> None:
         tab = self._active_tab()
@@ -1161,6 +1186,56 @@ class MainWindow(QMainWindow):
         else:
             for path in paths:
                 self._open_in_new_window(path)
+
+    def _populate_open_recent_menu(self) -> None:
+        menu = self._open_recent_menu
+        menu.clear()
+        paths = recent_files()
+        if not paths:
+            empty = menu.addAction("No recent files")
+            empty.setEnabled(False)
+            return
+        for index, path in enumerate(paths):
+            name = Path(path).name
+            if index < 9:
+                label = f"&{index + 1} {name}"
+            elif index == 9:
+                label = f"1&0 {name}"
+            else:
+                label = name
+            action = menu.addAction(label)
+            action.setData(path)
+            action.setToolTip(path)
+            action.triggered.connect(self._open_recent_file)
+
+    def _open_recent_file(self) -> None:
+        action = self.sender()
+        if not isinstance(action, QAction):
+            return
+        path = action.data()
+        if not isinstance(path, str) or not path:
+            return
+        if not Path(path).is_file():
+            QMessageBox.warning(
+                self,
+                "Open Recent",
+                f"File not found:\n{path}",
+            )
+            return
+        remember_directory(path)
+        self._open_recent_path(path)
+
+    def _open_recent_path(self, path: str) -> None:
+        """Open a recent PDF: current blank tab, else a new tab."""
+        active = self._active_tab()
+        if active is None:
+            active = self._tab_manager.add_blank_tab()
+        if active.is_blank:
+            self._load_pdf(path, tab=active)
+            return
+        tab = self._tab_manager.add_blank_tab()
+        self._tab_manager.setCurrentWidget(tab)
+        self._load_pdf(path, tab=tab)
 
     def _open_single_pdf(self, path: str) -> None:
         active = self._active_tab()
@@ -1331,6 +1406,7 @@ class MainWindow(QMainWindow):
                 return
 
         self._tab_manager.update_tab_title(target)
+        remember_recent_file(path)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
             count = (
@@ -1467,12 +1543,11 @@ class MainWindow(QMainWindow):
         if os.environ.get("PAGEDROP_TESTING") == "1":
             return "discard"
 
-        model = tab.edit_model
-        filename = Path(model.original_path).name if model is not None else "document"
+        display_title = tab.tab_title.rstrip("*") or "document"
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Unsaved Changes")
-        message.setText(f'"{filename}" has unsaved changes.')
+        message.setText(f'"{display_title}" has unsaved changes.')
         message.setInformativeText("Save your changes before closing?")
         save_button = message.addButton(
             "Save As",
@@ -1750,6 +1825,14 @@ class MainWindow(QMainWindow):
             if isinstance(widget, PdfTab):
                 widget.close_loader()
         self._temp_manager.cleanup()
+        save_window_geometry(self.saveGeometry())
         super().closeEvent(event)
         if event.isAccepted() and self._window_manager is not None:
             self._window_manager.notify_window_closed(self)
+
+    def restore_saved_geometry(self) -> bool:
+        """Apply persisted geometry when the preference is on. Returns True if applied."""
+        geometry = load_window_geometry()
+        if geometry is None:
+            return False
+        return self.restoreGeometry(geometry)

@@ -21,7 +21,7 @@ class PdfEditModel:
             PageRef(source_path, index) for index in range(page_count)
         ]
         self._dirty = False
-        # ponytail: unbounded snapshot stack; cap/coalesce if memory becomes an issue
+        # unbounded snapshot stack; cap/coalesce if memory becomes an issue
         self._undo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
         self._redo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
 
