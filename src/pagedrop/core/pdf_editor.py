@@ -160,8 +160,11 @@ class PdfEditModel:
         return self._dirty
 
     def mark_saved(self, save_path: str) -> None:
+        """Record save path, clear dirty, and establish a savepoint (no undo past save)."""
         self._save_path = save_path
         self._dirty = False
+        self._undo_stack.clear()
+        self._redo_stack.clear()
 
     def _push_undo(self) -> None:
         self._undo_stack.append((tuple(self._pages), self._dirty))

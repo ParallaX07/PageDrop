@@ -70,6 +70,26 @@ def test_mark_saved_clears_dirty():
     assert model.save_path == "/out/saved.pdf"
 
 
+def test_mark_saved_clears_undo_redo_stacks():
+    """Save establishes a savepoint: no undo past save; dirty tracks post-save edits."""
+    model = PdfEditModel("/a.pdf", 3)
+    model.remove_pages([0])
+    assert model.can_undo()
+    model.mark_saved("/out/saved.pdf")
+    assert not model.is_dirty()
+    assert not model.can_undo()
+    assert not model.can_redo()
+
+    # New edits after save are undoable; undoing them returns to clean saved state.
+    model.rotate_pages([0], 90)
+    assert model.is_dirty()
+    assert model.can_undo()
+    assert model.undo()
+    assert not model.is_dirty()
+    assert [model.page_at(i).source_index for i in range(2)] == [1, 2]
+    assert not model.can_undo()
+
+
 def test_undo_redo_restore_pages_and_dirty():
     model = PdfEditModel("/a.pdf", 5)
     assert not model.can_undo()
