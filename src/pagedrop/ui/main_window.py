@@ -1210,10 +1210,16 @@ class MainWindow(QMainWindow):
         tab = self.sender()
         if not isinstance(tab, PdfTab):
             return
-        if not tab.thumbnail_grid.autofit_thumbnails_if_allowed():
-            return
+        if tab.thumbnail_grid.autofit_thumbnails_if_allowed():
+            if tab is self._active_tab():
+                self._zoom_controls.set_value(tab.zoom_level)
         if tab is self._active_tab():
-            self._zoom_controls.set_value(tab.zoom_level)
+            self._maybe_quality_scale_guidance(tab)
+
+    def _maybe_quality_scale_guidance(self, tab: PdfTab) -> None:
+        tip = tab.quality_scale_guidance()
+        if tip is not None:
+            self._transient_status(tip)
 
     def _on_zoom_requested(self, thumbnail_width_px: int) -> None:
         tab = self._active_tab()
@@ -1301,9 +1307,13 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         if tab is not None and tab.loader is not None:
             self._zoom_controls.set_value(thumbnail_width_px)
-            self._transient_status(
-                f"Thumbnail size: {thumbnail_width_px} px"
-            )
+            tip = tab.quality_scale_guidance()
+            if tip is not None:
+                self._transient_status(tip)
+            else:
+                self._transient_status(
+                    f"Thumbnail size: {thumbnail_width_px} px"
+                )
 
     def _on_zoom_render_pending(self, pending: bool) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):

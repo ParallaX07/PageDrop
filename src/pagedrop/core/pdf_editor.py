@@ -57,6 +57,12 @@ class PdfEditModel:
     def page_at(self, logical_index: int) -> PageRef:
         return self._pages[logical_index]
 
+    def source_paths(self) -> set[str]:
+        """Paths still needed for the current page list (plus original)."""
+        paths = {self._original_path}
+        paths.update(page.source_path for page in self._pages)
+        return paths
+
     def can_undo(self) -> bool:
         return bool(self._undo_stack)
 

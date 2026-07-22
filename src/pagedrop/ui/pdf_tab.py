@@ -11,10 +11,19 @@ from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.dialogs import confirm_delete_pages
 from pagedrop.ui.page_preview import PagePreviewWidget
+from pagedrop.ui.settings import thumbnail_quality
+from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
 
 _INVALID_TAB_TITLE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+# Unused source loaders kept for undo/re-drop; 0 = close as soon as unreferenced.
+LOADER_CACHE_IDLE_MAX = 0
+
+# Suggest smaller thumbnails when both thresholds are met — never silent-cap quality.
+QUALITY_GUIDANCE_MIN_PAGES = 60
+QUALITY_GUIDANCE_MIN_ZOOM_PX = DEFAULT_THUMBNAIL_WIDTH * 2
 
 
 def sanitize_tab_title_stem(title: str) -> str:
@@ -46,6 +55,7 @@ class PdfTab(QWidget):
         self._dirty = False
         self._drop_initialized = False
         self._custom_tab_title: str | None = None
+        self._quality_guidance_shown = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -200,6 +210,7 @@ class PdfTab(QWidget):
     def get_loader(self, path: str) -> PdfLoader:
         if path not in self._loader_cache:
             self._loader_cache[path] = PdfLoader(path)
+        self._evict_idle_loaders(keep={path})
         return self._loader_cache[path]
 
     def load_pdf(
@@ -214,6 +225,7 @@ class PdfTab(QWidget):
         self._edit_model = None
         self._pdf_path = None
         self._custom_tab_title = None
+        self._quality_guidance_shown = False
 
         loader = PdfLoader(path, password=password)
         self._loader_cache[path] = loader
@@ -335,6 +347,7 @@ class PdfTab(QWidget):
         self._edit_model = PdfEditModel.with_pages(primary, refs)
         self._pdf_path = primary
         self._drop_initialized = True
+        self._quality_guidance_shown = False
         self._sync_dirty_from_model()
 
         get_loader: Callable[[str], PdfLoader] = self.get_loader
@@ -352,19 +365,54 @@ class PdfTab(QWidget):
         self._pdf_path = None
         self._drop_initialized = False
         self._custom_tab_title = None
+        self._quality_guidance_shown = False
         if self._dirty:
             self._dirty = False
             self.dirty_changed.emit(False)
         self._preview_widget.set_model(None, None)
         self.pdf_closed.emit()
 
+    def quality_scale_guidance(self) -> str | None:
+        """Status tip when a large tab is at high zoom. Never changes quality."""
+        if self._quality_guidance_shown or self._edit_model is None:
+            return None
+        if self._edit_model.logical_count() < QUALITY_GUIDANCE_MIN_PAGES:
+            return None
+        if self.zoom_level < QUALITY_GUIDANCE_MIN_ZOOM_PX:
+            return None
+        self._quality_guidance_shown = True
+        if thumbnail_quality() == "low":
+            return (
+                "Large document at high zoom — try a smaller thumbnail size "
+                "for smoother scrolling"
+            )
+        return (
+            "Large document at high zoom — try a smaller thumbnail size, "
+            "or View → Thumbnail quality"
+        )
+
     def _close_loader_cache(self) -> None:
         for loader in self._loader_cache.values():
             loader.close()
         self._loader_cache.clear()
+
+    def _evict_idle_loaders(self, *, keep: set[str] | None = None) -> None:
+        """Close unreferenced source loaders beyond LOADER_CACHE_IDLE_MAX."""
+        if not self._loader_cache:
+            return
+        live = self._edit_model.source_paths() if self._edit_model is not None else set()
+        if keep:
+            live |= keep
+        idle = [path for path in self._loader_cache if path not in live]
+        # ponytail: dict order ≈ insertion; good enough when IDLE_MAX > 0
+        for path in idle[LOADER_CACHE_IDLE_MAX:]:
+            loader = self._loader_cache.pop(path, None)
+            if loader is not None:
+                loader.close()
 
     def _sync_dirty_from_model(self) -> None:
         dirty = self._edit_model.is_dirty() if self._edit_model is not None else False
         if dirty != self._dirty:
             self._dirty = dirty
             self.dirty_changed.emit(dirty)
+        self._evict_idle_loaders()
