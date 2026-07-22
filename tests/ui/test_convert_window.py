@@ -144,3 +144,44 @@ def test_toolbar_zoom_before_primary_action(qtbot):
     create_i = children.index(create_btn)
     radio_i = children.index(window._single_mode_action)
     assert zoom_i < create_i < radio_i
+
+
+def test_image_preview_arrow_keys_and_zoom(qtbot, tmp_path):
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    from pagedrop.ui.theme import ZOOM_WHEEL_STEP
+
+    a = tmp_path / "a.png"
+    b = tmp_path / "b.png"
+    _write_test_image(a, 400, 300)
+    _write_test_image(b, 400, 300)
+
+    window = _convert_window(qtbot)
+    window._add_paths([str(a), str(b)])
+    window._open_preview(str(a))
+    qtbot.waitUntil(lambda: window._is_preview_visible(), timeout=5000)
+
+    preview = window._preview_widget
+    assert preview.current_index == 0
+    initial_width = preview.render_width_px
+
+    qtbot.keyClick(preview, Qt.Key.Key_Right)
+    assert preview.current_index == 1
+    assert window._file_grid.selection_manager.selection == {1}
+
+    event = QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    preview._scroll.wheelEvent(event)
+    assert preview.render_width_px >= initial_width + ZOOM_WHEEL_STEP
+    assert preview._manual_zoom
+
+    preview.reset_zoom_to_fit()
+    assert not preview._manual_zoom

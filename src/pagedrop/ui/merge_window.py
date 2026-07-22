@@ -173,6 +173,9 @@ class MergeWindow(QMainWindow):
         self._file_grid.files_reordered.connect(self._on_files_reordered)
         self._file_grid.zoom_changed.connect(self._on_zoom_changed)
         self._zoom_controls.zoom_requested.connect(self._file_grid.set_thumbnail_zoom)
+        self._zoom_controls.reset_requested.connect(
+            lambda: self._file_grid.set_thumbnail_zoom(DEFAULT_THUMBNAIL_WIDTH)
+        )
         self._preview_widget.page_changed.connect(self._update_status)
         self._preview_widget.closed.connect(self._close_preview)
 

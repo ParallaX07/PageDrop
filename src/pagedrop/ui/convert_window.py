@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QKeyEvent, QResizeEvent
+from PyQt6.QtGui import QCloseEvent, QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEvent
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
@@ -47,36 +47,76 @@ from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
+    MIN_PREVIEW_RENDER_WIDTH,
     MIN_THUMBNAIL_WIDTH,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
 
-_PREVIEW_FOOTER_HINT = "Esc back to grid"
+_PREVIEW_FOOTER_HINT = (
+    "← → or ↑ ↓ change image  ·  Ctrl+scroll zoom  ·  Ctrl+0 fit width  ·  Esc back to grid"
+)
 _OUTPUT_SINGLE = "single"
 _OUTPUT_SEPARATE = "separate"
 
 
+class _ImagePreviewScrollArea(QScrollArea):
+    """Scroll area that zooms the image preview on Ctrl+scroll."""
+
+    def __init__(
+        self, preview: _ImagePreviewWidget, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self._preview = preview
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            super().wheelEvent(event)
+            return
+
+        delta = event.angleDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+
+        step = ZOOM_WHEEL_STEP * max(
+            1, self._preview.render_width_px // DEFAULT_THUMBNAIL_WIDTH
+        )
+        zoom_delta = step if delta > 0 else -step
+        self._preview.zoom_by(zoom_delta)
+        event.accept()
+
+
 class _ImagePreviewWidget(QWidget):
     closed = pyqtSignal()
+    image_changed = pyqtSignal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._paths: list[str] = []
+        self._dimensions: dict[str, tuple[int, int]] = {}
+        self._index = 0
         self._path: str | None = None
-        self._dimensions: tuple[int, int] = (0, 0)
+        self._current_dimensions: tuple[int, int] = (0, 0)
+        self._render_width_px = MIN_PREVIEW_RENDER_WIDTH
+        self._manual_zoom = False
 
-        self._scroll = QScrollArea()
+        self._scroll = _ImagePreviewScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self._image_label = QLabel()
         self._image_label.setObjectName("ConvertPreviewImage")
         self._image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._image_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._scroll.setWidget(self._image_label)
+        self._scroll.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self._footer = QLabel(_PREVIEW_FOOTER_HINT)
         self._footer.setObjectName("PagePreviewHint")
@@ -96,16 +136,126 @@ class _ImagePreviewWidget(QWidget):
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-    def show_image(self, path: str, dimensions: tuple[int, int]) -> None:
-        self._path = path
+    @property
+    def render_width_px(self) -> int:
+        return self._render_width_px
+
+    @property
+    def current_index(self) -> int:
+        return self._index
+
+    def show_images(
+        self,
+        paths: list[str],
+        dimensions: dict[str, tuple[int, int]],
+        index: int,
+    ) -> None:
+        self._paths = list(paths)
         self._dimensions = dimensions
-        width, _height = dimensions
-        render_width = min(max(width, 1), MAX_RENDER_WIDTH_PX)
+        self._manual_zoom = False
+        if not self._paths:
+            self.clear_image()
+            return
+        self._index = max(0, min(index, len(self._paths) - 1))
+        self._update_render_width()
+        self._render_current()
+
+    def clear_image(self) -> None:
+        self._paths = []
+        self._path = None
+        self._current_dimensions = (0, 0)
+        self._manual_zoom = False
+        self._image_label.clear()
+
+    def reset_zoom_to_fit(self) -> None:
+        self._manual_zoom = False
+        previous = self._render_width_px
+        self._update_render_width()
+        if self._path is not None and self._render_width_px != previous:
+            self._render_current()
+
+    def zoom_by(self, step: int) -> None:
+        if self._path is None:
+            return
+        new_width = self._render_width_px + step
+        new_width = max(
+            MIN_PREVIEW_RENDER_WIDTH,
+            min(MAX_RENDER_WIDTH_PX, new_width),
+        )
+        if new_width == self._render_width_px:
+            return
+        self._manual_zoom = True
+        self._render_width_px = new_width
+        self._render_current()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if self._path is not None:
+            self._update_render_width()
+            self._render_current()
+        self.setFocus()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self.isVisible() and self._path is not None and not self._manual_zoom:
+            previous = self._render_width_px
+            self._update_render_width()
+            if self._render_width_px != previous:
+                self._render_current()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            self._go_to_index(self._index - 1)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            self._go_to_index(self._index + 1)
+            event.accept()
+            return
+        if (
+            key == Qt.Key.Key_0
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.reset_zoom_to_fit()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Escape:
+            self.closed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _fit_render_width(self) -> int:
+        viewport = self._scroll.viewport()
+        available = max(viewport.width() - 32, MIN_PREVIEW_RENDER_WIDTH)
+        return min(MAX_RENDER_WIDTH_PX, available)
+
+    def _update_render_width(self) -> None:
+        if not self._manual_zoom:
+            self._render_width_px = self._fit_render_width()
+
+    def _go_to_index(self, index: int) -> None:
+        if not self._paths:
+            return
+        clamped = max(0, min(index, len(self._paths) - 1))
+        if clamped == self._index:
+            return
+        self._index = clamped
+        self._render_current()
+        self.image_changed.emit(self._index)
+
+    def _render_current(self) -> None:
+        if not self._paths:
+            return
+        path = self._paths[self._index]
+        dimensions = self._dimensions.get(path, (0, 0))
+        self._path = path
+        self._current_dimensions = dimensions
+        render_width = min(max(self._render_width_px, 1), MAX_RENDER_WIDTH_PX)
         png = render_image_thumbnail_png(path, render_width)
         pixmap = None
         if png is not None:
-            from PyQt6.QtGui import QPixmap
-
             pixmap = QPixmap()
             pixmap.loadFromData(png, "PNG")
         if pixmap is None or pixmap.isNull():
@@ -114,17 +264,7 @@ class _ImagePreviewWidget(QWidget):
             return
         self._image_label.setText("")
         self._image_label.setPixmap(pixmap)
-
-    def clear_image(self) -> None:
-        self._path = None
-        self._image_label.clear()
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() == Qt.Key.Key_Escape:
-            self.closed.emit()
-            event.accept()
-            return
-        super().keyPressEvent(event)
+        self._image_label.adjustSize()
 
 
 class _ConvertWorker(QRunnable):
@@ -289,7 +429,11 @@ class ConvertWindow(QMainWindow):
         self._file_grid.files_reordered.connect(self._on_files_reordered)
         self._file_grid.zoom_changed.connect(self._on_zoom_changed)
         self._zoom_controls.zoom_requested.connect(self._file_grid.set_thumbnail_zoom)
+        self._zoom_controls.reset_requested.connect(
+            lambda: self._file_grid.set_thumbnail_zoom(DEFAULT_THUMBNAIL_WIDTH)
+        )
         self._preview_widget.closed.connect(self._close_preview)
+        self._preview_widget.image_changed.connect(self._on_preview_image_changed)
         self._single_mode_action.toggled.connect(self._on_output_mode_changed)
 
     def _selected_indices(self) -> list[int]:
@@ -354,10 +498,20 @@ class ConvertWindow(QMainWindow):
                     f"Could not open {Path(path).name}:\n{exc}",
                 )
                 return
-        self._preview_widget.show_image(path, dimensions)
+            self._dimensions[path] = dimensions
+        paths = self._file_grid.ordered_paths
+        try:
+            index = paths.index(path)
+        except ValueError:
+            return
+        self._preview_widget.show_images(paths, self._dimensions, index)
         self._stack.setCurrentWidget(self._preview_widget)
         self._preview_widget.setFocus()
         self._update_actions()
+        self._update_status()
+
+    def _on_preview_image_changed(self, index: int) -> None:
+        self._file_grid.selection_manager.select_single(index)
         self._update_status()
 
     def _close_preview(self) -> None:
@@ -371,9 +525,11 @@ class ConvertWindow(QMainWindow):
     def _update_status(self) -> None:
         if self._is_preview_visible() and self._preview_widget._path is not None:
             filename = Path(self._preview_widget._path).name
-            width, height = self._preview_widget._dimensions
+            width, height = self._preview_widget._current_dimensions
+            total = len(self._preview_widget._paths)
+            page = self._preview_widget.current_index + 1
             self.statusBar().showMessage(
-                f"Preview · {filename} ({width} × {height} px)"
+                f"Preview · {filename} ({width} × {height} px) · {page}/{total}"
             )
             return
 

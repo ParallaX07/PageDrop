@@ -55,6 +55,7 @@ from pagedrop.ui.theme import (
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
+from pagedrop.utils.page_jump import parse_page_jump
 from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow):
         self._build_status_widgets()
         self._build_selection_shortcuts()
         self._build_tab_shortcuts()
+        self._build_navigation_shortcuts()
         self._build_central_widget()
         QApplication.instance().installEventFilter(self)
         self.statusBar().showMessage("Ready")
@@ -283,6 +285,7 @@ class MainWindow(QMainWindow):
         )
         toolbar.addWidget(self._zoom_controls)
         self._zoom_controls.zoom_requested.connect(self._on_zoom_requested)
+        self._zoom_controls.reset_requested.connect(self._reset_thumbnail_zoom)
 
         enable_toolbar_keyboard_navigation(toolbar)
 
@@ -412,6 +415,25 @@ class MainWindow(QMainWindow):
         new_tab.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
         new_tab.triggered.connect(self._new_blank_tab)
         self.addAction(new_tab)
+
+    def _build_navigation_shortcuts(self) -> None:
+        go_to_page = QAction(self)
+        go_to_page.setShortcut(QKeySequence("Ctrl+G"))
+        go_to_page.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        go_to_page.triggered.connect(self._go_to_page_dialog)
+        self.addAction(go_to_page)
+
+        page_jump = QAction(self)
+        page_jump.setShortcut(QKeySequence("Ctrl+F"))
+        page_jump.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        page_jump.triggered.connect(self._page_range_jump_dialog)
+        self.addAction(page_jump)
+
+        reset_zoom = QAction(self)
+        reset_zoom.setShortcut(QKeySequence("Ctrl+0"))
+        reset_zoom.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        reset_zoom.triggered.connect(self._reset_zoom)
+        self.addAction(reset_zoom)
 
     def _connect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -943,6 +965,76 @@ class MainWindow(QMainWindow):
         if tab is None:
             return
         tab.set_zoom_level(thumbnail_width_px)
+
+    def _reset_thumbnail_zoom(self) -> None:
+        self._on_zoom_requested(DEFAULT_THUMBNAIL_WIDTH)
+
+    def _reset_zoom(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.loader is None:
+            return
+        if tab.is_preview_visible():
+            tab.preview_widget.reset_zoom_to_fit()
+            return
+        self._reset_thumbnail_zoom()
+
+    def _go_to_page_dialog(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None:
+            return
+        count = tab.edit_model.logical_count()
+        if count <= 0:
+            return
+        current = 1
+        if tab.is_preview_visible():
+            current = tab.preview_widget.current_page + 1
+        elif tab.thumbnail_grid.selection_manager.selection:
+            current = min(tab.thumbnail_grid.selection_manager.selection) + 1
+        page, ok = QInputDialog.getInt(
+            self,
+            "Go to Page",
+            f"Page number (1–{count}):",
+            current,
+            1,
+            count,
+        )
+        if not ok:
+            return
+        index = page - 1
+        if tab.is_preview_visible():
+            tab.preview_widget.show_page(index)
+            tab.thumbnail_grid.selection_manager.select_single(index)
+            self._update_preview_status()
+            return
+        tab.thumbnail_grid.jump_to_pages([index])
+
+    def _page_range_jump_dialog(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None:
+            return
+        count = tab.edit_model.logical_count()
+        if count <= 0:
+            return
+        text, ok = QInputDialog.getText(
+            self,
+            "Jump to Pages",
+            f"Page or range (e.g. 12 or 1-5), 1–{count}:",
+        )
+        if not ok:
+            return
+        indices = parse_page_jump(text, count)
+        if not indices:
+            self.statusBar().showMessage("Enter a page number or range like 12 or 1-5")
+            return
+        if tab.is_preview_visible():
+            tab.close_preview()
+        tab.thumbnail_grid.jump_to_pages(indices)
+        if len(indices) == 1:
+            self.statusBar().showMessage(f"Jumped to page {indices[0] + 1}")
+        else:
+            self.statusBar().showMessage(
+                f"Selected pages {indices[0] + 1}–{indices[-1] + 1}"
+            )
 
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):

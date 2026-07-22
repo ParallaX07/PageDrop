@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDrag, QFont, QMouseEvent, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QVBoxLayout
 
 from pagedrop.core.drag_mime import (
@@ -35,6 +35,13 @@ class PageCard(BaseFileCard):
         self.setObjectName("PageCard")
         self._thumbnail_label.setObjectName("PageCardThumbnail")
 
+        self._page_overlay = QLabel(str(page_index + 1), self._thumbnail_label)
+        self._page_overlay.setObjectName("PageCardPageOverlay")
+        self._page_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self._page_overlay.hide()
+
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -64,6 +71,32 @@ class PageCard(BaseFileCard):
     def set_logical_index(self, index: int) -> None:
         self.page_index = index
         self._page_label.setText(f"Page {index + 1}")
+        self._page_overlay.setText(str(index + 1))
+        self._sync_page_overlay_geometry()
+
+    def set_page_overlay_visible(self, visible: bool) -> None:
+        self._page_overlay.setVisible(visible)
+        if visible:
+            self._sync_page_overlay_geometry()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._sync_page_overlay_geometry()
+
+    def _sync_page_overlay_geometry(self) -> None:
+        if not self._page_overlay.isVisible():
+            return
+        self._page_overlay.adjustSize()
+        margin = 4
+        x = max(
+            0,
+            self._thumbnail_label.width() - self._page_overlay.width() - margin,
+        )
+        y = max(
+            0,
+            self._thumbnail_label.height() - self._page_overlay.height() - margin,
+        )
+        self._page_overlay.move(x, y)
 
     def set_drag_context(
         self,

@@ -43,6 +43,8 @@ DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 80
 MAX_THUMBNAIL_WIDTH = 480
 ZOOM_WHEEL_STEP = 16
+# Below-card labels are easy to miss once thumbnails get large.
+PAGE_NUMBER_OVERLAY_MIN_WIDTH = DEFAULT_THUMBNAIL_WIDTH + ZOOM_WHEEL_STEP * 5
 MIN_PREVIEW_RENDER_WIDTH = 400
 CARD_WIDTH = DEFAULT_THUMBNAIL_WIDTH + CARD_PADDING
 
@@ -722,6 +724,14 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.3px;
+    }}
+    QLabel#PageCardPageOverlay {{
+        color: #FFFFFF;
+        background-color: rgba(19, 19, 22, 160);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
     }}
     """
 

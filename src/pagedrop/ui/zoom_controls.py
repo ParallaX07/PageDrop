@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -14,6 +14,7 @@ class ZoomControls(QWidget):
     """Compact thumbnail zoom cluster: −, slider, +, and pixel readout."""
 
     zoom_requested = pyqtSignal(int)
+    reset_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -32,7 +33,7 @@ class ZoomControls(QWidget):
         self._current = initial
 
         self.setObjectName("ZoomControls")
-        self.setToolTip("Thumbnail size (Ctrl+scroll)")
+        self.setToolTip("Thumbnail size (Ctrl+scroll · Ctrl+0 reset)")
         self.setAccessibleName("Thumbnail zoom")
 
         layout = QHBoxLayout(self)
@@ -52,9 +53,11 @@ class ZoomControls(QWidget):
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setObjectName("ZoomSlider")
         self._slider.setAccessibleName("Thumbnail size")
+        self._slider.setToolTip("Double-click to reset default size")
         self._slider.setFixedWidth(128)
         self._slider.setRange(0, (max_width - min_width) // step)
         self._slider.valueChanged.connect(self._on_slider_changed)
+        self._slider.installEventFilter(self)
 
         self._zoom_in = QPushButton("+")
         self._zoom_in.setObjectName("ZoomButton")
@@ -78,6 +81,16 @@ class ZoomControls(QWidget):
 
         self.set_value(initial)
         self.setEnabled(False)
+
+    def eventFilter(self, obj, event) -> bool:
+        if (
+            obj is self._slider
+            and event.type() == QEvent.Type.MouseButtonDblClick
+            and self.isEnabled()
+        ):
+            self.reset_requested.emit()
+            return True
+        return super().eventFilter(obj, event)
 
     def set_value(self, width_px: int) -> None:
         clamped = max(self._min_width, min(self._max_width, width_px))

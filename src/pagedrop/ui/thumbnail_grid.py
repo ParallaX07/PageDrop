@@ -68,6 +68,7 @@ from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    PAGE_NUMBER_OVERLAY_MIN_WIDTH,
 )
 from pagedrop.utils.list_utils import move_items
 from pagedrop.utils.temp_manager import TempManager
@@ -424,6 +425,7 @@ class ThumbnailGrid(QScrollArea):
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)
             card.context_menu_requested.connect(self._on_card_context_menu)
+            card.set_page_overlay_visible(self._page_overlay_visible())
             self._cards.append(card)
 
     def _process_card_creation_batch(self) -> None:
@@ -908,6 +910,7 @@ class ThumbnailGrid(QScrollArea):
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)
             card.context_menu_requested.connect(self._on_card_context_menu)
+            card.set_page_overlay_visible(self._page_overlay_visible())
             new_cards.append(card)
 
         self._cards[insert_index:insert_index] = new_cards
@@ -1403,6 +1406,26 @@ class ThumbnailGrid(QScrollArea):
     def zoom_by(self, step: int) -> None:
         self.set_thumbnail_zoom(self._thumbnail_width_px + step)
 
+    def jump_to_pages(self, indices: list[int]) -> None:
+        """Select *indices* (0-based) and scroll the first into view."""
+        if not indices or not self._cards:
+            return
+        valid = sorted({i for i in indices if 0 <= i < len(self._cards)})
+        if not valid:
+            return
+        self.selection_manager.set_selection(set(valid))
+        self._last_clicked_index = valid[0]
+        self._set_focused_index(valid[0])
+        self._scroll_to_focused_card()
+
+    def _page_overlay_visible(self) -> bool:
+        return self._thumbnail_width_px >= PAGE_NUMBER_OVERLAY_MIN_WIDTH
+
+    def _sync_page_overlays(self) -> None:
+        visible = self._page_overlay_visible()
+        for card in self._cards:
+            card.set_page_overlay_visible(visible)
+
     def _apply_zoom(self, thumbnail_width_px: int) -> None:
         self._thumbnail_width_px = thumbnail_width_px
         self._card_width = thumbnail_width_px + CARD_PADDING
@@ -1425,6 +1448,7 @@ class ThumbnailGrid(QScrollArea):
                     apply_layout=False,
                 )
                 deferred_layout.append(index)
+        self._sync_page_overlays()
         if deferred_layout:
             self._schedule_deferred_layout_update(deferred_layout)
         self._reflow_grid()

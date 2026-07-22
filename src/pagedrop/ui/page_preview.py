@@ -151,7 +151,7 @@ class PagePreviewWidget(QWidget):
         footer_layout.setSpacing(0)
 
         self._hint_label = QLabel(
-            "← → or ↑ ↓ change page  ·  Ctrl+scroll zoom  ·  Esc back to grid"
+            "← → or ↑ ↓ change page  ·  Ctrl+scroll zoom  ·  Ctrl+0 fit width  ·  Esc back to grid"
         )
         self._hint_label.setObjectName("PagePreviewHint")
         self._hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -199,7 +199,10 @@ class PagePreviewWidget(QWidget):
 
     def reset_zoom_to_fit(self) -> None:
         self._manual_zoom = False
+        previous = self._render_width_px
         self._update_render_width()
+        if self._model is not None and self._render_width_px != previous:
+            self._schedule_render()
 
     def show_page(self, page_index: int) -> None:
         if self._model is None:
@@ -247,6 +250,13 @@ class PagePreviewWidget(QWidget):
             return
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
             self._go_to_page(self._current_page + 1)
+            event.accept()
+            return
+        if (
+            key == Qt.Key.Key_0
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.reset_zoom_to_fit()
             event.accept()
             return
         if key == Qt.Key.Key_Escape:
