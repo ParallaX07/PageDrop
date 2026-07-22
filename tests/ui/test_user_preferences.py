@@ -102,6 +102,27 @@ def test_zoom_persisted_on_change(main_window, five_page_pdf, isolated_settings,
     assert thumbnail_zoom() == 200
 
 
+def test_autofit_on_open_fills_columns(main_window, five_page_pdf, qtbot):
+    main_window.showMinimized()
+    qtbot.waitExposed(main_window)
+    grid = main_window._thumbnail_grid
+    expected = grid.fitted_thumbnail_width()
+    main_window._load_pdf(str(five_page_pdf))
+    assert grid.thumbnail_width_px == expected
+    assert not grid.manual_zoom
+    # Auto-fit must not clobber the remembered preference.
+    assert thumbnail_zoom() == DEFAULT_THUMBNAIL_WIDTH
+
+
+def test_autofit_skips_after_manual_zoom(main_window, five_page_pdf, qtbot):
+    main_window.showMinimized()
+    qtbot.waitExposed(main_window)
+    main_window._on_zoom_requested(200)
+    assert main_window._thumbnail_grid.manual_zoom
+    main_window._load_pdf(str(five_page_pdf))
+    assert main_window._thumbnail_grid.thumbnail_width_px == 200
+
+
 def test_new_blank_tab_uses_saved_zoom(main_window, isolated_settings):
     set_thumbnail_zoom(200)
     main_window._new_blank_tab()

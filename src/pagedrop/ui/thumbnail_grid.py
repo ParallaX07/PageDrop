@@ -69,6 +69,7 @@ from pagedrop.ui.theme import (
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
     PAGE_NUMBER_OVERLAY_MIN_WIDTH,
+    ZOOM_WHEEL_STEP,
 )
 from pagedrop.utils.list_utils import move_items
 from pagedrop.utils.temp_manager import TempManager
@@ -282,6 +283,8 @@ class ThumbnailGrid(QScrollArea):
         self._page_render_width: list[int] = []
         self._last_rendered_width_px = 0
         self._grid_cols = 0
+        # session flag only — resize does not re-fit (upgrade: optional live fit).
+        self._manual_zoom = False
         self._generation = 0
         self._silent_render = False
         self._render_pool = QThreadPool(self)
@@ -1508,11 +1511,48 @@ class ThumbnailGrid(QScrollArea):
         self.set_thumbnail_zoom(self._thumbnail_width_px + step)
         event.accept()
 
-    def set_thumbnail_zoom(self, thumbnail_width_px: int) -> None:
+    @property
+    def manual_zoom(self) -> bool:
+        """True after the user changes zoom (wheel / slider / reset)."""
+        return self._manual_zoom
+
+    def fitted_thumbnail_width(self) -> int:
+        """Thumbnail width that fills the current column count without horizontal scroll."""
+        spacing = self._layout.spacing()
+        margins = self._layout.contentsMargins()
+        available = self.viewport().width() - margins.left() - margins.right()
+        if available <= 0:
+            return self._thumbnail_width_px
+        cols = max(1, available // (self._card_width + spacing))
+        card = (available - (cols - 1) * spacing) // cols
+        raw = max(
+            MIN_THUMBNAIL_WIDTH,
+            min(MAX_THUMBNAIL_WIDTH, card - CARD_PADDING),
+        )
+        # Snap down to zoom-step grid so the slider stays aligned.
+        steps = (raw - MIN_THUMBNAIL_WIDTH) // ZOOM_WHEEL_STEP
+        return MIN_THUMBNAIL_WIDTH + steps * ZOOM_WHEEL_STEP
+
+
+    def autofit_thumbnails_if_allowed(self) -> bool:
+        """Fill columns on open. No-op after manual zoom. Returns True when size changed."""
+        if self._manual_zoom:
+            return False
+        fitted = self.fitted_thumbnail_width()
+        if fitted == self._thumbnail_width_px:
+            return False
+        self._apply_zoom(fitted)
+        return True
+
+    def set_thumbnail_zoom(
+        self, thumbnail_width_px: int, *, manual: bool = True
+    ) -> None:
         clamped = max(
             MIN_THUMBNAIL_WIDTH,
             min(MAX_THUMBNAIL_WIDTH, thumbnail_width_px),
         )
+        if manual:
+            self._manual_zoom = True
         if clamped != self._thumbnail_width_px:
             self._apply_zoom(clamped)
 

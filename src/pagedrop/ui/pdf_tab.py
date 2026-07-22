@@ -175,8 +175,12 @@ class PdfTab(QWidget):
     def zoom_level(self) -> int:
         return self._thumbnail_grid.thumbnail_width_px
 
-    def set_zoom_level(self, thumbnail_width_px: int) -> None:
-        self._thumbnail_grid.set_thumbnail_zoom(thumbnail_width_px)
+    def set_zoom_level(
+        self, thumbnail_width_px: int, *, manual: bool = False
+    ) -> None:
+        self._thumbnail_grid.set_thumbnail_zoom(
+            thumbnail_width_px, manual=manual
+        )
 
     def is_preview_visible(self) -> bool:
         return self._content_stack.currentWidget() is self._preview_widget

@@ -89,7 +89,7 @@ def test_smoke_multi_tab_isolation(qtbot, pdf_fixtures_dir, monkeypatch):
     window._tab_manager.setCurrentIndex(middle_index)
     window._tab_manager.tabCloseRequested.emit(middle_index)
     qtbot.waitUntil(
-        lambda: window._tab_manager.count() == len(loaded_indices),
+        lambda: window._tab_manager.count() == len(loaded_indices) - 1,
         timeout=5000,
     )
 

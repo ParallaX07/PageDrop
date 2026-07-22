@@ -5,7 +5,6 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QToolBar
 
 from pagedrop.ui.main_window import MainWindow
-from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 
 
 def _toolbar_action(window: MainWindow, label: str):
@@ -86,13 +85,19 @@ def test_smoke_card_visual_states_differ(qtbot, five_page_pdf):
     window.close()
 
 
-def test_smoke_zoom_default_after_load(qtbot, five_page_pdf, isolated_settings):
+def test_smoke_zoom_autofit_after_load(qtbot, five_page_pdf, isolated_settings):
     window = MainWindow()
     qtbot.addWidget(window)
+    window.showMinimized()
+    qtbot.waitExposed(window)
+    grid = window._thumbnail_grid
+    expected = grid.fitted_thumbnail_width()
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
+    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
 
-    assert window._thumbnail_grid.thumbnail_width_px == DEFAULT_THUMBNAIL_WIDTH
-    assert window._thumbnail_grid._cards[0].width() == window._thumbnail_grid.card_width
+    assert grid.thumbnail_width_px == expected
+    assert not grid.manual_zoom
+    assert grid._cards[0].width() == grid.card_width
+    assert grid.card_width <= grid.viewport().width()
 
     window.close()

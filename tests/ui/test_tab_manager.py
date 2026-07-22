@@ -180,14 +180,67 @@ def test_multi_select_opens_each_in_new_tab(
 
     initial_count = main_window._tab_manager.count()
     paths = [one_page_pdf, two_page_pdf, five_page_pdf]
-    _open_multi(main_window, paths, monkeypatch)
+    asked: list[int] = []
+    monkeypatch.setattr(
+        main_window,
+        "_ask_multi_open_target",
+        lambda count: asked.append(count) or "tabs",
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileNames",
+        lambda *args, **kwargs: (
+            [str(path) for path in paths],
+            "PDF Files (*.pdf)",
+        ),
+    )
+    main_window._open_pdf()
 
-    assert main_window._tab_manager.count() == initial_count + 3
+    # Blank active tab: open each in its own tab with no prompt (reuse blank).
+    assert asked == []
+    assert main_window._tab_manager.count() == len(paths)
     loaded = _loaded_tab_paths(main_window)
     assert loaded == [str(path) for path in paths]
 
-    for index in range(initial_count, main_window._tab_manager.count()):
+    for index in range(main_window._tab_manager.count()):
         _wait_for_tab_loaded(qtbot, _tab_at(main_window, index))
+
+
+def test_multi_select_prompts_when_active_has_content(
+    main_window,
+    one_page_pdf,
+    five_page_pdf,
+    pdf_fixtures_dir,
+    monkeypatch,
+    qtbot,
+):
+    two_page_pdf = pdf_fixtures_dir / "two_page.pdf"
+    if not two_page_pdf.exists():
+        generate_n_page(two_page_pdf, 2)
+
+    _open_single(main_window, one_page_pdf, monkeypatch, target="current")
+    _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))
+
+    paths = [two_page_pdf, five_page_pdf]
+    asked: list[int] = []
+    monkeypatch.setattr(
+        main_window,
+        "_ask_multi_open_target",
+        lambda count: asked.append(count) or "tabs",
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileNames",
+        lambda *args, **kwargs: (
+            [str(path) for path in paths],
+            "PDF Files (*.pdf)",
+        ),
+    )
+    before = main_window._tab_manager.count()
+    main_window._open_pdf()
+
+    assert asked == [2]
+    assert main_window._tab_manager.count() == before + len(paths)
 
 
 def test_close_tab_via_x_button(

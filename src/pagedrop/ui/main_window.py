@@ -594,6 +594,7 @@ class MainWindow(QMainWindow):
             self._extract_selected_to_new_window
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
+        tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
@@ -628,6 +629,7 @@ class MainWindow(QMainWindow):
                 self._extract_selected_to_new_window,
             ),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
+            (tab.pdf_loaded, self._on_tab_pdf_loaded),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
             (preview.render_error, self._on_preview_render_error),
@@ -1163,11 +1165,21 @@ class MainWindow(QMainWindow):
         tab.thumbnail_grid.selection_manager.select_single(page_index)
         self._update_preview_status()
 
+    def _on_tab_pdf_loaded(self) -> None:
+        """Auto-fit thumbnail columns after open unless the user already zoomed."""
+        tab = self.sender()
+        if not isinstance(tab, PdfTab):
+            return
+        if not tab.thumbnail_grid.autofit_thumbnails_if_allowed():
+            return
+        if tab is self._active_tab():
+            self._zoom_controls.set_value(tab.zoom_level)
+
     def _on_zoom_requested(self, thumbnail_width_px: int) -> None:
         tab = self._active_tab()
         if tab is None:
             return
-        tab.set_zoom_level(thumbnail_width_px)
+        tab.set_zoom_level(thumbnail_width_px, manual=True)
 
     def _reset_thumbnail_zoom(self) -> None:
         self._on_zoom_requested(DEFAULT_THUMBNAIL_WIDTH)
@@ -1242,7 +1254,10 @@ class MainWindow(QMainWindow):
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
-        set_thumbnail_zoom(thumbnail_width_px)
+        # Auto-fit must not overwrite the user's remembered zoom preference.
+        grid = self.sender()
+        if getattr(grid, "manual_zoom", True):
+            set_thumbnail_zoom(thumbnail_width_px)
         tab = self._active_tab()
         if tab is not None and tab.loader is not None:
             self._zoom_controls.set_value(thumbnail_width_px)
@@ -1446,17 +1461,37 @@ class MainWindow(QMainWindow):
             self._open_single_pdf(paths[0])
             return
 
+        active = self._active_tab()
+        # Blank tab: each file into its own tab, no prompt (first reuses the blank).
+        if active is not None and active.is_blank:
+            self._open_paths_as_tabs(paths, first_tab=active)
+            return
+
         choice = self._ask_multi_open_target(len(paths))
         if choice is None:
             return
         if choice == "tabs":
-            for path in paths:
-                tab = self._tab_manager.add_blank_tab()
-                self._load_pdf(path, tab=tab)
-            self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
+            self._open_paths_as_tabs(paths)
         else:
             for path in paths:
                 self._open_in_new_window(path)
+
+    def _open_paths_as_tabs(
+        self, paths: list[str], *, first_tab: PdfTab | None = None
+    ) -> None:
+        """Load each path into its own tab. Reuses *first_tab* when given."""
+        if not paths:
+            return
+        if first_tab is not None:
+            self._load_pdf(paths[0], tab=first_tab)
+            rest = paths[1:]
+        else:
+            rest = paths
+        for path in rest:
+            tab = self._tab_manager.add_blank_tab()
+            tab.set_zoom_level(thumbnail_zoom())
+            self._load_pdf(path, tab=tab)
+        self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
 
     def _populate_open_recent_menu(self) -> None:
         menu = self._open_recent_menu
@@ -1700,12 +1735,7 @@ class MainWindow(QMainWindow):
             return
 
         remember_directory(paths[0])
-        self._load_pdf(paths[0], tab=tab)
-        for path in paths[1:]:
-            new_tab = self._tab_manager.add_blank_tab()
-            self._load_pdf(path, tab=new_tab)
-        if len(paths) > 1:
-            self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
+        self._open_paths_as_tabs(paths, first_tab=tab)
 
     def _same_path(self, left: str, right: str) -> bool:
         try:

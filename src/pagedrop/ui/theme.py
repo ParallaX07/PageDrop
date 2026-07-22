@@ -138,7 +138,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid transparent;
     }}
 
-    /* ponytail: no ::item:focus — Qt marks every menubar item focused at once */
+    /* no ::item:focus — Qt marks every menubar item focused at once */
     QMenuBar::item:selected {{
         background-color: {bg_card_hover};
         border-color: {ACCENT};

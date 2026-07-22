@@ -255,7 +255,7 @@ def test_zoom_slider_changes_thumbnail_width(main_window, five_page_pdf, qtbot):
     zoom = main_window.findChild(ZoomControls)
 
     zoom._slider.setValue(zoom._slider.value() + 2)
-    expected = DEFAULT_THUMBNAIL_WIDTH + 2 * ZOOM_WHEEL_STEP
+    expected = zoom._min_width + zoom._slider.value() * zoom._step
     assert grid.thumbnail_width_px == expected
 
 

@@ -154,6 +154,10 @@ def test_multi_select_open_each_in_new_window(
     source.showMinimized()
 
     paths = [one_page_pdf, two_page_pdf, five_page_pdf]
+    # Prompt only when the active tab already has content.
+    _open_single(source, one_page_pdf, monkeypatch, target="current")
+    _wait_for_tab_loaded(qtbot, _tab_at(source, 0))
+
     initial_count = len(manager.windows)
     windows_before = frozenset(manager.windows)
     _open_multi(source, paths, monkeypatch, target="windows")
@@ -174,4 +178,4 @@ def test_multi_select_open_each_in_new_window(
         loaded_paths.append(tab.pdf_path)
 
     assert set(loaded_paths) == {str(path) for path in paths}
-    assert _tab_at(source, 0).is_blank
+    assert _tab_at(source, 0).pdf_path == str(one_page_pdf)
