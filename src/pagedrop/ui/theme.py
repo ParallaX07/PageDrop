@@ -679,6 +679,50 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
     }}
 
+    QWidget#TipsOverlay {{
+        background-color: {busy_overlay_bg};
+    }}
+
+    QWidget#TipsOverlayCard {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QLabel#TipsOverlayTitle {{
+        color: {text_primary};
+        font-size: 18px;
+        font-weight: 700;
+    }}
+
+    QLabel#TipsOverlayIntro {{
+        color: {text_secondary};
+        font-size: 13px;
+    }}
+
+    QLabel#TipsOverlayTip {{
+        color: {text_primary};
+        font-size: 13px;
+    }}
+
+    QLabel#ShortcutCategory {{
+        color: {text_primary};
+        font-size: 14px;
+        font-weight: 700;
+        padding-top: 4px;
+    }}
+
+    QLabel#ShortcutAction {{
+        color: {text_secondary};
+        font-size: 13px;
+    }}
+
+    QLabel#ShortcutKeys {{
+        color: {text_primary};
+        font-size: 12px;
+        font-family: {FONT_MONO};
+    }}
+
     QWidget#MergeListPane {{
         background-color: {bg_grid};
     }}

@@ -19,6 +19,7 @@ KEY_WINDOW_GEOMETRY = "window/geometry"
 KEY_LIGHT_THEME = "view/light_theme"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
+KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
 
 # Confirm multi-page delete when selection size exceeds this (instant for ≤3).
 DELETE_CONFIRM_THRESHOLD = 3
@@ -201,3 +202,12 @@ def set_thumbnail_zoom(width_px: int) -> None:
 
     clamped = max(MIN_THUMBNAIL_WIDTH, min(int(width_px), MAX_THUMBNAIL_WIDTH))
     _settings().setValue(KEY_THUMBNAIL_ZOOM, clamped)
+
+
+def has_seen_tips() -> bool:
+    """True after the first-run tips overlay has been dismissed."""
+    return _settings().value(KEY_HAS_SEEN_TIPS, False, type=bool)
+
+
+def set_has_seen_tips(seen: bool = True) -> None:
+    _settings().setValue(KEY_HAS_SEEN_TIPS, bool(seen))

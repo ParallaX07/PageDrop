@@ -40,11 +40,13 @@ from pagedrop.ui.keyboard_nav import (
     set_content_tab_order,
 )
 from pagedrop.ui.merge_window import MergeWindow
+from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui.settings import (
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
+    has_seen_tips,
     last_directory,
     light_theme,
     load_window_geometry,
@@ -116,6 +118,8 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
+        self._tips_overlay = TipsOverlay(self)
+        QTimer.singleShot(0, self._maybe_show_first_run_tips)
 
     @property
     def current_pdf_path(self) -> str | None:
@@ -264,6 +268,13 @@ class MainWindow(QMainWindow):
         create_pdf_action = menubar.addAction("&Create PDF")
         create_pdf_action.triggered.connect(self._open_convert_window)
 
+        help_menu = menubar.addMenu("&Help")
+        shortcuts_action = help_menu.addAction("&Keyboard Shortcuts")
+        shortcuts_action.setShortcut(QKeySequence("Ctrl+/"))
+        shortcuts_action.triggered.connect(self._show_keyboard_shortcuts)
+        tips_action = help_menu.addAction("Show &Tips")
+        tips_action.triggered.connect(self._show_tips_overlay)
+
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
@@ -275,6 +286,7 @@ class MainWindow(QMainWindow):
             "Open",
         )
         open_action.triggered.connect(self._open_pdf)
+        self._set_action_hint(open_action, "Open a PDF (Ctrl+O)")
         open_button = toolbar.widgetForAction(open_action)
         if open_button is not None:
             open_button.setObjectName("ToolbarPrimary")
@@ -283,8 +295,9 @@ class MainWindow(QMainWindow):
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
             "Preview",
         )
-        self._preview_action.setToolTip(
-            "Preview selected page (Enter or double-click a card)"
+        self._set_action_hint(
+            self._preview_action,
+            "Preview selected page (Enter or double-click a card)",
         )
         self._preview_action.triggered.connect(self._open_preview)
         self._preview_action.setEnabled(False)
@@ -292,12 +305,12 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         self._select_all_action = toolbar.addAction("Select All")
-        self._select_all_action.setToolTip("Select all pages (Ctrl+A)")
+        self._set_action_hint(self._select_all_action, "Select all pages (Ctrl+A)")
         self._select_all_action.triggered.connect(self._select_all_pages)
         self._select_all_action.setEnabled(False)
 
         self._deselect_all_action = toolbar.addAction("Deselect All")
-        self._deselect_all_action.setToolTip("Clear selection (Esc)")
+        self._set_action_hint(self._deselect_all_action, "Clear selection (Esc)")
         self._deselect_all_action.triggered.connect(self._clear_selection)
         self._deselect_all_action.setEnabled(False)
 
@@ -305,7 +318,9 @@ class MainWindow(QMainWindow):
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
             "Move up",
         )
-        self._move_up_action.setToolTip("Move selected pages up (Ctrl+↑)")
+        self._set_action_hint(
+            self._move_up_action, "Move selected pages up (Ctrl+↑)"
+        )
         self._move_up_action.triggered.connect(self._move_selected_pages_up)
         self._move_up_action.setEnabled(False)
 
@@ -313,7 +328,9 @@ class MainWindow(QMainWindow):
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
             "Move down",
         )
-        self._move_down_action.setToolTip("Move selected pages down (Ctrl+↓)")
+        self._set_action_hint(
+            self._move_down_action, "Move selected pages down (Ctrl+↓)"
+        )
         self._move_down_action.triggered.connect(self._move_selected_pages_down)
         self._move_down_action.setEnabled(False)
 
@@ -321,24 +338,32 @@ class MainWindow(QMainWindow):
             self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
             "Delete page(s)",
         )
-        self._delete_pages_action.setToolTip("Delete selected pages (Delete)")
+        self._set_action_hint(
+            self._delete_pages_action, "Delete selected pages (Delete)"
+        )
         self._delete_pages_action.triggered.connect(self._delete_selected_pages)
         self._delete_pages_action.setEnabled(False)
 
         self._duplicate_pages_action = toolbar.addAction("Duplicate")
-        self._duplicate_pages_action.setToolTip("Duplicate selected pages (Ctrl+D)")
+        self._set_action_hint(
+            self._duplicate_pages_action, "Duplicate selected pages (Ctrl+D)"
+        )
         self._duplicate_pages_action.triggered.connect(self._duplicate_selected_pages)
         self._duplicate_pages_action.setEnabled(False)
 
         self._rotate_cw_action = toolbar.addAction("Rotate CW")
-        self._rotate_cw_action.setToolTip("Rotate selected pages clockwise")
+        self._set_action_hint(
+            self._rotate_cw_action, "Rotate selected pages clockwise"
+        )
         self._rotate_cw_action.triggered.connect(
             lambda: self._rotate_selected_pages(90)
         )
         self._rotate_cw_action.setEnabled(False)
 
         self._rotate_ccw_action = toolbar.addAction("Rotate CCW")
-        self._rotate_ccw_action.setToolTip("Rotate selected pages counter-clockwise")
+        self._set_action_hint(
+            self._rotate_ccw_action, "Rotate selected pages counter-clockwise"
+        )
         self._rotate_ccw_action.triggered.connect(
             lambda: self._rotate_selected_pages(-90)
         )
@@ -368,6 +393,9 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._zoom_controls)
         self._zoom_controls.zoom_requested.connect(self._on_zoom_requested)
         self._zoom_controls.reset_requested.connect(self._reset_thumbnail_zoom)
+        zoom_hint = "Thumbnail size (Ctrl+scroll · Ctrl+0 reset)"
+        self._zoom_controls.setToolTip(zoom_hint)
+        self._zoom_controls.setStatusTip(zoom_hint)
 
         enable_toolbar_keyboard_navigation(toolbar)
 
@@ -1138,11 +1166,13 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         in_preview = tab is not None and tab.is_preview_visible()
         self._preview_action.setText("Back to grid" if in_preview else "Preview")
-        self._preview_action.setToolTip(
-            "Return to the thumbnail grid"
-            if in_preview
-            else "Preview selected page in this window (double-click a card)"
-        )
+        if in_preview:
+            self._set_action_hint(self._preview_action, "Return to the thumbnail grid")
+        else:
+            self._set_action_hint(
+                self._preview_action,
+                "Preview selected page (Enter or double-click a card)",
+            )
         has_pdf = tab is not None and tab.loader is not None
         self._zoom_controls.setVisible(not in_preview)
         self._clear_selection_action.setEnabled(not in_preview)
@@ -1312,6 +1342,25 @@ class MainWindow(QMainWindow):
     def _open_command_palette(self) -> None:
         dialog = CommandPalette(collect_actions(self), self)
         dialog.exec()
+
+    @staticmethod
+    def _set_action_hint(action: QAction, text: str) -> None:
+        """Tooltip + status-bar hint (shown while hovering toolbar buttons)."""
+        action.setToolTip(text)
+        action.setStatusTip(text)
+
+    def _maybe_show_first_run_tips(self) -> None:
+        if os.environ.get("PAGEDROP_TESTING") == "1":
+            return
+        if has_seen_tips():
+            return
+        self._show_tips_overlay()
+
+    def _show_tips_overlay(self) -> None:
+        self._tips_overlay.show_tips()
+
+    def _show_keyboard_shortcuts(self) -> None:
+        KeyboardShortcutsDialog(self).exec()
 
     def eventFilter(self, obj, event) -> bool:
         if (
