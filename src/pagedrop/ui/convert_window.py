@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
@@ -38,7 +37,7 @@ from pagedrop.core.supported_formats import (
 )
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
-from pagedrop.ui.dialogs import fit_message_box_buttons, prompt_discard_file_list
+from pagedrop.ui.dialogs import confirm_overwrite, prompt_discard_file_list
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
@@ -679,26 +678,7 @@ class ConvertWindow(QMainWindow):
         return True
 
     def _confirm_overwrite(self, paths: list[Path]) -> bool:
-        if os.environ.get("PAGEDROP_TESTING") == "1":
-            return True
-
-        names = ", ".join(path.name for path in paths[:5])
-        extra = ""
-        if len(paths) > 5:
-            extra = f"\n…and {len(paths) - 5} more"
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Question)
-        message.setWindowTitle(self.WINDOW_TITLE)
-        message.setText(
-            f"The following file(s) already exist and will be overwritten:\n\n"
-            f"{names}{extra}\n\nContinue?"
-        )
-        message.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        fit_message_box_buttons(message)
-        return message.exec() == QMessageBox.StandardButton.Yes
+        return confirm_overwrite(self, paths, window_title=self.WINDOW_TITLE)
 
     def _create_pdfs(self) -> None:
         if self._model.file_count() == 0:

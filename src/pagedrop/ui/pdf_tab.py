@@ -404,7 +404,7 @@ class PdfTab(QWidget):
         if keep:
             live |= keep
         idle = [path for path in self._loader_cache if path not in live]
-        # ponytail: dict order ≈ insertion; good enough when IDLE_MAX > 0
+        # dict order ≈ insertion; good enough when IDLE_MAX > 0
         for path in idle[LOADER_CACHE_IDLE_MAX:]:
             loader = self._loader_cache.pop(path, None)
             if loader is not None:

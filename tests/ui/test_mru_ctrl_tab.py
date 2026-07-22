@@ -48,7 +48,16 @@ def _open_single(
 
 def _trigger_shortcut(window: MainWindow, sequence: str) -> None:
     target = QKeySequence(sequence)
-    for action in window.actions():
+    candidates = list(window.actions())
+    registry = getattr(window, "_actions", None)
+    if registry is not None:
+        candidates.extend(registry.values())
+    seen: set[int] = set()
+    for action in candidates:
+        key = id(action)
+        if key in seen:
+            continue
+        seen.add(key)
         if action.shortcut() == target:
             action.trigger()
             return

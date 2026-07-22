@@ -40,10 +40,11 @@ def test_toolbar_open_button(main_window):
     open_action = None
     for toolbar in main_window.findChildren(QToolBar):
         for action in toolbar.actions():
-            if action.text() == "Open":
+            if action.text().replace("&", "") == "Open PDF":
                 open_action = action
                 break
     assert open_action is not None
+    assert open_action is main_window._actions["open"]
     assert open_action.isEnabled()
 
 

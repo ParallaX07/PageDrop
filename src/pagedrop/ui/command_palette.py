@@ -38,7 +38,13 @@ def fuzzy_match(query: str, text: str) -> bool:
 
 
 def collect_actions(root: QWidget) -> list[QAction]:
-    """Gather labeled actions from menus, toolbars, and window shortcuts."""
+    """Gather labeled actions from a registry, or fall back to menu/toolbar scan."""
+    registry = getattr(root, "_actions", None)
+    if registry is not None and hasattr(registry, "values"):
+        result = [a for a in registry.values() if action_label(a)]
+        result.sort(key=lambda a: action_label(a).casefold())
+        return result
+
     seen: set[int] = set()
     result: list[QAction] = []
 

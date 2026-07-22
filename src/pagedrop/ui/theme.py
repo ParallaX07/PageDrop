@@ -669,14 +669,42 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
     }}
 
+    QWidget#ToastOverlayCard {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 4px 8px 4px 4px;
+    }}
+
     QLabel#ToastOverlayMessage {{
         color: {text_primary};
         font-size: 13px;
         font-weight: 600;
-        padding: 12px 20px;
-        background-color: {bg_surface};
-        border: 1px solid {border_subtle};
+        padding: 8px 16px;
+        background-color: transparent;
+        border: none;
+    }}
+
+    QLabel#ToastOverlayMessage[kind="success"] {{
+        color: {ACCENT};
+    }}
+
+    QLabel#ToastOverlayMessage[kind="error"] {{
+        color: {close_tab};
+    }}
+
+    QPushButton#ToastOverlayUndo {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
+        padding: 6px 12px;
+        font-weight: 600;
+    }}
+
+    QPushButton#ToastOverlayUndo:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
     }}
 
     QWidget#TipsOverlay {{

@@ -203,7 +203,11 @@ def test_rapid_reopen_shows_cancelled_toast(main_window, five_page_pdf, one_page
         lambda: True,
     )
     toasts: list[str] = []
-    monkeypatch.setattr(main_window, "_show_toast", toasts.append)
+    monkeypatch.setattr(
+        main_window,
+        "_show_toast",
+        lambda message, **_kwargs: toasts.append(message),
+    )
 
     main_window._load_pdf(str(one_page_pdf))
 

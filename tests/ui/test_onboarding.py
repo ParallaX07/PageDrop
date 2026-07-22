@@ -83,7 +83,7 @@ def test_keyboard_shortcuts_dialog_lists_categories(qtbot):
 
 
 _TOOLBAR_HINT_LABELS = {
-    "Open",
+    "Open PDF",
     "Preview",
     "Select All",
     "Deselect All",
@@ -100,9 +100,10 @@ def test_toolbar_actions_have_status_tips(main_window):
     toolbar = main_window.findChild(QToolBar)
     assert toolbar is not None
     for action in toolbar.actions():
-        if action.isSeparator() or action.text() not in _TOOLBAR_HINT_LABELS:
+        label = action.text().replace("&", "")
+        if action.isSeparator() or label not in _TOOLBAR_HINT_LABELS:
             continue
-        assert action.statusTip(), f"missing status tip on {action.text()!r}"
+        assert action.statusTip(), f"missing status tip on {label!r}"
         assert action.toolTip() == action.statusTip()
 
     assert "Ctrl+scroll" in main_window._zoom_controls.statusTip()

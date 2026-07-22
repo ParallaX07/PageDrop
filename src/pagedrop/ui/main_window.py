@@ -31,10 +31,11 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_writer import write_pdf
+from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
-from pagedrop.ui.command_palette import CommandPalette, collect_actions
+from pagedrop.ui.command_palette import CommandPalette, action_label
 from pagedrop.ui.convert_window import ConvertWindow
-from pagedrop.ui.dialogs import fit_message_box_buttons
+from pagedrop.ui.dialogs import fit_message_box_buttons, prompt_unsaved_changes
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
@@ -108,12 +109,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(720, 480)
         self.resize(960, 680)
 
+        self._build_actions()
         self._build_menu()
         self._build_toolbar()
         self._build_status_widgets()
-        self._build_selection_shortcuts()
-        self._build_tab_shortcuts()
-        self._build_navigation_shortcuts()
         self._build_central_widget()
         QApplication.instance().installEventFilter(self)
         self._persistent_status("Ready")
@@ -146,99 +145,91 @@ class MainWindow(QMainWindow):
         tab = self._tab_manager.active_tab
         return tab.content_stack if tab is not None else None
 
-    def _build_menu(self) -> None:
-        menubar = self.menuBar()
-        file_menu = menubar.addMenu("&File")
+    def _build_actions(self) -> None:
+        """Create the single action catalogue used by menu, toolbar, and shortcuts."""
+        actions = ActionRegistry(self)
+        self._actions = actions
+        style = self.style()
 
-        open_action = file_menu.addAction("&Open PDF")
-        open_action.setShortcut(QKeySequence.StandardKey.Open)
-        open_action.triggered.connect(self._open_pdf)
-
-        self._open_recent_menu = file_menu.addMenu("Open &Recent")
-        self._open_recent_menu.aboutToShow.connect(self._populate_open_recent_menu)
-
-        self._close_action = file_menu.addAction("&Close Tab")
-        self._close_action.triggered.connect(self._close_tab)
-        self._close_action.setEnabled(False)
-
-        self._save_as_action = file_menu.addAction("Save &As")
-        self._save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        self._save_as_action.triggered.connect(self._save_as)
-        self._save_as_action.setEnabled(False)
-
-        self._export_all_action = file_menu.addAction("Export All &Pages…")
-        self._export_all_action.triggered.connect(self._export_all_pages)
-        self._export_all_action.setEnabled(False)
-
-        file_menu.addSeparator()
-
-        self._new_window_action = file_menu.addAction("New &Window")
-        self._new_window_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
-        self._new_window_action.triggered.connect(self._new_window)
-
-        file_menu.addSeparator()
-
-        exit_action = file_menu.addAction("E&xit")
-        exit_action.triggered.connect(self.close)
-
-        edit_menu = menubar.addMenu("&Edit")
-
-        self._undo_action = edit_menu.addAction("&Undo")
-        self._undo_action.setShortcut(QKeySequence.StandardKey.Undo)
-        self._undo_action.triggered.connect(self._undo)
-        self._undo_action.setEnabled(False)
-
-        self._redo_action = edit_menu.addAction("&Redo")
-        self._redo_action.setShortcuts(
-            [
-                QKeySequence("Ctrl+Shift+Z"),
-                QKeySequence.StandardKey.Redo,
-            ]
+        actions.register(
+            "open",
+            "&Open PDF",
+            slot=self._open_pdf,
+            shortcut=QKeySequence.StandardKey.Open,
+            icon=style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            tip="Open a PDF (Ctrl+O)",
         )
-        self._redo_action.triggered.connect(self._redo)
-        self._redo_action.setEnabled(False)
+        self._close_action = actions.register(
+            "close_tab",
+            "&Close Tab",
+            slot=self._close_tab,
+            shortcut="Ctrl+W",
+            add_to_window=True,
+        )
+        self._save_as_action = actions.register(
+            "save_as",
+            "Save &As",
+            slot=self._save_as,
+            shortcut="Ctrl+Shift+S",
+            enabled=False,
+        )
+        self._export_all_action = actions.register(
+            "export_all",
+            "Export All &Pages…",
+            slot=self._export_all_pages,
+            enabled=False,
+        )
+        self._new_window_action = actions.register(
+            "new_window",
+            "New &Window",
+            slot=self._new_window,
+            shortcut="Ctrl+Shift+N",
+        )
+        actions.register("exit", "E&xit", slot=self.close)
 
-        edit_menu.addSeparator()
-
-        self._confirm_delete_action = edit_menu.addAction(
-            "Confirm before &deleting multiple pages"
+        self._undo_action = actions.register(
+            "undo",
+            "&Undo",
+            slot=self._undo,
+            shortcut=QKeySequence.StandardKey.Undo,
+            enabled=False,
         )
-        self._confirm_delete_action.setCheckable(True)
-        self._confirm_delete_action.setChecked(
-            confirm_before_deleting_multiple_pages()
+        self._redo_action = actions.register(
+            "redo",
+            "&Redo",
+            slot=self._redo,
+            shortcuts=["Ctrl+Shift+Z", QKeySequence.StandardKey.Redo],
+            enabled=False,
         )
-        self._confirm_delete_action.toggled.connect(
-            set_confirm_before_deleting_multiple_pages
+        self._confirm_delete_action = actions.register(
+            "confirm_delete",
+            "Confirm before &deleting multiple pages",
+            slot=set_confirm_before_deleting_multiple_pages,
+            checkable=True,
+            checked=confirm_before_deleting_multiple_pages(),
         )
-
-        self._confirm_close_dirty_action = edit_menu.addAction(
-            "Confirm before closing dirty &tabs"
+        self._confirm_close_dirty_action = actions.register(
+            "confirm_close_dirty",
+            "Confirm before closing dirty &tabs",
+            slot=set_confirm_before_closing_dirty_tabs,
+            checkable=True,
+            checked=confirm_before_closing_dirty_tabs(),
         )
-        self._confirm_close_dirty_action.setCheckable(True)
-        self._confirm_close_dirty_action.setChecked(
-            confirm_before_closing_dirty_tabs()
-        )
-        self._confirm_close_dirty_action.toggled.connect(
-            set_confirm_before_closing_dirty_tabs
-        )
-
-        self._remember_geometry_action = edit_menu.addAction(
-            "Remember window &size and position"
-        )
-        self._remember_geometry_action.setCheckable(True)
-        self._remember_geometry_action.setChecked(remember_window_geometry())
-        self._remember_geometry_action.toggled.connect(
-            set_remember_window_geometry
+        self._remember_geometry_action = actions.register(
+            "remember_geometry",
+            "Remember window &size and position",
+            slot=set_remember_window_geometry,
+            checkable=True,
+            checked=remember_window_geometry(),
         )
 
-        view_menu = menubar.addMenu("&View")
-
-        self._light_theme_action = view_menu.addAction("Toggle &Light Theme")
-        self._light_theme_action.setCheckable(True)
-        self._light_theme_action.setChecked(light_theme())
-        self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
-
-        quality_menu = view_menu.addMenu("Thumbnail &quality")
+        self._light_theme_action = actions.register(
+            "light_theme",
+            "Toggle &Light Theme",
+            slot=self._on_light_theme_toggled,
+            checkable=True,
+            checked=light_theme(),
+        )
         self._quality_action_group = QActionGroup(self)
         self._quality_action_group.setExclusive(True)
         current_quality = thumbnail_quality()
@@ -247,128 +238,224 @@ class MainWindow(QMainWindow):
             ("medium", "&Medium"),
             ("high", "&High"),
         ):
-            action = quality_menu.addAction(label)
-            action.setCheckable(True)
-            action.setData(value)
-            action.setChecked(value == current_quality)
+            action = actions.register(
+                f"quality_{value}",
+                label,
+                checkable=True,
+                checked=value == current_quality,
+                data=value,
+            )
             self._quality_action_group.addAction(action)
         self._quality_action_group.triggered.connect(
             self._on_thumbnail_quality_triggered
         )
+        self._command_palette_action = actions.register(
+            "command_palette",
+            "Command &palette…",
+            slot=self._open_command_palette,
+            shortcut="Ctrl+Shift+P",
+        )
 
+        actions.register("merge", "&Merge PDFs", slot=self._open_merge_window)
+        actions.register(
+            "create_pdf", "&Create PDF", slot=self._open_convert_window
+        )
+        actions.register(
+            "keyboard_shortcuts",
+            "&Keyboard Shortcuts",
+            slot=self._show_keyboard_shortcuts,
+            shortcut="Ctrl+/",
+        )
+        actions.register("tips", "Show &Tips", slot=self._show_tips_overlay)
+
+        self._preview_action = actions.register(
+            "preview",
+            "Preview",
+            slot=self._open_preview,
+            icon=style.standardIcon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView
+            ),
+            tip="Preview selected page (Enter or double-click a card)",
+            enabled=False,
+        )
+        self._select_all_action = actions.register(
+            "select_all",
+            "Select All",
+            slot=self._select_all_pages,
+            shortcut=QKeySequence.StandardKey.SelectAll,
+            tip="Select all pages (Ctrl+A)",
+            enabled=False,
+        )
+        self._deselect_all_action = actions.register(
+            "deselect_all",
+            "Deselect All",
+            slot=self._clear_selection,
+            tip="Clear selection (Esc)",
+            enabled=False,
+        )
+        # Esc closes preview or clears selection — not the same as Deselect All.
+        # Empty text keeps it out of the command palette.
+        self._clear_selection_action = actions.register(
+            "escape",
+            "",
+            slot=self._on_escape,
+            shortcut=QKeySequence.StandardKey.Cancel,
+            add_to_window=True,
+        )
+        self._move_up_action = actions.register(
+            "move_up",
+            "Move up",
+            slot=self._move_selected_pages_up,
+            shortcut="Ctrl+Up",
+            icon=style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            tip="Move selected pages up (Ctrl+↑)",
+            enabled=False,
+        )
+        self._move_down_action = actions.register(
+            "move_down",
+            "Move down",
+            slot=self._move_selected_pages_down,
+            shortcut="Ctrl+Down",
+            icon=style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+            tip="Move selected pages down (Ctrl+↓)",
+            enabled=False,
+        )
+        self._delete_pages_action = actions.register(
+            "delete_pages",
+            "Delete page(s)",
+            slot=self._delete_selected_pages,
+            shortcut=QKeySequence(Qt.Key.Key_Delete),
+            icon=style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            tip="Delete selected pages (Delete)",
+            enabled=False,
+        )
+        self._duplicate_pages_action = actions.register(
+            "duplicate_pages",
+            "Duplicate",
+            slot=self._duplicate_selected_pages,
+            shortcut="Ctrl+D",
+            tip="Duplicate selected pages (Ctrl+D)",
+            enabled=False,
+        )
+        self._rotate_cw_action = actions.register(
+            "rotate_cw",
+            "Rotate CW",
+            slot=lambda: self._rotate_selected_pages(90),
+            tip="Rotate selected pages clockwise",
+            enabled=False,
+        )
+        self._rotate_ccw_action = actions.register(
+            "rotate_ccw",
+            "Rotate CCW",
+            slot=lambda: self._rotate_selected_pages(-90),
+            tip="Rotate selected pages counter-clockwise",
+            enabled=False,
+        )
+
+        actions.register(
+            "next_tab",
+            "Previous tab (MRU)",
+            slot=self._switch_to_next_tab,
+            shortcut="Ctrl+Tab",
+            add_to_window=True,
+        )
+        actions.register(
+            "prev_tab",
+            "Cycle tabs backward",
+            slot=self._switch_to_previous_tab,
+            shortcut="Ctrl+Shift+Tab",
+            add_to_window=True,
+        )
+        actions.register(
+            "new_tab",
+            "New tab",
+            slot=self._new_blank_tab,
+            shortcut="Ctrl+T",
+            add_to_window=True,
+        )
+        actions.register(
+            "go_to_page",
+            "Go to page",
+            slot=self._go_to_page_dialog,
+            shortcut="Ctrl+G",
+            add_to_window=True,
+        )
+        actions.register(
+            "page_jump",
+            "Select page range",
+            slot=self._page_range_jump_dialog,
+            shortcut="Ctrl+F",
+            add_to_window=True,
+        )
+        actions.register(
+            "reset_zoom",
+            "Reset zoom",
+            slot=self._reset_zoom,
+            shortcut="Ctrl+0",
+            add_to_window=True,
+        )
+
+    def _build_menu(self) -> None:
+        menubar = self.menuBar()
+        a = self._actions
+
+        file_menu = menubar.addMenu("&File")
+        file_menu.addAction(a["open"])
+        self._open_recent_menu = file_menu.addMenu("Open &Recent")
+        self._open_recent_menu.aboutToShow.connect(self._populate_open_recent_menu)
+        file_menu.addAction(a["close_tab"])
+        file_menu.addAction(a["save_as"])
+        file_menu.addAction(a["export_all"])
+        file_menu.addSeparator()
+        file_menu.addAction(a["new_window"])
+        file_menu.addSeparator()
+        file_menu.addAction(a["exit"])
+
+        edit_menu = menubar.addMenu("&Edit")
+        edit_menu.addAction(a["undo"])
+        edit_menu.addAction(a["redo"])
+        edit_menu.addSeparator()
+        edit_menu.addAction(a["confirm_delete"])
+        edit_menu.addAction(a["confirm_close_dirty"])
+        edit_menu.addAction(a["remember_geometry"])
+
+        view_menu = menubar.addMenu("&View")
+        view_menu.addAction(a["light_theme"])
+        quality_menu = view_menu.addMenu("Thumbnail &quality")
+        for key in ("quality_low", "quality_medium", "quality_high"):
+            quality_menu.addAction(a[key])
         view_menu.addSeparator()
+        view_menu.addAction(a["command_palette"])
 
-        self._command_palette_action = view_menu.addAction("Command &palette…")
-        self._command_palette_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
-        self._command_palette_action.triggered.connect(self._open_command_palette)
-
-        merge_action = menubar.addAction("&Merge PDFs")
-        merge_action.triggered.connect(self._open_merge_window)
-
-        create_pdf_action = menubar.addAction("&Create PDF")
-        create_pdf_action.triggered.connect(self._open_convert_window)
+        menubar.addAction(a["merge"])
+        menubar.addAction(a["create_pdf"])
 
         help_menu = menubar.addMenu("&Help")
-        shortcuts_action = help_menu.addAction("&Keyboard Shortcuts")
-        shortcuts_action.setShortcut(QKeySequence("Ctrl+/"))
-        shortcuts_action.triggered.connect(self._show_keyboard_shortcuts)
-        tips_action = help_menu.addAction("Show &Tips")
-        tips_action.triggered.connect(self._show_tips_overlay)
+        help_menu.addAction(a["keyboard_shortcuts"])
+        help_menu.addAction(a["tips"])
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         self._toolbar = toolbar
+        a = self._actions
 
-        open_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
-            "Open",
-        )
-        open_action.triggered.connect(self._open_pdf)
-        self._set_action_hint(open_action, "Open a PDF (Ctrl+O)")
-        open_button = toolbar.widgetForAction(open_action)
+        toolbar.addAction(a["open"])
+        open_button = toolbar.widgetForAction(a["open"])
         if open_button is not None:
             open_button.setObjectName("ToolbarPrimary")
 
-        self._preview_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
-            "Preview",
-        )
-        self._set_action_hint(
-            self._preview_action,
-            "Preview selected page (Enter or double-click a card)",
-        )
-        self._preview_action.triggered.connect(self._open_preview)
-        self._preview_action.setEnabled(False)
-
+        toolbar.addAction(a["preview"])
         toolbar.addSeparator()
-
-        self._select_all_action = toolbar.addAction("Select All")
-        self._set_action_hint(self._select_all_action, "Select all pages (Ctrl+A)")
-        self._select_all_action.triggered.connect(self._select_all_pages)
-        self._select_all_action.setEnabled(False)
-
-        self._deselect_all_action = toolbar.addAction("Deselect All")
-        self._set_action_hint(self._deselect_all_action, "Clear selection (Esc)")
-        self._deselect_all_action.triggered.connect(self._clear_selection)
-        self._deselect_all_action.setEnabled(False)
-
-        self._move_up_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
-            "Move up",
-        )
-        self._set_action_hint(
-            self._move_up_action, "Move selected pages up (Ctrl+↑)"
-        )
-        self._move_up_action.triggered.connect(self._move_selected_pages_up)
-        self._move_up_action.setEnabled(False)
-
-        self._move_down_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
-            "Move down",
-        )
-        self._set_action_hint(
-            self._move_down_action, "Move selected pages down (Ctrl+↓)"
-        )
-        self._move_down_action.triggered.connect(self._move_selected_pages_down)
-        self._move_down_action.setEnabled(False)
-
-        self._delete_pages_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
-            "Delete page(s)",
-        )
-        self._set_action_hint(
-            self._delete_pages_action, "Delete selected pages (Delete)"
-        )
-        self._delete_pages_action.triggered.connect(self._delete_selected_pages)
-        self._delete_pages_action.setEnabled(False)
-
-        self._duplicate_pages_action = toolbar.addAction("Duplicate")
-        self._set_action_hint(
-            self._duplicate_pages_action, "Duplicate selected pages (Ctrl+D)"
-        )
-        self._duplicate_pages_action.triggered.connect(self._duplicate_selected_pages)
-        self._duplicate_pages_action.setEnabled(False)
-
-        self._rotate_cw_action = toolbar.addAction("Rotate CW")
-        self._set_action_hint(
-            self._rotate_cw_action, "Rotate selected pages clockwise"
-        )
-        self._rotate_cw_action.triggered.connect(
-            lambda: self._rotate_selected_pages(90)
-        )
-        self._rotate_cw_action.setEnabled(False)
-
-        self._rotate_ccw_action = toolbar.addAction("Rotate CCW")
-        self._set_action_hint(
-            self._rotate_ccw_action, "Rotate selected pages counter-clockwise"
-        )
-        self._rotate_ccw_action.triggered.connect(
-            lambda: self._rotate_selected_pages(-90)
-        )
-        self._rotate_ccw_action.setEnabled(False)
-
+        toolbar.addAction(a["select_all"])
+        toolbar.addAction(a["deselect_all"])
+        toolbar.addAction(a["move_up"])
+        toolbar.addAction(a["move_down"])
+        toolbar.addAction(a["delete_pages"])
+        toolbar.addAction(a["duplicate_pages"])
+        toolbar.addAction(a["rotate_cw"])
+        toolbar.addAction(a["rotate_ccw"])
         toolbar.addSeparator()
 
         self._filename_label = QLabel("No file open")
@@ -446,8 +533,14 @@ class MainWindow(QMainWindow):
     def _persistent_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
 
-    def _show_toast(self, message: str) -> None:
-        self._toast.show_toast(message)
+    def _show_toast(
+        self,
+        message: str,
+        *,
+        kind: str = "info",
+        on_undo=None,
+    ) -> None:
+        self._toast.show_toast(message, kind=kind, on_undo=on_undo)
 
     def _restore_document_status(self) -> None:
         """Restore sticky document status after a drag hint."""
@@ -514,92 +607,6 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._move_undo_widget)
         self.statusBar().addPermanentWidget(self._progress_bar)
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-    def _build_selection_shortcuts(self) -> None:
-        # WindowShortcut, not ApplicationShortcut: with multiple windows open,
-        # app-wide contexts collide ("Ambiguous shortcut overload") and Qt
-        # fires neither action. Handlers act on this window's tab anyway.
-        select_all = QAction(self)
-        select_all.setShortcut(QKeySequence.StandardKey.SelectAll)
-        select_all.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        select_all.triggered.connect(self._select_all_pages)
-        self.addAction(select_all)
-
-        self._clear_selection_action = QAction(self)
-        self._clear_selection_action.setShortcut(QKeySequence.StandardKey.Cancel)
-        self._clear_selection_action.setShortcutContext(
-            Qt.ShortcutContext.WindowShortcut
-        )
-        self._clear_selection_action.triggered.connect(self._on_escape)
-        self.addAction(self._clear_selection_action)
-
-        delete_pages = QAction(self)
-        delete_pages.setShortcut(QKeySequence(Qt.Key.Key_Delete))
-        delete_pages.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        delete_pages.triggered.connect(self._delete_selected_pages)
-        self.addAction(delete_pages)
-
-        move_up = QAction(self)
-        move_up.setShortcut(QKeySequence("Ctrl+Up"))
-        move_up.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        move_up.triggered.connect(self._move_selected_pages_up)
-        self.addAction(move_up)
-
-        move_down = QAction(self)
-        move_down.setShortcut(QKeySequence("Ctrl+Down"))
-        move_down.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        move_down.triggered.connect(self._move_selected_pages_down)
-        self.addAction(move_down)
-
-        duplicate_pages = QAction(self)
-        duplicate_pages.setShortcut(QKeySequence("Ctrl+D"))
-        duplicate_pages.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        duplicate_pages.triggered.connect(self._duplicate_selected_pages)
-        self.addAction(duplicate_pages)
-
-    def _build_tab_shortcuts(self) -> None:
-        next_tab = QAction(self)
-        next_tab.setShortcut(QKeySequence("Ctrl+Tab"))
-        next_tab.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        next_tab.triggered.connect(self._switch_to_next_tab)
-        self.addAction(next_tab)
-
-        prev_tab = QAction(self)
-        prev_tab.setShortcut(QKeySequence("Ctrl+Shift+Tab"))
-        prev_tab.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        prev_tab.triggered.connect(self._switch_to_previous_tab)
-        self.addAction(prev_tab)
-
-        close_tab = QAction(self)
-        close_tab.setShortcut(QKeySequence("Ctrl+W"))
-        close_tab.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        close_tab.triggered.connect(self._close_tab)
-        self.addAction(close_tab)
-
-        new_tab = QAction(self)
-        new_tab.setShortcut(QKeySequence("Ctrl+T"))
-        new_tab.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        new_tab.triggered.connect(self._new_blank_tab)
-        self.addAction(new_tab)
-
-    def _build_navigation_shortcuts(self) -> None:
-        go_to_page = QAction(self)
-        go_to_page.setShortcut(QKeySequence("Ctrl+G"))
-        go_to_page.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        go_to_page.triggered.connect(self._go_to_page_dialog)
-        self.addAction(go_to_page)
-
-        page_jump = QAction(self)
-        page_jump.setShortcut(QKeySequence("Ctrl+F"))
-        page_jump.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        page_jump.triggered.connect(self._page_range_jump_dialog)
-        self.addAction(page_jump)
-
-        reset_zoom = QAction(self)
-        reset_zoom.setShortcut(QKeySequence("Ctrl+0"))
-        reset_zoom.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
-        reset_zoom.triggered.connect(self._reset_zoom)
-        self.addAction(reset_zoom)
 
     def _connect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -838,7 +845,9 @@ class MainWindow(QMainWindow):
         )
 
     def _update_close_tab_action(self) -> None:
-        self._close_action.setEnabled(not self._is_only_blank_tab())
+        # Always enabled: `_close_tab` reports why the last blank tab cannot close.
+        # Disabling here would also mute Ctrl+W (same QAction as the menu item).
+        self._close_action.setEnabled(True)
 
     def _on_active_tab_changed(self, tab: PdfTab) -> None:
         if tab.is_preview_visible():
@@ -988,7 +997,7 @@ class MainWindow(QMainWindow):
         self._update_save_as_action()
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Duplicated {count} {noun}")
-        self._show_toast(f"Duplicated {count} {noun}")
+        self._show_toast(f"Duplicated {count} {noun}", kind="success")
 
     def _rotate_selected_pages(self, delta_degrees: int) -> None:
         tab = self._active_tab()
@@ -1359,7 +1368,8 @@ class MainWindow(QMainWindow):
                 tab.thumbnail_grid.refresh_thumbnail_quality()
 
     def _open_command_palette(self) -> None:
-        dialog = CommandPalette(collect_actions(self), self)
+        labeled = [a for a in self._actions.values() if action_label(a)]
+        dialog = CommandPalette(labeled, self)
         dialog.exec()
 
     @staticmethod
@@ -1455,7 +1465,7 @@ class MainWindow(QMainWindow):
         count = len(paths)
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Extracted {count} {noun} to {folder}")
-        self._show_toast(f"Extracted {count} {noun}")
+        self._show_toast(f"Extracted {count} {noun}", kind="success")
 
     def _export_all_pages(self) -> None:
         tab = self._active_tab()
@@ -1491,7 +1501,7 @@ class MainWindow(QMainWindow):
         count = len(paths)
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Exported {count} {noun} to {folder}")
-        self._show_toast(f"Exported {count} {noun}")
+        self._show_toast(f"Exported {count} {noun}", kind="success")
 
     def _extract_selected_to_new_tab(self) -> None:
         tab = self._active_tab()
@@ -1509,7 +1519,7 @@ class MainWindow(QMainWindow):
         count = len(refs)
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Extracted {count} {noun} to new tab")
-        self._show_toast(f"Extracted {count} {noun} to new tab")
+        self._show_toast(f"Extracted {count} {noun} to new tab", kind="success")
 
     def _extract_selected_to_new_window(self) -> None:
         tab = self._active_tab()
@@ -1538,7 +1548,7 @@ class MainWindow(QMainWindow):
         count = len(refs)
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Extracted {count} {noun} to new window")
-        self._show_toast(f"Extracted {count} {noun} to new window")
+        self._show_toast(f"Extracted {count} {noun} to new window", kind="success")
 
     def _open_merge_window(self) -> None:
         if self._merge_window is None:
@@ -1833,7 +1843,7 @@ class MainWindow(QMainWindow):
             )
             noun = "page" if count == 1 else "pages"
             if cancelled_previous:
-                self._show_toast("Cancelled previous load")
+                self._show_toast("Cancelled previous load", kind="info")
             self._persistent_status(f"Loading {count} {noun}…")
 
     def _on_open_pdfs_requested(self, paths: list) -> None:
@@ -1922,7 +1932,7 @@ class MainWindow(QMainWindow):
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
             self._transient_status(f"Saved to {Path(path).name}")
-            self._show_toast(f"Saved to {Path(path).name}")
+            self._show_toast(f"Saved to {Path(path).name}", kind="success")
         return True
 
     def _rename_tab(self, index: int) -> None:
@@ -1955,32 +1965,7 @@ class MainWindow(QMainWindow):
 
     def _prompt_unsaved_changes(self, tab: PdfTab) -> str:
         """Return ``save``, ``discard``, or ``cancel``."""
-        if os.environ.get("PAGEDROP_TESTING") == "1":
-            return "discard"
-
-        display_title = tab.tab_title.rstrip("*") or "document"
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Unsaved Changes")
-        message.setText(f'"{display_title}" has unsaved changes.')
-        message.setInformativeText("Save your changes before closing?")
-        save_button = message.addButton(
-            "Save As",
-            QMessageBox.ButtonRole.AcceptRole,
-        )
-        discard_button = message.addButton(
-            "Discard",
-            QMessageBox.ButtonRole.DestructiveRole,
-        )
-        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
-        fit_message_box_buttons(message)
-        message.exec()
-        clicked = message.clickedButton()
-        if clicked is save_button:
-            return "save"
-        if clicked is discard_button:
-            return "discard"
-        return "cancel"
+        return prompt_unsaved_changes(self, tab.tab_title)
 
     def _try_close_tab(self, index: int) -> bool:
         if index < 0 or index >= self._tab_manager.count():
@@ -2064,7 +2049,7 @@ class MainWindow(QMainWindow):
         self._transient_status(
             f"Inserted {count} {noun} from {filename} at position {position}"
         )
-        self._show_toast(f"Inserted {count} {noun}")
+        self._show_toast(f"Inserted {count} {noun}", kind="success")
 
     def _on_pages_reordered(self) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -2079,7 +2064,7 @@ class MainWindow(QMainWindow):
             return
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Inserted {count} {noun} from {filename}")
-        self._show_toast(f"Inserted {count} {noun}")
+        self._show_toast(f"Inserted {count} {noun}", kind="success")
         self._sync_toolbar_from_active_tab()
 
     def _on_pages_moved_out(

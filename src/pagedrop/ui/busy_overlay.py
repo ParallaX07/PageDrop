@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PyQt6.QtCore import QEvent, Qt, QTimer
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+
+# info | success | error | undo — property drives theme chrome
+ToastKind = str
 
 
 class BusyOverlay(QWidget):
@@ -41,9 +46,14 @@ class BusyOverlay(QWidget):
 
 
 class ToastOverlay(QWidget):
-    """Non-blocking auto-dismiss notice; same chrome as BusyOverlay, no dimming."""
+    """Non-blocking auto-dismiss notice; same chrome as BusyOverlay, no dimming.
+
+    Thin helper — not a notification manager. Use ``kind`` for chrome and
+    ``on_undo`` when the notice offers a one-shot undo affordance.
+    """
 
     DEFAULT_TIMEOUT_MS = 2500
+    UNDO_TIMEOUT_MS = 8000
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -57,27 +67,79 @@ class ToastOverlay(QWidget):
         )
         layout.setContentsMargins(24, 24, 24, 48)
 
+        self._card = QWidget()
+        self._card.setObjectName("ToastOverlayCard")
+        card_layout = QHBoxLayout(self._card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(8)
+
         self._message = QLabel()
         self._message.setObjectName("ToastOverlayMessage")
         self._message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._message.setWordWrap(True)
-        layout.addWidget(self._message)
+        card_layout.addWidget(self._message)
+
+        self._undo_button = QPushButton("Undo")
+        self._undo_button.setObjectName("ToastOverlayUndo")
+        self._undo_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._undo_button.setAccessibleName("Undo")
+        self._undo_button.clicked.connect(self._on_undo_clicked)
+        self._undo_button.hide()
+        card_layout.addWidget(self._undo_button)
+
+        layout.addWidget(self._card)
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
+        self._on_undo: Callable[[], None] | None = None
 
         if parent is not None:
             parent.installEventFilter(self)
 
     def show_toast(
-        self, message: str, timeout_ms: int = DEFAULT_TIMEOUT_MS
+        self,
+        message: str,
+        *,
+        kind: ToastKind = "info",
+        timeout_ms: int | None = None,
+        on_undo: Callable[[], None] | None = None,
     ) -> None:
         self._message.setText(message)
+        self._message.setProperty("kind", kind)
+        style = self._message.style()
+        if style is not None:
+            style.unpolish(self._message)
+            style.polish(self._message)
+
+        self._on_undo = on_undo
+        if on_undo is not None:
+            self.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
+            )
+            self._undo_button.show()
+            if timeout_ms is None:
+                timeout_ms = self.UNDO_TIMEOUT_MS
+        else:
+            self.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+            )
+            self._undo_button.hide()
+            if timeout_ms is None:
+                timeout_ms = self.DEFAULT_TIMEOUT_MS
+
         self._sync_geometry()
         self.show()
         self.raise_()
         self._timer.start(timeout_ms)
+
+    def _on_undo_clicked(self) -> None:
+        callback = self._on_undo
+        self._on_undo = None
+        self.hide()
+        self._timer.stop()
+        if callback is not None:
+            callback()
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:

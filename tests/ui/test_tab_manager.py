@@ -79,7 +79,16 @@ def _close_tab_at(window: MainWindow, index: int) -> None:
 def _trigger_shortcut(window: MainWindow, sequence: str) -> None:
     """Fire a registered window shortcut (reliable under offscreen Qt)."""
     target = QKeySequence(sequence)
-    for action in window.actions():
+    candidates = list(window.actions())
+    registry = getattr(window, "_actions", None)
+    if registry is not None:
+        candidates.extend(registry.values())
+    seen: set[int] = set()
+    for action in candidates:
+        key = id(action)
+        if key in seen:
+            continue
+        seen.add(key)
         if action.shortcut() == target:
             action.trigger()
             return

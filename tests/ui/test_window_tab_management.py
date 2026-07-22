@@ -80,11 +80,11 @@ def test_unsaved_prompt_uses_custom_tab_title(
 
     monkeypatch.delenv("PAGEDROP_TESTING", raising=False)
     monkeypatch.setattr(
-        "pagedrop.ui.main_window.QMessageBox",
+        "pagedrop.ui.dialogs.QMessageBox",
         FakeBox,
     )
     monkeypatch.setattr(
-        "pagedrop.ui.main_window.fit_message_box_buttons",
+        "pagedrop.ui.dialogs.fit_message_box_buttons",
         lambda _msg: None,
     )
 
