@@ -1481,6 +1481,17 @@ class ThumbnailGrid(QScrollArea):
             base_name,
         )
 
+    def extract_all_to_folder(self, output_dir) -> list:
+        """Write every page to *output_dir*; returns paths or raises."""
+        if self._model is None:
+            return []
+        total = self._model.logical_count()
+        if total == 0:
+            return []
+        refs = [self._model.page_at(i) for i in range(total)]
+        base_name = Path(self._model.original_path).stem
+        return extract_page_refs_to_files(refs, output_dir, base_name)
+
     def _set_focused_index(self, index: int) -> None:
         if not self._cards:
             self._focused_index = None

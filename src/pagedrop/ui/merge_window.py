@@ -5,9 +5,11 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QResizeEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QStackedWidget,
     QStyle,
     QToolBar,
@@ -17,6 +19,7 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.pdf_loader import PdfEmptyError, PdfLoadError, PdfLoader
 from pagedrop.core.pdf_merge import PdfMergeModel
 from pagedrop.core.pdf_writer import merge_pdf_files
+from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.dialogs import prompt_discard_file_list
 from pagedrop.ui.keyboard_nav import (
@@ -37,6 +40,9 @@ from pagedrop.ui.zoom_controls import ZoomControls
 _PREVIEW_FOOTER_HINT = (
     "← → change page · Ctrl+scroll zoom · Esc back to list"
 )
+
+# Show a progress dialog once folder validation exceeds this many candidates.
+_FOLDER_PROGRESS_THRESHOLD = 8
 
 
 class _MergeWorker(QRunnable):
@@ -119,6 +125,12 @@ class MergeWindow(QMainWindow):
         )
         self._add_action.triggered.connect(self._add_pdfs)
 
+        self._add_folder_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            "Add Folder…",
+        )
+        self._add_folder_action.triggered.connect(self._add_folder)
+
         self._remove_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
             "Remove",
@@ -198,6 +210,7 @@ class MergeWindow(QMainWindow):
 
         self._back_to_list_action.setVisible(in_preview)
         self._add_action.setVisible(not in_preview)
+        self._add_folder_action.setVisible(not in_preview)
         self._remove_action.setVisible(not in_preview)
         self._move_up_action.setVisible(not in_preview)
         self._move_down_action.setVisible(not in_preview)
@@ -206,6 +219,7 @@ class MergeWindow(QMainWindow):
 
         toolbar_enabled = not self._merging
         self._add_action.setEnabled(toolbar_enabled)
+        self._add_folder_action.setEnabled(toolbar_enabled)
         self._remove_action.setEnabled(has_selection and toolbar_enabled)
         self._move_up_action.setEnabled(self._can_move_up() and toolbar_enabled)
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
@@ -315,10 +329,7 @@ class MergeWindow(QMainWindow):
     def _validate_pdf(self, path: str) -> int | None:
         filename = Path(path).name
         try:
-            loader = PdfLoader(path)
-            count = loader.page_count
-            loader.close()
-            return count
+            return self._page_count(path)
         except PdfEmptyError:
             QMessageBox.warning(
                 self,
@@ -333,6 +344,14 @@ class MergeWindow(QMainWindow):
                 f"Could not open {filename}:\n{exc}",
             )
             return None
+
+    @staticmethod
+    def _page_count(path: str) -> int:
+        loader = PdfLoader(path)
+        try:
+            return loader.page_count
+        finally:
+            loader.close()
 
     def _add_paths(self, paths: list[str]) -> None:
         accepted: list[str] = []
@@ -364,6 +383,115 @@ class MergeWindow(QMainWindow):
             return
         remember_directory(paths[0])
         self._add_paths(paths)
+
+    def _discover_pdfs_in_folder(self, folder: str) -> list[str]:
+        root = Path(folder)
+        return sorted(
+            str(path)
+            for path in root.rglob("*")
+            if path.is_file() and is_pdf_path(path)
+        )
+
+    def _add_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Add Folder",
+            last_directory(),
+        )
+        if not folder:
+            return
+        remember_directory(folder)
+
+        candidates = self._discover_pdfs_in_folder(folder)
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "Add Folder",
+                "No PDF files found in that folder.",
+            )
+            return
+
+        accepted, skipped, cancelled = self._validate_folder_candidates(candidates)
+        if cancelled and not accepted:
+            self.statusBar().showMessage("Add Folder cancelled")
+            return
+
+        if accepted:
+            self._model.add_files(accepted)
+            self._refresh_grid()
+
+        parts: list[str] = []
+        if accepted:
+            noun = "file" if len(accepted) == 1 else "files"
+            parts.append(f"Added {len(accepted)} {noun}")
+        if skipped:
+            parts.append(f"skipped {len(skipped)}")
+        if cancelled:
+            parts.append("cancelled")
+        self.statusBar().showMessage(", ".join(parts) if parts else "No files added")
+
+        if skipped:
+            preview = "\n".join(
+                f"• {Path(path).name}: {reason}" for path, reason in skipped[:8]
+            )
+            extra = len(skipped) - 8
+            if extra > 0:
+                preview = f"{preview}\n…and {extra} more"
+            QMessageBox.warning(
+                self,
+                "Add Folder",
+                f"Could not add {len(skipped)} PDF file(s):\n\n{preview}",
+            )
+
+    def _validate_folder_candidates(
+        self, paths: list[str]
+    ) -> tuple[list[str], list[tuple[str, str]], bool]:
+        """Validate folder PDFs; returns (accepted, skipped, cancelled)."""
+        accepted: list[str] = []
+        skipped: list[tuple[str, str]] = []
+        total = len(paths)
+        progress: QProgressDialog | None = None
+        if total >= _FOLDER_PROGRESS_THRESHOLD:
+            progress = QProgressDialog(
+                "Checking PDFs…",
+                "Cancel",
+                0,
+                total,
+                self,
+            )
+            progress.setWindowTitle("Add Folder")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+        cancelled = False
+        for index, path in enumerate(paths):
+            if progress is not None:
+                progress.setValue(index)
+                progress.setLabelText(f"Checking {Path(path).name}…")
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    cancelled = True
+                    break
+
+            try:
+                page_count = self._page_count(path)
+            except PdfEmptyError:
+                skipped.append((path, "no pages"))
+                continue
+            except PdfLoadError as exc:
+                skipped.append((path, str(exc)))
+                continue
+
+            resolved = str(Path(path).resolve())
+            self._page_counts[resolved] = page_count
+            accepted.append(resolved)
+
+        if progress is not None:
+            progress.setValue(total if not cancelled else progress.value())
+            progress.close()
+
+        return accepted, skipped, cancelled
 
     def _remove_selected(self) -> None:
         indices = self._selected_indices()

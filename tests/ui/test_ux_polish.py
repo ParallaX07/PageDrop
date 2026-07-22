@@ -51,6 +51,26 @@ def test_context_menu_extract_action(
     assert all(path.suffix == ".pdf" for path in pdfs)
 
 
+def test_export_all_pages(main_window, five_page_pdf, tmp_path, monkeypatch, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+
+    assert main_window._export_all_action.isEnabled()
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(tmp_path),
+    )
+    main_window._export_all_pages()
+
+    pdfs = sorted(tmp_path.glob("*.pdf"))
+    assert len(pdfs) == 5
+    assert [path.name for path in pdfs] == [
+        f"{five_page_pdf.stem}_page_{i:04d}.pdf" for i in range(1, 6)
+    ]
+
+
 def _press_key(widget, key: Qt.Key) -> None:
     event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
     widget.keyPressEvent(event)

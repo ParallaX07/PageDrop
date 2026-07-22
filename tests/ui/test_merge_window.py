@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.ui.merge_window import MergeWindow
 from tests.fixtures.generate_fixtures import generate_n_page
@@ -113,3 +113,54 @@ def test_zoom_controls_resize_thumbnails(qtbot, one_page_pdf):
     window._file_grid.set_thumbnail_zoom(initial + 32)
     assert window._file_grid.thumbnail_width_px == initial + 32
     assert window._file_grid._cards[0].width() == initial + 32 + 16
+
+
+def test_add_folder_recursively_adds_pdfs(
+    qtbot, one_page_pdf, five_page_pdf, tmp_path, monkeypatch
+):
+    root = tmp_path / "inbox"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    (root / "a.pdf").write_bytes(one_page_pdf.read_bytes())
+    (nested / "b.pdf").write_bytes(five_page_pdf.read_bytes())
+    (root / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(root),
+    )
+
+    window = _merge_window(qtbot)
+    window._add_folder()
+
+    names = sorted(Path(path).name for path in window._model.all_paths())
+    assert names == ["a.pdf", "b.pdf"]
+    assert window._page_counts[str((root / "a.pdf").resolve())] == 1
+    assert window._page_counts[str((nested / "b.pdf").resolve())] == 5
+    assert "Added 2 files" in window.statusBar().currentMessage()
+
+
+def test_add_folder_skips_invalid_pdfs(qtbot, one_page_pdf, tmp_path, monkeypatch):
+    root = tmp_path / "mixed"
+    root.mkdir()
+    (root / "good.pdf").write_bytes(one_page_pdf.read_bytes())
+    (root / "bad.pdf").write_bytes(b"not a pdf")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(root),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Ok,
+    )
+
+    window = _merge_window(qtbot)
+    window._add_folder()
+
+    assert window._model.file_count() == 1
+    assert Path(window._model.path_at(0)).name == "good.pdf"
+    assert "skipped 1" in window.statusBar().currentMessage()

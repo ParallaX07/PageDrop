@@ -162,6 +162,10 @@ class MainWindow(QMainWindow):
         self._save_as_action.triggered.connect(self._save_as)
         self._save_as_action.setEnabled(False)
 
+        self._export_all_action = file_menu.addAction("Export All &Pages…")
+        self._export_all_action.triggered.connect(self._export_all_pages)
+        self._export_all_action.setEnabled(False)
+
         file_menu.addSeparator()
 
         self._new_window_action = file_menu.addAction("New &Window")
@@ -869,11 +873,13 @@ class MainWindow(QMainWindow):
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
-        self._save_as_action.setEnabled(
+        has_pages = (
             tab is not None
             and tab.edit_model is not None
             and tab.edit_model.logical_count() > 0
         )
+        self._save_as_action.setEnabled(has_pages)
+        self._export_all_action.setEnabled(has_pages)
 
     def _update_delete_pages_action(self) -> None:
         tab = self._active_tab()
@@ -1382,6 +1388,42 @@ class MainWindow(QMainWindow):
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Extracted {count} {noun} to {folder}")
         self._show_toast(f"Extracted {count} {noun}")
+
+    def _export_all_pages(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None or tab.edit_model.logical_count() == 0:
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Export All Pages",
+            last_directory(),
+        )
+        if not folder:
+            return
+
+        remember_directory(folder)
+        try:
+            paths = tab.thumbnail_grid.extract_all_to_folder(Path(folder))
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Export All Pages",
+                f"Could not write PDFs to the chosen folder:\n{exc}",
+            )
+            return
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Export All Pages",
+                f"Could not export pages:\n{exc}",
+            )
+            return
+
+        count = len(paths)
+        noun = "page" if count == 1 else "pages"
+        self._transient_status(f"Exported {count} {noun} to {folder}")
+        self._show_toast(f"Exported {count} {noun}")
 
     def _extract_selected_to_new_tab(self) -> None:
         tab = self._active_tab()
