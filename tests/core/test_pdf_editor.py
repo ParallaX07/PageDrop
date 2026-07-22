@@ -110,3 +110,35 @@ def test_record_undo_false_skips_stack():
     model.remove_pages([0], record_undo=False)
     assert not model.can_undo()
     assert model.logical_count() == 2
+
+
+def test_rotate_pages_updates_rotation_and_dirty():
+    model = PdfEditModel("/a.pdf", 3)
+    model.rotate_pages([0, 2], 90)
+    assert model.page_at(0).rotation == 90
+    assert model.page_at(1).rotation == 0
+    assert model.page_at(2).rotation == 90
+    assert model.is_dirty()
+
+    model.rotate_pages([0], 90)
+    assert model.page_at(0).rotation == 180
+    model.rotate_pages([0], 180)
+    assert model.page_at(0).rotation == 0
+
+
+def test_rotate_pages_undo():
+    model = PdfEditModel("/a.pdf", 2)
+    model.rotate_pages([1], -90)
+    assert model.page_at(1).rotation == 270
+    assert model.undo()
+    assert model.page_at(1).rotation == 0
+    assert not model.is_dirty()
+
+
+def test_duplicate_via_insert_after_last_selected():
+    model = PdfEditModel("/a.pdf", 4)
+    selected = [1, 3]
+    refs = [model.page_at(i) for i in selected]
+    model.insert_pages(selected[-1] + 1, refs)
+    assert model.logical_count() == 6
+    assert [model.page_at(i).source_index for i in range(6)] == [0, 1, 2, 3, 1, 3]

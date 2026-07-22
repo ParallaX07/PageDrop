@@ -285,6 +285,32 @@ class PdfTab(QWidget):
         self._sync_dirty_from_model()
         return True
 
+    def duplicate_selected_pages(self) -> int:
+        """Duplicate the current selection after the last selected page."""
+        if self._edit_model is None or self.is_preview_visible():
+            return 0
+        self.close_preview()
+        count = self._thumbnail_grid.duplicate_selected_pages()
+        if count:
+            self._sync_dirty_from_model()
+        return count
+
+    def rotate_selected_pages(self, delta_degrees: int) -> bool:
+        """Rotate the current selection by *delta_degrees*."""
+        if self._edit_model is None or self.is_preview_visible():
+            return False
+        if not self._thumbnail_grid.rotate_selected_pages(delta_degrees):
+            return False
+        self._sync_dirty_from_model()
+        return True
+
+    def selected_page_refs(self) -> list[PageRef]:
+        """Return PageRefs for the current thumbnail selection (logical order)."""
+        if self._edit_model is None:
+            return []
+        ordered = sorted(self._thumbnail_grid.selection_manager.selection)
+        return [self._edit_model.page_at(index) for index in ordered]
+
     def _on_pages_reordered(self) -> None:
         self.close_preview()
         self._sync_dirty_from_model()

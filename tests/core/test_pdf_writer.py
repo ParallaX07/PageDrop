@@ -107,3 +107,21 @@ def test_merge_pdf_files_total_page_count(tmp_path):
         assert doc.page_count == 3
     finally:
         doc.close()
+
+
+def test_write_applies_page_rotation(five_page_pdf, tmp_path):
+    model = PdfEditModel(str(five_page_pdf), 5)
+    model.rotate_pages([1], 90)
+    model.rotate_pages([2], 180)
+
+    output = tmp_path / "rotated.pdf"
+    write_pdf(model, str(output))
+
+    out = fitz.open(str(output))
+    try:
+        assert out[0].rotation == 0
+        assert out[1].rotation == 90
+        assert out[2].rotation == 180
+        assert out[3].rotation == 0
+    finally:
+        out.close()

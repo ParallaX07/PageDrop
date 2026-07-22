@@ -62,6 +62,9 @@ def write_pdf(model: PdfEditModel, output_path: str) -> None:
             ref = model.page_at(logical_index)
             src = _cached_doc(ref.source_path, docs)
             out.insert_pdf(src, from_page=ref.source_index, to_page=ref.source_index)
+            if ref.rotation:
+                page = out[-1]
+                page.set_rotation((page.rotation + ref.rotation) % 360)
         out.save(output_path)
     finally:
         out.close()

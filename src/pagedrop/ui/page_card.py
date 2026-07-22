@@ -42,6 +42,14 @@ class PageCard(BaseFileCard):
         )
         self._page_overlay.hide()
 
+        # Semantic rotation chip — same material as page overlay, opposite corner.
+        self._rotation_overlay = QLabel("", self._thumbnail_label)
+        self._rotation_overlay.setObjectName("PageCardRotationOverlay")
+        self._rotation_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self._rotation_overlay.hide()
+
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -67,6 +75,7 @@ class PageCard(BaseFileCard):
 
     def set_page_ref(self, ref: PageRef) -> None:
         self._page_ref = ref
+        self.set_rotation_indicator(ref.rotation)
 
     def set_logical_index(self, index: int) -> None:
         self.page_index = index
@@ -79,9 +88,19 @@ class PageCard(BaseFileCard):
         if visible:
             self._sync_page_overlay_geometry()
 
+    def set_rotation_indicator(self, degrees: int) -> None:
+        rot = degrees % 360
+        if rot == 0:
+            self._rotation_overlay.hide()
+            return
+        self._rotation_overlay.setText(f"{rot}°")
+        self._rotation_overlay.show()
+        self._sync_rotation_overlay_geometry()
+
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._sync_page_overlay_geometry()
+        self._sync_rotation_overlay_geometry()
 
     def _sync_page_overlay_geometry(self) -> None:
         if not self._page_overlay.isVisible():
@@ -97,6 +116,13 @@ class PageCard(BaseFileCard):
             self._thumbnail_label.height() - self._page_overlay.height() - margin,
         )
         self._page_overlay.move(x, y)
+
+    def _sync_rotation_overlay_geometry(self) -> None:
+        if not self._rotation_overlay.isVisible():
+            return
+        self._rotation_overlay.adjustSize()
+        margin = 4
+        self._rotation_overlay.move(margin, margin)
 
     def set_drag_context(
         self,

@@ -23,6 +23,9 @@ def extract_page_refs_to_files(
             out = fitz.open()
             try:
                 out.insert_pdf(src, from_page=ref.source_index, to_page=ref.source_index)
+                if ref.rotation:
+                    page = out[-1]
+                    page.set_rotation((page.rotation + ref.rotation) % 360)
                 out_path = output_dir / f"{base_name}_page_{seq:04d}.pdf"
                 out.save(str(out_path))
                 out_paths.append(out_path)

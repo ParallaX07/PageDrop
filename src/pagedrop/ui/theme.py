@@ -747,6 +747,15 @@ def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False
         padding: 2px 6px;
         border-radius: 4px;
     }}
+    QLabel#PageCardRotationOverlay {{
+        color: #FFFFFF;
+        background-color: rgba(19, 19, 22, 160);
+        font-family: {FONT_MONO};
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 5px;
+        border-radius: 4px;
+    }}
     """
 
 

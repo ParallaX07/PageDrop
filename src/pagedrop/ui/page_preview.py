@@ -38,6 +38,8 @@ class PreviewRenderWorker(QRunnable):
         width_px: int,
         generation: int,
         is_cancelled: Callable[[int], bool],
+        *,
+        rotation: int = 0,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
@@ -47,6 +49,7 @@ class PreviewRenderWorker(QRunnable):
         self._width_px = width_px
         self._generation = generation
         self._is_cancelled = is_cancelled
+        self._rotation = rotation
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -57,7 +60,12 @@ class PreviewRenderWorker(QRunnable):
             doc = fitz.open(self._source_path)
             if self._is_cancelled(self._generation):
                 return
-            png = render_page_png(doc, self._source_index, width_px=self._width_px)
+            png = render_page_png(
+                doc,
+                self._source_index,
+                width_px=self._width_px,
+                rotation=self._rotation,
+            )
             if self._is_cancelled(self._generation):
                 return
             self.signals.finished.emit(
@@ -305,6 +313,7 @@ class PagePreviewWidget(QWidget):
             self._render_width_px,
             generation,
             self._is_cancelled,
+            rotation=ref.rotation,
         )
         worker.signals.finished.connect(self._on_render_finished)
         worker.signals.error.connect(self._on_render_error)

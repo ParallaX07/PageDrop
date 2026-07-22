@@ -9,6 +9,12 @@ from pagedrop.utils.list_utils import move_items
 class PageRef:
     source_path: str
     source_index: int  # 0-based in that file
+    rotation: int = 0  # additional degrees: 0, 90, 180, or 270
+
+
+def normalize_rotation(degrees: int) -> int:
+    """Snap to {0, 90, 180, 270}."""
+    return ((degrees // 90) % 4) * 90
 
 
 class PdfEditModel:
@@ -107,6 +113,24 @@ class PdfEditModel:
         if ordered[-1] >= len(self._pages) - 1:
             return
         self.move_pages(ordered, ordered[-1] + 2)
+
+    def rotate_pages(
+        self, logical_indices: list[int], delta_degrees: int, *, record_undo: bool = True
+    ) -> None:
+        """Add *delta_degrees* (typically ±90) to each listed page's rotation."""
+        if not logical_indices:
+            return
+        ordered = sorted(set(logical_indices))
+        if record_undo:
+            self._push_undo()
+        for index in ordered:
+            old = self._pages[index]
+            self._pages[index] = PageRef(
+                old.source_path,
+                old.source_index,
+                normalize_rotation(old.rotation + delta_degrees),
+            )
+        self._dirty = True
 
     def undo(self) -> bool:
         if not self._undo_stack:

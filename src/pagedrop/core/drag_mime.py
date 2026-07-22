@@ -23,7 +23,11 @@ def decode_page_indices(data: bytes | bytearray | None) -> list[int]:
 
 def encode_page_refs(refs: list[PageRef]) -> bytes:
     payload = [
-        {"source_path": ref.source_path, "source_index": ref.source_index}
+        {
+            "source_path": ref.source_path,
+            "source_index": ref.source_index,
+            "rotation": ref.rotation,
+        }
         for ref in refs
     ]
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -34,6 +38,10 @@ def decode_page_refs(data: bytes | bytearray | None) -> list[PageRef]:
         return []
     items = json.loads(bytes(data).decode("utf-8"))
     return [
-        PageRef(str(item["source_path"]), int(item["source_index"]))
+        PageRef(
+            str(item["source_path"]),
+            int(item["source_index"]),
+            int(item.get("rotation", 0)),
+        )
         for item in items
     ]

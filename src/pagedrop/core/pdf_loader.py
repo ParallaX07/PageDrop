@@ -72,13 +72,18 @@ class PdfLoader:
     def page_count(self) -> int:
         return len(self.doc)
 
-    def render_page(self, page_index: int, width_px: int = 160) -> bytes:
+    def render_page(
+        self, page_index: int, width_px: int = 160, *, rotation: int = 0
+    ) -> bytes:
         """Render page to PNG bytes at target width."""
-        return render_page_png(self.doc, page_index, width_px=width_px)
+        return render_page_png(
+            self.doc, page_index, width_px=width_px, rotation=rotation
+        )
 
-    def page_size_mm(self, page_index: int) -> tuple[int, int]:
+    def page_size_mm(self, page_index: int, *, rotation: int = 0) -> tuple[int, int]:
         """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
-        return page_size_mm(self.doc, page_index)
+        return page_size_mm(self.doc, page_index, rotation=rotation)
+
 
     def close(self) -> None:
         if getattr(self, "_closed", False):
@@ -94,27 +99,37 @@ _MM_PER_POINT = 25.4 / 72.0
 _MAX_RENDER_SCALE = MAX_RENDER_DPI / 72.0
 
 
-def page_size_mm(doc: fitz.Document, page_index: int) -> tuple[int, int]:
+def page_size_mm(
+    doc: fitz.Document, page_index: int, *, rotation: int = 0
+) -> tuple[int, int]:
     """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
     page = doc[page_index]
     width_mm = round(page.rect.width * _MM_PER_POINT)
     height_mm = round(page.rect.height * _MM_PER_POINT)
+    if rotation % 180 == 90:
+        return height_mm, width_mm
     return width_mm, height_mm
 
 
 def render_page_png(
-    doc: fitz.Document, page_index: int, width_px: int = 160
+    doc: fitz.Document,
+    page_index: int,
+    width_px: int = 160,
+    *,
+    rotation: int = 0,
 ) -> bytes:
     """Render a page from an open PyMuPDF document to PNG bytes."""
     page = doc[page_index]
-    page_width = page.rect.width
-    if page_width <= 0:
+    rot = ((rotation // 90) % 4) * 90
+    # page.rect already reflects the PDF /Rotate flag; *rotation* is extra.
+    basis = page.rect.height if rot in (90, 270) else page.rect.width
+    if basis <= 0:
         raise ValueError(f"Page {page_index} has invalid width")
 
-    scale = min(width_px / page_width, _MAX_RENDER_SCALE)
-    if page_width * scale > MAX_RENDER_WIDTH_PX:
-        scale = MAX_RENDER_WIDTH_PX / page_width
+    scale = min(width_px / basis, _MAX_RENDER_SCALE)
+    if basis * scale > MAX_RENDER_WIDTH_PX:
+        scale = MAX_RENDER_WIDTH_PX / basis
 
-    mat = fitz.Matrix(scale, scale)
+    mat = fitz.Matrix(scale, scale).prerotate(rot)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")

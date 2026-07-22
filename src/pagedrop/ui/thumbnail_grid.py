@@ -117,7 +117,12 @@ class ThumbnailWorker(QRunnable):
                 if ref.source_path not in docs:
                     docs[ref.source_path] = fitz.open(ref.source_path)
                 doc = docs[ref.source_path]
-                png = render_page_png(doc, ref.source_index, width_px=self._width_px)
+                png = render_page_png(
+                    doc,
+                    ref.source_index,
+                    width_px=self._width_px,
+                    rotation=ref.rotation,
+                )
                 if self._is_cancelled(self._generation):
                     return
                 self.signals.page_ready.emit(self._generation, logical_index, png)
@@ -193,6 +198,8 @@ class ThumbnailGrid(QScrollArea):
     preview_requested = pyqtSignal(int)
     zoom_changed = pyqtSignal(int)
     extract_to_folder_requested = pyqtSignal()
+    extract_to_new_tab_requested = pyqtSignal()
+    extract_to_new_window_requested = pyqtSignal()
     pages_reordered = pyqtSignal()
     pages_inserted = pyqtSignal(int, str, int)  # count, filename, 1-based position
     cross_window_pages_inserted = pyqtSignal(int, str)  # count, source filename
@@ -420,7 +427,9 @@ class ThumbnailGrid(QScrollArea):
             ref = self._model.page_at(i)
             card.set_page_ref(ref)
             loader = self._get_loader(ref.source_path)
-            width_mm, height_mm = loader.page_size_mm(ref.source_index)
+            width_mm, height_mm = loader.page_size_mm(
+                ref.source_index, rotation=ref.rotation
+            )
             card.set_page_tooltip(width_mm, height_mm)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)
@@ -686,12 +695,25 @@ class ThumbnailGrid(QScrollArea):
 
         menu.addSeparator()
 
+        duplicate_action = menu.addAction("Duplicate selected pages")
+        duplicate_action.setEnabled(has_pdf and has_selection)
+        rotate_cw_action = menu.addAction("Rotate clockwise")
+        rotate_cw_action.setEnabled(has_pdf and has_selection)
+        rotate_ccw_action = menu.addAction("Rotate counter-clockwise")
+        rotate_ccw_action.setEnabled(has_pdf and has_selection)
+
+        menu.addSeparator()
+
         delete_action = menu.addAction("Delete selected pages")
         delete_action.setEnabled(has_pdf and has_selection)
 
         menu.addSeparator()
         extract_action = menu.addAction("Extract selected pages to folder")
         extract_action.setEnabled(has_pdf and has_selection)
+        extract_tab_action = menu.addAction("Extract selected to new tab")
+        extract_tab_action.setEnabled(has_pdf and has_selection)
+        extract_window_action = menu.addAction("Extract selected to new window")
+        extract_window_action.setEnabled(has_pdf and has_selection)
 
         if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get(
             "PAGEDROP_TESTING"
@@ -703,6 +725,24 @@ class ThumbnailGrid(QScrollArea):
             self.move_selection_up()
         elif chosen is move_down_action:
             self.move_selection_down()
+        elif chosen is duplicate_action:
+            tab = self._parent_tab()
+            if tab is not None:
+                tab.duplicate_selected_pages()
+            else:
+                self.duplicate_selected_pages()
+        elif chosen is rotate_cw_action:
+            tab = self._parent_tab()
+            if tab is not None:
+                tab.rotate_selected_pages(90)
+            else:
+                self.rotate_selected_pages(90)
+        elif chosen is rotate_ccw_action:
+            tab = self._parent_tab()
+            if tab is not None:
+                tab.rotate_selected_pages(-90)
+            else:
+                self.rotate_selected_pages(-90)
         elif chosen is delete_action:
             tab = self._parent_tab()
             if tab is not None:
@@ -711,6 +751,10 @@ class ThumbnailGrid(QScrollArea):
                 self.delete_selected_pages()
         elif chosen is extract_action:
             self.extract_to_folder_requested.emit()
+        elif chosen is extract_tab_action:
+            self.extract_to_new_tab_requested.emit()
+        elif chosen is extract_window_action:
+            self.extract_to_new_window_requested.emit()
 
     def can_move_selection_up(self) -> bool:
         if self._model is None:
@@ -748,6 +792,43 @@ class ThumbnailGrid(QScrollArea):
         self._restore_after_reorder({index + 1 for index in ordered})
         return True
 
+    def duplicate_selected_pages(self) -> int:
+        """Insert copies of the selection after the last selected page."""
+        if self._model is None or self._get_loader is None:
+            return 0
+        ordered = sorted(self.selection_manager.selection)
+        if not ordered:
+            return 0
+
+        refs = [self._model.page_at(index) for index in ordered]
+        insert_at = ordered[-1] + 1
+        self._model.insert_pages(insert_at, refs)
+        self._sync_grid_after_insert(insert_at, len(refs))
+        new_selection = set(range(insert_at, insert_at + len(refs)))
+        self.selection_manager.set_selection(new_selection)
+        self._last_clicked_index = insert_at
+        self._set_focused_index(insert_at)
+        self.pages_reordered.emit()
+        return len(refs)
+
+    def rotate_selected_pages(self, delta_degrees: int) -> bool:
+        """Rotate selected pages by *delta_degrees* (typically ±90)."""
+        if self._model is None or self._get_loader is None:
+            return False
+        ordered = sorted(self.selection_manager.selection)
+        if not ordered:
+            return False
+
+        self._model.rotate_pages(ordered, delta_degrees)
+        self._reindex_cards()
+        # Width cache would skip re-render; rotation changes the pixels.
+        for index in ordered:
+            if 0 <= index < len(self._page_render_width):
+                self._page_render_width[index] = 0
+        self._start_rendering(silent=True, page_indices=ordered)
+        self.pages_reordered.emit()
+        return True
+
     def _restore_after_reorder(self, new_selection: set[int]) -> None:
         self._sync_grid_after_reorder()
         self.selection_manager.set_selection(new_selection)
@@ -778,7 +859,9 @@ class ThumbnailGrid(QScrollArea):
             card.set_logical_index(index)
             card.set_page_ref(ref)
             loader = self._get_loader(ref.source_path)
-            width_mm, height_mm = loader.page_size_mm(ref.source_index)
+            width_mm, height_mm = loader.page_size_mm(
+                ref.source_index, rotation=ref.rotation
+            )
             card.set_page_tooltip(width_mm, height_mm)
 
     def _reorder_cards_to_model(self) -> None:
@@ -914,7 +997,9 @@ class ThumbnailGrid(QScrollArea):
             ref = self._model.page_at(logical_index)
             card.set_page_ref(ref)
             loader = self._get_loader(ref.source_path)
-            width_mm, height_mm = loader.page_size_mm(ref.source_index)
+            width_mm, height_mm = loader.page_size_mm(
+                ref.source_index, rotation=ref.rotation
+            )
             card.set_page_tooltip(width_mm, height_mm)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self.preview_requested.emit)

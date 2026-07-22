@@ -282,6 +282,25 @@ class MainWindow(QMainWindow):
         self._delete_pages_action.triggered.connect(self._delete_selected_pages)
         self._delete_pages_action.setEnabled(False)
 
+        self._duplicate_pages_action = toolbar.addAction("Duplicate")
+        self._duplicate_pages_action.setToolTip("Duplicate selected pages (Ctrl+D)")
+        self._duplicate_pages_action.triggered.connect(self._duplicate_selected_pages)
+        self._duplicate_pages_action.setEnabled(False)
+
+        self._rotate_cw_action = toolbar.addAction("Rotate CW")
+        self._rotate_cw_action.setToolTip("Rotate selected pages clockwise")
+        self._rotate_cw_action.triggered.connect(
+            lambda: self._rotate_selected_pages(90)
+        )
+        self._rotate_cw_action.setEnabled(False)
+
+        self._rotate_ccw_action = toolbar.addAction("Rotate CCW")
+        self._rotate_ccw_action.setToolTip("Rotate selected pages counter-clockwise")
+        self._rotate_ccw_action.triggered.connect(
+            lambda: self._rotate_selected_pages(-90)
+        )
+        self._rotate_ccw_action.setEnabled(False)
+
         toolbar.addSeparator()
 
         self._filename_label = QLabel("No file open")
@@ -458,6 +477,12 @@ class MainWindow(QMainWindow):
         move_down.triggered.connect(self._move_selected_pages_down)
         self.addAction(move_down)
 
+        duplicate_pages = QAction(self)
+        duplicate_pages.setShortcut(QKeySequence("Ctrl+D"))
+        duplicate_pages.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        duplicate_pages.triggered.connect(self._duplicate_selected_pages)
+        self.addAction(duplicate_pages)
+
     def _build_tab_shortcuts(self) -> None:
         next_tab = QAction(self)
         next_tab.setShortcut(QKeySequence("Ctrl+Tab"))
@@ -522,6 +547,10 @@ class MainWindow(QMainWindow):
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
+        grid.extract_to_new_tab_requested.connect(self._extract_selected_to_new_tab)
+        grid.extract_to_new_window_requested.connect(
+            self._extract_selected_to_new_window
+        )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
@@ -551,6 +580,11 @@ class MainWindow(QMainWindow):
             (grid.page_transfer_failed, self._on_page_transfer_failed),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
+            (grid.extract_to_new_tab_requested, self._extract_selected_to_new_tab),
+            (
+                grid.extract_to_new_window_requested,
+                self._extract_selected_to_new_window,
+            ),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
@@ -752,6 +786,7 @@ class MainWindow(QMainWindow):
         )
         self._update_delete_pages_action()
         self._update_move_pages_actions()
+        self._update_page_op_actions()
         self._update_undo_redo_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
@@ -770,6 +805,9 @@ class MainWindow(QMainWindow):
         self._select_all_action.setEnabled(False)
         self._deselect_all_action.setEnabled(False)
         self._delete_pages_action.setEnabled(False)
+        self._duplicate_pages_action.setEnabled(False)
+        self._rotate_cw_action.setEnabled(False)
+        self._rotate_ccw_action.setEnabled(False)
         self._move_up_action.setEnabled(False)
         self._move_down_action.setEnabled(False)
         self._undo_action.setEnabled(False)
@@ -797,6 +835,18 @@ class MainWindow(QMainWindow):
             and not tab.is_preview_visible()
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
+
+    def _update_page_op_actions(self) -> None:
+        tab = self._active_tab()
+        enabled = (
+            tab is not None
+            and tab.edit_model is not None
+            and not tab.is_preview_visible()
+            and bool(tab.thumbnail_grid.selection_manager.selection)
+        )
+        self._duplicate_pages_action.setEnabled(enabled)
+        self._rotate_cw_action.setEnabled(enabled)
+        self._rotate_ccw_action.setEnabled(enabled)
 
     def _update_move_pages_actions(self) -> None:
         tab = self._active_tab()
@@ -835,6 +885,40 @@ class MainWindow(QMainWindow):
         else:
             noun = "page" if count == 1 else "pages"
             self._transient_status(f"Deleted {count} {noun}")
+
+    def _duplicate_selected_pages(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
+            return
+        count = tab.duplicate_selected_pages()
+        if not count:
+            return
+        self._tab_manager.update_tab_title(tab)
+        self._update_window_title()
+        self._update_delete_pages_action()
+        self._update_move_pages_actions()
+        self._update_page_op_actions()
+        self._update_undo_redo_actions()
+        self._update_save_as_action()
+        noun = "page" if count == 1 else "pages"
+        self._transient_status(f"Duplicated {count} {noun}")
+        self._show_toast(f"Duplicated {count} {noun}")
+
+    def _rotate_selected_pages(self, delta_degrees: int) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
+            return
+        count = len(tab.thumbnail_grid.selection_manager.selection)
+        if not count:
+            return
+        if not tab.rotate_selected_pages(delta_degrees):
+            return
+        self._tab_manager.update_tab_title(tab)
+        self._update_undo_redo_actions()
+        self._update_save_as_action()
+        direction = "clockwise" if delta_degrees > 0 else "counter-clockwise"
+        noun = "page" if count == 1 else "pages"
+        self._transient_status(f"Rotated {count} {noun} {direction}")
 
     def _move_selected_pages_up(self) -> None:
         tab = self._active_tab()
@@ -1016,6 +1100,7 @@ class MainWindow(QMainWindow):
         )
         self._update_delete_pages_action()
         self._update_move_pages_actions()
+        self._update_page_op_actions()
 
     def _update_preview_status(self) -> None:
         tab = self._active_tab()
@@ -1193,6 +1278,53 @@ class MainWindow(QMainWindow):
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Extracted {count} {noun} to {folder}")
         self._show_toast(f"Extracted {count} {noun}")
+
+    def _extract_selected_to_new_tab(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
+            return
+        refs = tab.selected_page_refs()
+        if not refs:
+            return
+
+        new_tab = self._tab_manager.add_blank_tab()
+        new_tab.init_from_page_refs(list(refs))
+        self._tab_manager.setCurrentWidget(new_tab)
+        self._tab_manager.update_tab_title(new_tab)
+        self._sync_toolbar_from_active_tab()
+        count = len(refs)
+        noun = "page" if count == 1 else "pages"
+        self._transient_status(f"Extracted {count} {noun} to new tab")
+        self._show_toast(f"Extracted {count} {noun} to new tab")
+
+    def _extract_selected_to_new_window(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
+            return
+        refs = tab.selected_page_refs()
+        if not refs:
+            return
+
+        if self._window_manager is not None:
+            new_window = self._window_manager.open_new_window()
+        else:
+            new_window = MainWindow()
+            new_window.show()
+
+        target = new_window._active_tab()
+        if target is None or not target.is_blank:
+            target = new_window._tab_manager.add_blank_tab()
+        target.init_from_page_refs(list(refs))
+        new_window._tab_manager.setCurrentWidget(target)
+        new_window._tab_manager.update_tab_title(target)
+        new_window._sync_toolbar_from_active_tab()
+        new_window.raise_()
+        new_window.activateWindow()
+
+        count = len(refs)
+        noun = "page" if count == 1 else "pages"
+        self._transient_status(f"Extracted {count} {noun} to new window")
+        self._show_toast(f"Extracted {count} {noun} to new window")
 
     def _open_merge_window(self) -> None:
         if self._merge_window is None:
@@ -1842,6 +1974,7 @@ class MainWindow(QMainWindow):
         )
         self._update_delete_pages_action()
         self._update_move_pages_actions()
+        self._update_page_op_actions()
         self._update_selection_status(selection)
 
     def closeEvent(self, event: QCloseEvent) -> None:
