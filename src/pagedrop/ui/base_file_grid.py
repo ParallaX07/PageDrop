@@ -70,8 +70,12 @@ class BaseFileGrid(QScrollArea):
         empty_logo_object_name: str,
         empty_title_object_name: str,
         empty_hint_object_name: str,
+        empty_kbd_object_name: str,
         empty_title: str,
         empty_hint: str,
+        empty_kbd: str = (
+            "← → ↑ ↓ navigate  ·  Space select  ·  Enter preview"
+        ),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -132,10 +136,15 @@ class BaseFileGrid(QScrollArea):
         self._empty_hint.setObjectName(empty_hint_object_name)
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self._empty_kbd = QLabel(empty_kbd)
+        self._empty_kbd.setObjectName(empty_kbd_object_name)
+        self._empty_kbd.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         empty_layout.addStretch(1)
         empty_layout.addWidget(self._empty_logo)
         empty_layout.addWidget(self._empty_title)
         empty_layout.addWidget(self._empty_hint)
+        empty_layout.addWidget(self._empty_kbd)
         empty_layout.addStretch(2)
 
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)

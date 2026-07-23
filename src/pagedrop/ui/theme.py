@@ -483,7 +483,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 0;
     }}
 
-    QLabel#GridEmptyKbd {{
+    QLabel#GridEmptyKbd,
+    QLabel#MergeEmptyKbd,
+    QLabel#ConvertEmptyKbd {{
         color: {text_muted};
         font-family: {FONT_MONO};
         font-size: 11px;

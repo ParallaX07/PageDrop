@@ -17,6 +17,20 @@ def test_grid_inheritance():
     assert not issubclass(ThumbnailGrid, BaseFileGrid)
 
 
+def test_empty_states_show_keyboard_hints(qtbot):
+    merge = MergeFileGrid()
+    convert = ConvertFileGrid()
+    qtbot.addWidget(merge)
+    qtbot.addWidget(convert)
+
+    assert merge._empty_kbd.isVisibleTo(merge)
+    assert convert._empty_kbd.isVisibleTo(convert)
+    assert "Space" in merge._empty_kbd.text()
+    assert "Enter" in convert._empty_kbd.text()
+    assert merge._empty_kbd.objectName() == "MergeEmptyKbd"
+    assert convert._empty_kbd.objectName() == "ConvertEmptyKbd"
+
+
 def test_merge_reorder_by_drop(qtbot, one_page_pdf, five_page_pdf, tmp_path):
     third = tmp_path / "third.pdf"
     third.write_bytes(one_page_pdf.read_bytes())

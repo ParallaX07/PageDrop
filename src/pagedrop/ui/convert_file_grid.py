@@ -69,6 +69,7 @@ class ConvertFileGrid(BaseFileGrid):
             empty_logo_object_name="ConvertEmptyLogo",
             empty_title_object_name="ConvertEmptyTitle",
             empty_hint_object_name="ConvertEmptyHint",
+            empty_kbd_object_name="ConvertEmptyKbd",
             empty_title="Add images to create PDF",
             empty_hint="Use Add images or drop files here",
             parent=parent,

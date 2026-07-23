@@ -70,6 +70,7 @@ class MergeFileGrid(BaseFileGrid):
             empty_logo_object_name="MergeEmptyLogo",
             empty_title_object_name="MergeEmptyTitle",
             empty_hint_object_name="MergeEmptyHint",
+            empty_kbd_object_name="MergeEmptyKbd",
             empty_title="Add PDFs to merge",
             empty_hint="Use Add PDFs or drop files here",
             parent=parent,
