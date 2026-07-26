@@ -32,3 +32,9 @@ pythonpath = ["."]
 qt_api = "pyqt6"
 timeout = 60
 timeout_method = "thread"
+addopts = ["--strict-markers"]
+markers = [
+    "office_com: real Microsoft Office COM conversion (set PAGEDROP_OFFICE_COM=1)",
+    "libreoffice: real LibreOffice conversion (set PAGEDROP_LO_PATH or install soffice)",
+    "tessdata: real tessdata languages available for OCR tests",
+]
