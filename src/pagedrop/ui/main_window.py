@@ -45,6 +45,7 @@ from pagedrop.ui.keyboard_nav import (
     set_content_tab_order,
 )
 from pagedrop.ui.merge_window import MergeWindow
+from pagedrop.ui.tools_window import ToolsWindow
 from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
@@ -105,6 +106,7 @@ class MainWindow(QMainWindow):
         self._temp_manager = TempManager()
         self._merge_window: MergeWindow | None = None
         self._convert_window: ConvertWindow | None = None
+        self._tools_window: ToolsWindow | None = None
         self._previous_tab_index: int | None = None
         self._last_tab_index: int = 0
         self._pending_move_undo: Callable[[], bool] | None = None
@@ -264,6 +266,7 @@ class MainWindow(QMainWindow):
         actions.register(
             "create_pdf", "&Create PDF", slot=self._open_convert_window
         )
+        actions.register("tools", "&Tools", slot=self._open_tools_window)
         actions.register(
             "keyboard_shortcuts",
             "&Keyboard Shortcuts",
@@ -433,6 +436,7 @@ class MainWindow(QMainWindow):
 
         menubar.addAction(a["merge"])
         menubar.addAction(a["create_pdf"])
+        menubar.addAction(a["tools"])
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
@@ -1567,6 +1571,15 @@ class MainWindow(QMainWindow):
         self._convert_window.show()
         self._convert_window.raise_()
         self._convert_window.activateWindow()
+
+    def _open_tools_window(self) -> None:
+        if self._tools_window is None:
+            self._tools_window = ToolsWindow(editor=self)
+        else:
+            self._tools_window.set_editor(self)
+        self._tools_window.show()
+        self._tools_window.raise_()
+        self._tools_window.activateWindow()
 
     def _open_pdf(self) -> None:
         start_dir = last_directory()

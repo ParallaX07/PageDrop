@@ -5,10 +5,30 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox, QWidget
 
+from pagedrop.core.capabilities import AbsenceReason, CapabilityStatus, clear_cache, probe
 from pagedrop.ui.settings import (
     DELETE_CONFIRM_THRESHOLD,
     confirm_before_deleting_multiple_pages,
 )
+
+_REASON_COPY: dict[AbsenceReason, tuple[str, str]] = {
+    AbsenceReason.ENGINE_MISSING: (
+        "Processing engine missing",
+        "Install or locate the required converter / processing engine, then recheck.",
+    ),
+    AbsenceReason.DATA_MISSING: (
+        "Language or model data missing",
+        "Download or configure the required data files (for example tessdata), then recheck.",
+    ),
+    AbsenceReason.CODEC_MISSING: (
+        "Format codec pack missing",
+        "Install the optional codec pack for this format, then recheck.",
+    ),
+    AbsenceReason.LICENCE_BLOCKED: (
+        "Licence restriction",
+        "This component is present but blocked by redistribution or licence policy.",
+    ),
+}
 
 
 def prompt_pdf_password(
@@ -149,3 +169,103 @@ def confirm_delete_pages(parent: QWidget, count: int) -> bool:
     message.setDefaultButton(QMessageBox.StandardButton.No)
     fit_message_box_buttons(message)
     return message.exec() == QMessageBox.StandardButton.Yes
+
+
+def prompt_cancel_running_job(
+    parent: QWidget,
+    *,
+    window_title: str = "Tools",
+) -> bool:
+    """Return True if the user confirms cancelling an in-progress job."""
+    if os.environ.get("PAGEDROP_TESTING") == "1":
+        return True
+
+    message = QMessageBox(parent)
+    message.setIcon(QMessageBox.Icon.Question)
+    message.setWindowTitle(window_title)
+    message.setText("A job is still running.")
+    message.setInformativeText("Cancel the job and close this window?")
+    cancel_job = message.addButton(
+        "Cancel job",
+        QMessageBox.ButtonRole.DestructiveRole,
+    )
+    keep_open = message.addButton(
+        "Keep open",
+        QMessageBox.ButtonRole.RejectRole,
+    )
+    message.setDefaultButton(keep_open)
+    fit_message_box_buttons(message)
+    message.exec()
+    return message.clickedButton() is cancel_job
+
+
+def prompt_missing_capability(
+    parent: QWidget | None,
+    status: CapabilityStatus,
+    *,
+    tool_title: str | None = None,
+) -> str:
+    """Shared configure / recheck flow for absent optional backends.
+
+    Returns ``recheck`` if the capability became available after recheck,
+    ``configure`` when the user asked for setup guidance (already shown),
+    or ``cancel``.
+    """
+    if status.available:
+        return "recheck"
+
+    reason = status.reason or AbsenceReason.ENGINE_MISSING
+    headline, guidance = _REASON_COPY.get(
+        reason,
+        _REASON_COPY[AbsenceReason.ENGINE_MISSING],
+    )
+    subject = tool_title or status.id.replace("_", " ")
+    detail = status.detail.strip() or "No additional detail."
+
+    if os.environ.get("PAGEDROP_TESTING") == "1":
+        return "cancel"
+
+    message = QMessageBox(parent)
+    message.setIcon(QMessageBox.Icon.Information)
+    message.setWindowTitle("Missing capability")
+    message.setText(f"{subject}: {headline}")
+    message.setInformativeText(
+        f"{guidance}\n\n"
+        f"Kind: {reason.value}\n"
+        f"Detail: {detail}"
+    )
+    recheck_btn = message.addButton(
+        "Recheck",
+        QMessageBox.ButtonRole.AcceptRole,
+    )
+    configure_btn = message.addButton(
+        "Configure…",
+        QMessageBox.ButtonRole.ActionRole,
+    )
+    message.addButton(QMessageBox.StandardButton.Cancel)
+    message.setDefaultButton(recheck_btn)
+    fit_message_box_buttons(message)
+    message.exec()
+    clicked = message.clickedButton()
+    if clicked is recheck_btn:
+        clear_cache()
+        refreshed = probe(status.id, refresh=True)
+        if refreshed.available:
+            QMessageBox.information(
+                parent,
+                "Missing capability",
+                f"{subject} is now available.",
+            )
+            return "recheck"
+        return prompt_missing_capability(parent, refreshed, tool_title=tool_title)
+    if clicked is configure_btn:
+        QMessageBox.information(
+            parent,
+            "Configure capability",
+            f"{guidance}\n\n"
+            f"Capability id: {status.id}\n"
+            f"Kind: {reason.value}\n"
+            f"{detail}",
+        )
+        return "configure"
+    return "cancel"

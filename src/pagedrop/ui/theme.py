@@ -829,6 +829,47 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ACCENT};
         border-radius: 2px;
     }}
+
+    QWidget#ToolsCentral {{
+        background-color: {bg_base};
+    }}
+
+    QWidget#ToolsCatalogue {{
+        background-color: {bg_base};
+    }}
+
+    QScrollArea#ToolsScroll {{
+        background-color: {bg_base};
+        border: none;
+    }}
+
+    QLineEdit#ToolsSearch {{
+        min-height: 32px;
+    }}
+
+    QLabel#ToolsCategoryHeading {{
+        color: {text_secondary};
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+    }}
+
+    QLabel#ToolsEmptyState {{
+        color: {text_muted};
+        font-size: 13px;
+        padding: 24px;
+    }}
+
+    QWidget#ResultActionsBar {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QLabel#ResultActionsLabel {{
+        color: {text_secondary};
+        font-size: 13px;
+    }}
     """
 
 
@@ -1028,5 +1069,37 @@ def convert_file_card_stylesheet(
         color: {subtitle_color};
         font-size: 11px;
         font-weight: 500;
+    }}
+    """
+
+
+def tool_tile_stylesheet(
+    *,
+    focused: bool = False,
+    blocked: bool = False,
+    coming_soon: bool = False,
+) -> str:
+    c = _card_surface_colors()
+    border_color = ACCENT if focused else c["BORDER_DEFAULT"]
+    border_width = 2 if focused else 1
+    background = c["BG_CARD_HOVER"] if focused else c["BG_CARD"]
+    title_color = c["TEXT_MUTED"] if blocked or coming_soon else c["TEXT_PRIMARY"]
+    subtitle_color = c["TEXT_MUTED"]
+
+    return f"""
+    QFrame#ToolTile {{
+        background-color: {background};
+        border: {border_width}px solid {border_color};
+        border-radius: {RADIUS_CARD}px;
+    }}
+    QLabel#ToolTileTitle {{
+        color: {title_color};
+        font-size: 13px;
+        font-weight: 600;
+    }}
+    QLabel#ToolTileSubtitle {{
+        color: {subtitle_color};
+        font-size: 11px;
+        font-weight: 400;
     }}
     """

@@ -35,10 +35,18 @@ def _ensure_window_manager(qapp):
 def _reset_window_manager(qapp):
     from PyQt6.QtWidgets import QApplication
 
+    from pagedrop.ui.convert_window import ConvertWindow
     from pagedrop.ui.main_window import MainWindow
+    from pagedrop.ui.merge_window import MergeWindow
+    from pagedrop.ui.tools_window import ToolsWindow
     from pagedrop.ui.window_manager import WindowManager
 
-    for widget in QApplication.topLevelWidgets():
+    # Close utility hubs first — they are top-level and keep the app alive.
+    for widget in list(QApplication.topLevelWidgets()):
+        if isinstance(widget, (MergeWindow, ConvertWindow, ToolsWindow)):
+            widget.close()
+            qapp.processEvents()
+    for widget in list(QApplication.topLevelWidgets()):
         if isinstance(widget, MainWindow):
             widget.close()
             qapp.processEvents()
