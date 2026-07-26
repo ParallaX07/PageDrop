@@ -646,6 +646,7 @@ class MainWindow(QMainWindow):
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
+        tab.preview_widget.closed.connect(self._on_viewer_closed)
         tab.dirty_changed.connect(self._on_tab_dirty_changed)
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
@@ -682,6 +683,7 @@ class MainWindow(QMainWindow):
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
             (preview.render_error, self._on_preview_render_error),
+            (preview.closed, self._on_viewer_closed),
             (tab.dirty_changed, self._on_tab_dirty_changed),
         ):
             try:
@@ -1157,6 +1159,16 @@ class MainWindow(QMainWindow):
         if tab is None or not tab.is_preview_visible():
             return
         tab.close_preview()
+        self._after_viewer_closed(tab)
+
+    def _on_viewer_closed(self) -> None:
+        """Esc from the viewer widget — PdfTab already switched the stack."""
+        tab = self._active_tab()
+        if tab is None or self.sender() is not tab.preview_widget:
+            return
+        self._after_viewer_closed(tab)
+
+    def _after_viewer_closed(self, tab: PdfTab) -> None:
         self._update_preview_mode_ui()
         if tab.edit_model is not None:
             selection = tab.thumbnail_grid.selection_manager.selection
@@ -1213,7 +1225,7 @@ class MainWindow(QMainWindow):
             return
         page = tab.preview_widget.current_page + 1
         total = tab.edit_model.logical_count()
-        self._persistent_status(f"Preview · page {page} of {total}")
+        self._persistent_status(f"Page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
         tab = self._active_tab()
@@ -2174,10 +2186,10 @@ class MainWindow(QMainWindow):
             return
         if busy and message:
             self._persistent_status(message)
-        elif tab.edit_model is not None:
+        elif tab.is_viewer_mode() and tab.edit_model is not None:
             page = tab.preview_widget.current_page + 1
             total = tab.edit_model.logical_count()
-            self._persistent_status(f"Preview · page {page} of {total}")
+            self._persistent_status(f"Page {page} of {total}")
 
     def _on_selection_changed(self, selection: set[int]) -> None:
         sender = self.sender()

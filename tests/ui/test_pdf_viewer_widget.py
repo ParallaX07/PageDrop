@@ -123,6 +123,68 @@ def test_viewer_layouts_and_zoom(qtbot, viewer_pdf: Path) -> None:
         loader.close()
 
 
+def test_fit_page_spread_uses_viewport_height(qtbot, viewer_pdf: Path) -> None:
+    """Fit page in two-page mode must not double-halve render width."""
+    from pagedrop.ui.pdf_viewer import PAGE_GAP_PX
+
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        # Wide + short → height is the limiting dimension for portrait pages.
+        viewer.resize(1400, 500)
+        viewer.show()
+        qtbot.waitExposed(viewer, timeout=5000)
+        viewer.set_layout_mode(ViewerLayout.SPREAD)
+        viewer.set_zoom_mode(ZoomMode.FIT_PAGE)
+        viewer._update_render_width()
+
+        viewport = viewer._scroll.viewport()
+        avail_w = max(viewport.width() - 2 * PAGE_GAP_PX, 1)
+        avail_h = max(viewport.height() - 2 * PAGE_GAP_PX, 1)
+        page_budget_w = max(100, (avail_w - PAGE_GAP_PX) // 2)
+        dw, dh = 300.0, 400.0  # fixture page size
+        expected_per_page = int(min(page_budget_w, avail_h * (dw / dh)))
+
+        w, h = viewer._display_size_for(0)
+        assert abs(w - expected_per_page) <= 1
+        # Old bug returned per-page as render_w, then halved again → ~half width.
+        assert w > expected_per_page * 0.6
+        assert abs(h - int(round(w * (dh / dw)))) <= 1
+    finally:
+        loader.close()
+
+
+def test_fit_width_canvas_shrinks_after_narrower_viewport(qtbot, viewer_pdf: Path) -> None:
+    """Continuous fit-width must shrink canvas (no stuck white gutter)."""
+    from pagedrop.ui.pdf_viewer import PAGE_GAP_PX
+
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer.resize(1100, 700)
+        viewer.show()
+        qtbot.waitExposed(viewer, timeout=5000)
+        viewer.set_layout_mode(ViewerLayout.CONTINUOUS)
+        viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
+        viewer._update_render_width()
+        viewer._sync_continuous_tiles()
+        wide = viewer._canvas.width()
+
+        viewer.resize(700, 700)
+        qtbot.waitUntil(
+            lambda: viewer._scroll.viewport().width() < 800,
+            timeout=3000,
+        )
+        viewer._update_render_width()
+        viewer._sync_continuous_tiles()
+        narrow = viewer._canvas.width()
+        assert narrow < wide
+        assert narrow == viewer.render_width_px + 2 * PAGE_GAP_PX
+        # Page tile fills the content width (only PAGE_GAP gutters).
+        tile = viewer._tiles[viewer.current_page]
+        assert tile.width() == viewer.render_width_px
+    finally:
+        loader.close()
+
+
 def test_viewer_search_next_prev(qtbot, viewer_pdf: Path) -> None:
     viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
     try:
@@ -211,6 +273,53 @@ def test_outline_and_attachment_extract(qtbot, linked_pdf: Path, tmp_path: Path)
         loader.close()
 
 
+def test_outline_scrolls_to_section_y(qtbot, tmp_path: Path) -> None:
+    """Bookmarks must honor destination Y, not only the page number."""
+    path = tmp_path / "outline_y.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=300, height=1200)
+        doc[0].insert_text((40, 60), "Top", fontsize=14)
+        doc[0].insert_text((40, 700), "Deep section", fontsize=14)
+        doc.set_toc(
+            [
+                [1, "Top", 1, {"kind": 1, "page": 0, "to": fitz.Point(0, 0), "zoom": 0}],
+                [
+                    1,
+                    "Deep section",
+                    1,
+                    {"kind": 1, "page": 0, "to": fitz.Point(0, 680), "zoom": 0},
+                ],
+            ]
+        )
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+    items = outline_for_paths([str(path)])
+    deep = next(i for i in items if i.title == "Deep section")
+    assert deep.top_y is not None and deep.top_y >= 600
+
+    viewer, _model, loader = _bind_viewer(qtbot, path)
+    try:
+        viewer.set_layout_mode(ViewerLayout.CONTINUOUS)
+        viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
+        viewer.resize(700, 400)
+        viewer._update_render_width()
+        viewer.go_to_page(0, pdf_y=0.0)
+        top_scroll = viewer._scroll.verticalScrollBar().value()
+        viewer.go_to_page(0, pdf_y=deep.top_y)
+        deep_scroll = viewer._scroll.verticalScrollBar().value()
+        assert deep_scroll > top_scroll + 100
+        # Activate the tree item the same way the UI does.
+        node = viewer._outline.topLevelItem(1)
+        assert node is not None
+        viewer._on_outline_activated(node)
+        assert viewer._scroll.verticalScrollBar().value() == deep_scroll
+    finally:
+        loader.close()
+
+
 def test_keyboard_page_and_escape(qtbot, viewer_pdf: Path) -> None:
     viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
     closed = {"ok": False}
@@ -248,5 +357,45 @@ def test_continuous_virtualizes_tiles(qtbot, tmp_path: Path) -> None:
         # Must not mount all 40 page tiles at once.
         assert 0 < len(viewer._tiles) < 40
         assert viewer._canvas.minimumHeight() > 1000
+    finally:
+        loader.close()
+
+
+def test_viewer_honors_logical_rotation(qtbot, viewer_pdf: Path) -> None:
+    viewer, model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        before_w, before_h = viewer._display_size_for(0)
+        model.rotate_pages([0], 90)
+        viewer.set_model(model, viewer._get_loader)
+        after_w, after_h = viewer._display_size_for(0)
+        assert model.page_at(0).rotation == 90
+        # 90° swaps aspect — display height/width ratio flips vs unrotated.
+        assert before_w == after_w  # same fit-width target
+        assert after_h != before_h
+        assert abs(after_h / after_w - before_w / before_h) < 0.05
+    finally:
+        loader.close()
+
+
+def test_large_doc_cache_and_tiles_bounded(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "hundred.pdf"
+    _text_pdf(path, [f"Page {i}" for i in range(120)])
+    viewer, _model, loader = _bind_viewer(qtbot, path)
+    try:
+        viewer.set_layout_mode(ViewerLayout.CONTINUOUS)
+        viewer.resize(700, 500)
+        viewer.show()
+        # Scroll through a chunk so several pages render into the LRU.
+        bar = viewer._scroll.verticalScrollBar()
+        for value in (0, bar.maximum() // 4, bar.maximum() // 2, bar.maximum()):
+            bar.setValue(value)
+            viewer._sync_continuous_tiles()
+            viewer._render_visible()
+            qtbot.wait(50)
+        assert len(viewer._tiles) < 120
+        assert viewer.cache_size <= viewer.cache_max
+        assert viewer.cache_max == 48
+        viewer.clear_caches()
+        assert viewer.cache_size == 0
     finally:
         loader.close()

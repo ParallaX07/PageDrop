@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
@@ -10,7 +9,7 @@ from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.dialogs import confirm_delete_pages
-from pagedrop.ui.page_preview import PagePreviewWidget
+from pagedrop.ui.pdf_viewer import PdfViewerWidget
 from pagedrop.ui.settings import thumbnail_quality
 from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -35,7 +34,7 @@ def sanitize_tab_title_stem(title: str) -> str:
 
 
 class PdfTab(QWidget):
-    """Per-tab document workspace: thumbnail grid, preview pane, and zoom state."""
+    """Per-tab document workspace: thumbnail grid, full viewer, and zoom state."""
 
     pdf_loaded = pyqtSignal()
     pdf_closed = pyqtSignal()
@@ -74,7 +73,8 @@ class PdfTab(QWidget):
         )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)
-        self._preview_widget = PagePreviewWidget()
+        # Phase 23: Preview / Enter / double-click opens the full viewer.
+        self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
 
         self._content_stack.addWidget(self._thumbnail_grid)
@@ -86,7 +86,12 @@ class PdfTab(QWidget):
         return self._thumbnail_grid
 
     @property
-    def preview_widget(self) -> PagePreviewWidget:
+    def preview_widget(self) -> PdfViewerWidget:
+        """Full viewer stack page (kept name for MainWindow / test wiring)."""
+        return self._preview_widget
+
+    @property
+    def viewer_widget(self) -> PdfViewerWidget:
         return self._preview_widget
 
     @property
@@ -194,20 +199,29 @@ class PdfTab(QWidget):
             thumbnail_width_px, manual=manual
         )
 
-    def is_preview_visible(self) -> bool:
+    def is_viewer_mode(self) -> bool:
+        """True when the full PDF viewer is showing (grid is hidden)."""
         return self._content_stack.currentWidget() is self._preview_widget
 
+    def is_preview_visible(self) -> bool:
+        """Alias for shortcut guards — Preview entry opens viewer mode."""
+        return self.is_viewer_mode()
+
     def show_preview_at(self, page_index: int) -> None:
+        """Toggle into viewer at *page_index* (logical); honors model rotations."""
         if self._edit_model is None:
             return
+        # Re-bind so rotate/reorder while in grid refreshes sizes + cache keys.
+        self._preview_widget.set_model(self._edit_model, self.get_loader)
         self._preview_widget.reset_zoom_to_fit()
         self._preview_widget.show_page(page_index)
         self._content_stack.setCurrentWidget(self._preview_widget)
 
     def close_preview(self) -> None:
-        if not self.is_preview_visible():
+        if not self.is_viewer_mode():
             return
         self._content_stack.setCurrentWidget(self._thumbnail_grid)
+        self._preview_widget.clear_caches()
 
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""
@@ -237,9 +251,9 @@ class PdfTab(QWidget):
         self._drop_initialized = False
         self._sync_dirty_from_model()
 
-        get_loader: Callable[[str], PdfLoader] = self.get_loader
-        self._preview_widget.set_model(self._edit_model, get_loader)
-        self._thumbnail_grid.load_model(self._edit_model, get_loader)
+        # Viewer binds on show_preview_at — avoid background renders while on grid.
+        self._preview_widget.set_model(None, None)
+        self._thumbnail_grid.load_model(self._edit_model, self.get_loader)
         self.pdf_loaded.emit()
         return loader
 
@@ -353,9 +367,8 @@ class PdfTab(QWidget):
         self._quality_guidance_shown = False
         self._sync_dirty_from_model()
 
-        get_loader: Callable[[str], PdfLoader] = self.get_loader
-        self._preview_widget.set_model(self._edit_model, get_loader)
-        self._thumbnail_grid.load_model(self._edit_model, get_loader)
+        self._preview_widget.set_model(None, None)
+        self._thumbnail_grid.load_model(self._edit_model, self.get_loader)
         self.pdf_loaded.emit()
 
     def close_loader(self) -> None:

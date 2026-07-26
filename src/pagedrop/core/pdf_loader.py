@@ -99,11 +99,10 @@ class PdfLoader:
         self._closed = True
 
 
-MAX_RENDER_DPI = 150
+MAX_RENDER_DPI = 150  # documented legacy; width cap is the real safety limit
 MAX_RENDER_WIDTH_PX = 2048
 
 _MM_PER_POINT = 25.4 / 72.0
-_MAX_RENDER_SCALE = MAX_RENDER_DPI / 72.0
 
 
 def page_size_mm(
@@ -125,7 +124,11 @@ def render_page_png(
     *,
     rotation: int = 0,
 ) -> bytes:
-    """Render a page from an open PyMuPDF document to PNG bytes."""
+    """Render a page from an open PyMuPDF document to PNG bytes.
+
+    Honors *width_px* up to ``MAX_RENDER_WIDTH_PX``. (An older 150 DPI clamp
+    made full-page viewer tiles soft whenever fit-width exceeded ~1275 px.)
+    """
     page = doc[page_index]
     rot = ((rotation // 90) % 4) * 90
     # page.rect already reflects the PDF /Rotate flag; *rotation* is extra.
@@ -133,10 +136,8 @@ def render_page_png(
     if basis <= 0:
         raise ValueError(f"Page {page_index} has invalid width")
 
-    scale = min(width_px / basis, _MAX_RENDER_SCALE)
-    if basis * scale > MAX_RENDER_WIDTH_PX:
-        scale = MAX_RENDER_WIDTH_PX / basis
-
+    target = max(1, min(int(width_px), MAX_RENDER_WIDTH_PX))
+    scale = target / basis
     mat = fitz.Matrix(scale, scale).prerotate(rot)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")

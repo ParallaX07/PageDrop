@@ -34,6 +34,9 @@ class OutlineItem:
     title: str
     source_path: str
     source_index: int  # 0-based
+    # MuPDF page coords (origin top-left). None → top of page.
+    top_y: float | None = None
+    left_x: float | None = None
 
 
 @dataclass(frozen=True)
@@ -241,10 +244,30 @@ def outline_for_paths(
         for path in paths:
             doc = _open(path, password)
             try:
-                for level, title, page1 in doc.get_toc():
-                    source_index = max(0, int(page1) - 1)
+                for entry in doc.get_toc(simple=False):
+                    level = int(entry[0])
+                    title = str(entry[1])
+                    page1 = int(entry[2])
+                    source_index = max(0, page1 - 1) if page1 > 0 else 0
+                    top_y: float | None = None
+                    left_x: float | None = None
+                    if len(entry) > 3 and isinstance(entry[3], dict):
+                        dest = entry[3]
+                        dest_page = dest.get("page")
+                        if isinstance(dest_page, int) and dest_page >= 0:
+                            source_index = dest_page
+                        to = dest.get("to")
+                        if to is not None:
+                            try:
+                                left_x = float(to.x)
+                                top_y = float(to.y)
+                            except AttributeError:
+                                left_x = float(to[0])
+                                top_y = float(to[1])
                     items.append(
-                        OutlineItem(int(level), str(title), path, source_index)
+                        OutlineItem(
+                            level, title, path, source_index, top_y, left_x
+                        )
                     )
             finally:
                 doc.close()

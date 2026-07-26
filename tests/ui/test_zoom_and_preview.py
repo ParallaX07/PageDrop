@@ -306,6 +306,42 @@ def test_escape_closes_preview(main_window, five_page_pdf, qtbot):
     assert main_window._central_stack.currentWidget() is main_window._thumbnail_grid
 
 
+def test_toggle_grid_viewer_preserves_tab(main_window, five_page_pdf, qtbot):
+    """PdfTab grid ↔ viewer toggle; status uses logical_count; Esc returns."""
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+
+    tab = main_window._active_tab()
+    assert tab is not None
+    assert not tab.is_viewer_mode()
+
+    tab.thumbnail_grid.selection_manager.select_single(2)
+    main_window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=5000)
+    assert tab.is_preview_visible()
+    assert tab.preview_widget.current_page == 2
+    assert tab.content_stack.currentWidget() is tab.viewer_widget
+    main_window._update_preview_status()
+    assert main_window.statusBar().currentMessage() == "Page 3 of 5"
+
+    # Rotate while back on grid, re-enter — viewer must see new rotation.
+    main_window._close_preview()
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode(), timeout=5000)
+    assert tab.edit_model is not None
+    tab.edit_model.rotate_pages([2], 90)
+    tab.show_preview_at(2)
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=5000)
+    assert tab.edit_model.page_at(2).rotation == 90
+    _w, h = tab.viewer_widget._display_size_for(2)
+    assert h > 0
+    assert tab.viewer_widget.cache_max == 48
+
+    qtbot.keyClick(tab.viewer_widget, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode(), timeout=5000)
+    assert tab.content_stack.currentWidget() is tab.thumbnail_grid
+    assert tab is main_window._active_tab()
+
+
 def test_preview_blocks_grid_shortcuts(main_window, five_page_pdf, qtbot):
     from PyQt6.QtCore import QEvent
     from PyQt6.QtGui import QKeyEvent, QKeySequence

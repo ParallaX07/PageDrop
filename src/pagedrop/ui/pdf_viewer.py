@@ -14,6 +14,7 @@ from enum import Enum
 from pathlib import Path
 
 from PyQt6.QtCore import (
+    QEvent,
     QObject,
     QPointF,
     QRectF,
@@ -353,7 +354,21 @@ class _PageTile(QWidget):
             painter.fillRect(self.rect(), QColor("#FAFAFA"))
             pix = self._pixmap
             if pix is not None and not pix.isNull():
-                painter.drawPixmap(0, 0, pix)
+                # DPR-aware pixmaps draw at the correct logical size; scale only
+                # when geometry drifted (avoids soft upscale of undersized tiles).
+                target = self.rect()
+                if (
+                    pix.devicePixelRatio() > 0
+                    and abs(pix.width() / pix.devicePixelRatio() - target.width()) < 1.5
+                    and abs(pix.height() / pix.devicePixelRatio() - target.height()) < 1.5
+                ):
+                    painter.drawPixmap(0, 0, pix)
+                else:
+                    painter.drawPixmap(
+                        target,
+                        pix,
+                        QRectF(0, 0, pix.width(), pix.height()),
+                    )
             else:
                 painter.setPen(QColor("#888888"))
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "…")
@@ -556,6 +571,8 @@ class PdfViewerWidget(QWidget):
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        # Scrollbar show/hide changes viewport size without resizing this widget.
+        self._scroll.viewport().installEventFilter(self)
 
         self._canvas = QWidget()
         self._canvas.setObjectName("PdfViewerCanvas")
@@ -656,6 +673,10 @@ class PdfViewerWidget(QWidget):
         """Ctrl+0 — fit width."""
         self.set_zoom_mode(ZoomMode.FIT_WIDTH)
 
+    def reset_zoom_to_fit(self) -> None:
+        """Alias used by PdfTab / MainWindow preview entry."""
+        self.reset_zoom()
+
     def zoom_by(self, step_px: int) -> None:
         if self._model is None:
             return
@@ -665,7 +686,14 @@ class PdfViewerWidget(QWidget):
         delta_pct = int(round(100 * step_px / base)) or (1 if step_px > 0 else -1)
         self.set_zoom_mode(ZoomMode.PERCENT, current_pct + delta_pct)
 
-    def go_to_page(self, page_index: int) -> None:
+    def go_to_page(
+        self,
+        page_index: int,
+        *,
+        pdf_x: float | None = None,
+        pdf_y: float | None = None,
+    ) -> None:
+        """Jump to a logical page; optional PDF-space point scrolls into view."""
         if self._model is None:
             return
         last = max(0, self._model.logical_count() - 1)
@@ -675,17 +703,64 @@ class PdfViewerWidget(QWidget):
         if self._layout != ViewerLayout.CONTINUOUS:
             self._rebuild_canvas()
             self._schedule_render()
+            self._scroll_to_pdf_point(page_index, pdf_x, pdf_y)
         else:
-            offsets = self._page_y_offsets()
-            if page_index < len(offsets):
-                self._scroll.verticalScrollBar().setValue(
-                    max(0, offsets[page_index] - PAGE_GAP_PX)
-                )
+            self._scroll_to_pdf_point(page_index, pdf_x, pdf_y)
             self._sync_continuous_tiles()
             self._schedule_render()
         if changed:
             self.page_changed.emit(self._current_page)
         self._update_page_label()
+
+    def _scroll_to_pdf_point(
+        self,
+        logical: int,
+        pdf_x: float | None,
+        pdf_y: float | None,
+    ) -> None:
+        """Scroll so *pdf_y* (page top if None) sits near the top of the viewport."""
+        if self._model is None or logical >= len(self._page_sizes):
+            return
+        ref = self._model.page_at(logical)
+        pw, ph = self._page_sizes[logical]
+        tile_w, tile_h = self._display_size_for(logical)
+        x = 0.0 if pdf_x is None else pdf_x
+        y = 0.0 if pdf_y is None else pdf_y
+        mapped = _map_pdf_rect_to_widget(
+            (x, y, x + 1.0, y + 1.0),
+            pw,
+            ph,
+            tile_w,
+            tile_h,
+            ref.rotation,
+        )
+        if self._layout == ViewerLayout.CONTINUOUS:
+            offsets = self._page_y_offsets()
+            if logical >= len(offsets):
+                return
+            target = offsets[logical] + int(mapped.y()) - PAGE_GAP_PX
+        else:
+            target = int(mapped.y()) - PAGE_GAP_PX
+        self._scroll.verticalScrollBar().setValue(max(0, target))
+
+    def show_page(self, page_index: int) -> None:
+        """Alias for MainWindow / tab preview entry (same as go_to_page)."""
+        self.go_to_page(page_index)
+
+    def clear_caches(self) -> None:
+        """Drop pixmap cache + cancel renders (e.g. return to grid)."""
+        self._cancel_all()
+        self._cache.clear()
+        self._overlay.hide_overlay()
+        self.busy_changed.emit(False, "")
+
+    @property
+    def cache_size(self) -> int:
+        return len(self._cache._items)
+
+    @property
+    def cache_max(self) -> int:
+        return self._cache._max
 
     def search(self, query: str) -> None:
         if self._model is None:
@@ -918,7 +993,7 @@ class PdfViewerWidget(QWidget):
             node.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                (item.source_path, item.source_index),
+                (item.source_path, item.source_index, item.left_x, item.top_y),
             )
             parent = parents.get(item.level - 1)
             if parent is None or item.level <= 1:
@@ -1085,7 +1160,9 @@ class PdfViewerWidget(QWidget):
                 tile.setParent(None)
                 tile.deleteLater()
                 self._pending_meta.discard(logical)
-        canvas_w = max(self._canvas.width(), self._render_width_px + 2 * PAGE_GAP_PX)
+        # Exact width — max(old, …) left a stuck-wide canvas and white gutters
+        # after fit-width reflow (search jump / scrollbar appearing).
+        canvas_w = self._render_width_px + 2 * PAGE_GAP_PX
         for logical in needed:
             w, h = self._display_size_for(logical)
             x = max(PAGE_GAP_PX, (canvas_w - w) // 2)
@@ -1148,12 +1225,19 @@ class PdfViewerWidget(QWidget):
 
     def _fit_width_px(self) -> int:
         viewport = self._scroll.viewport()
-        available = max(viewport.width() - 2 * PAGE_GAP_PX - 24, MIN_PREVIEW_RENDER_WIDTH)
+        # Viewport already excludes visible scrollbars — no extra -24 reserve
+        # (that left a permanent gutter once the v-bar was shown).
+        available = max(viewport.width() - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
         if self._layout == ViewerLayout.SPREAD:
             available = max(MIN_PREVIEW_RENDER_WIDTH, (available - PAGE_GAP_PX) // 2 * 2)
         return min(MAX_RENDER_WIDTH_PX, available)
 
     def _fit_page_px(self) -> int:
+        """Return render width so the page (or spread) fits in the viewport.
+
+        ``_render_width_px`` uses the same convention as ``_fit_width_px``:
+        full content width. Spread layout splits it in ``_display_size_for``.
+        """
         if self._model is None or not self._page_sizes:
             return self._fit_width_px()
         logical = self._current_page
@@ -1161,15 +1245,22 @@ class PdfViewerWidget(QWidget):
         pw, ph = self._page_sizes[min(logical, len(self._page_sizes) - 1)]
         dw, dh = _rotated_size(pw, ph, ref.rotation)
         viewport = self._scroll.viewport()
-        avail_w = max(viewport.width() - 2 * PAGE_GAP_PX - 24, MIN_PREVIEW_RENDER_WIDTH)
-        avail_h = max(viewport.height() - 2 * PAGE_GAP_PX - 24, 200)
-        if self._layout == ViewerLayout.SPREAD:
-            avail_w = max(100, (avail_w - PAGE_GAP_PX) // 2)
+        avail_w = max(viewport.width() - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
+        avail_h = max(viewport.height() - 2 * PAGE_GAP_PX, 200)
         if dh <= 0 or dw <= 0:
             return self._fit_width_px()
-        by_w = avail_w
-        by_h = avail_h * (dw / dh)
-        return min(MAX_RENDER_WIDTH_PX, max(MIN_PREVIEW_RENDER_WIDTH, int(min(by_w, by_h))))
+        # Per-page width budgets (spread: two pages share the viewport width).
+        if self._layout == ViewerLayout.SPREAD:
+            page_budget_w = max(100, (avail_w - PAGE_GAP_PX) // 2)
+        else:
+            page_budget_w = avail_w
+        per_page = int(min(page_budget_w, avail_h * (dw / dh)))
+        if self._layout == ViewerLayout.SPREAD:
+            # Invert _display_size_for: page_w = render_w // 2 - PAGE_GAP // 2
+            render_w = 2 * per_page + PAGE_GAP_PX
+        else:
+            render_w = per_page
+        return min(MAX_RENDER_WIDTH_PX, max(MIN_PREVIEW_RENDER_WIDTH, render_w))
 
     def _update_render_width(self) -> None:
         if self._zoom_mode == ZoomMode.FIT_WIDTH:
@@ -1201,6 +1292,15 @@ class PdfViewerWidget(QWidget):
             return sorted(self._tiles)
         return [self._current_page] if self._model else []
 
+    def _device_pixel_ratio(self) -> float:
+        return max(1.0, float(self.devicePixelRatioF()))
+
+    def _physical_render_width(self, logical_width: int) -> int:
+        return min(
+            MAX_RENDER_WIDTH_PX,
+            max(1, int(round(logical_width * self._device_pixel_ratio()))),
+        )
+
     def _render_visible(self) -> None:
         if self._model is None:
             return
@@ -1213,10 +1313,11 @@ class PdfViewerWidget(QWidget):
         gen = self._generation
         started = False
         for logical in pages:
-            width, _h = self._display_size_for(logical)
+            logical_w, _h = self._display_size_for(logical)
+            physical_w = self._physical_render_width(logical_w)
             ref = self._model.page_at(logical)
             ocg = self._ocg_on.get(ref.source_path)
-            key = (logical, width, ref.rotation, ocg)
+            key = (logical, physical_w, ref.rotation, ocg)
             cached = self._cache.get(key)
             tile = self._tiles.get(logical)
             if cached is not None:
@@ -1225,7 +1326,7 @@ class PdfViewerWidget(QWidget):
                 continue
             started = True
             worker = _ViewerRenderWorker(
-                ref, logical, width, gen, self._is_cancelled, ocg
+                ref, logical, physical_w, gen, self._is_cancelled, ocg
             )
             worker.signals.finished.connect(self._on_render_finished)
             worker.signals.error.connect(self._on_render_error)
@@ -1271,11 +1372,14 @@ class PdfViewerWidget(QWidget):
             return
         ref = self._model.page_at(logical)
         ocg = self._ocg_on.get(ref.source_path)
-        expected_w, _ = self._display_size_for(logical)
-        if width_px != expected_w:
+        logical_w, _ = self._display_size_for(logical)
+        expected_physical = self._physical_render_width(logical_w)
+        if width_px != expected_physical:
             return
         pix = QPixmap()
         pix.loadFromData(png, "PNG")
+        dpr = width_px / max(1, logical_w)
+        pix.setDevicePixelRatio(dpr)
         key = (logical, width_px, ref.rotation, ocg)
         self._cache.put(key, pix)
         tile = self._tiles.get(logical)
@@ -1359,10 +1463,10 @@ class PdfViewerWidget(QWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return
-        source_path, source_index = data
+        source_path, source_index, left_x, top_y = data
         logical = logical_index_for_source(self._model, source_path, source_index)
         if logical is not None:
-            self.go_to_page(logical)
+            self.go_to_page(logical, pdf_x=left_x, pdf_y=top_y)
 
     def _on_link(self, logical_page: int, link: object) -> None:
         if not isinstance(link, LinkInfo) or self._model is None:
@@ -1446,6 +1550,22 @@ class PdfViewerWidget(QWidget):
             self._update_render_width()
             self._schedule_render()
         self.setFocus()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            watched is self._scroll.viewport()
+            and event.type() == QEvent.Type.Resize
+            and self.isVisible()
+            and self._model is not None
+            and self._zoom_mode != ZoomMode.PERCENT
+        ):
+            previous = self._render_width_px
+            self._update_render_width()
+            if self._render_width_px != previous:
+                self._cache.clear()
+                self._rebuild_canvas()
+                self._schedule_render()
+        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

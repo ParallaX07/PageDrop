@@ -39,8 +39,10 @@ def test_smoke_edit_model_grid_preview_sync(qtbot, five_page_pdf):
 
     preview = tab.preview_widget
     qtbot.waitUntil(
-        lambda: preview._image_label.pixmap() is not None
-        and not preview._image_label.pixmap().isNull(),
+        lambda: any(
+            t._pixmap is not None and not t._pixmap.isNull()
+            for t in preview._tiles.values()
+        ),
         timeout=RENDER_TIMEOUT_MS,
     )
 

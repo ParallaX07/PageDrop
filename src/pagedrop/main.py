@@ -1,6 +1,7 @@
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication
 
 from pagedrop.assets import app_icon
@@ -18,7 +19,7 @@ def _app_version() -> str:
         return "0.0.0"
 
 
-def main():
+def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName(_ORG_NAME)
     app.setApplicationName(_APP_NAME)
@@ -32,7 +33,14 @@ def main():
     win = manager.open_new_window()
     win.restore_saved_geometry()
     win.setWindowIcon(icon)
-    sys.exit(app.exec())
+    exit_code = app.exec()
+
+    # Flush top-level widgets before interpreter shutdown. Leaving the viewer's
+    # QObject tree for SIP's atexit cleanup can segfault after a clean Qt exit.
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    return exit_code
 
 
 if __name__ == "__main__":
