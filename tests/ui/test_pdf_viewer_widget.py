@@ -191,11 +191,16 @@ def test_viewer_search_next_prev(qtbot, viewer_pdf: Path) -> None:
         viewer.search("Alpha")
         qtbot.waitUntil(lambda: viewer.search_hit_count == 2, timeout=5000)
         assert viewer._hit_index == 0
+        first = viewer._hits[0]
+        assert viewer._tiles[first.logical_page]._active_hit == first.rect
         viewer.find_next()
         assert viewer._hit_index == 1
         assert viewer.current_page == 2
+        second = viewer._hits[1]
+        assert viewer._tiles[second.logical_page]._active_hit == second.rect
         viewer.find_prev()
         assert viewer._hit_index == 0
+        assert viewer._tiles[first.logical_page]._active_hit == first.rect
     finally:
         loader.close()
 

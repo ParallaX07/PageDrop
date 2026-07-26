@@ -294,6 +294,7 @@ class _PageTile(QWidget):
         self._rotation = 0
         self._links: list[LinkInfo] = []
         self._hits: list[tuple[float, float, float, float]] = []
+        self._active_hit: tuple[float, float, float, float] | None = None
         self._text_dict: dict | None = None
         self._selecting = False
         self._sel_start: QPointF | None = None
@@ -322,8 +323,14 @@ class _PageTile(QWidget):
         self._pixmap = pixmap
         self.update()
 
-    def set_hits(self, hits: list[tuple[float, float, float, float]]) -> None:
+    def set_hits(
+        self,
+        hits: list[tuple[float, float, float, float]],
+        *,
+        active: tuple[float, float, float, float] | None = None,
+    ) -> None:
         self._hits = hits
+        self._active_hit = active
         self.update()
 
     def selected_text(self) -> str:
@@ -382,7 +389,13 @@ class _PageTile(QWidget):
                     self.height(),
                     self._rotation,
                 )
-                painter.fillRect(r, QColor(255, 220, 0, 90))
+                if hit == self._active_hit:
+                    # Stronger orange so the current match stands out from peers.
+                    painter.fillRect(r, QColor(255, 145, 0, 170))
+                    painter.setPen(QColor(200, 90, 0, 220))
+                    painter.drawRect(r)
+                else:
+                    painter.fillRect(r, QColor(255, 220, 0, 90))
 
             if self._sel_start is not None and self._sel_end is not None:
                 x0 = min(self._sel_start.x(), self._sel_end.x())
@@ -1445,14 +1458,25 @@ class PdfViewerWidget(QWidget):
         by_page: dict[int, list[tuple[float, float, float, float]]] = {}
         for hit in self._hits:
             by_page.setdefault(hit.logical_page, []).append(hit.rect)
+        active: tuple[float, float, float, float] | None = None
+        active_page = -1
+        if 0 <= self._hit_index < len(self._hits):
+            current = self._hits[self._hit_index]
+            active = current.rect
+            active_page = current.logical_page
         for logical, tile in self._tiles.items():
-            tile.set_hits(by_page.get(logical, []))
+            tile.set_hits(
+                by_page.get(logical, []),
+                active=active if logical == active_page else None,
+            )
 
     def _reveal_current_hit(self) -> None:
         if self._hit_index < 0 or self._hit_index >= len(self._hits):
             return
         hit = self._hits[self._hit_index]
         self.go_to_page(hit.logical_page)
+        # After go_to_page — tile sync may recreate widgets.
+        self._apply_hits_to_tiles()
         self._hit_label.setText(
             f"{self._hit_index + 1} of {len(self._hits)}"
         )
