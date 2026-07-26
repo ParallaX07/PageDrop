@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QKeyEvent, QResizeEvent
@@ -36,6 +37,9 @@ from pagedrop.ui.result_actions import (
     show_in_folder,
 )
 from pagedrop.ui.theme import tool_tile_stylesheet
+
+if TYPE_CHECKING:
+    from pagedrop.ui.window_manager import WindowManager
 
 CATEGORIES: tuple[str, ...] = (
     "Organize",
@@ -278,10 +282,15 @@ class ToolsWindow(QMainWindow):
 
     WINDOW_TITLE = "Tools"
 
-    def __init__(self, editor: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        editor: QWidget | None = None,
+        window_manager: WindowManager | None = None,
+    ) -> None:
         # Top-level (no QObject parent) so closing the last editor keeps Tools alive.
         super().__init__(None)
         self._editor = editor
+        self._window_manager = window_manager
         self._job_running = False
         self._cancel_token: CancelToken | None = None
         self._tiles: list[ToolTile] = []
@@ -553,3 +562,6 @@ class ToolsWindow(QMainWindow):
             self.cancel_active_job()
             self.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
         super().closeEvent(event)
+        # quitOnLastWindowClosed is False — deferred quit after last editor.
+        if event.isAccepted() and self._window_manager is not None:
+            self._window_manager.notify_utility_closed(self)

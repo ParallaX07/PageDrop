@@ -214,6 +214,7 @@ def test_window_manager_keeps_app_alive_with_tools_open(
     assert tools.isVisible()
     tools.close()
     qapp.processEvents()
+    assert quit_called
 
 
 def test_result_actions_bar_emits_explicit_only(qtbot, tmp_path):

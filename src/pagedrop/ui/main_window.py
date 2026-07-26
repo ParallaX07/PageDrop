@@ -1574,7 +1574,10 @@ class MainWindow(QMainWindow):
 
     def _open_tools_window(self) -> None:
         if self._tools_window is None:
-            self._tools_window = ToolsWindow(editor=self)
+            self._tools_window = ToolsWindow(
+                editor=self,
+                window_manager=self._window_manager,
+            )
         else:
             self._tools_window.set_editor(self)
         self._tools_window.show()

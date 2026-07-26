@@ -63,11 +63,19 @@ class WindowManager(QObject):
         if not self._windows:
             self._maybe_quit()
 
+    def notify_utility_closed(self, closing: QWidget | None = None) -> None:
+        """Merge / Convert / Tools closed — quit if no editors remain."""
+        if not self._windows:
+            self._maybe_quit(ignoring=closing)
+
     def _register(self, window: MainWindow) -> None:
         self._windows.add(window)
 
-    def _maybe_quit(self) -> None:
+    def _maybe_quit(self, ignoring: QWidget | None = None) -> None:
+        # During closeEvent the closing window is still isVisible(); ignore it.
         for widget in self._app.topLevelWidgets():
+            if widget is ignoring:
+                continue
             if (
                 isinstance(widget, (MergeWindow, ConvertWindow, ToolsWindow))
                 and widget.isVisible()
