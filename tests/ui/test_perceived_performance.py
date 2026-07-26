@@ -125,6 +125,7 @@ def test_progress_survives_silent_zoom_interrupt(qtbot, five_page_pdf):
     qtbot.waitUntil(lambda: bool(finished), timeout=15000)
     assert not grid._progress_active
     assert progress_values
-    assert progress_values[-1] == 5
+    assert progress_values[-1] >= 1
+    assert all(not card._is_skeleton for card in grid._cards)
 
     loader.close()

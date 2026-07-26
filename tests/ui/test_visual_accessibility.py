@@ -43,18 +43,23 @@ def test_reduce_motion_setting_gates_shadow_hover(qtbot, isolated_settings):
 
     card = MergeFileCard(0, "/tmp/a.pdf", 1)
     qtbot.addWidget(card)
-    resting_blur = card._shadow.blurRadius()
+    # Shadows are hover-only — resting cards carry no graphics effect.
+    assert card._shadow is None
 
     pos = QPointF(8, 8)
     card.enterEvent(QEnterEvent(pos, pos, pos))
     assert card._hovered is True
-    assert card._shadow.blurRadius() == resting_blur
+    # Reduce-motion: no shadow installed on hover either.
+    assert card._shadow is None
 
     card.leaveEvent(None)
     set_reduce_motion(False)
     assert prefers_reduce_motion() is False
     card.enterEvent(QEnterEvent(pos, pos, pos))
-    assert card._shadow.blurRadius() > resting_blur
+    assert card._shadow is not None
+    assert card._shadow.blurRadius() > 14
+    card.leaveEvent(None)
+    assert card._shadow is None
 
 
 def test_stylesheet_includes_focus_rings_for_controls():

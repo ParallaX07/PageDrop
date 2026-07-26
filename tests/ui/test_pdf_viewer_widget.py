@@ -95,6 +95,8 @@ def _bind_viewer(qtbot, path: Path) -> tuple[PdfViewerWidget, PdfEditModel, PdfL
     viewer.show()
     viewer.set_model(model, get_loader)
     qtbot.waitUntil(lambda: len(viewer._tiles) >= 1, timeout=5000)
+    # Side panel (bookmarks/layers) is deferred off the set_model critical path.
+    qtbot.waitUntil(lambda: not viewer._side_panel_dirty, timeout=5000)
     return viewer, model, loader
 
 
@@ -216,11 +218,15 @@ def test_viewer_selection_copy(qtbot, viewer_pdf: Path) -> None:
             timeout=8000,
         )
         tile = viewer._tiles[viewer.current_page]
-        qtbot.waitUntil(lambda: tile._text_dict is not None, timeout=5000)
+        qtbot.waitUntil(
+            lambda: tile._text_provider is not None or tile._text_dict is not None,
+            timeout=5000,
+        )
         # Force selection geometry covering the text area.
         tile._sel_start = tile.rect().topLeft().toPointF()
         tile._sel_end = tile.rect().bottomRight().toPointF()
         tile._selected_text = tile._text_in_selection()
+        assert tile._text_dict is not None
         assert "Alpha" in tile.selected_text() or "unique" in tile.selected_text()
         assert viewer.copy_selection() is True
     finally:

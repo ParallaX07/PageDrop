@@ -78,6 +78,9 @@ ZOOM_RENDER_DEBOUNCE_MS = 400
 SCROLL_RENDER_DEBOUNCE_MS = 150
 RENDER_POOL_DRAIN_MS = 3000
 VISIBLE_RENDER_BUFFER_ROWS = 2
+# Prefetch / retain band around the viewport for large documents.
+RENDER_WINDOW_ROWS = 4
+RETAIN_WINDOW_ROWS = 8
 DEFERRED_THUMBNAIL_BATCH = 24
 LARGE_PDF_PAGE_THRESHOLD = 50
 CARD_CREATE_BATCH = 32
@@ -291,6 +294,9 @@ class ThumbnailGrid(QScrollArea):
         self._generation = 0
         self._silent_render = False
         self._progress_active = False
+        self._batch_total = 0
+        self._batch_rendered = 0
+        self._skeleton_count = 0
         self._render_pool = QThreadPool(self)
         self._render_pool.setMaxThreadCount(1)
         # Keep Signals QObjects alive until drain; autoDelete drops the QRunnable.
@@ -387,12 +393,17 @@ class ThumbnailGrid(QScrollArea):
         self._last_clicked_index = None
         self._focused_index = 0 if total else None
         self.selection_manager.set_page_count(total)
+        self._skeleton_count = 0
+        self._batch_total = 0
+        self._batch_rendered = 0
 
         if total <= LARGE_PDF_PAGE_THRESHOLD:
             self._create_all_cards(range(total))
             self._reflow_grid(force=True)
             self._update_focus_highlight()
-            self._start_rendering(silent=False)
+            self._start_rendering(
+                silent=False, page_indices=self._render_window_indices()
+            )
             return
 
         self._pending_card_indices = list(range(total))
@@ -429,6 +440,7 @@ class ThumbnailGrid(QScrollArea):
     def _create_all_cards(self, indices: range | list[int]) -> None:
         for i in indices:
             self._cards.append(self._make_page_card(i))
+            self._skeleton_count += 1
         self._start_skeleton_pulse()
 
     def _make_page_card(self, logical_index: int) -> PageCard:
@@ -472,9 +484,12 @@ class ThumbnailGrid(QScrollArea):
             self._card_create_timer.start(0)
             return
 
+        self._reflow_grid(force=True)
         self._leave_busy("loading")
         self._update_focus_highlight()
-        self._start_rendering(silent=False)
+        self._start_rendering(
+            silent=False, page_indices=self._render_window_indices()
+        )
 
     def _start_rendering(
         self, *, silent: bool, page_indices: list[int] | None = None
@@ -483,7 +498,7 @@ class ThumbnailGrid(QScrollArea):
             return
 
         if page_indices is None:
-            page_indices = list(range(self._model.logical_count()))
+            page_indices = self._render_window_indices()
         else:
             target = self._target_render_width()
             page_indices = [
@@ -506,6 +521,8 @@ class ThumbnailGrid(QScrollArea):
         generation = self._generation
         render_width = self._target_render_width()
         self._busy_render_width = render_width
+        self._batch_total = len(page_indices)
+        self._batch_rendered = 0
         worker = ThumbnailWorker(
             pages,
             generation,
@@ -596,16 +613,73 @@ class ThumbnailGrid(QScrollArea):
     def _on_scroll_changed(self, _value: int) -> None:
         if self._model is None:
             return
-        visible = self._get_visible_page_indices()
-        for index in visible:
-            if 0 <= index < len(self._cards):
-                card = self._cards[index]
-                card.apply_layout_width()
-                if card._source_pixmap is not None:
-                    card.refresh_thumbnail_display(fast=True)
-        if self._pages_needing_render():
-            if self._visible_pages_needing_render():
-                self._scroll_render_timer.start()
+        visible = set(self._get_visible_page_indices())
+        # Only finish deferred zoom layout/rescale for cards that just entered view.
+        if self._pending_layout_indices:
+            pending_layout = [
+                i for i in self._pending_layout_indices if i in visible
+            ]
+            if pending_layout:
+                pending_set = set(pending_layout)
+                self._pending_layout_indices = [
+                    i for i in self._pending_layout_indices if i not in pending_set
+                ]
+                for index in pending_layout:
+                    if 0 <= index < len(self._cards):
+                        self._cards[index].apply_layout_width()
+        if self._pending_thumbnail_refresh:
+            pending_thumbs = [
+                i for i in self._pending_thumbnail_refresh if i in visible
+            ]
+            if pending_thumbs:
+                pending_set = set(pending_thumbs)
+                self._pending_thumbnail_refresh = [
+                    i for i in self._pending_thumbnail_refresh if i not in pending_set
+                ]
+                for index in pending_thumbs:
+                    if 0 <= index < len(self._cards):
+                        self._cards[index].refresh_thumbnail_display(fast=True)
+        self._evict_thumbnails_outside_window()
+        if self._visible_pages_needing_render():
+            self._scroll_render_timer.start()
+
+    def _render_window_indices(
+        self, *, buffer_rows: int = RENDER_WINDOW_ROWS
+    ) -> list[int]:
+        """Page indices near the viewport that should be rendered."""
+        if not self._cards:
+            return []
+        visible = self._get_visible_page_indices(buffer_rows=buffer_rows)
+        if not visible:
+            cols = max(self._grid_cols, 1)
+            sample = self._cards[0]
+            row_stride = max(sample.height() + self._layout.spacing(), 1)
+            rows = max(1, self.viewport().height() // row_stride) + buffer_rows
+            visible = list(range(min(len(self._cards), cols * rows)))
+        # Always keep page 1 in the window so open-priority stays predictable.
+        if 0 not in visible:
+            return [0, *visible]
+        return visible
+
+    def _retain_window_indices(self) -> set[int]:
+        return set(self._render_window_indices(buffer_rows=RETAIN_WINDOW_ROWS))
+
+    def _evict_thumbnails_outside_window(self) -> None:
+        """Release pixmaps far from the viewport so memory stays bounded."""
+        if not self._cards:
+            return
+        retain = self._retain_window_indices()
+        for index, card in enumerate(self._cards):
+            if index in retain:
+                continue
+            if card._source_pixmap is None:
+                continue
+            if card.release_thumbnail():
+                self._skeleton_count += 1
+            if index < len(self._page_render_width):
+                self._page_render_width[index] = 0
+        if self._skeleton_count > 0:
+            self._start_skeleton_pulse()
 
     def has_pending_work(self) -> bool:
         """True when a load/render batch is still in flight."""
@@ -903,23 +977,32 @@ class ThumbnailGrid(QScrollArea):
         self.rendering_finished.emit()
 
     def _maybe_continue_or_dismiss_progress(self) -> None:
-        """After a worker ends/no-ops, keep the bar alive until all pages are done."""
+        """After a worker ends/no-ops, keep the bar alive until the window is done."""
+        self._evict_thumbnails_outside_window()
         if not self._progress_active:
-            if self._pages_needing_render():
+            if self._background_pages_needing_render():
                 self._schedule_background_render()
             return
-        needing = self._pages_needing_render()
+        needing = self._pages_needing_render_in_window()
         if not needing:
             self._dismiss_progress()
+            if self._background_pages_needing_render():
+                self._schedule_background_render()
             return
         if self._busy_render_generation >= 0:
             return
-        # Remaining pages keep the same progress session (visible-first ordered).
+        # Remaining window pages keep the same progress session (visible-first).
         self._start_rendering(silent=True, page_indices=needing)
+
+    def _pages_needing_render_in_window(self) -> list[int]:
+        window = set(self._render_window_indices())
+        return [index for index in self._pages_needing_render() if index in window]
 
     def _remove_cards_at_indices(self, indices: list[int]) -> None:
         for idx in sorted(indices, reverse=True):
             card = self._cards.pop(idx)
+            if card._is_skeleton and self._skeleton_count > 0:
+                self._skeleton_count -= 1
             card.setParent(None)
             card.deleteLater()
             if idx < len(self._page_render_width):
@@ -1048,7 +1131,9 @@ class ThumbnailGrid(QScrollArea):
     def _sync_grid_after_insert(self, insert_index: int, count: int) -> None:
         assert self._model is not None
         assert self._get_loader is not None
-        if self._pending_card_indices or self._pages_needing_render():
+        # Far pages stay unrendered under windowed mode — only reload when
+        # card creation or an in-flight batch would race a surgical insert.
+        if self._pending_card_indices or self._busy_render_generation >= 0:
             self.load_model(self._model, self._get_loader)
             return
         if len(self._cards) + count != self._model.logical_count():
@@ -1062,6 +1147,7 @@ class ThumbnailGrid(QScrollArea):
             new_cards.append(self._make_page_card(logical_index))
 
         self._cards[insert_index:insert_index] = new_cards
+        self._skeleton_count += count
         for _ in range(count):
             self._page_render_width.insert(insert_index, 0)
 
@@ -1753,13 +1839,22 @@ class ThumbnailGrid(QScrollArea):
         return [index for index in self._pages_needing_render() if index in visible]
 
     def _background_pages_needing_render(self) -> list[int]:
+        """Non-visible pages still inside the render window that need a pixmap."""
+        window = set(self._render_window_indices())
         visible = set(self._get_visible_page_indices())
-        return [index for index in self._pages_needing_render() if index not in visible]
+        return [
+            index
+            for index in self._pages_needing_render()
+            if index in window and index not in visible
+        ]
 
     def _sync_rendered_width_state(self) -> None:
         target = self._target_render_width()
-        if self._page_render_width and all(
-            width >= target for width in self._page_render_width
+        window = self._render_window_indices()
+        if window and all(
+            self._page_render_width[i] >= target
+            for i in window
+            if 0 <= i < len(self._page_render_width)
         ):
             self._last_rendered_width_px = self._thumbnail_width_px
 
@@ -1784,6 +1879,7 @@ class ThumbnailGrid(QScrollArea):
             card.setParent(None)
             card.deleteLater()
         self._cards.clear()
+        self._skeleton_count = 0
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
@@ -1833,23 +1929,22 @@ class ThumbnailGrid(QScrollArea):
         pixmap = QPixmap()
         if not pixmap.loadFromData(png, "PNG") or pixmap.isNull():
             return
-        self._cards[page_index].set_thumbnail(pixmap)
+        card = self._cards[page_index]
+        was_skeleton = card._is_skeleton
+        card.set_thumbnail(pixmap)
+        if was_skeleton and self._skeleton_count > 0:
+            self._skeleton_count -= 1
         self._page_render_width[page_index] = (
             self._busy_render_width or self._target_render_width()
         )
+        self._batch_rendered += 1
         self._sync_rendered_width_state()
-        if not any(card._is_skeleton for card in self._cards):
+        if self._skeleton_count <= 0:
             self._stop_skeleton_pulse()
         # Keep the status-bar bar moving across silent zoom/scroll follow-ups;
         # otherwise cancelling the initial job freezes the percentage forever.
-        if self._progress_active:
-            target = self._target_render_width()
-            rendered = sum(
-                1
-                for width in self._page_render_width
-                if width >= target
-            )
-            self.rendering_progress.emit(rendered, len(self._cards))
+        if self._progress_active and self._batch_total > 0:
+            self.rendering_progress.emit(self._batch_rendered, self._batch_total)
 
     def _on_rendering_finished(self, generation: int) -> None:
         if self._is_cancelled(generation):
@@ -1885,7 +1980,7 @@ class ThumbnailGrid(QScrollArea):
     def _start_skeleton_pulse(self) -> None:
         if prefers_reduce_motion():
             return
-        if not any(card._is_skeleton for card in self._cards):
+        if self._skeleton_count <= 0:
             return
         if not self._skeleton_pulse_timer.isActive():
             self._skeleton_pulse_dim = False
@@ -1896,13 +1991,18 @@ class ThumbnailGrid(QScrollArea):
         self._skeleton_pulse_dim = False
 
     def _pulse_skeleton_cards(self) -> None:
-        skeletons = [card for card in self._cards if card._is_skeleton]
-        if not skeletons:
+        if self._skeleton_count <= 0:
             self._stop_skeleton_pulse()
             return
+        visible = set(self._get_visible_page_indices())
         self._skeleton_pulse_dim = not self._skeleton_pulse_dim
-        for card in skeletons:
-            card.set_skeleton_pulse(self._skeleton_pulse_dim)
+        for index, card in enumerate(self._cards):
+            if not card._is_skeleton:
+                continue
+            if index in visible:
+                card.set_skeleton_pulse(self._skeleton_pulse_dim)
+            else:
+                card.clear_skeleton_pulse()
 
     def _on_card_clicked(
         self, page_index: int, modifiers: Qt.KeyboardModifier

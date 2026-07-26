@@ -46,15 +46,27 @@ class BaseFileCard(QFrame):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._keyboard_focused = False
 
-        self._shadow = QGraphicsDropShadowEffect(self)
-        self._shadow.setBlurRadius(14)
-        self._shadow.setOffset(0, 3)
-        self._shadow.setColor(shadow_qcolor(alpha=55))
-        self.setGraphicsEffect(self._shadow)
+        self._shadow: QGraphicsDropShadowEffect | None = None
 
         self._thumbnail_label = QLabel()
         self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._thumbnail_label.setMinimumHeight(80)
+
+    def _ensure_shadow(self) -> QGraphicsDropShadowEffect:
+        if self._shadow is None:
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(14)
+            shadow.setOffset(0, 3)
+            shadow.setColor(shadow_qcolor(alpha=55))
+            self.setGraphicsEffect(shadow)
+            self._shadow = shadow
+        return self._shadow
+
+    def _clear_shadow(self) -> None:
+        if self._shadow is None:
+            return
+        self.setGraphicsEffect(None)
+        self._shadow = None
 
     def _item_index(self) -> int:
         raise NotImplementedError
@@ -100,18 +112,16 @@ class BaseFileCard(QFrame):
     def enterEvent(self, event: QEnterEvent) -> None:
         self._hovered = True
         if not prefers_reduce_motion():
-            self._shadow.setBlurRadius(18)
-            self._shadow.setOffset(0, 4)
-            self._shadow.setColor(shadow_qcolor(alpha=72))
+            shadow = self._ensure_shadow()
+            shadow.setBlurRadius(18)
+            shadow.setOffset(0, 4)
+            shadow.setColor(shadow_qcolor(alpha=72))
         self._apply_visual_state()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self._hovered = False
-        # Always restore resting shadow (covers mid-hover reduce_motion flips).
-        self._shadow.setBlurRadius(14)
-        self._shadow.setOffset(0, 3)
-        self._shadow.setColor(shadow_qcolor(alpha=55))
+        self._clear_shadow()
         self._apply_visual_state()
         super().leaveEvent(event)
 

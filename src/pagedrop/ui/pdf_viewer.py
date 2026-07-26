@@ -7,6 +7,7 @@ concurrent pools.
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections import OrderedDict
 from collections.abc import Callable
@@ -296,6 +297,7 @@ class _PageTile(QWidget):
         self._hits: list[tuple[float, float, float, float]] = []
         self._active_hit: tuple[float, float, float, float] | None = None
         self._text_dict: dict | None = None
+        self._text_provider: Callable[[], dict | None] | None = None
         self._selecting = False
         self._sel_start: QPointF | None = None
         self._sel_end: QPointF | None = None
@@ -310,13 +312,16 @@ class _PageTile(QWidget):
         page_h: float,
         rotation: int,
         links: list[LinkInfo],
-        text_dict: dict | None,
+        text_dict: dict | None = None,
+        *,
+        text_provider: Callable[[], dict | None] | None = None,
     ) -> None:
         self._page_w = page_w
         self._page_h = page_h
         self._rotation = rotation
         self._links = links
         self._text_dict = text_dict
+        self._text_provider = text_provider
         self.update()
 
     def set_pixmap(self, pixmap: QPixmap | None) -> None:
@@ -465,9 +470,22 @@ class _PageTile(QWidget):
                 return link
         return None
 
+    def _ensure_text_dict(self) -> dict | None:
+        if self._text_dict is not None:
+            return self._text_dict
+        if self._text_provider is None:
+            return None
+        try:
+            self._text_dict = self._text_provider()
+        except Exception:
+            self._text_dict = None
+        self._text_provider = None
+        return self._text_dict
+
     def _text_in_selection(self) -> str:
+        text_dict = self._ensure_text_dict()
         if (
-            self._text_dict is None
+            text_dict is None
             or self._sel_start is None
             or self._sel_end is None
         ):
@@ -479,7 +497,7 @@ class _PageTile(QWidget):
         if bx - ax < 2 and by - ay < 2:
             return ""
         parts: list[str] = []
-        for block in self._text_dict.get("blocks", []):
+        for block in text_dict.get("blocks", []):
             if block.get("type", 0) != 0:
                 continue
             for line in block.get("lines", []):
@@ -547,6 +565,8 @@ class PdfViewerWidget(QWidget):
         self._generation = 0
         self._search_generation = 0
         self._page_sizes: list[tuple[float, float]] = []  # unrotated points
+        self._page_offsets: list[int] | None = None
+        self._side_panel_dirty = False
         self._cache = _LruPixmapCache()
         self._tiles: dict[int, _PageTile] = {}
         self._pending_meta: set[int] = set()
@@ -561,6 +581,10 @@ class PdfViewerWidget(QWidget):
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(RENDER_DEBOUNCE_MS)
         self._render_timer.timeout.connect(self._render_visible)
+        self._side_panel_timer = QTimer(self)
+        self._side_panel_timer.setSingleShot(True)
+        self._side_panel_timer.setInterval(0)
+        self._side_panel_timer.timeout.connect(self._refresh_side_panel_if_dirty)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -645,17 +669,24 @@ class PdfViewerWidget(QWidget):
         self._cache.clear()
         self._clear_tiles()
         self._page_sizes = []
+        self._invalidate_offsets()
         self._ocg_on.clear()
         self._ocg_source = None
         self._search_edit.clear()
         self._hit_label.setText("")
         if model is None:
+            self._side_panel_timer.stop()
+            self._side_panel_dirty = False
             self._outline.clear()
             self._layers.clear()
             self._attachments.clear()
             return
         self._load_page_sizes()
-        self._refresh_side_panel()
+        self._refresh_side_panel(outline=False)
+        # Large TOCs are built on the next event-loop turn so the first canvas
+        # paint is not blocked under FITZ_LOCK.
+        self._side_panel_dirty = True
+        self._side_panel_timer.start()
         self._rebuild_canvas()
         self._update_render_width()
         self._schedule_render()
@@ -665,6 +696,7 @@ class PdfViewerWidget(QWidget):
             return
         self._cancel_all()
         self._layout = mode
+        self._invalidate_offsets()
         self._layout_continuous.setChecked(mode == ViewerLayout.CONTINUOUS)
         self._layout_single.setChecked(mode == ViewerLayout.SINGLE)
         self._layout_spread.setChecked(mode == ViewerLayout.SPREAD)
@@ -678,6 +710,7 @@ class PdfViewerWidget(QWidget):
         if percent is not None:
             self._zoom_percent = max(MIN_ZOOM_PERCENT, min(MAX_ZOOM_PERCENT, percent))
         self._cache.clear()
+        self._invalidate_offsets()
         self._update_render_width()
         self._rebuild_canvas()
         self._schedule_render()
@@ -986,35 +1019,29 @@ class PdfViewerWidget(QWidget):
         sizes: list[tuple[float, float]] = []
         for ref in self._model.iter_pages():
             try:
-                geom = page_geometry(ref.source_path, ref.source_index)
-                sizes.append((geom.width, geom.height))
+                if self._get_loader is not None:
+                    sizes.append(
+                        self._get_loader(ref.source_path).page_size_pt(
+                            ref.source_index
+                        )
+                    )
+                else:
+                    geom = page_geometry(ref.source_path, ref.source_index)
+                    sizes.append((geom.width, geom.height))
             except Exception:
                 sizes.append((612.0, 792.0))
         self._page_sizes = sizes
 
-    def _refresh_side_panel(self) -> None:
+    def _refresh_side_panel_if_dirty(self) -> None:
+        if not self._side_panel_dirty or self._model is None:
+            return
+        self._side_panel_dirty = False
+        self._populate_outline()
+
+    def _refresh_side_panel(self, *, outline: bool = True) -> None:
         assert self._model is not None
-        paths = sorted(self._model.source_paths())
-        self._outline.clear()
-        try:
-            items = outline_for_paths(paths)
-        except Exception:
-            items = []
-        parents: dict[int, QTreeWidgetItem] = {}
-        for item in items:
-            node = QTreeWidgetItem([item.title])
-            node.setData(
-                0,
-                Qt.ItemDataRole.UserRole,
-                (item.source_path, item.source_index, item.left_x, item.top_y),
-            )
-            parent = parents.get(item.level - 1)
-            if parent is None or item.level <= 1:
-                self._outline.addTopLevelItem(node)
-            else:
-                parent.addChild(node)
-            parents[item.level] = node
-        self._outline.expandToDepth(1)
+        if outline:
+            self._populate_outline()
 
         self._layers.clear()
         self._ocg_source = self._model.original_path
@@ -1050,6 +1077,30 @@ class PdfViewerWidget(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, att)
             self._attachments.addItem(item)
+
+    def _populate_outline(self) -> None:
+        assert self._model is not None
+        paths = sorted(self._model.source_paths())
+        self._outline.clear()
+        try:
+            items = outline_for_paths(paths)
+        except Exception:
+            items = []
+        parents: dict[int, QTreeWidgetItem] = {}
+        for item in items:
+            node = QTreeWidgetItem([item.title])
+            node.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                (item.source_path, item.source_index, item.left_x, item.top_y),
+            )
+            parent = parents.get(item.level - 1)
+            if parent is None or item.level <= 1:
+                self._outline.addTopLevelItem(node)
+            else:
+                parent.addChild(node)
+            parents[item.level] = node
+        self._outline.expandToDepth(1)
 
     def _toggle_layer(self, number: int, on: bool) -> None:
         if self._ocg_source is None:
@@ -1087,8 +1138,13 @@ class PdfViewerWidget(QWidget):
             pages.append(left + 1)
         return pages
 
+    def _invalidate_offsets(self) -> None:
+        self._page_offsets = None
+
     def _page_y_offsets(self) -> list[int]:
         """Top Y of each logical page in continuous canvas coordinates."""
+        if self._page_offsets is not None:
+            return self._page_offsets
         offsets: list[int] = []
         y = PAGE_GAP_PX
         count = len(self._page_sizes) if self._model else 0
@@ -1096,6 +1152,7 @@ class PdfViewerWidget(QWidget):
             offsets.append(y)
             _w, h = self._display_size_for(i)
             y += h + PAGE_GAP_PX
+        self._page_offsets = offsets
         return offsets
 
     def _continuous_canvas_height(self) -> int:
@@ -1161,10 +1218,16 @@ class PdfViewerWidget(QWidget):
         pad = max(viewport.height(), 400)
         top -= pad
         bottom += pad
+        # Offsets are monotonic — bisect to the first page that could intersect.
+        start = bisect.bisect_right(offsets, top) - 1
+        start = max(0, start)
         needed: set[int] = set()
-        for i, y in enumerate(offsets):
+        for i in range(start, n):
+            y = offsets[i]
+            if y > bottom:
+                break
             _w, h = self._display_size_for(i)
-            if y + h < top or y > bottom:
+            if y + h < top:
                 continue
             needed.add(i)
         for logical in list(self._tiles):
@@ -1276,6 +1339,7 @@ class PdfViewerWidget(QWidget):
         return min(MAX_RENDER_WIDTH_PX, max(MIN_PREVIEW_RENDER_WIDTH, render_w))
 
     def _update_render_width(self) -> None:
+        previous = self._render_width_px
         if self._zoom_mode == ZoomMode.FIT_WIDTH:
             self._render_width_px = self._fit_width_px()
         elif self._zoom_mode == ZoomMode.FIT_PAGE:
@@ -1289,6 +1353,8 @@ class PdfViewerWidget(QWidget):
                     int(round(base * self._zoom_percent / 100)),
                 ),
             )
+        if self._render_width_px != previous:
+            self._invalidate_offsets()
         self._relayout_tile_sizes()
 
     # --- rendering ----------------------------------------------------------
@@ -1369,13 +1435,20 @@ class PdfViewerWidget(QWidget):
                 links = page_links(ref)
             except Exception:
                 links = []
-            try:
-                text = page_text_dict(ref)
-            except Exception:
-                text = None
+
+            def _text_provider(
+                r: PageRef = ref,
+            ) -> dict | None:
+                try:
+                    return page_text_dict(r)
+                except Exception:
+                    return None
+
             tile = self._tiles.get(logical)
             if tile is not None:
-                tile.set_page_meta(pw, ph, ref.rotation, links, text)
+                tile.set_page_meta(
+                    pw, ph, ref.rotation, links, text_provider=_text_provider
+                )
             self._pending_meta.discard(logical)
 
     def _on_render_finished(

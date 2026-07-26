@@ -117,6 +117,22 @@ class PageCard(BaseFileCard):
         super().set_thumbnail(pixmap)
         self._sync_page_overlay_visibility()
 
+    def release_thumbnail(self) -> bool:
+        """Drop the cached pixmap and return to skeleton placeholder.
+
+        Returns True if a pixmap was released.
+        """
+        if self._source_pixmap is None and self._is_skeleton:
+            return False
+        had_pixmap = self._source_pixmap is not None
+        self._source_pixmap = None
+        self._thumbnail_label.clear()
+        self._is_skeleton = True
+        self.clear_skeleton_pulse()
+        self._apply_skeleton_size()
+        self._sync_page_overlay_visibility()
+        return had_pixmap
+
     def set_skeleton_pulse(self, dim: bool) -> None:
         """Gentle opacity blink so placeholders read as loading, not blank."""
         if not self._is_skeleton:

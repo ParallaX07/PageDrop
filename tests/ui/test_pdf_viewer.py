@@ -148,10 +148,14 @@ def test_selection_copy_clipboard(main_window, viewer_text_pdf, qtbot):
         timeout=RENDER_TIMEOUT_MS,
     )
     tile = viewer._tiles[viewer.current_page]
-    qtbot.waitUntil(lambda: tile._text_dict is not None, timeout=5000)
+    qtbot.waitUntil(
+        lambda: tile._text_provider is not None or tile._text_dict is not None,
+        timeout=5000,
+    )
     tile._sel_start = tile.rect().topLeft().toPointF()
     tile._sel_end = tile.rect().bottomRight().toPointF()
     tile._selected_text = tile._text_in_selection()
+    assert tile._text_dict is not None
     assert "Alpha" in tile.selected_text() or "unique" in tile.selected_text()
 
     clipboard = QGuiApplication.clipboard()
