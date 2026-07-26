@@ -50,6 +50,8 @@ class PdfTab(QWidget):
         super().__init__(parent)
         self._temp_manager = temp_manager
         self._edit_model: PdfEditModel | None = None
+        # Main-thread only — never pass these docs into QRunnable workers
+        # (see core.thread_policy). Workers open by path themselves.
         self._loader_cache: dict[str, PdfLoader] = {}
         self._pdf_path: str | None = None
         self._dirty = False
@@ -208,6 +210,7 @@ class PdfTab(QWidget):
         self._content_stack.setCurrentWidget(self._thumbnail_grid)
 
     def get_loader(self, path: str) -> PdfLoader:
+        """Return a cached loader for *path* (UI / main thread only)."""
         if path not in self._loader_cache:
             self._loader_cache[path] = PdfLoader(path)
         self._evict_idle_loaders(keep={path})

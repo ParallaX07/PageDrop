@@ -89,6 +89,7 @@ class BaseFileGrid(QScrollArea):
         self._last_clicked_index: int | None = None
         self._focused_index: int | None = None
         self._drop_insertion_index: int | None = None
+        # max 1 serializes this grid only; see core.thread_policy for cross-pool risk
         self._render_pool = QThreadPool(self)
         self._render_pool.setMaxThreadCount(1)
         self._zoom_render_timer = QTimer(self)

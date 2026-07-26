@@ -86,6 +86,8 @@ SKELETON_PULSE_MS = 550
 
 
 class ThumbnailWorker(QRunnable):
+    """Renders page thumbs off the UI thread (see core.thread_policy)."""
+
     class Signals(QObject):
         # PNG bytes — QPixmap is GUI-thread only (see PreviewRenderWorker).
         page_ready = pyqtSignal(int, int, bytes)  # generation, logical_index, png
@@ -108,9 +110,8 @@ class ThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # fitz.Document is not thread-safe — never share PdfTab._loader_cache
-        # docs with this worker. One open per source path per run is enough; the open
-        # cost is noise vs get_pixmap, and progressive batches cancel via generation.
+        # See core.thread_policy: open by path only; never PdfTab._loader_cache.
+        # Pool is max 1, but still overlaps other window pools until Phase 22/23.
         docs: dict[str, fitz.Document] = {}
         try:
             for logical_index, ref in self._pages:

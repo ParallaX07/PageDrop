@@ -15,6 +15,7 @@ import fitz
 
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader, render_page_png
+from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -26,6 +27,8 @@ PREVIEW_RENDER_DEBOUNCE_MS = 150
 
 
 class PreviewRenderWorker(QRunnable):
+    """Renders one page off the UI thread (see core.thread_policy)."""
+
     class Signals(QObject):
         finished = pyqtSignal(int, int, int, bytes)  # generation, logical_page, width, png
         error = pyqtSignal(int, str)
@@ -42,6 +45,7 @@ class PreviewRenderWorker(QRunnable):
         rotation: int = 0,
     ) -> None:
         super().__init__()
+        ensure_no_fitz_document(source_path, what="PreviewRenderWorker")
         self.signals = self.Signals()
         self._source_path = source_path
         self._source_index = source_index
@@ -53,6 +57,7 @@ class PreviewRenderWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
+        # Own open by path; pool max 1. Cross-window fitz overlap → Phase 22/23.
         doc = None
         try:
             if self._is_cancelled(self._generation):

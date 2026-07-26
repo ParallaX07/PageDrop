@@ -46,6 +46,8 @@ _FOLDER_PROGRESS_THRESHOLD = 8
 
 
 class _MergeWorker(QRunnable):
+    """Whole-file merge off the UI thread (see core.thread_policy)."""
+
     class Signals(QObject):
         succeeded = pyqtSignal(str)
         failed = pyqtSignal(str)
@@ -58,6 +60,7 @@ class _MergeWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
+        # Paths only; pool max 1. Migrate to Phase 22 job runner / process.
         try:
             merge_pdf_files(self._file_paths, self._output_path)
         except PdfLoadError as exc:

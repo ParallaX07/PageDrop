@@ -132,7 +132,10 @@ def render_stacked_page_pngs(
     width_px: int = DEFAULT_PAGE_WIDTH_PX,
     should_cancel: Callable[[], bool] | None = None,
 ) -> list[bytes]:
-    """Render the first 1–3 pages of a PDF to PNG bytes (safe for worker threads)."""
+    """Render the first 1–3 pages of a PDF to PNG bytes.
+
+    Opens *path* locally (see core.thread_policy) — never accepts a shared Document.
+    """
     pages_to_render = min(max(page_count, 0), MAX_STACK_PAGES)
     if pages_to_render == 0:
         return []

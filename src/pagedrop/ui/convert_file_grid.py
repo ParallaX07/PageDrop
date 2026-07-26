@@ -27,6 +27,8 @@ def render_image_thumbnail_png(path: str, width_px: int) -> bytes | None:
 
 
 class _ConvertThumbnailWorker(QRunnable):
+    """Image thumbs off the UI thread (see core.thread_policy)."""
+
     class Signals(QObject):
         ready = pyqtSignal(str, int, int, object)  # path, width_px, generation, png
 
@@ -46,6 +48,7 @@ class _ConvertThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
+        # Own fitz.open by path; pool max 1 (BaseFileGrid). Cross-pool → Phase 22/23.
         if self._is_cancelled(self._generation):
             return
         try:

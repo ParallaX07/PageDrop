@@ -17,6 +17,8 @@ from pagedrop.ui.stacked_thumbnail import (
 
 
 class _MergeThumbnailWorker(QRunnable):
+    """Stacked PDF thumbs off the UI thread (see core.thread_policy)."""
+
     class Signals(QObject):
         ready = pyqtSignal(str, int, int, object)  # path, width_px, generation, page_pngs
 
@@ -38,6 +40,7 @@ class _MergeThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
+        # Opens by path in render_stacked_page_pngs; pool max 1 (BaseFileGrid).
         if self._is_cancelled(self._generation):
             return
         try:

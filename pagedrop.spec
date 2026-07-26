@@ -14,6 +14,9 @@ ASSETS = SRC / "pagedrop" / "assets"
 
 datas: list[tuple[str, str]] = [
     (str(ASSETS / "logo.png"), "pagedrop/assets"),
+    # Licence notices must ship with onedir / installer.
+    (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
+    (str(ROOT / "LICENSE"), "."),
 ]
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = [
