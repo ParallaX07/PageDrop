@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import fitz
+import pytest
+
 from pagedrop.core.capabilities import (
     AbsenceReason,
     CapabilityStatus,
     PILLOW,
 )
+from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
 from pagedrop.ui.command_palette import collect_actions
-from pagedrop.ui.dialogs import prompt_cancel_running_job, prompt_missing_capability
+from pagedrop.ui.dialogs import (
+    prompt_cancel_running_job,
+    prompt_missing_capability,
+    prompt_pdf_password,
+)
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.result_actions import ResultActionsBar, show_in_folder
 from pagedrop.ui.tools_window import ToolsWindow
@@ -95,6 +105,59 @@ def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
     assert not window._busy_overlay.isVisible()
     assert status.currentMessage() == "Job failed"
     assert window._toast.isVisible()
+    window.close()
+
+
+def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
+    qtbot, tmp_path, monkeypatch
+):
+    """Tools jobs reuse prompt_pdf_password: wrong → retry, cancel aborts job."""
+    enc = tmp_path / "locked.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(
+            str(enc),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="secret",
+            owner_pw="owner",
+        )
+    finally:
+        doc.close()
+    source_bytes = enc.read_bytes()
+
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+    cancel = window.begin_job("Unlocking…")
+
+    prompts: list[bool] = []
+    # First attempt: wrong password. Retry: cancel (None).
+    replies = iter([("wrong", True), ("", False)])
+
+    def fake_get_text(*args, **kwargs):
+        label = args[2] if len(args) > 2 else kwargs.get("label", "")
+        incorrect = "Incorrect password" in label
+        prompts.append(incorrect)
+        return next(replies)
+
+    monkeypatch.setattr(
+        "pagedrop.ui.dialogs.QInputDialog.getText",
+        fake_get_text,
+    )
+
+    def prompt(filename: str, incorrect: bool) -> str | None:
+        return prompt_pdf_password(window, filename, incorrect=incorrect)
+
+    with pytest.raises(JobCancelledError):
+        preflight_pdf_inputs([enc], prompt=prompt, cancel=cancel)
+
+    assert prompts == [False, True]
+    window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+    assert not window.is_job_running()
+    assert not window._busy_overlay.isVisible()
+    assert window.statusBar().currentMessage() == "Cancelled"
+    assert enc.read_bytes() == source_bytes
     window.close()
 
 
