@@ -25,8 +25,10 @@ still overlap). That cross-pool overlap is known risk until Phase 22/23.
 
 Migration
 ---------
-- **job runner:** batch / write jobs run in a process or one serialized
-  PDF worker; never share fitz docs with ad-hoc UI thread pools.
+- **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` —
+  process-wide lock, stage/promote via ``TempManager``, paths only; never
+  share fitz docs with ad-hoc UI thread pools. Upgrade path: dedicated PDF
+  service process for fitz-heavy handlers (same stage/promote/cancel API).
 - **Phase 23 viewer:** page render goes through the same serialized PDF service,
   not additional ``QThreadPool`` fitz callers.
 """

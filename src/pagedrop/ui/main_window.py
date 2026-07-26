@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QInputDialog,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -24,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.core.jobs.paths import paths_refer_to_same_file
 from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
@@ -35,7 +35,11 @@ from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import CommandPalette, action_label
 from pagedrop.ui.convert_window import ConvertWindow
-from pagedrop.ui.dialogs import fit_message_box_buttons, prompt_unsaved_changes
+from pagedrop.ui.dialogs import (
+    fit_message_box_buttons,
+    prompt_pdf_password,
+    prompt_unsaved_changes,
+)
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
@@ -1770,19 +1774,7 @@ class MainWindow(QMainWindow):
         self, filename: str, *, incorrect: bool = False
     ) -> str | None:
         """Ask for a PDF password. Returns None if the user cancels."""
-        if incorrect:
-            label = f'Incorrect password for "{filename}". Try again:'
-        else:
-            label = f'"{filename}" is password-protected.\nEnter password:'
-        text, ok = QInputDialog.getText(
-            self,
-            "Password Required",
-            label,
-            QLineEdit.EchoMode.Password,
-        )
-        if not ok:
-            return None
-        return text
+        return prompt_pdf_password(self, filename, incorrect=incorrect)
 
     def _load_pdf(self, path: str, *, tab: PdfTab | None = None) -> None:
         target = tab or self._active_tab()
@@ -1858,10 +1850,7 @@ class MainWindow(QMainWindow):
         self._open_paths_as_tabs(paths, first_tab=tab)
 
     def _same_path(self, left: str, right: str) -> bool:
-        try:
-            return Path(left).resolve().samefile(Path(right).resolve())
-        except OSError:
-            return Path(left).resolve() == Path(right).resolve()
+        return paths_refer_to_same_file(left, right)
 
     def _default_save_as_path(self, tab: PdfTab) -> str:
         model = tab.edit_model

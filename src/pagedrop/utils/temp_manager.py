@@ -12,6 +12,7 @@ class TempManager:
     def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
         self._dir = Path(tempfile.mkdtemp(prefix="pagedrop_"))
         self._drag_counter = 0
+        self._job_counter = 0
         self._max_bytes = max_bytes
         atexit.register(self.cleanup)
 
@@ -24,6 +25,14 @@ class TempManager:
         drag_dir = self._dir / f"drag_{self._drag_counter}"
         drag_dir.mkdir(parents=True, exist_ok=True)
         return drag_dir
+
+    def create_job_dir(self) -> Path:
+        """Directory for a Tools job's staged output (promote or cleanup)."""
+        self._enforce_max_size()
+        self._job_counter += 1
+        job_dir = self._dir / f"job_{self._job_counter}"
+        job_dir.mkdir(parents=True, exist_ok=True)
+        return job_dir
 
     def cleanup_paths(self, paths: list[Path]) -> None:
         drag_dirs: set[Path] = set()

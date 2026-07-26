@@ -342,7 +342,7 @@ _PROBES: dict[str, Callable[[], CapabilityStatus]] = {
 
 
 def _self_check() -> None:
-    """Runnable check: registry enumerates without raising (ponytail)."""
+    """Runnable check: registry enumerates without raising."""
     clear_cache()
     statuses = probe_all(refresh=True)
     assert set(statuses) == set(CAPABILITY_IDS)

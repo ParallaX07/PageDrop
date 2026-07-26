@@ -3,12 +3,34 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox, QWidget
 
 from pagedrop.ui.settings import (
     DELETE_CONFIRM_THRESHOLD,
     confirm_before_deleting_multiple_pages,
 )
+
+
+def prompt_pdf_password(
+    parent: QWidget | None,
+    filename: str,
+    *,
+    incorrect: bool = False,
+) -> str | None:
+    """Ask for a PDF password (editor + Tools jobs). Returns None on cancel."""
+    if incorrect:
+        label = f'Incorrect password for "{filename}". Try again:'
+    else:
+        label = f'"{filename}" is password-protected.\nEnter password:'
+    text, ok = QInputDialog.getText(
+        parent,
+        "Password Required",
+        label,
+        QLineEdit.EchoMode.Password,
+    )
+    if not ok:
+        return None
+    return text
 
 
 def fit_message_box_buttons(message: QMessageBox) -> None:
