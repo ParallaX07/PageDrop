@@ -25,7 +25,7 @@ FIRST_RUN_TIPS: tuple[tuple[str, str], ...] = (
     ("Tabs", "Ctrl+T opens a tab. Ctrl+Tab returns to the previous tab (MRU)."),
 )
 
-# Grouped for Help → Keyboard Shortcuts. Ctrl+Tab is documented as MRU (Phase A).
+# Grouped for Help → Keyboard Shortcuts. Ctrl+Tab is documented as MRU.
 SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "File",

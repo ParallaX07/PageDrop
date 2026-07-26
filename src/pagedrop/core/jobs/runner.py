@@ -20,6 +20,7 @@ from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import ensure_output_destination
 from pagedrop.core.jobs.spec import JobSpec, ProgressCallback, _noop_progress
 from pagedrop.core.jobs.staging import JobStaging
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.utils.temp_manager import TempManager
 
@@ -45,10 +46,9 @@ class SerializedJobRunner:
 
     Never shares ``fitz.Document`` instances with UI thread pools. Callers pass
     paths on ``JobSpec``; handlers open by path. Cancel removes partial staged
-    output. Source overwrite is rejected like Save As.
+    output. Source overwrite is rejected like Save As. Uses the shared
+    ``FITZ_LOCK`` so jobs serialize with the viewer PDF service.
     """
-
-    _run_lock = threading.Lock()
 
     def __init__(self, temp_manager: TempManager | None = None) -> None:
         self._temp_manager = temp_manager or TempManager()
@@ -104,7 +104,7 @@ class SerializedJobRunner:
             self._active_cancel = token
 
         try:
-            with self._run_lock:
+            with FITZ_LOCK:
                 token.check()
                 report(0.0, "Starting…")
                 ctx = JobContext(

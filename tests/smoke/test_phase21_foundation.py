@@ -1,4 +1,4 @@
-"""Phase 21 smoke tests — foundation: app start + rapid open/close PDFs."""
+"""Foundation smoke tests — app start + rapid open/close PDFs."""
 
 from __future__ import annotations
 

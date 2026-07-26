@@ -57,6 +57,10 @@ class PdfEditModel:
     def page_at(self, logical_index: int) -> PageRef:
         return self._pages[logical_index]
 
+    def iter_pages(self) -> list[PageRef]:
+        """Current logical page list (copy — safe to iterate while reading)."""
+        return list(self._pages)
+
     def source_paths(self) -> set[str]:
         """Paths still needed for the current page list (plus original)."""
         paths = {self._original_path}

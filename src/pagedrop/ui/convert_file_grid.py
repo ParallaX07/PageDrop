@@ -48,7 +48,7 @@ class _ConvertThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Own fitz.open by path; pool max 1 (BaseFileGrid). Cross-pool → Phase 22/23.
+        # Own fitz.open by path; pool max 1 (BaseFileGrid). Cross-pool overlap is a known risk.
         if self._is_cancelled(self._generation):
             return
         try:

@@ -1,4 +1,4 @@
-"""Phase 21 — optional capability registry contracts."""
+"""Optional capability registry contracts."""
 
 from __future__ import annotations
 

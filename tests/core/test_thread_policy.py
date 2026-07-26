@@ -1,4 +1,4 @@
-"""Phase 21 — PyMuPDF concurrency policy contract."""
+"""PyMuPDF concurrency policy contract."""
 
 from __future__ import annotations
 
@@ -17,8 +17,9 @@ def test_policy_documents_no_concurrent_fitz_and_migration() -> None:
     doc = thread_policy.__doc__ or ""
     assert "not" in doc.lower() and "concurrent" in doc.lower()
     assert "multiprocessing" in doc
-    assert "Phase 22" in doc and "Phase 23" in doc
+    assert "FITZ_LOCK" in doc
     assert "main-thread" in doc.lower() or "main thread" in doc.lower()
+    assert "pdf_service" in doc
 
 
 def test_worker_audit_covers_known_fitz_pools() -> None:
@@ -26,6 +27,7 @@ def test_worker_audit_covers_known_fitz_pools() -> None:
     assert names >= {
         "ThumbnailWorker",
         "PreviewRenderWorker",
+        "ViewerRenderWorker",
         "_MergeThumbnailWorker",
         "_ConvertThumbnailWorker",
         "_MergeWorker",

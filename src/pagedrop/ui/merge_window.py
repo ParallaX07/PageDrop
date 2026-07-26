@@ -60,7 +60,7 @@ class _MergeWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Paths only; pool max 1. Migrate to Phase 22 job runner / process.
+        # Paths only; pool max 1. Prefer job runner / process for new work.
         try:
             merge_pdf_files(self._file_paths, self._output_path)
         except PdfLoadError as exc:

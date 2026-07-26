@@ -1,4 +1,4 @@
-"""PyMuPDF / Qt concurrency policy for PageDrop (Phase 21).
+"""PyMuPDF / Qt concurrency policy for PageDrop.
 
 Policy
 ------
@@ -21,24 +21,27 @@ Short-term allowance
 Existing UI workers keep a private ``QThreadPool`` with ``setMaxThreadCount(1)``
 and open documents by path. That serializes *within* one pool but **does not**
 serialize across windows (editor thumbnails + preview + merge + convert can
-still overlap). That cross-pool overlap is known risk until Phase 22/23.
+still overlap). Job runner and viewer already share ``pdf_service.FITZ_LOCK``;
+other UI pools remain a known cross-window risk.
 
 Migration
 ---------
-- **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` —
-  process-wide lock, stage/promote via ``TempManager``, paths only; never
-  share fitz docs with ad-hoc UI thread pools. Upgrade path: dedicated PDF
+- **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` — uses
+  ``pdf_service.FITZ_LOCK``, stage/promote via ``TempManager``, paths only;
+  never share fitz docs with ad-hoc UI pools. Upgrade path: dedicated PDF
   service process for fitz-heavy handlers (same stage/promote/cancel API).
-- **Phase 23 viewer:** page render goes through the same serialized PDF service,
-  not additional ``QThreadPool`` fitz callers.
+- **viewer:** ``ui/pdf_viewer.py`` via ``pagedrop.core.pdf_service`` under
+  ``FITZ_LOCK`` — not additional concurrent ``QThreadPool`` fitz callers
+  outside that lock.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Current QRunnable / pool sites that call fitz (audit, Phase 21).
-# Each pool is maxThreadCount=1 and opens by path — still unsafe vs *other* pools.
+# Current QRunnable / pool sites that call fitz (audit).
+# Each pool is maxThreadCount=1 and opens by path — still unsafe vs *other* pools
+# unless they take ``pdf_service.FITZ_LOCK`` (viewer + job runner do).
 WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     (
         "ThumbnailWorker",
@@ -47,6 +50,10 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     (
         "PreviewRenderWorker",
         "ui/page_preview.py — single-page preview; own open; pool max 1",
+    ),
+    (
+        "ViewerRenderWorker",
+        "ui/pdf_viewer.py — via pdf_service.render_ref_png under FITZ_LOCK; pool max 1",
     ),
     (
         "_MergeThumbnailWorker",

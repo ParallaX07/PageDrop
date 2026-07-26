@@ -111,7 +111,7 @@ class ThumbnailWorker(QRunnable):
 
     def run(self) -> None:
         # See core.thread_policy: open by path only; never PdfTab._loader_cache.
-        # Pool is max 1, but still overlaps other window pools until Phase 22/23.
+        # Pool is max 1, but still overlaps other window pools (shared FITZ_LOCK covers jobs/viewer).
         docs: dict[str, fitz.Document] = {}
         try:
             for logical_index, ref in self._pages:
@@ -1013,7 +1013,7 @@ class ThumbnailGrid(QScrollArea):
     def insert_pdf_pages(self, paths: list[str], drop_index: int) -> bool:
         """Insert all pages from *paths* at *drop_index*. Returns True on success.
 
-        Edge cases (Phase 14):
+        Edge cases:
         - Same file as the tab primary source: duplicate ``PageRef`` rows are allowed.
         - Multiple paths in one drop: processed in path-sorted order at the same index.
         - Thumbnails still loading: ``_sync_grid_after_insert`` reloads the model
@@ -1186,7 +1186,7 @@ class ThumbnailGrid(QScrollArea):
         source_filename = Path(refs[0].source_path).name
 
         # Tab-bar drops always append; grid drops (cross-window and same-window
-        # cross-tab) keep the caller-supplied insertion index (Phase 18).
+        # cross-tab) keep the caller-supplied insertion index.
         if append_only:
             drop_index = 0
             if self._model is not None:

@@ -290,7 +290,7 @@ class _ConvertWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Paths only; pool max 1. Migrate to Phase 22 job runner / process.
+        # Paths only; pool max 1. Prefer job runner / process for new work.
         try:
             if self._output_mode == _OUTPUT_SINGLE:
                 assert self._output_path is not None

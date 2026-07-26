@@ -57,7 +57,7 @@ class PreviewRenderWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Own open by path; pool max 1. Cross-window fitz overlap → Phase 22/23.
+        # Own open by path; pool max 1. Cross-window fitz overlap is a known risk.
         doc = None
         try:
             if self._is_cancelled(self._generation):

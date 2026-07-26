@@ -653,6 +653,45 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 10px 16px;
     }}
 
+    QWidget#PdfViewer {{
+        background-color: {bg_base};
+    }}
+
+    QScrollArea#PdfViewerScroll {{
+        background-color: {bg_grid};
+        border: none;
+    }}
+
+    QWidget#PdfViewerCanvas {{
+        background-color: {bg_grid};
+    }}
+
+    QWidget#PdfViewerPage {{
+        background-color: #FAFAFA;
+        border: 1px solid {border_subtle};
+    }}
+
+    QWidget#PdfViewerToolbar {{
+        background-color: {bg_preview_footer};
+        border-bottom: 1px solid {border_subtle};
+    }}
+
+    QLabel#PdfViewerHint {{
+        color: {text_muted};
+        font-size: 11px;
+        font-family: {FONT_MONO};
+        padding: 10px 16px;
+        background-color: {bg_preview_footer};
+        border-top: 1px solid {border_subtle};
+    }}
+
+    QLabel#PdfViewerPageLabel,
+    QLabel#PdfViewerHitLabel {{
+        color: {text_muted};
+        font-size: 12px;
+        padding: 0 8px;
+    }}
+
     QWidget#BusyOverlay {{
         background-color: {busy_overlay_bg};
     }}
