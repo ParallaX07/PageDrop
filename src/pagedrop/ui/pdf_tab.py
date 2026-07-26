@@ -73,7 +73,7 @@ class PdfTab(QWidget):
         )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)
-        # Phase 23: Preview / Enter / double-click opens the full viewer.
+        # Preview / Enter / double-click opens the full viewer.
         self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
 
