@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -76,16 +77,21 @@ from pagedrop.utils.temp_manager import TempManager
 
 ZOOM_RENDER_DEBOUNCE_MS = 400
 SCROLL_RENDER_DEBOUNCE_MS = 150
-RENDER_POOL_DRAIN_MS = 3000
 VISIBLE_RENDER_BUFFER_ROWS = 2
 # Prefetch / retain band around the viewport for large documents.
 RENDER_WINDOW_ROWS = 4
 RETAIN_WINDOW_ROWS = 8
 DEFERRED_THUMBNAIL_BATCH = 24
 LARGE_PDF_PAGE_THRESHOLD = 50
-CARD_CREATE_BATCH = 32
+# Budgeted card creation — yield so shortcuts/buttons stay responsive.
+CARD_CREATE_MAX = 16
+CARD_CREATE_BUDGET_MS = 10
+CARD_CREATE_YIELD_MS = 1
+# Legacy alias for tests that still patch the old name.
+CARD_CREATE_BATCH = CARD_CREATE_MAX
 DEFERRED_LAYOUT_BATCH = 48
 SKELETON_PULSE_MS = 550
+POOL_DRAIN_POLL_MS = 16
 
 
 class ThumbnailWorker(QRunnable):
@@ -301,6 +307,11 @@ class ThumbnailGrid(QScrollArea):
         self._render_pool.setMaxThreadCount(1)
         # Keep Signals QObjects alive until drain; autoDelete drops the QRunnable.
         self._worker_signals: list[ThumbnailWorker.Signals] = []
+        self._orphaned_signals: list[ThumbnailWorker.Signals] = []
+        self._pool_drain_timer = QTimer(self)
+        self._pool_drain_timer.setSingleShot(False)
+        self._pool_drain_timer.setInterval(POOL_DRAIN_POLL_MS)
+        self._pool_drain_timer.timeout.connect(self._on_pool_drain_tick)
         self._zoom_render_timer = QTimer(self)
         self._zoom_render_timer.setSingleShot(True)
         self._zoom_render_timer.setInterval(ZOOM_RENDER_DEBOUNCE_MS)
@@ -319,7 +330,7 @@ class ThumbnailGrid(QScrollArea):
             self._process_deferred_thumbnail_refresh
         )
         self._pending_thumbnail_refresh: list[int] = []
-        self._pending_card_indices: list[int] = []
+        self._pending_card_indices: deque[int] = deque()
         self._card_create_timer = QTimer(self)
         self._card_create_timer.setSingleShot(True)
         self._card_create_timer.timeout.connect(self._process_card_creation_batch)
@@ -406,7 +417,8 @@ class ThumbnailGrid(QScrollArea):
             )
             return
 
-        self._pending_card_indices = list(range(total))
+        # still create all N PageCards (virtualize for 5k+ pages).
+        self._pending_card_indices = deque(range(total))
         self._enter_busy("loading", f"Preparing {total} pages…")
         self.rendering_started.emit(total)
         self._card_create_timer.start(0)
@@ -470,10 +482,21 @@ class ThumbnailGrid(QScrollArea):
         if self._model is None or not self._pending_card_indices:
             return
 
-        batch = self._pending_card_indices[:CARD_CREATE_BATCH]
-        self._pending_card_indices = self._pending_card_indices[CARD_CREATE_BATCH:]
-        self._create_all_cards(batch)
-        self._reflow_grid(force=len(self._cards) <= CARD_CREATE_BATCH)
+        start_index = len(self._cards)
+        deadline = time.monotonic() + CARD_CREATE_BUDGET_MS / 1000.0
+        created_this_turn = 0
+        while self._pending_card_indices and created_this_turn < CARD_CREATE_BATCH:
+            if created_this_turn > 0 and time.monotonic() >= deadline:
+                break
+            logical_index = self._pending_card_indices.popleft()
+            self._cards.append(self._make_page_card(logical_index))
+            self._skeleton_count += 1
+            created_this_turn += 1
+
+        if created_this_turn:
+            self._start_skeleton_pulse()
+            self._append_cards_to_layout(start_index)
+
         remaining = len(self._pending_card_indices)
         total = len(self._cards) + remaining
         created = len(self._cards)
@@ -481,15 +504,29 @@ class ThumbnailGrid(QScrollArea):
         self.rendering_progress.emit(created, total)
 
         if self._pending_card_indices:
-            self._card_create_timer.start(0)
+            self._card_create_timer.start(CARD_CREATE_YIELD_MS)
             return
 
-        self._reflow_grid(force=True)
+        # Cards already laid out incrementally — no O(n) final reflow cliff.
         self._leave_busy("loading")
         self._update_focus_highlight()
         self._start_rendering(
             silent=False, page_indices=self._render_window_indices()
         )
+
+    def _append_cards_to_layout(self, start_index: int) -> None:
+        """Place newly created cards without tearing down the whole grid."""
+        if start_index >= len(self._cards):
+            return
+        cols = self._compute_grid_cols()
+        if self._grid_cols == 0 or cols != self._grid_cols:
+            self._reflow_grid(force=True)
+            return
+        self._update_empty_state()
+        for index in range(start_index, len(self._cards)):
+            self._layout.addWidget(
+                self._cards[index], index // cols, index % cols
+            )
 
     def _start_rendering(
         self, *, silent: bool, page_indices: list[int] | None = None
@@ -692,14 +729,41 @@ class ThumbnailGrid(QScrollArea):
         )
 
     def cancel_rendering(self) -> None:
-        """Invalidate in-flight workers and drain the pool before teardown/reload."""
+        """Invalidate in-flight workers without blocking the UI thread."""
         self._cancel_rendering()
-        self._drain_render_pool()
+        self._orphan_worker_signals()
+        self._schedule_pool_drain()
 
-    def _drain_render_pool(self) -> None:
-        self._render_pool.waitForDone(RENDER_POOL_DRAIN_MS)
-        # Worker signals are queued to this object; flush them before cards go away.
+    def _orphan_worker_signals(self) -> None:
+        """Disconnect slots but keep Signals alive until the pool is idle."""
+        for signals in self._worker_signals:
+            for signal in (
+                signals.page_ready,
+                signals.finished,
+                signals.error,
+            ):
+                try:
+                    signal.disconnect()
+                except TypeError:
+                    pass
+        self._orphaned_signals.extend(self._worker_signals)
+        self._worker_signals.clear()
+
+    def _schedule_pool_drain(self) -> None:
+        if self._render_pool.waitForDone(0):
+            self._finish_pool_drain()
+            return
+        if not self._pool_drain_timer.isActive():
+            self._pool_drain_timer.start()
+
+    def _on_pool_drain_tick(self) -> None:
+        if self._render_pool.waitForDone(0):
+            self._pool_drain_timer.stop()
+            self._finish_pool_drain()
+
+    def _finish_pool_drain(self) -> None:
         QCoreApplication.sendPostedEvents(self, QEvent.Type.MetaCall)
+        self._orphaned_signals.clear()
         self._worker_signals.clear()
 
     def clear(self) -> None:
@@ -709,12 +773,14 @@ class ThumbnailGrid(QScrollArea):
         self._deferred_thumbnail_timer.stop()
         self._card_create_timer.stop()
         self._deferred_layout_timer.stop()
+        self._pool_drain_timer.stop()
         self._pending_thumbnail_refresh.clear()
         self._pending_card_indices.clear()
         self._pending_layout_indices.clear()
         self._cancel_rendering()
         self._stop_skeleton_pulse()
-        self._drain_render_pool()
+        self._orphan_worker_signals()
+        self._schedule_pool_drain()
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
         self._clear_cards()
@@ -1791,6 +1857,10 @@ class ThumbnailGrid(QScrollArea):
         if not self._cards:
             return []
 
+        cols = max(self._grid_cols, 1)
+        sample = self._cards[0]
+        row_stride = max(sample.height() + self._layout.spacing(), 1)
+
         top_left = self._container.mapFrom(self.viewport(), QPoint(0, 0))
         bottom_right = self._container.mapFrom(
             self.viewport(),
@@ -1799,20 +1869,15 @@ class ThumbnailGrid(QScrollArea):
         visible_top = min(top_left.y(), bottom_right.y())
         visible_bottom = max(top_left.y(), bottom_right.y())
 
-        if buffer_rows > 0:
-            sample = self._cards[0]
-            row_stride = max(sample.height() + self._layout.spacing(), 1)
-            buffer_px = buffer_rows * row_stride
-            visible_top -= buffer_px
-            visible_bottom += buffer_px
-
-        indices: list[int] = []
-        for index, card in enumerate(self._cards):
-            card_top = card.y()
-            card_bottom = card_top + card.height()
-            if card_bottom >= visible_top and card_top <= visible_bottom:
-                indices.append(index)
-        return indices
+        n = len(self._cards)
+        max_row = (n - 1) // cols
+        first_row = max(0, visible_top // row_stride - buffer_rows)
+        last_row = visible_bottom // row_stride + buffer_rows
+        first_row = min(first_row, max_row)
+        last_row = min(max(last_row, first_row), max_row)
+        start = first_row * cols
+        end = min(n, (last_row + 1) * cols)
+        return list(range(start, end))
 
     def _target_render_width(self) -> int:
         from pagedrop.ui.settings import thumbnail_render_width
@@ -1880,6 +1945,7 @@ class ThumbnailGrid(QScrollArea):
             card.deleteLater()
         self._cards.clear()
         self._skeleton_count = 0
+        self._grid_cols = 0
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
@@ -1893,19 +1959,19 @@ class ThumbnailGrid(QScrollArea):
         else:
             self._empty_state.show()
 
+    def _compute_grid_cols(self) -> int:
+        spacing = self._layout.spacing()
+        margins = self._layout.contentsMargins()
+        available = self.viewport().width() - margins.left() - margins.right()
+        return max(1, available // (self._card_width + spacing))
+
     def _reflow_grid(self, *, force: bool = False) -> None:
         if not self._cards:
             self._grid_cols = 0
             self._update_empty_state()
             return
 
-        spacing = self._layout.spacing()
-        margins = self._layout.contentsMargins()
-        available = self.viewport().width() - margins.left() - margins.right()
-        cols = max(
-            1,
-            available // (self._card_width + spacing),
-        )
+        cols = self._compute_grid_cols()
 
         if not force and cols == self._grid_cols:
             return

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import fitz
 import pytest
+from PyQt6.QtCore import QObject, QRunnable, QTimer, pyqtSignal
 
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
-from pagedrop.ui.pdf_viewer import PdfViewerWidget, ViewerLayout
+from pagedrop.ui.pdf_viewer import PdfViewerWidget
 from pagedrop.ui.thumbnail_grid import (
     RETAIN_WINDOW_ROWS,
     ThumbnailGrid,
@@ -165,3 +167,106 @@ def test_loader_page_size_pt_uses_open_doc(large_pdf: Path, monkeypatch) -> None
         assert w > 0 and h > 0
     assert open_calls["n"] == opens_after_init
     loader.close()
+
+
+def test_prepare_yields_event_loop(qtbot, large_pdf: Path, monkeypatch) -> None:
+    """Card creation must yield so the event loop can run mid-prepare."""
+    import pagedrop.ui.thumbnail_grid as tg
+
+    monkeypatch.setattr(tg, "CARD_CREATE_BATCH", 8)
+    monkeypatch.setattr(tg, "CARD_CREATE_BUDGET_MS", 1)
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+
+    yielded = {"ok": False}
+
+    def _mark_yielded() -> None:
+        # Must fire while cards are still being created.
+        if grid._pending_card_indices or len(grid._cards) < 800:
+            yielded["ok"] = True
+
+    loader = PdfLoader(str(large_pdf))
+    grid.load_pdf(loader)
+    QTimer.singleShot(0, _mark_yielded)
+    qtbot.waitUntil(lambda: len(grid._cards) == 800, timeout=60000)
+    qtbot.waitUntil(lambda: not grid._pending_card_indices, timeout=5000)
+    assert yielded["ok"]
+    # Incremental layout: every card is in the grid without a final cliff rebuild.
+    assert grid._layout.count() == 800
+    loader.close()
+
+
+def test_incremental_layout_appends_without_full_rebuild(
+    qtbot, large_pdf: Path, monkeypatch
+) -> None:
+    """After the first batch, later cards are appended — not a full takeAt rebuild."""
+    import pagedrop.ui.thumbnail_grid as tg
+
+    monkeypatch.setattr(tg, "CARD_CREATE_BATCH", 10)
+    monkeypatch.setattr(tg, "CARD_CREATE_BUDGET_MS", 50)
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+
+    rebuilds = {"n": 0}
+    real_reflow = grid._reflow_grid
+
+    def counting_reflow(*, force: bool = False) -> None:
+        if force:
+            rebuilds["n"] += 1
+        real_reflow(force=force)
+
+    monkeypatch.setattr(grid, "_reflow_grid", counting_reflow)
+
+    loader = PdfLoader(str(large_pdf))
+    grid.load_pdf(loader)
+    qtbot.waitUntil(lambda: len(grid._cards) >= 10, timeout=10000)
+    rebuilds_after_first = rebuilds["n"]
+    assert rebuilds_after_first >= 1
+
+    qtbot.waitUntil(lambda: len(grid._cards) == 800, timeout=60000)
+    qtbot.waitUntil(lambda: not grid._pending_card_indices, timeout=5000)
+    # Later batches must append; force-reflow count must not grow per batch.
+    assert rebuilds["n"] == rebuilds_after_first
+    assert grid._layout.count() == 800
+    loader.close()
+
+
+def test_cancel_rendering_does_not_block(qtbot) -> None:
+    """cancel_rendering must return immediately even with a long-running pool job."""
+
+    class _SlowSignals(QObject):
+        page_ready = pyqtSignal(int, int, bytes)
+        finished = pyqtSignal(int)
+        error = pyqtSignal(int, str)
+
+    class _SlowWorker(QRunnable):
+        def __init__(self) -> None:
+            super().__init__()
+            self.signals = _SlowSignals()
+            self.setAutoDelete(True)
+
+        def run(self) -> None:
+            time.sleep(2.0)
+            self.signals.finished.emit(0)
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    worker = _SlowWorker()
+    # Mimic ThumbnailWorker signal ownership so cancel orphans them safely.
+    grid._worker_signals.append(worker.signals)  # type: ignore[arg-type]
+    grid._render_pool.start(worker)
+
+    t0 = time.monotonic()
+    grid.cancel_rendering()
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.5
+    # Pool may still be finishing asynchronously — wait so teardown is clean.
+    qtbot.waitUntil(lambda: grid._render_pool.waitForDone(0), timeout=5000)
