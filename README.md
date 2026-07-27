@@ -133,10 +133,11 @@ A separate window, under Create PDF in the menu bar, for turning images into PDF
 | Thumbnail zoom | Ctrl+scroll |
 | Preview focused page | Enter |
 | Command palette | Ctrl+Shift+P |
+| Tools | Ctrl+Shift+O |
 | Keyboard shortcuts | Ctrl+/ |
 | Back to grid / list (in preview) | Escape |
 
-Ctrl+Tab toggles the most recently used previous tab rather than moving sequentially. Ctrl+Shift+Tab cycles backward through all tabs.
+Ctrl+Tab toggles the most recently used previous tab rather than moving sequentially. Ctrl+Shift+Tab cycles backward through all tabs. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab).
 
 For cross-window page drags: dropping copies pages, and Shift+drop moves them.
 

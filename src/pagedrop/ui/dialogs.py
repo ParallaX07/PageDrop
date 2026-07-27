@@ -1,11 +1,26 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
+from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox, QWidget
 
-from pagedrop.core.capabilities import AbsenceReason, CapabilityStatus, clear_cache, probe
+from pagedrop.core.backends.libreoffice import (
+    DOWNLOAD_URL,
+    WINGET_INSTALL_ARGV,
+    WINGET_INSTALL_COMMAND,
+)
+from pagedrop.core.capabilities import (
+    LIBREOFFICE,
+    AbsenceReason,
+    CapabilityStatus,
+    clear_cache,
+    probe,
+)
 from pagedrop.ui.settings import (
     DELETE_CONFIRM_THRESHOLD,
     confirm_before_deleting_multiple_pages,
@@ -209,10 +224,12 @@ def prompt_missing_capability(
 
     Returns ``recheck`` if the capability became available after recheck,
     ``configure`` when the user asked for setup guidance (already shown),
-    or ``cancel``.
+    ``download`` / ``winget`` for LibreOffice install actions, or ``cancel``.
     """
     if status.available:
         return "recheck"
+    if status.id == LIBREOFFICE:
+        return prompt_missing_libreoffice(parent, status, tool_title=tool_title)
 
     reason = status.reason or AbsenceReason.ENGINE_MISSING
     headline, guidance = _REASON_COPY.get(
@@ -269,3 +286,129 @@ def prompt_missing_capability(
         )
         return "configure"
     return "cancel"
+
+
+def prompt_missing_libreoffice(
+    parent: QWidget | None,
+    status: CapabilityStatus | None = None,
+    *,
+    tool_title: str | None = None,
+) -> str:
+    """Contextual prompt when LibreOffice is needed but not installed.
+
+    Only shown when conversion is requested. Offers download (opens
+    libreoffice.org) and, on Windows, an explicit winget install — never runs
+    winget without a user click. Returns ``recheck``, ``download``, ``winget``,
+    or ``cancel``.
+    """
+    if status is not None and status.available:
+        return "recheck"
+
+    subject = tool_title or "Office to PDF"
+    detail = ""
+    if status is not None and status.detail.strip():
+        detail = status.detail.strip()
+
+    if os.environ.get("PAGEDROP_TESTING") == "1":
+        return "cancel"
+
+    message = build_missing_libreoffice_dialog(parent, subject=subject, detail=detail)
+    message.exec()
+    clicked = message.clickedButton()
+    role = message.buttonRole(clicked) if clicked is not None else None
+
+    # Identify by objectName set in builder (roles alone are ambiguous).
+    name = clicked.objectName() if clicked is not None else ""
+    if name == "lo_recheck":
+        clear_cache()
+        refreshed = probe(LIBREOFFICE, refresh=True)
+        if refreshed.available:
+            QMessageBox.information(
+                parent,
+                "LibreOffice",
+                "LibreOffice is now available.",
+            )
+            return "recheck"
+        return prompt_missing_libreoffice(parent, refreshed, tool_title=tool_title)
+    if name == "lo_download":
+        QDesktopServices.openUrl(QUrl(DOWNLOAD_URL))
+        return "download"
+    if name == "lo_winget":
+        _launch_libreoffice_winget(parent)
+        return "winget"
+    _ = role  # silence unused when cancel
+    return "cancel"
+
+
+def build_missing_libreoffice_dialog(
+    parent: QWidget | None,
+    *,
+    subject: str = "Office to PDF",
+    detail: str = "",
+) -> QMessageBox:
+    """Build (do not exec) the missing-LibreOffice prompt — testable without UI loop."""
+    message = QMessageBox(parent)
+    message.setIcon(QMessageBox.Icon.Information)
+    message.setWindowTitle("LibreOffice required")
+    message.setText(f"{subject}: LibreOffice not found")
+    informative = (
+        "Install LibreOffice to convert Word, Excel, and PowerPoint files locally.\n"
+        "PageDrop never installs it silently — choose Download or winget yourself."
+    )
+    if detail:
+        informative = f"{informative}\n\nDetail: {detail}"
+    if sys.platform == "win32":
+        informative = (
+            f"{informative}\n\n"
+            f"Winget command:\n{WINGET_INSTALL_COMMAND}"
+        )
+    message.setInformativeText(informative)
+
+    recheck_btn = message.addButton("Recheck", QMessageBox.ButtonRole.AcceptRole)
+    recheck_btn.setObjectName("lo_recheck")
+    download_btn = message.addButton(
+        "Download LibreOffice…",
+        QMessageBox.ButtonRole.ActionRole,
+    )
+    download_btn.setObjectName("lo_download")
+    if sys.platform == "win32":
+        winget_btn = message.addButton(
+            "Install with winget…",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        winget_btn.setObjectName("lo_winget")
+    message.addButton(QMessageBox.StandardButton.Cancel)
+    message.setDefaultButton(recheck_btn)
+    fit_message_box_buttons(message)
+    return message
+
+
+def _launch_libreoffice_winget(parent: QWidget | None) -> None:
+    """Run winget only after an explicit confirm (never silent)."""
+    confirm = QMessageBox(parent)
+    confirm.setIcon(QMessageBox.Icon.Question)
+    confirm.setWindowTitle("Install LibreOffice")
+    confirm.setText("Run winget to install LibreOffice?")
+    confirm.setInformativeText(
+        f"This runs:\n{WINGET_INSTALL_COMMAND}\n\n"
+        "Only continues if you click Install."
+    )
+    install_btn = confirm.addButton("Install", QMessageBox.ButtonRole.AcceptRole)
+    confirm.addButton(QMessageBox.StandardButton.Cancel)
+    confirm.setDefaultButton(install_btn)
+    fit_message_box_buttons(confirm)
+    confirm.exec()
+    if confirm.clickedButton() is not install_btn:
+        return
+    try:
+        subprocess.Popen(  # noqa: S603 — fixed argv; user-confirmed
+            list(WINGET_INSTALL_ARGV),
+            shell=False,
+        )
+    except OSError as exc:
+        QMessageBox.warning(
+            parent,
+            "Install LibreOffice",
+            f"Could not start winget:\n{exc}\n\n"
+            f"You can run this yourself:\n{WINGET_INSTALL_COMMAND}",
+        )

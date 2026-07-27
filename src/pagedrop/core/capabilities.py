@@ -193,40 +193,125 @@ def _windows_office_progids() -> list[str]:
     return found
 
 
+# User-configured soffice path (Settings / tests). Checked before PATH.
+_configured_soffice_path: str | None = None
+
+
+def set_configured_soffice_path(path: str | None) -> None:
+    """Set or clear the user-configured LibreOffice ``soffice`` path.
+
+    Call from Settings when the user picks a custom binary. Does not probe;
+    callers should ``clear_cache()`` after changing.
+    """
+    global _configured_soffice_path
+    raw = (path or "").strip()
+    _configured_soffice_path = raw or None
+
+
+def configured_soffice_path() -> str | None:
+    """Return the path last set via :func:`set_configured_soffice_path`."""
+    return _configured_soffice_path
+
+
 def _probe_libreoffice() -> CapabilityStatus:
-    path = _find_soffice()
+    path = find_soffice()
     if path is None:
         return _absent(
             LIBREOFFICE,
             AbsenceReason.ENGINE_MISSING,
-            "LibreOffice (soffice) not found on PATH or common install dirs",
+            "LibreOffice (soffice) not found (configured path, PATH, registry, or install dirs)",
         )
     return _present(LIBREOFFICE, "LibreOffice found", path=path)
 
 
-def _find_soffice() -> str | None:
+def find_soffice(configured_path: str | None = None) -> str | None:
+    """Locate ``soffice`` / LibreOffice binary.
+
+    Order: *configured_path* argument → module-configured path → env
+    (``PAGEDROP_LO_PATH``, ``LIBREOFFICE_PATH``) → ``PATH`` → Windows registry
+    → common install directories.
+    """
+    for candidate in _soffice_candidates(configured_path):
+        if candidate is not None and Path(candidate).is_file():
+            return str(Path(candidate).resolve())
+    return None
+
+
+def _soffice_candidates(configured_path: str | None) -> list[str | None]:
+    ordered: list[str | None] = []
+    for raw in (configured_path, _configured_soffice_path):
+        if raw and raw.strip():
+            ordered.append(raw.strip())
     for env_key in ("PAGEDROP_LO_PATH", "LIBREOFFICE_PATH"):
         raw = os.environ.get(env_key, "").strip()
-        if raw and Path(raw).is_file():
-            return str(Path(raw).resolve())
+        if raw:
+            ordered.append(raw)
     for name in ("soffice", "soffice.exe", "libreoffice"):
         found = shutil.which(name)
         if found:
-            return found
-    candidates: list[Path] = [
+            ordered.append(found)
+    registry = _windows_registry_soffice()
+    if registry:
+        ordered.append(registry)
+    home = Path.home()
+    for path in (
         Path("/usr/bin/soffice"),
         Path("/usr/lib/libreoffice/program/soffice"),
         Path("/usr/local/bin/soffice"),
         Path("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+        home / "Applications" / "LibreOffice.app" / "Contents" / "MacOS" / "soffice",
         Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
         Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
-    ]
-    home = Path.home()
-    candidates.append(home / "Applications" / "LibreOffice.app" / "Contents" / "MacOS" / "soffice")
-    for path in candidates:
+    ):
+        ordered.append(str(path))
+    return ordered
+
+
+def _windows_registry_soffice() -> str | None:
+    """Resolve soffice.exe from LibreOffice / App Paths registry keys (Windows)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    def _file_if_exists(raw: str) -> str | None:
+        path = Path(raw)
         if path.is_file():
-            return str(path.resolve())
+            return str(path)
+        # UNO InstallPath is typically the ``program`` directory.
+        for name in ("soffice.exe", "soffice"):
+            candidate = path / name
+            if candidate.is_file():
+                return str(candidate)
+            candidate = path / "program" / name
+            if candidate.is_file():
+                return str(candidate)
+        return None
+
+    roots = (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
+    subkeys = (
+        r"SOFTWARE\LibreOffice\UNO\InstallPath",
+        r"SOFTWARE\WOW6432Node\LibreOffice\UNO\InstallPath",
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\soffice.exe",
+    )
+    for root in roots:
+        for sub in subkeys:
+            try:
+                with winreg.OpenKey(root, sub) as key:
+                    value, _ = winreg.QueryValueEx(key, "")
+            except OSError:
+                continue
+            if isinstance(value, str) and value.strip():
+                found = _file_if_exists(value.strip())
+                if found:
+                    return found
     return None
+
+
+# Back-compat for callers / tests that used the private name.
+_find_soffice = find_soffice
 
 
 def _probe_tessdata() -> CapabilityStatus:
