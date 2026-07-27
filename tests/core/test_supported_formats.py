@@ -5,6 +5,8 @@ from __future__ import annotations
 from pagedrop.core.supported_formats import (
     SUPPORTED_IMAGE_EXTENSIONS,
     image_paths_from_mime,
+    import_to_pdf_dialog_filter,
+    is_native_import_path,
     is_pdf_path,
     is_supported_image,
     local_paths_from_mime,
@@ -64,3 +66,12 @@ def test_local_paths_from_mime_filters(tmp_path):
     assert local_paths_from_mime(mime) == [pdf, png, txt]
     assert image_paths_from_mime(mime) == [png]
     assert pdf_paths_from_mime(mime) == [pdf]
+
+
+def test_native_import_helpers(tmp_path):
+    svg = tmp_path / "a.svg"
+    svg.touch()
+    assert is_native_import_path(svg)
+    assert not is_native_import_path(tmp_path / "a.png")
+    filt = import_to_pdf_dialog_filter(available_only=False)
+    assert "*.svg" in filt and "*.epub" in filt and "*.heic" in filt

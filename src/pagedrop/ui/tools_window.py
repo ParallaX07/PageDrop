@@ -24,6 +24,8 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.capabilities import (
+    OPENPYXL,
+    PI_HEIF,
     PILLOW,
     AbsenceReason,
     CapabilityStatus,
@@ -202,12 +204,46 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         action="create_pdf",
     ),
     ToolEntry(
+        "convert_to_pdf",
+        "Convert to PDF",
+        "SVG, XPS, ebooks, text, HTML, and more → PDF",
+        "Convert",
+        keywords=("import", "svg", "epub", "markdown", "html", "cbz"),
+        coming_soon=True,
+    ),
+    ToolEntry(
+        "export_from_pdf",
+        "Export from PDF",
+        "PNG, JPEG, WebP, SVG, text, JSON/XML, CBZ, tables",
+        "Convert",
+        keywords=("export", "png", "jpeg", "webp", "svg", "csv"),
+        coming_soon=True,
+    ),
+    ToolEntry(
         "export_tiff",
         "Export TIFF",
         "Export pages as TIFF images",
         "Convert",
         keywords=("image", "tiff"),
         capability_id=PILLOW,
+        coming_soon=True,
+    ),
+    ToolEntry(
+        "export_xlsx",
+        "Export tables XLSX",
+        "Extract tables to an Excel workbook",
+        "Convert",
+        keywords=("tables", "excel", "xlsx", "spreadsheet"),
+        capability_id=OPENPYXL,
+        coming_soon=True,
+    ),
+    ToolEntry(
+        "import_heic",
+        "HEIC to PDF",
+        "Convert HEIC/HEIF images to PDF",
+        "Convert",
+        keywords=("heic", "heif", "apple", "photo"),
+        capability_id=PI_HEIF,
         coming_soon=True,
     ),
     ToolEntry(

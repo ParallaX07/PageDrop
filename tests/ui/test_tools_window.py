@@ -371,6 +371,35 @@ def test_coming_soon_hidden_by_default_and_toggle_shows(qtbot):
     window.close()
 
 
+def test_codec_capability_gates_convert_tiles(monkeypatch, qtbot):
+    """TIFF / XLSX / HEIC tiles stay blocked when their codec pack is absent."""
+    from pagedrop.core.capabilities import OPENPYXL, PI_HEIF, CapabilityStatus
+
+    def _fake_probe(capability_id: str, refresh: bool = False) -> CapabilityStatus:
+        del refresh
+        if capability_id in {PILLOW, OPENPYXL, PI_HEIF}:
+            return CapabilityStatus(
+                id=capability_id,
+                available=False,
+                reason=AbsenceReason.CODEC_MISSING,
+                detail="missing in test",
+            )
+        return CapabilityStatus(id=capability_id, available=True)
+
+    monkeypatch.setattr("pagedrop.ui.tools_window.probe", _fake_probe)
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window._upcoming_btn.setChecked(True)
+    window.show()
+
+    by_id = {t.entry.id: t for t in window._tiles}
+    for tool_id in ("export_tiff", "export_xlsx", "import_heic"):
+        tile = by_id[tool_id]
+        assert tile.is_blocked()
+        assert "Codec missing" in tile._subtitle.text()
+    window.close()
+
+
 def test_category_heading_counts_update_on_filter(qtbot):
     window = ToolsWindow()
     qtbot.addWidget(window)
