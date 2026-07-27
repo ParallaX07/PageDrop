@@ -192,6 +192,23 @@ def handle_attachment_remove(ctx: JobContext) -> Path:
     return ctx.staged_output
 
 
+def handle_attachment_extract(ctx: JobContext) -> Path:
+    ctx.progress(0.3, "Extracting attachment…")
+    # Extract directly into the job staging dir, then let the runner promote
+    # the returned staged file to the user-chosen output path.
+    extracted = pdf_tools.attachment_extract(
+        ctx.spec.inputs[0],
+        str(ctx.spec.options["name"]),
+        ctx.staging.job_dir,
+        password=_password(ctx),
+    )
+    # The runner only guarantees cleanup for `ctx.staged_output`, so ensure
+    # the extracted file is in that location before returning.
+    if extracted != ctx.staged_output:
+        extracted.replace(ctx.staged_output)
+    return ctx.staged_output
+
+
 def handle_zip(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Creating ZIP…")
     pdf_tools.zip_pdfs(ctx.spec.inputs, ctx.staged_output)
@@ -209,9 +226,12 @@ def handle_compare(ctx: JobContext) -> Path:
         password_a=_password(ctx, a),
         password_b=_password(ctx, b),
     )
-    # Stash ratio for UI status via options mutation is forbidden; write sidecar note.
-    note = ctx.staging.job_dir / "compare_ratio.txt"
-    note.write_text(f"{result.overall_diff_ratio:.4f}", encoding="utf-8")
+    # Stash ratio for UI status via options mutation is forbidden; write a
+    # promoted sidecar note next to the exported heatmap PDF.
+    ratio_dest = Path(ctx.spec.output).with_suffix(".compare_ratio.txt")
+    ratio_staged = ctx.staging.stage_file(ratio_dest.name)
+    ratio_staged.write_text(f"{result.overall_diff_ratio:.4f}", encoding="utf-8")
+    ctx.staging.promote(ratio_staged, ratio_dest)
     return ctx.staged_output
 
 
@@ -230,6 +250,7 @@ ORGANIZE_HANDLERS: dict[str, object] = {
     "page_labels": handle_page_labels,
     "attachment_add": handle_attachment_add,
     "attachment_remove": handle_attachment_remove,
+    "attachment_extract": handle_attachment_extract,
     "zip": handle_zip,
     "compare": handle_compare,
 }

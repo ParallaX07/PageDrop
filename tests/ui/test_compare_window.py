@@ -67,3 +67,41 @@ def test_compare_window_lists_deleted_text(qtbot, tmp_path: Path):
     assert any(r[1] <= 260 <= r[3] for r, _color in highlights)
 
     window.close()
+
+
+def test_export_heatmap_shows_overall_diff_ratio(
+    qtbot, tmp_path: Path, monkeypatch
+):
+    """UI should read overall diff ratio sidecar and include it in status/toast."""
+    import pagedrop.ui.compare_window as compare_module
+    from pagedrop.core.jobs import JobSpec
+
+    out = tmp_path / "heat_compare.pdf"
+    ratio_text = "0.1234"
+
+    class FakeRunner:
+        def run(self, spec: JobSpec, **_kwargs):
+            out_path = Path(spec.output)
+            out_path.write_bytes(b"%PDF-1.4 fake")
+            out_path.with_suffix(".compare_ratio.txt").write_text(
+                ratio_text, encoding="utf-8"
+            )
+            return out_path
+
+    monkeypatch.setattr(compare_module, "ensure_organize_runner", lambda: FakeRunner())
+    monkeypatch.setattr(
+        compare_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(out), "PDF files (*.pdf)"),
+    )
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._path_a = str(tmp_path / "a.pdf")
+    window._path_b = str(tmp_path / "b.pdf")
+    window._export_heatmap()
+
+    status = window.statusBar().currentMessage()
+    assert "Overall diff" in status
+    assert f"{float(ratio_text):.4f}" in status
+    window.close()

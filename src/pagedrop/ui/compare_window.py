@@ -615,9 +615,24 @@ class CompareWindow(QMainWindow):
         finally:
             self._busy.hide_overlay()
 
-        self.statusBar().showMessage(f"Saved {Path(result).name}")
-        self._toast.show_toast(f"Saved {Path(result).name}", kind="success")
-        self._result_bar.show_for(result, message=f"Saved {Path(result).name}")
+        heatmap_name = Path(result).name
+        ratio_path = Path(result).with_suffix(".compare_ratio.txt")
+        ratio: float | None = None
+        try:
+            if ratio_path.exists():
+                ratio = float(ratio_path.read_text(encoding="utf-8").strip())
+        except Exception:
+            ratio = None
+
+        if ratio is None:
+            self.statusBar().showMessage(f"Saved {heatmap_name}")
+            self._toast.show_toast(f"Saved {heatmap_name}", kind="success")
+            self._result_bar.show_for(result, message=f"Saved {heatmap_name}")
+        else:
+            msg = f"Saved {heatmap_name} · Overall diff {ratio:.4f}"
+            self.statusBar().showMessage(msg)
+            self._toast.show_toast(msg, kind="success")
+            self._result_bar.show_for(result, message=msg)
 
     def _preview_export(self, path: str) -> None:
         preview_pdf(path, parent=self)

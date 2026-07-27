@@ -54,6 +54,37 @@ ORGANIZE_TOOL_IDS: frozenset[str] = frozenset(
     }
 )
 
+# ToolShellWindow (Phase 22b) currently wires only split / reverse.
+# Everything else is an explicit exception until the shared shell gets the
+# richer parameter widgets needed for these tools.
+ORGANIZE_MODAL_TOOL_EXCEPTIONS: dict[str, str] = {
+    "alternate": "Modal form: requires two-input selection in one dialog.",
+    "n_up": "Modal form: multiple numeric/layout fields.",
+    "booklet": "Modal form: simple but still dedicated parameters UI.",
+    "posterize": "Modal form: grid/layout fields.",
+    "divide": "Modal form: direction + per-page transforms.",
+    "combine": "Modal form: per-page transforms; keep single-action modal.",
+    "normalize": "Modal form: paper presets + sizing options.",
+    "attachments": "Modal form: action picker + file/folder browsing.",
+    "metadata": "Modal form: typed metadata fields with optional load button.",
+    "page_labels": "Modal form: label style + starting page controls.",
+    "zip": "Modal form: multi-input semicolon list picker.",
+}
+
+# Dedicated modeless window exception (still uses job runner for heatmap export).
+ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS: dict[str, str] = {
+    "compare": "Dedicated CompareWindow UI; heatmap export shows overall diff ratio.",
+}
+
+
+def _tool_description(tool_id: str) -> str | None:
+    # Lazy import to avoid circular imports at module import time.
+    from pagedrop.ui.tools_window import TOOL_CATALOGUE
+
+    entry = next((e for e in TOOL_CATALOGUE if e.id == tool_id), None)
+    return entry.description if entry is not None else None
+
+
 _PAPER_SIZES_PT: dict[str, tuple[float, float]] = {
     "A4": (595.0, 842.0),
     "Letter": (612.0, 792.0),
@@ -234,6 +265,7 @@ def _form_dialog(
     parent: QWidget,
     *,
     title: str,
+    description: str | None = None,
     build,
     collect=None,
 ) -> dict | None:
@@ -246,6 +278,11 @@ def _form_dialog(
     dialog.setWindowTitle(title)
     dialog.setModal(True)
     root = QVBoxLayout(dialog)
+    if description:
+        desc = QLabel(description)
+        desc.setWordWrap(True)
+        desc.setObjectName("OrganizeModalDescription")
+        root.addWidget(desc)
     form = QFormLayout()
     widgets: dict = {}
     build(form, widgets)
@@ -310,7 +347,9 @@ def _launch_single_transform(
         if extra_build is not None:
             extra_build(form, w)
 
-    widgets = _form_dialog(tools, title=title, build=build)
+    widgets = _form_dialog(
+        tools, title=title, description=_tool_description(job_type), build=build
+    )
     if widgets is None:
         return
     source = widgets["source"].text()
@@ -479,7 +518,12 @@ def _launch_alternate(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
         w["start_a"].setChecked(True)
         form.addRow("", w["start_a"])
 
-    widgets = _form_dialog(tools, title="Alternate pages", build=build)
+    widgets = _form_dialog(
+        tools,
+        title="Alternate pages",
+        description=_tool_description("alternate"),
+        build=build,
+    )
     if widgets is None:
         return
     a = widgets["a"].text()
@@ -517,7 +561,9 @@ def _launch_zip(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
         hint.setWordWrap(True)
         form.addRow("", hint)
 
-    widgets = _form_dialog(tools, title="ZIP PDFs", build=build)
+    widgets = _form_dialog(
+        tools, title="ZIP PDFs", description=_tool_description("zip"), build=build
+    )
     if widgets is None:
         return
     paths = [p.strip() for p in widgets["files"].text().split(";") if p.strip()]
@@ -590,7 +636,9 @@ def _launch_metadata(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
         if initial:
             load_meta()
 
-    widgets = _form_dialog(tools, title="Metadata", build=build)
+    widgets = _form_dialog(
+        tools, title="Metadata", description=_tool_description("metadata"), build=build
+    )
     if widgets is None:
         return
     source = widgets["source"].text()
@@ -703,7 +751,12 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
         w["replace"] = QCheckBox("Replace if name already exists")
         form.addRow("", w["replace"])
 
-    widgets = _form_dialog(tools, title="Attachments", build=build)
+    widgets = _form_dialog(
+        tools,
+        title="Attachments",
+        description=_tool_description("attachments"),
+        build=build,
+    )
     if widgets is None:
         return
     source = widgets["source"].text()
@@ -720,14 +773,26 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
         folder = _pick_folder(tools, "Extract attachment to folder")
         if not folder:
             return
-        try:
-            out = pdf_tools.attachment_extract(source, name, folder)
-        except Exception as exc:
-            QMessageBox.critical(tools, "Attachments", str(exc))
-            return
-        tools.statusBar().showMessage(f"Extracted {out.name}")
-        tools.show_toast(f"Extracted {out.name}", kind="success")
-        tools.show_result(str(out))
+        safe_name = Path(name).name or "attachment.bin"
+        out = Path(folder) / safe_name
+        if out.exists():
+            stem, suffix = out.stem, out.suffix
+            n = 1
+            while True:
+                candidate = Path(folder) / f"{stem}_{n}{suffix}"
+                if not candidate.exists():
+                    out = candidate
+                    break
+                n += 1
+        _run_organize_job(
+            tools,
+            job_type="attachment_extract",
+            inputs=[source],
+            output=str(out),
+            options={"name": name},
+            progress_message="Extracting attachment…",
+            success_toast=f"Extracted {out.name}",
+        )
         return
 
     if not name:

@@ -8,6 +8,14 @@ import fitz
 import pytest
 
 from pagedrop.core import pdf_tools
+from pagedrop.core.jobs import (
+    CancelToken,
+    JobCancelledError,
+    JobSpec,
+    SerializedJobRunner,
+)
+from pagedrop.core.organize_jobs import register_organize_handlers
+from pagedrop.utils.temp_manager import TempManager
 
 
 def _file_hash(path: Path) -> str:
@@ -317,6 +325,61 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
     assert "note.txt" not in names2
 
 
+def test_attachment_extract_job_runner(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(str(src))
+    finally:
+        doc.close()
+
+    out_added = tmp_path / "with_attach.pdf"
+    pdf_tools.attachment_add(
+        str(src),
+        str(out_added),
+        name="note.txt",
+        data=b"hello",
+        filename="note.txt",
+        overwrite=False,
+    )
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+
+        out = tmp_path / "extracted" / "note.txt"
+        result = runner.run(
+            JobSpec.create(
+                "attachment_extract",
+                inputs=[str(out_added)],
+                output=out,
+                options={"name": "note.txt"},
+            ),
+        )
+        assert result == out
+        assert out.is_file()
+        assert out.read_bytes() == b"hello"
+
+        out_cancel = tmp_path / "extracted_cancel" / "note.txt"
+        token = CancelToken()
+        token.cancel()
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(
+                    "attachment_extract",
+                    inputs=[str(out_added)],
+                    output=out_cancel,
+                    options={"name": "note.txt"},
+                ),
+                cancel=token,
+            )
+        assert not out_cancel.exists()
+    finally:
+        temp.cleanup()
+
+
 def test_metadata_set_strip_and_xmp_v1(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     doc = fitz.open()
@@ -424,6 +487,51 @@ def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
         assert out_doc[0].get_drawings()
     finally:
         out_doc.close()
+
+
+def test_compare_job_writes_overall_diff_ratio_sidecar(tmp_path: Path) -> None:
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((100, 100), "A", fontsize=22)
+        doc.save(str(a))
+    finally:
+        doc.close()
+
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((100, 100), "B", fontsize=22)
+        doc.save(str(b))
+    finally:
+        doc.close()
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        out = tmp_path / "heatmap_compare.pdf"
+
+        result = runner.run(
+            JobSpec.create(
+                "compare",
+                inputs=[str(a), str(b)],
+                output=out,
+                options={"dpi": 40},
+            )
+        )
+        assert result == out
+        assert out.is_file()
+
+        ratio_path = out.with_suffix(".compare_ratio.txt")
+        assert ratio_path.exists()
+        ratio = float(ratio_path.read_text(encoding="utf-8").strip())
+        assert 0.0 <= ratio <= 1.0
+    finally:
+        temp.cleanup()
 
 
 def test_compare_detects_thin_deleted_text_line(tmp_path: Path) -> None:
