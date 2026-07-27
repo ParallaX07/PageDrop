@@ -2005,7 +2005,7 @@ class MainWindow(QMainWindow):
             return False
 
         try:
-            write_pdf(model, path, markup=target.peek_markup_ops() or None)
+            write_pdf(model, path, markup=target.markup_session.non_redaction_ops() or None)
         except OSError as exc:
             QMessageBox.critical(
                 self,
@@ -2023,13 +2023,19 @@ class MainWindow(QMainWindow):
 
         remember_directory(path)
         model.mark_saved(path)
+        had_redactions = bool(target.markup_session.redaction_regions())
         target.clear_markup_after_save()
         target.clear_custom_tab_title()
         target._sync_dirty_from_model()
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
-            self._transient_status(f"Saved to {Path(path).name}")
+            if had_redactions:
+                self._transient_status(
+                    f"Saved to {Path(path).name} — redaction marks kept; use Apply redaction"
+                )
+            else:
+                self._transient_status(f"Saved to {Path(path).name}")
             self._show_toast(f"Saved to {Path(path).name}", kind="success")
         return True
 

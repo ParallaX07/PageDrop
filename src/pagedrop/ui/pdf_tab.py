@@ -113,7 +113,12 @@ class PdfTab(QWidget):
         return self._markup.ops()
 
     def clear_markup_after_save(self) -> None:
-        self._markup.clear()
+        # Keep pending redaction marks — they need Apply redaction, not Save As.
+        self._markup.clear_non_redactions()
+        self._preview_widget.refresh_markup_overlays()
+
+    def clear_redactions_after_apply(self) -> None:
+        self._markup.clear_redactions()
         self._preview_widget.refresh_markup_overlays()
 
     @property

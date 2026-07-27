@@ -83,6 +83,12 @@ from pagedrop.core.annotations import (
 from pagedrop.core.forms import FormCreateOp
 from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
+from pagedrop.core.redact import (
+    RedactionRegion,
+    RedactionScope,
+    RedactionVerifyError,
+    redact_edit_model,
+)
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
 from pagedrop.core.pdf_service import (
     MAX_PRINT_PAGES,
@@ -154,6 +160,7 @@ class AnnotTool(str, Enum):
     FREETEXT = "freetext"
     IMAGE = "image"
     COMMENT = "comment"
+    REDACT = "redact"
     FORM_FILL = "form_fill"
     FORM_TEXT = "form_text"
     FORM_CHECK = "form_check"
@@ -173,6 +180,7 @@ ANNOT_TOOL_ITEMS: tuple[tuple[str, AnnotTool], ...] = (
     ("Text", AnnotTool.FREETEXT),
     ("Image", AnnotTool.IMAGE),
     ("Comment", AnnotTool.COMMENT),
+    ("Redact", AnnotTool.REDACT),
     ("Fill", AnnotTool.FORM_FILL),
     ("Field", AnnotTool.FORM_TEXT),
     ("Check", AnnotTool.FORM_CHECK),
@@ -774,12 +782,20 @@ class _PageTile(QWidget):
                         AnnotTool.FORM_TEXT,
                         AnnotTool.FORM_CHECK,
                         AnnotTool.IMAGE,
+                        AnnotTool.REDACT,
                     ):
                         painter.setPen(QPen(QColor(47, 155, 230), 1))
                         if self._tool == AnnotTool.CIRCLE:
                             painter.drawEllipse(QRectF(x0, y0, x1 - x0, y1 - y0))
                         elif self._tool == AnnotTool.LINE:
                             painter.drawLine(self._sel_start, self._sel_end)
+                        elif self._tool == AnnotTool.REDACT:
+                            painter.fillRect(
+                                QRectF(x0, y0, x1 - x0, y1 - y0),
+                                QColor(0, 0, 0, 160),
+                            )
+                            painter.setPen(QPen(QColor(220, 40, 40), 2))
+                            painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
                         else:
                             painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
 
@@ -817,6 +833,22 @@ class _PageTile(QWidget):
 
     def _paint_markup_overlays(self, painter: QPainter) -> None:
         for entry in self._overlay_entries:
+            if entry.kind == "redaction" and entry.redaction is not None:
+                region = entry.redaction
+                if region.page_index != self.logical_page:
+                    continue
+                wr = _map_pdf_rect_to_widget(
+                    region.rect,
+                    self._page_w,
+                    self._page_h,
+                    self.width(),
+                    self.height(),
+                    self._rotation,
+                )
+                painter.fillRect(wr, QColor(0, 0, 0, 170))
+                painter.setPen(QPen(QColor(220, 40, 40), 2))
+                painter.drawRect(wr)
+                continue
             if entry.kind != "annotation" or entry.annotation is None:
                 continue
             op = entry.annotation
@@ -1637,6 +1669,7 @@ class PdfViewerWidget(QWidget):
             AnnotTool.FREETEXT: "Free text — click to place; drag handles to resize",
             AnnotTool.IMAGE: "Image — drag a box, then choose a file",
             AnnotTool.COMMENT: "Comment — click to place",
+            AnnotTool.REDACT: "Redact — drag a region; Apply redaction exports a verified copy",
             AnnotTool.FORM_FILL: "Fill form — click a field",
             AnnotTool.FORM_TEXT: "Add text field — drag",
             AnnotTool.FORM_CHECK: "Add checkbox — drag",
@@ -2060,6 +2093,18 @@ class PdfViewerWidget(QWidget):
         flatten_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         flatten_btn.clicked.connect(self._on_flatten_forms)
         tools_layout.addWidget(flatten_btn)
+
+        apply_redact_btn = QToolButton()
+        apply_redact_btn.setText("Apply redaction")
+        apply_redact_btn.setAccessibleName("Apply redaction")
+        apply_redact_btn.setToolTip(
+            "Write a new PDF with marked regions permanently removed and verified"
+        )
+        apply_redact_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        apply_redact_btn.clicked.connect(self._on_apply_redaction)
+        tools_layout.addWidget(apply_redact_btn)
         tools_layout.addStretch(1)
         outer.addWidget(self._annot_tools_host, stretch=1)
 
@@ -2169,6 +2214,108 @@ class PdfViewerWidget(QWidget):
         self.refresh_markup_overlays()
         self.markup_changed.emit()
         self.status_message.emit("Flatten forms queued — Save As to apply")
+
+    def _on_apply_redaction(self) -> None:
+        """Export a GC-rewritten copy with marked regions permanently removed."""
+        if self._markup is None or self._model is None:
+            return
+        regions = self._markup.redaction_regions()
+        if not regions:
+            QMessageBox.information(
+                self,
+                "Apply redaction",
+                "Mark one or more regions with the Redact tool first.",
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Apply redaction")
+        form = QFormLayout(dialog)
+        strip_meta = QCheckBox("Strip document metadata")
+        strip_meta.setChecked(True)
+        strip_xmp = QCheckBox("Strip XMP metadata")
+        strip_xmp.setChecked(True)
+        remove_att = QCheckBox("Remove embedded attachments")
+        remove_att.setChecked(False)
+        form.addRow(strip_meta)
+        form.addRow(strip_xmp)
+        form.addRow(remove_att)
+        note = QLabel(
+            "Writes a new PDF with marked content permanently removed, then "
+            "verifies extraction in a fresh process. The original file is never "
+            "modified. Failed verification deletes the output."
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        stem = Path(self._model.original_path).stem if self._model.original_path else "document"
+        suggested = str(Path(self._model.original_path).with_name(f"{stem}-redacted.pdf"))
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save redacted PDF",
+            suggested,
+            "PDF Files (*.pdf);;All Files (*)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path = f"{path}.pdf"
+
+        scope = RedactionScope(
+            strip_metadata=strip_meta.isChecked(),
+            strip_xmp=strip_xmp.isChecked(),
+            remove_attachments=remove_att.isChecked(),
+        )
+        try:
+            redact_edit_model(
+                self._model,
+                path,
+                regions,
+                markup=self._markup.non_redaction_ops(),
+                scope=scope,
+                verify=True,
+            )
+        except RedactionVerifyError as exc:
+            QMessageBox.critical(
+                self,
+                "Redaction verification failed",
+                f"{exc}\n\nNo redacted copy was produced.",
+            )
+            self.status_message.emit("Redaction verification failed — output discarded")
+            return
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Apply redaction",
+                f"Could not write redacted PDF:\n{exc}",
+            )
+            return
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Apply redaction",
+                f"Could not apply redaction:\n{exc}",
+            )
+            return
+
+        self._markup.clear_redactions()
+        self.refresh_markup_overlays()
+        self.markup_changed.emit()
+        name = Path(path).name
+        self.status_message.emit(f"Redacted copy saved as {name}")
+        QMessageBox.information(
+            self,
+            "Redaction complete",
+            f"Verified redacted copy saved as:\n{path}",
+        )
 
     def _on_markup_gesture(self, logical: int, tool_value: str, payload: object) -> None:
         if self._markup is None or not isinstance(payload, dict):
@@ -2343,6 +2490,18 @@ class PdfViewerWidget(QWidget):
                 text=text.strip(),
             )
             self._markup.push_annotation(created)
+        elif tool == AnnotTool.REDACT:
+            rect = payload.get("rect")
+            if not rect:
+                return
+            region = RedactionRegion(page_index=logical, rect=tuple(rect))  # type: ignore[arg-type]
+            self._markup.push_redaction(region)
+            self.refresh_markup_overlays()
+            self.markup_changed.emit()
+            self.status_message.emit(
+                "Redaction marked — Apply redaction to export a verified copy"
+            )
+            return
         elif tool in (AnnotTool.FORM_TEXT, AnnotTool.FORM_CHECK):
             rect = payload.get("rect")
             if not rect:

@@ -1,6 +1,8 @@
-"""Pending viewer markup — annotations + form ops with undo/redo.
+"""Pending viewer markup — annotations, forms, and redaction marks with undo/redo.
 
-Ops are applied on Save As (via ``write_pdf``), not to the user's original.
+Annotation / form ops are applied on Save As (via ``write_pdf``).
+Redaction marks are applied only through the dedicated redaction export
+(``pagedrop.core.redact``) — never via ordinary Save As.
 """
 
 from __future__ import annotations
@@ -16,11 +18,14 @@ from pagedrop.core.forms import (
     apply_form_fill,
     apply_form_flatten,
 )
+from pagedrop.core.redact import RedactionRegion
 
 if TYPE_CHECKING:
     import fitz
 
-MarkupKind = Literal["annotation", "form_fill", "form_create", "form_flatten"]
+MarkupKind = Literal[
+    "annotation", "form_fill", "form_create", "form_flatten", "redaction"
+]
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,7 @@ class MarkupEntry:
     annotation: AnnotationOp | None = None
     form_fill: Mapping[str, str] | None = None
     form_create: FormCreateOp | None = None
+    redaction: RedactionRegion | None = None
 
 
 class MarkupSession:
@@ -86,6 +92,29 @@ class MarkupSession:
     def push_form_flatten(self) -> None:
         self._push(MarkupEntry(kind="form_flatten"))
 
+    def push_redaction(self, region: RedactionRegion) -> None:
+        self._push(MarkupEntry(kind="redaction", redaction=region))
+
+    def redaction_regions(self) -> list[RedactionRegion]:
+        return [
+            entry.redaction
+            for entry in self._ops
+            if entry.kind == "redaction" and entry.redaction is not None
+        ]
+
+    def non_redaction_ops(self) -> list[MarkupEntry]:
+        """Annotation / form entries only (safe for ordinary Save As)."""
+        return [entry for entry in self._ops if entry.kind != "redaction"]
+
+    def clear_redactions(self) -> None:
+        self._ops = [entry for entry in self._ops if entry.kind != "redaction"]
+        self._redo.clear()
+
+    def clear_non_redactions(self) -> None:
+        """Drop annotation/form ops after Save As; keep pending redaction marks."""
+        self._ops = [entry for entry in self._ops if entry.kind == "redaction"]
+        self._redo.clear()
+
     def undo(self) -> bool:
         if not self._ops:
             return False
@@ -104,7 +133,11 @@ class MarkupSession:
 
 
 def apply_markup_entries(doc: fitz.Document, entries: Sequence[MarkupEntry]) -> None:
-    """Apply pending markup to an assembled output document (mutates *doc*)."""
+    """Apply pending annotation/form markup to an assembled document (mutates *doc*).
+
+    Redaction entries are skipped here — they require ``redact_document`` /
+    ``redact_pdf`` (GC rewrite + fresh-process verify).
+    """
     annot_batch: list[AnnotationOp] = []
 
     def flush_annots() -> None:
@@ -114,6 +147,8 @@ def apply_markup_entries(doc: fitz.Document, entries: Sequence[MarkupEntry]) -> 
             annot_batch = []
 
     for entry in entries:
+        if entry.kind == "redaction":
+            continue
         if entry.kind == "annotation":
             assert entry.annotation is not None
             annot_batch.append(entry.annotation)

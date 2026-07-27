@@ -68,6 +68,7 @@ def test_annot_tools_and_markup_dirty_undo_save(
         AnnotTool.FREETEXT,
         AnnotTool.IMAGE,
         AnnotTool.COMMENT,
+        AnnotTool.REDACT,
         AnnotTool.FORM_FILL,
         AnnotTool.FORM_TEXT,
         AnnotTool.FORM_CHECK,
