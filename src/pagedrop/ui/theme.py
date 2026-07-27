@@ -188,7 +188,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {ACCENT};
     }}
 
-    QListWidget {{
+    QListWidget,
+    QTreeWidget {{
         background-color: {bg_surface};
         color: {text_primary};
         border: 1px solid {border_subtle};
@@ -197,18 +198,21 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 4px;
     }}
 
-    QListWidget::item {{
+    QListWidget::item,
+    QTreeWidget::item {{
         padding: 8px 10px;
         border-radius: 6px;
         color: {text_primary};
     }}
 
-    QListWidget::item:selected {{
+    QListWidget::item:selected,
+    QTreeWidget::item:selected {{
         background-color: {ACCENT};
         color: #FFFFFF;
     }}
 
-    QListWidget::item:hover:!selected {{
+    QListWidget::item:hover:!selected,
+    QTreeWidget::item:hover:!selected {{
         background-color: {bg_card_hover};
     }}
 
@@ -216,6 +220,108 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         font-size: 11px;
         font-family: {FONT_MONO};
+    }}
+
+    QPushButton {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 6px 14px;
+        font-weight: 600;
+    }}
+
+    QPushButton:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+
+    QPushButton:pressed {{
+        background-color: {bg_base};
+    }}
+
+    QPushButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPushButton:disabled {{
+        color: {text_muted};
+        border-color: {border_subtle};
+    }}
+
+    QCheckBox,
+    QRadioButton {{
+        color: {text_primary};
+        spacing: 8px;
+    }}
+
+    QCheckBox::indicator,
+    QRadioButton::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 1px solid {border_default};
+        background-color: {bg_card};
+    }}
+
+    QCheckBox::indicator {{
+        border-radius: 3px;
+    }}
+
+    QRadioButton::indicator {{
+        border-radius: 8px;
+    }}
+
+    QCheckBox::indicator:checked,
+    QRadioButton::indicator:checked {{
+        background-color: {ACCENT};
+        border-color: {ACCENT_PRESSED};
+    }}
+
+    QCheckBox:focus,
+    QRadioButton:focus {{
+        outline: none;
+    }}
+
+    QComboBox {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 6px 10px;
+        min-height: 20px;
+    }}
+
+    QComboBox:hover {{
+        border-color: {border_hover};
+    }}
+
+    QComboBox:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QComboBox::drop-down {{
+        border: none;
+        width: 24px;
+    }}
+
+    QComboBox QAbstractItemView {{
+        background-color: {bg_surface};
+        color: {text_primary};
+        border: 1px solid {border_subtle};
+        selection-background-color: {ACCENT};
+        selection-color: #FFFFFF;
+    }}
+
+    QSpinBox {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 6px 8px;
+    }}
+
+    QSpinBox:focus {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QToolBar {{
@@ -226,6 +332,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 8px 12px;
     }}
 
+    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
+    QToolButton,
     QToolBar QToolButton {{
         background-color: {bg_card};
         color: {text_primary};
@@ -235,17 +343,37 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-weight: 600;
     }}
 
+    QToolButton:hover,
     QToolBar QToolButton:hover {{
         background-color: {bg_card_hover};
         border-color: {border_hover};
     }}
 
+    QToolButton:pressed,
     QToolBar QToolButton:pressed {{
         background-color: {bg_base};
     }}
 
+    QToolButton:focus,
     QToolBar QToolButton:focus {{
         border: {focus_width}px solid {ACCENT};
+    }}
+
+    QToolButton:checked {{
+        background-color: {ACCENT};
+        color: #FFFFFF;
+        border: 1px solid {ACCENT_PRESSED};
+    }}
+
+    QToolButton:checked:hover {{
+        background-color: {ACCENT_HOVER};
+        border-color: {ACCENT_HOVER};
+    }}
+
+    QToolButton:disabled,
+    QToolBar QToolButton:disabled {{
+        color: {text_muted};
+        border-color: {border_subtle};
     }}
 
     QToolBar QToolButton#ToolbarPrimary {{
@@ -647,7 +775,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#PagePreviewHint {{
-        color: {text_muted};
+        color: {text_secondary};
         font-size: 11px;
         font-family: {FONT_MONO};
         padding: 10px 16px;
@@ -676,8 +804,47 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-bottom: 1px solid {border_subtle};
     }}
 
-    QLabel#PdfViewerHint {{
+    QTabWidget#PdfViewerSide {{
+        background-color: {bg_surface};
+        color: {text_primary};
+    }}
+
+    QTabWidget#PdfViewerSide::pane {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-top: none;
+        padding: 4px;
+    }}
+
+    QTabWidget#PdfViewerSide > QTabBar {{
+        background-color: {bg_surface};
+        border-bottom: 1px solid {border_subtle};
+    }}
+
+    QTabWidget#PdfViewerSide > QTabBar::tab {{
+        background-color: transparent;
         color: {text_muted};
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 8px 12px 7px 12px;
+        margin-right: 2px;
+        font-weight: 500;
+    }}
+
+    QTabWidget#PdfViewerSide > QTabBar::tab:selected {{
+        color: {text_primary};
+        background-color: {bg_surface};
+        border-bottom: 2px solid {ACCENT};
+        font-weight: 600;
+    }}
+
+    QTabWidget#PdfViewerSide > QTabBar::tab:hover:!selected {{
+        color: {text_secondary};
+        background-color: {bg_card_hover};
+    }}
+
+    QLabel#PdfViewerHint {{
+        color: {text_secondary};
         font-size: 11px;
         font-family: {FONT_MONO};
         padding: 10px 16px;
@@ -687,7 +854,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#PdfViewerPageLabel,
     QLabel#PdfViewerHitLabel {{
-        color: {text_muted};
+        color: {text_secondary};
         font-size: 12px;
         padding: 0 8px;
     }}

@@ -65,15 +65,22 @@ def test_reduce_motion_setting_gates_shadow_hover(qtbot, isolated_settings):
 def test_stylesheet_includes_focus_rings_for_controls():
     sheet = app_stylesheet()
     assert "QToolBar QToolButton:focus" in sheet
+    assert "QToolButton:checked" in sheet
     assert "QMenuBar::item:selected" in sheet
     # Menubar ::item:focus highlights every item under Qt — do not use it.
     assert "QMenuBar::item:focus" not in sheet
     assert "QMenu::item:selected" in sheet
     assert "QDialog {" in sheet
-    assert "QListWidget {" in sheet
+    assert "QListWidget," in sheet
+    assert "QTreeWidget {" in sheet
+    assert "QPushButton {" in sheet
+    assert "QComboBox {" in sheet
+    assert "QSpinBox {" in sheet
+    assert "QCheckBox," in sheet
     assert "QLineEdit {" in sheet
     assert "QSlider#ZoomSlider:focus" in sheet
     assert "QPushButton#ZoomButton:focus" in sheet
+    assert "QTabWidget#PdfViewerSide::pane" in sheet
 
 
 def test_light_stylesheet_styles_dialogs(isolated_settings):
@@ -81,6 +88,12 @@ def test_light_stylesheet_styles_dialogs(isolated_settings):
     assert "#F2F3F5" in light
     assert "QDialog {" in light
     assert "QListWidget::item:selected" in light
+    assert "QTreeWidget::item:selected" in light
+    assert "QTabWidget#PdfViewerSide::pane" in light
+    # Viewer QToolButtons sit outside QToolBar — must still get light surfaces.
+    assert "QToolButton," in light
+    assert "background-color: #FFFFFF" in light
+    assert "color: #1A1A1F" in light
 
 
 def test_progress_and_empty_state_accessible_names(main_window, qtbot):
