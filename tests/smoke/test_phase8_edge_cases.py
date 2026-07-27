@@ -100,17 +100,34 @@ def test_smoke_rapid_reopen_survives():
 
 
 def test_smoke_drag_without_pdf_survives():
-    code = _scenario_template(
-        """
+    # Standalone script (not _scenario_template): QTest mouse press on a
+    # synthetic PageCard under offscreen Qt can SIGSEGV during normal
+    # interpreter/Qt teardown after app.exec() even when the gesture itself
+    # survives. os._exit(0) after ALIVE is the reliable smoke gate.
+    code = """
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication
+
+from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.page_card import PageCard
 
-card = PageCard(0, window._thumbnail_grid._container)
+app = QApplication([])
+window = MainWindow()
+window.showMinimized()
+
+card = PageCard(0, window)
 card.resize(200, 200)
 card.show()
 QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
 QTest.mouseMove(card, pos=QPoint(250, 250))
+QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(250, 250))
+
+print("ALIVE", flush=True)
+print("VISIBLE", window.isVisible(), flush=True)
+os._exit(0)
 """
-    )
     _assert_process_ok(_run_app_scenario(code))
