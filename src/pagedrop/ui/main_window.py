@@ -266,7 +266,14 @@ class MainWindow(QMainWindow):
         actions.register(
             "create_pdf", "&Create PDF", slot=self._open_convert_window
         )
-        actions.register("tools", "&Tools", slot=self._open_tools_window)
+        actions.register(
+            "tools",
+            "&Tools",
+            slot=self._open_tools_window,
+            # Ctrl+T is New tab — use a dedicated chord for Tools.
+            shortcut="Ctrl+Shift+O",
+            tip="Open Tools (Ctrl+Shift+O)",
+        )
         actions.register(
             "keyboard_shortcuts",
             "&Keyboard Shortcuts",

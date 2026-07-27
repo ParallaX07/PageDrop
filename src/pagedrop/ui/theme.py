@@ -1071,11 +1071,45 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-height: 32px;
     }}
 
-    QLabel#ToolsCategoryHeading {{
+    QLabel#ToolsCategoryHeading,
+    QToolButton#ToolsCategoryHeading {{
         color: {text_secondary};
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 600;
-        letter-spacing: 0.2px;
+        letter-spacing: 0.4px;
+        border: none;
+        border-bottom: 1px solid {border_subtle};
+        background: transparent;
+        padding: 0 0 6px 0;
+        text-align: left;
+    }}
+
+    QToolButton#ToolsCategoryHeading:hover {{
+        color: {text_primary};
+    }}
+
+    QLabel#ToolsMatchCount {{
+        color: {text_muted};
+        font-size: 12px;
+    }}
+
+    QToolButton#ToolsDensityToggle,
+    QToolButton#ToolsUpcomingToggle {{
+        color: {text_muted};
+        font-size: 12px;
+        border: none;
+        background: transparent;
+        padding: 2px 4px;
+    }}
+
+    QToolButton#ToolsDensityToggle:checked,
+    QToolButton#ToolsUpcomingToggle:checked {{
+        color: {ACCENT};
+    }}
+
+    QToolButton#ToolsDensityToggle:hover,
+    QToolButton#ToolsUpcomingToggle:hover {{
+        color: {text_secondary};
     }}
 
     QLabel#ToolsEmptyState {{
@@ -1125,6 +1159,7 @@ def _card_surface_colors() -> dict[str, str]:
             "BG_CARD": "#FFFFFF",
             "BG_CARD_HOVER": "#E4E6EB",
             "BG_THUMB_EMPTY": "#D5D7DE",
+            "BORDER_SUBTLE": "#D5D7DE",
             "BORDER_DEFAULT": "#B4B7C0",
             "BORDER_HOVER": "#8A8E99",
             "TEXT_PRIMARY": "#1A1A1F",
@@ -1135,6 +1170,7 @@ def _card_surface_colors() -> dict[str, str]:
         "BG_CARD": BG_CARD,
         "BG_CARD_HOVER": BG_CARD_HOVER,
         "BG_THUMB_EMPTY": "#2A2A32",
+        "BORDER_SUBTLE": BORDER_SUBTLE,
         "BORDER_DEFAULT": BORDER_DEFAULT,
         "BORDER_HOVER": BORDER_HOVER,
         "TEXT_PRIMARY": TEXT_PRIMARY,
@@ -1300,30 +1336,48 @@ def convert_file_card_stylesheet(
 def tool_tile_stylesheet(
     *,
     focused: bool = False,
+    hovered: bool = False,
     blocked: bool = False,
     coming_soon: bool = False,
+    compact: bool = False,
 ) -> str:
+    """Quiet catalogue tile — one brand accent on focus only (no category color rails)."""
     c = _card_surface_colors()
-    border_color = ACCENT if focused else c["BORDER_DEFAULT"]
-    border_width = 2 if focused else 1
-    background = c["BG_CARD_HOVER"] if focused else c["BG_CARD"]
+    if focused:
+        border_color = ACCENT
+        border_width = 2
+        background = c["BG_CARD_HOVER"]
+    elif hovered and not blocked:
+        border_color = c["BORDER_HOVER"]
+        border_width = 1
+        background = c["BG_CARD_HOVER"]
+    else:
+        border_color = c["BORDER_SUBTLE"]
+        border_width = 1
+        background = c["BG_CARD"]
+
     title_color = c["TEXT_MUTED"] if blocked or coming_soon else c["TEXT_PRIMARY"]
     subtitle_color = c["TEXT_MUTED"]
+    title_size = 12 if compact else 13
+    subtitle_size = 10 if compact else 11
+    # Slightly tighter radius in compact; keep one radius family with RADIUS_CARD.
+    radius = max(6, RADIUS_CARD - 2) if compact else RADIUS_CARD
 
     return f"""
     QFrame#ToolTile {{
         background-color: {background};
         border: {border_width}px solid {border_color};
-        border-radius: {RADIUS_CARD}px;
+        border-radius: {radius}px;
     }}
     QLabel#ToolTileTitle {{
         color: {title_color};
-        font-size: 13px;
+        font-size: {title_size}px;
         font-weight: 600;
+        letter-spacing: -0.1px;
     }}
     QLabel#ToolTileSubtitle {{
         color: {subtitle_color};
-        font-size: 11px;
+        font-size: {subtitle_size}px;
         font-weight: 400;
     }}
     """

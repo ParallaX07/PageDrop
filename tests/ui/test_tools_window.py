@@ -333,3 +333,98 @@ def test_show_in_folder_opens_parent(tmp_path, monkeypatch):
     monkeypatch.setattr("pagedrop.ui.result_actions.sys.platform", "linux")
     assert show_in_folder(target) is True
     assert opened == [str(tmp_path.resolve())]
+
+
+def test_search_enter_focuses_first_tile(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    window._search.setText("merge")
+    window._search.setFocus()
+    window._search.returnPressed.emit()
+    focused = window.focusWidget()
+    assert isinstance(focused, type(window.visible_tiles()[0]))
+    assert focused.entry.id == "merge"
+    window.close()
+
+
+def test_coming_soon_hidden_by_default_and_toggle_shows(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    visible_ids = {t.entry.id for t in window.visible_tiles()}
+    assert "compress" not in visible_ids
+    assert "encrypt" not in visible_ids
+    assert "export_tiff" not in visible_ids
+    assert "viewer" not in visible_ids
+
+    assert window._upcoming_btn.isVisible()
+    assert "Show upcoming tools" in window._upcoming_btn.text()
+    window._upcoming_btn.setChecked(True)
+    visible_ids = {t.entry.id for t in window.visible_tiles()}
+    assert "compress" in visible_ids
+    assert "encrypt" in visible_ids
+    assert "export_tiff" in visible_ids
+    assert "Hide upcoming tools" in window._upcoming_btn.text()
+    window.close()
+
+
+def test_category_heading_counts_update_on_filter(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    organize = window._category_headings["Organize"]
+    assert organize.text() == "Organize (15)"
+
+    window._search.setText("interleave")
+    assert organize.text() == "Organize (1 of 15)"
+    assert window._match_label.isVisible()
+    assert "1 tool match" in window._match_label.text()
+
+    window._search.clear()
+    assert organize.text() == "Organize (15)"
+    assert not window._match_label.isVisible()
+    window.close()
+
+
+def test_no_viewer_tile_in_tools_catalogue(qtbot):
+    """Preview/viewer lives on the editor tab — not duplicated in Tools."""
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+    assert "View" not in window._category_sections
+    assert all(t.entry.id != "viewer" for t in window._tiles)
+    window.close()
+
+
+def test_tools_shortcut_is_ctrl_shift_o_not_ctrl_t(main_window):
+    from PyQt6.QtGui import QKeySequence
+
+    action = main_window._actions["tools"]
+    assert action.shortcut() == QKeySequence("Ctrl+Shift+O")
+    assert main_window._actions["new_tab"].shortcut() == QKeySequence("Ctrl+T")
+
+
+def test_tile_tooltip_uses_description(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    tile = next(t for t in window._tiles if t.entry.id == "merge")
+    assert tile.toolTip() == tile.entry.description
+    window.close()
+
+
+def test_error_toast_uses_longer_timeout(qtbot):
+    from pagedrop.ui.busy_overlay import ToastOverlay
+
+    assert ToastOverlay.ERROR_TIMEOUT_MS > ToastOverlay.DEFAULT_TIMEOUT_MS
+
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.show_toast("fail", kind="error")
+    assert window._toast.isVisible()
+    assert window._toast._timer.interval() == ToastOverlay.ERROR_TIMEOUT_MS
+    window.close()

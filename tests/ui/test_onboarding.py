@@ -53,6 +53,16 @@ def test_shortcut_groups_document_ctrl_tab_mru():
     assert "Ctrl+Tab" in by_label["Previous tab (MRU)"]
 
 
+def test_shortcut_groups_document_tools_not_ctrl_t():
+    view = dict(SHORTCUT_GROUPS)["View"]
+    by_label = dict(view)
+    assert "Tools" in by_label
+    assert "Ctrl+Shift+O" in by_label["Tools"]
+    assert "Ctrl+T" in by_label["Tools"]  # documents avoidance
+    tabs = dict(SHORTCUT_GROUPS)["Tabs"]
+    assert dict(tabs)["New tab"] == "Ctrl+T"
+
+
 def test_help_menu_keyboard_shortcuts_action(main_window):
     help_menus = [
         a.menu()

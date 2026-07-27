@@ -11,12 +11,14 @@ from PyQt6.QtGui import QCloseEvent, QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -48,10 +50,11 @@ CATEGORIES: tuple[str, ...] = (
     "Convert",
     "Optimize",
     "Secure",
-    "View",
 )
 
 _GRID_COLUMNS = 3
+_TILE_MIN_HEIGHT = 88
+_TILE_MIN_HEIGHT_COMPACT = 64
 
 
 @dataclass(frozen=True)
@@ -65,7 +68,7 @@ class ToolEntry:
     keywords: tuple[str, ...] = ()
     capability_id: str | None = None
     coming_soon: bool = False
-    action: str | None = None  # "merge" | "create_pdf"
+    action: str | None = None  # "merge" | "create_pdf" | "organize"
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -223,14 +226,6 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("password", "protect"),
         coming_soon=True,
     ),
-    ToolEntry(
-        "viewer",
-        "PDF viewer",
-        "Read and navigate pages",
-        "View",
-        keywords=("read", "preview"),
-        coming_soon=True,
-    ),
 )
 
 
@@ -263,11 +258,14 @@ class ToolTile(QFrame):
     def __init__(self, entry: ToolEntry, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.entry = entry
+        self._compact = False
+        self._hovered = False
         self.setObjectName("ToolTile")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(88)
+        self.setMinimumHeight(_TILE_MIN_HEIGHT)
+        self.setToolTip(entry.description)
 
         self._capability: CapabilityStatus | None = None
         if entry.capability_id is not None:
@@ -298,6 +296,20 @@ class ToolTile(QFrame):
     def is_blocked(self) -> bool:
         return self._capability is not None and not self._capability.available
 
+    def set_compact(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.setMinimumHeight(
+            _TILE_MIN_HEIGHT_COMPACT if compact else _TILE_MIN_HEIGHT
+        )
+        margins = (10, 8, 10, 8) if compact else (14, 12, 14, 12)
+        layout = self.layout()
+        if isinstance(layout, QVBoxLayout):
+            layout.setContentsMargins(*margins)
+            layout.setSpacing(2 if compact else 4)
+        self._refresh_chrome()
+
     def refresh_capability(self) -> None:
         if self.entry.capability_id is None:
             return
@@ -312,8 +324,10 @@ class ToolTile(QFrame):
         self.setStyleSheet(
             tool_tile_stylesheet(
                 focused=self.hasFocus(),
+                hovered=self._hovered,
                 blocked=blocked,
                 coming_soon=self.entry.coming_soon and not blocked,
+                compact=self._compact,
             )
         )
 
@@ -330,6 +344,16 @@ class ToolTile(QFrame):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hovered = True
+        self._refresh_chrome()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hovered = False
+        self._refresh_chrome()
+        super().leaveEvent(event)
 
     def focusInEvent(self, event) -> None:  # noqa: N802
         super().focusInEvent(event)
@@ -403,6 +427,11 @@ class ToolsWindow(QMainWindow):
         self._job_runner: SerializedJobRunner | None = None
         self._tiles: list[ToolTile] = []
         self._category_sections: dict[str, QWidget] = {}
+        self._category_headings: dict[str, QToolButton] = {}
+        self._category_grids: dict[str, QWidget] = {}
+        self._collapsed_categories: set[str] = set()
+        self._show_upcoming = False
+        self._compact = False
         self._grid_columns = _GRID_COLUMNS
 
         self.setWindowTitle(self.WINDOW_TITLE)
@@ -444,12 +473,31 @@ class ToolsWindow(QMainWindow):
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
 
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
         self._search = QLineEdit()
         self._search.setObjectName("ToolsSearch")
         self._search.setPlaceholderText("Search tools…")
         self._search.setClearButtonEnabled(True)
+        self._search.setAccessibleName("Search tools")
         self._search.textChanged.connect(self._apply_filter)
-        root.addWidget(self._search)
+        self._search.returnPressed.connect(self._focus_first_visible_tile)
+        search_row.addWidget(self._search, stretch=1)
+
+        self._compact_btn = QToolButton()
+        self._compact_btn.setObjectName("ToolsDensityToggle")
+        self._compact_btn.setText("Compact")
+        self._compact_btn.setCheckable(True)
+        self._compact_btn.setToolTip("Toggle compact tile density")
+        self._compact_btn.setAccessibleName("Compact density")
+        self._compact_btn.toggled.connect(self._set_compact)
+        search_row.addWidget(self._compact_btn)
+        root.addLayout(search_row)
+
+        self._match_label = QLabel()
+        self._match_label.setObjectName("ToolsMatchCount")
+        self._match_label.hide()
+        root.addWidget(self._match_label)
 
         self._scroll = QScrollArea()
         self._scroll.setObjectName("ToolsScroll")
@@ -471,8 +519,18 @@ class ToolsWindow(QMainWindow):
             section_layout.setContentsMargins(0, 0, 0, 0)
             section_layout.setSpacing(8)
 
-            heading = QLabel(category)
+            heading = QToolButton()
             heading.setObjectName("ToolsCategoryHeading")
+            heading.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            heading.setArrowType(Qt.ArrowType.DownArrow)
+            heading.setCheckable(True)
+            heading.setChecked(True)
+            heading.setAutoRaise(True)
+            heading.setText(category)
+            heading.setAccessibleName(f"{category} category")
+            heading.toggled.connect(
+                lambda checked, c=category: self._on_category_toggled(c, checked)
+            )
             section_layout.addWidget(heading)
 
             grid_host = QWidget()
@@ -484,6 +542,8 @@ class ToolsWindow(QMainWindow):
             section_layout.addWidget(grid_host)
 
             self._category_sections[category] = section
+            self._category_headings[category] = heading
+            self._category_grids[category] = grid_host
             self._catalogue_layout.addWidget(section)
 
             for entry in TOOL_CATALOGUE:
@@ -499,6 +559,15 @@ class ToolsWindow(QMainWindow):
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.hide()
         self._catalogue_layout.addWidget(self._empty_label)
+
+        self._upcoming_btn = QToolButton()
+        self._upcoming_btn.setObjectName("ToolsUpcomingToggle")
+        self._upcoming_btn.setCheckable(True)
+        self._upcoming_btn.setAutoRaise(True)
+        self._upcoming_btn.setToolTip("Show or hide tools that are not available yet")
+        self._upcoming_btn.toggled.connect(self._on_upcoming_toggled)
+        self._catalogue_layout.addWidget(self._upcoming_btn)
+
         self._catalogue_layout.addStretch(1)
 
         self._result_bar = ResultActionsBar()
@@ -573,13 +642,58 @@ class ToolsWindow(QMainWindow):
         if self._cancel_token is not None:
             self._cancel_token.cancel()
 
+    def _focus_first_visible_tile(self) -> None:
+        tiles = self.visible_tiles()
+        if tiles:
+            tiles[0].setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _set_compact(self, compact: bool) -> None:
+        self._compact = compact
+        for tile in self._tiles:
+            tile.set_compact(compact)
+
+    def _on_category_toggled(self, category: str, expanded: bool) -> None:
+        if expanded:
+            self._collapsed_categories.discard(category)
+        else:
+            self._collapsed_categories.add(category)
+        heading = self._category_headings[category]
+        heading.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        grid_host = self._category_grids[category]
+        # Only show grid when expanded and the section itself is visible.
+        if self._category_sections[category].isVisible():
+            grid_host.setVisible(expanded)
+
+    def _on_upcoming_toggled(self, show: bool) -> None:
+        self._show_upcoming = show
+        self._apply_filter(self._search.text())
+
+    def _upcoming_matching(self, query: str) -> int:
+        return sum(
+            1
+            for entry in TOOL_CATALOGUE
+            if entry.coming_soon and _matches_query(entry, query)
+        )
+
+    def _eligible_total(self, category: str) -> int:
+        return sum(
+            1
+            for entry in TOOL_CATALOGUE
+            if entry.category == category
+            and (self._show_upcoming or not entry.coming_soon)
+        )
+
     def _apply_filter(self, text: str) -> None:
         query = text.strip()
         any_visible = False
+        match_count = 0
+
         for category in CATEGORIES:
             section = self._category_sections[category]
-            grid_host = section.findChild(QWidget, "ToolsCategoryGrid")
-            assert grid_host is not None
+            heading = self._category_headings[category]
+            grid_host = self._category_grids[category]
             grid = grid_host.layout()
             assert isinstance(grid, QGridLayout)
 
@@ -589,6 +703,9 @@ class ToolsWindow(QMainWindow):
             visible_in_category: list[ToolTile] = []
             for tile in self._tiles:
                 if tile.entry.category != category:
+                    continue
+                if tile.entry.coming_soon and not self._show_upcoming:
+                    tile.hide()
                     continue
                 if _matches_query(tile.entry, query):
                     visible_in_category.append(tile)
@@ -600,10 +717,52 @@ class ToolsWindow(QMainWindow):
                 grid.addWidget(tile, row, col)
                 tile.show()
 
-            section.setVisible(bool(visible_in_category))
-            any_visible = any_visible or bool(visible_in_category)
+            # Empty columns keep equal share so a lone tile doesn't full-bleed.
+            for col in range(self._grid_columns):
+                grid.setColumnStretch(col, 1)
+            for col in range(self._grid_columns, 8):
+                grid.setColumnStretch(col, 0)
+
+            shown = len(visible_in_category)
+            total = self._eligible_total(category)
+            if query:
+                heading.setText(f"{category} ({shown} of {total})")
+            else:
+                heading.setText(f"{category} ({total})")
+
+            expanded = category not in self._collapsed_categories
+            heading.blockSignals(True)
+            heading.setChecked(expanded)
+            heading.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+            )
+            heading.blockSignals(False)
+
+            section_visible = shown > 0
+            section.setVisible(section_visible)
+            grid_host.setVisible(section_visible and expanded)
+            any_visible = any_visible or section_visible
+            match_count += shown
 
         self._empty_label.setVisible(not any_visible)
+
+        if query:
+            noun = "tool" if match_count == 1 else "tools"
+            self._match_label.setText(f"{match_count} {noun} match")
+            self._match_label.show()
+        else:
+            self._match_label.hide()
+
+        upcoming_n = self._upcoming_matching(query)
+        if self._show_upcoming:
+            self._upcoming_btn.setText("Hide upcoming tools")
+            self._upcoming_btn.setVisible(upcoming_n > 0 or self._show_upcoming)
+        else:
+            self._upcoming_btn.setText(f"Show upcoming tools ({upcoming_n})")
+            self._upcoming_btn.setVisible(upcoming_n > 0)
+        self._upcoming_btn.blockSignals(True)
+        self._upcoming_btn.setChecked(self._show_upcoming)
+        self._upcoming_btn.blockSignals(False)
 
     def _on_tile_activated(self, tool_id: str) -> None:
         entry = next((e for e in TOOL_CATALOGUE if e.id == tool_id), None)

@@ -57,6 +57,7 @@ SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Reset zoom", "Ctrl+0"),
             ("Thumbnail zoom", "Ctrl+scroll"),
             ("Command palette", "Ctrl+Shift+P"),
+            ("Tools", "Ctrl+Shift+O — not Ctrl+T (that opens a new tab)"),
             ("Keyboard shortcuts", "Ctrl+/"),
         ),
     ),

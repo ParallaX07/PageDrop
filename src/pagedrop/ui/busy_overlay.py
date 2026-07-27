@@ -78,6 +78,7 @@ class ToastOverlay(QWidget):
     """
 
     DEFAULT_TIMEOUT_MS = 2500
+    ERROR_TIMEOUT_MS = 6000
     UNDO_TIMEOUT_MS = 8000
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -151,7 +152,12 @@ class ToastOverlay(QWidget):
             )
             self._undo_button.hide()
             if timeout_ms is None:
-                timeout_ms = self.DEFAULT_TIMEOUT_MS
+                # Errors stay longer so they aren't missed after dialogs close.
+                timeout_ms = (
+                    self.ERROR_TIMEOUT_MS
+                    if kind == "error"
+                    else self.DEFAULT_TIMEOUT_MS
+                )
 
         self._sync_geometry()
         self.show()
