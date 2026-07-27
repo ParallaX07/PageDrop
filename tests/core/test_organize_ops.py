@@ -426,6 +426,95 @@ def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
         out_doc.close()
 
 
+def test_compare_detects_thin_deleted_text_line(tmp_path: Path) -> None:
+    """Regression: sparse 3×3 probes miss a single deleted text line on a letter page."""
+    a = tmp_path / "full.pdf"
+    b = tmp_path / "truncated.pdf"
+    long_line = (
+        "Tech Stack: Electron 30, React 18, Express 5, SQLite, Drizzle ORM, "
+        "Zustand, TanStack Query, Tailwind CSS v4, shadcn/ui"
+    )
+    short_line = "Tech Stack: Electron 30, React 18, Express 5, SQLite, Drizzle ORM,"
+
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 260), long_line, fontsize=10)
+        doc.save(str(a))
+    finally:
+        doc.close()
+
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 260), short_line, fontsize=10)
+        doc.save(str(b))
+    finally:
+        doc.close()
+
+    heatmap = tmp_path / "heat.pdf"
+    # Old 12×12 + 9-point sampling reported 0.0 on this class of diff.
+    result = pdf_tools.compare_pdfs_heatmap(
+        str(a),
+        str(b),
+        heatmap,
+        dpi=120,
+        sample_grid=(12, 12),
+        byte_diff_threshold=20,
+    )
+    assert result.page_diffs[0] > 0.0
+
+    out_doc = fitz.open(str(heatmap))
+    try:
+        red = [
+            d
+            for d in out_doc[0].get_drawings()
+            if d.get("fill") and d["fill"][0] > 0.9 and d["fill"][1] < 0.1
+        ]
+        assert red, "deleted text tail must produce red overlay cells"
+        # insert_text y is the baseline; overlay cells are coarse (12×12).
+        assert any(d["rect"].y0 <= 260 <= d["rect"].y1 for d in red)
+    finally:
+        out_doc.close()
+
+
+def test_compare_text_diff_truncation_and_identical(tmp_path: Path) -> None:
+    a = tmp_path / "full.pdf"
+    b = tmp_path / "truncated.pdf"
+    long_line = (
+        "Tech Stack: Electron 30, React 18, Express 5, SQLite, Drizzle ORM, "
+        "Zustand, TanStack Query, Tailwind CSS v4, shadcn/ui"
+    )
+    short_line = "Tech Stack: Electron 30, React 18, Express 5, SQLite, Drizzle ORM,"
+
+    for path, text in ((a, long_line), (b, short_line)):
+        doc = fitz.open()
+        try:
+            page = doc.new_page(width=612, height=792)
+            page.insert_text((72, 260), text, fontsize=10)
+            doc.save(str(path))
+        finally:
+            doc.close()
+
+    hash_a = _file_hash(a)
+    hash_b = _file_hash(b)
+    report = pdf_tools.compare_pdf_text_diff(str(a), str(b))
+    assert _file_hash(a) == hash_a
+    assert _file_hash(b) == hash_b
+    assert report.deleted_count == 1
+    assert report.added_count == 0
+    assert report.modified_count == 0
+    change = report.changes[0]
+    assert change.kind == "deleted"
+    assert "Zustand" in change.text
+    assert change.rects_a
+    assert any(r[1] <= 260 <= r[3] for r in change.rects_a)
+
+    identical = pdf_tools.compare_pdf_text_diff(str(a), str(a))
+    assert identical.changes == ()
+    assert identical.deleted_count == 0
+
+
 def test_compare_keeps_pixmap_cache_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Compare streams page pairs at a clamped DPI — never full-document pixmap caches."""
     a = tmp_path / "a.pdf"

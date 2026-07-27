@@ -37,13 +37,16 @@ def _reset_window_manager(qapp):
 
     from pagedrop.ui.convert_window import ConvertWindow
     from pagedrop.ui.main_window import MainWindow
+    from pagedrop.ui.compare_window import CompareWindow
     from pagedrop.ui.merge_window import MergeWindow
     from pagedrop.ui.tools_window import ToolsWindow
     from pagedrop.ui.window_manager import WindowManager
 
     # Close utility hubs first — they are top-level and keep the app alive.
     for widget in list(QApplication.topLevelWidgets()):
-        if isinstance(widget, (MergeWindow, ConvertWindow, ToolsWindow)):
+        if isinstance(
+            widget, (MergeWindow, ConvertWindow, ToolsWindow, CompareWindow)
+        ):
             widget.close()
             qapp.processEvents()
     for widget in list(QApplication.topLevelWidgets()):

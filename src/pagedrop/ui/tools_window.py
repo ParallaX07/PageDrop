@@ -185,9 +185,9 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
     ToolEntry(
         "compare",
         "Compare PDFs",
-        "Visual sample diff with a heatmap PDF",
+        "Side-by-side text and visual diff",
         "Organize",
-        keywords=("diff", "heatmap"),
+        keywords=("diff", "heatmap", "side-by-side", "compare"),
         action="organize",
     ),
     ToolEntry(

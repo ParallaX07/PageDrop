@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import math
+import difflib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, cast
+from typing import Any, Iterable, Literal, cast
 
 import fitz
 
@@ -33,6 +33,8 @@ STANDARD_METADATA_KEYS: tuple[str, ...] = (
 
 # Compare streams one page-pair at a time; never keep full-doc pixmaps.
 COMPARE_MAX_RENDER_WIDTH_PX = 2048
+# Stride (px) for in-page sampling — fixed 3×3 cell probes miss thin text lines.
+COMPARE_SAMPLE_STRIDE_PX = 4
 
 
 def _open(path: str, password: str | None = None) -> fitz.Document:
@@ -749,14 +751,203 @@ class CompareResult:
     heatmap_pdf: Path
 
 
+CompareChangeKind = Literal["deleted", "added", "modified"]
+
+
+@dataclass(frozen=True)
+class CompareChange:
+    kind: CompareChangeKind
+    page_a: int | None
+    page_b: int | None
+    text: str
+    rects_a: tuple[tuple[float, float, float, float], ...] = ()
+    rects_b: tuple[tuple[float, float, float, float], ...] = ()
+
+
+@dataclass(frozen=True)
+class CompareReport:
+    changes: tuple[CompareChange, ...]
+    page_count_a: int
+    page_count_b: int
+
+    @property
+    def deleted_count(self) -> int:
+        return sum(1 for c in self.changes if c.kind == "deleted")
+
+    @property
+    def added_count(self) -> int:
+        return sum(1 for c in self.changes if c.kind == "added")
+
+    @property
+    def modified_count(self) -> int:
+        return sum(1 for c in self.changes if c.kind == "modified")
+
+
+def _word_items(page: fitz.Page) -> list[tuple[str, tuple[float, float, float, float]]]:
+    """Return (text, rect) for each word in reading order."""
+    items: list[tuple[str, tuple[float, float, float, float]]] = []
+    for w in page.get_text("words"):
+        x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4]
+        if not text:
+            continue
+        items.append((str(text), (float(x0), float(y0), float(x1), float(y1))))
+    return items
+
+
+def _merge_word_rects(
+    rects: list[tuple[float, float, float, float]],
+    *,
+    y_slop: float = 3.0,
+) -> tuple[tuple[float, float, float, float], ...]:
+    """Merge horizontally adjacent word boxes on the same baseline into spans."""
+    if not rects:
+        return ()
+    ordered = sorted(rects, key=lambda r: (r[1], r[0]))
+    spans: list[list[float]] = []
+    cur = [ordered[0][0], ordered[0][1], ordered[0][2], ordered[0][3]]
+    for x0, y0, x1, y1 in ordered[1:]:
+        same_line = abs(y0 - cur[1]) <= y_slop and abs(y1 - cur[3]) <= y_slop
+        if same_line and x0 <= cur[2] + 8.0:
+            cur[2] = max(cur[2], x1)
+            cur[1] = min(cur[1], y0)
+            cur[3] = max(cur[3], y1)
+        else:
+            spans.append(cur)
+            cur = [x0, y0, x1, y1]
+    spans.append(cur)
+    return tuple((s[0], s[1], s[2], s[3]) for s in spans)
+
+
+def _page_word_diff(
+    words_a: list[tuple[str, tuple[float, float, float, float]]],
+    words_b: list[tuple[str, tuple[float, float, float, float]]],
+    *,
+    page_a: int,
+    page_b: int,
+) -> list[CompareChange]:
+    texts_a = [w[0] for w in words_a]
+    texts_b = [w[0] for w in words_b]
+    matcher = difflib.SequenceMatcher(a=texts_a, b=texts_b, autojunk=False)
+    changes: list[CompareChange] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "delete":
+            chunk = words_a[i1:i2]
+            text = " ".join(w[0] for w in chunk)
+            rects = _merge_word_rects([w[1] for w in chunk])
+            changes.append(
+                CompareChange(
+                    kind="deleted",
+                    page_a=page_a,
+                    page_b=page_b,
+                    text=text,
+                    rects_a=rects,
+                )
+            )
+        elif tag == "insert":
+            chunk = words_b[j1:j2]
+            text = " ".join(w[0] for w in chunk)
+            rects = _merge_word_rects([w[1] for w in chunk])
+            changes.append(
+                CompareChange(
+                    kind="added",
+                    page_a=page_a,
+                    page_b=page_b,
+                    text=text,
+                    rects_b=rects,
+                )
+            )
+        else:  # replace
+            chunk_a = words_a[i1:i2]
+            chunk_b = words_b[j1:j2]
+            text_a = " ".join(w[0] for w in chunk_a)
+            text_b = " ".join(w[0] for w in chunk_b)
+            label = f"{text_a} → {text_b}" if text_a and text_b else (text_a or text_b)
+            changes.append(
+                CompareChange(
+                    kind="modified",
+                    page_a=page_a,
+                    page_b=page_b,
+                    text=label,
+                    rects_a=_merge_word_rects([w[1] for w in chunk_a]),
+                    rects_b=_merge_word_rects([w[1] for w in chunk_b]),
+                )
+            )
+    return changes
+
+
+def compare_pdf_text_diff(
+    pdf_a: str,
+    pdf_b: str,
+    *,
+    password_a: str | None = None,
+    password_b: str | None = None,
+) -> CompareReport:
+    """Word-level text diff with geometry for side-by-side highlight overlays.
+
+    Page indices are aligned 0..min(n_a, n_b)-1. Extra trailing pages are reported
+    as wholesale deleted (A only) or added (B only) changes.
+    """
+    a = _open(pdf_a, password=password_a)
+    b = _open(pdf_b, password=password_b)
+    try:
+        changes: list[CompareChange] = []
+        shared = min(len(a), len(b))
+        for pno in range(shared):
+            changes.extend(
+                _page_word_diff(
+                    _word_items(a[pno]),
+                    _word_items(b[pno]),
+                    page_a=pno,
+                    page_b=pno,
+                )
+            )
+        for pno in range(shared, len(a)):
+            words = _word_items(a[pno])
+            text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
+            changes.append(
+                CompareChange(
+                    kind="deleted",
+                    page_a=pno,
+                    page_b=None,
+                    text=text,
+                    rects_a=_merge_word_rects([w[1] for w in words])
+                    or ((0.0, 0.0, float(a[pno].rect.width), float(a[pno].rect.height)),),
+                )
+            )
+        for pno in range(shared, len(b)):
+            words = _word_items(b[pno])
+            text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
+            changes.append(
+                CompareChange(
+                    kind="added",
+                    page_a=None,
+                    page_b=pno,
+                    text=text,
+                    rects_b=_merge_word_rects([w[1] for w in words])
+                    or ((0.0, 0.0, float(b[pno].rect.width), float(b[pno].rect.height)),),
+                )
+            )
+        return CompareReport(
+            changes=tuple(changes),
+            page_count_a=len(a),
+            page_count_b=len(b),
+        )
+    finally:
+        a.close()
+        b.close()
+
+
 def compare_pdfs_heatmap(
     pdf_a: str,
     pdf_b: str,
     output_heatmap_pdf: str | Path,
     *,
     dpi: int = 120,
-    sample_grid: tuple[int, int] = (12, 12),
+    sample_grid: tuple[int, int] = (24, 32),
     byte_diff_threshold: int = 20,
+    sample_stride_px: int = COMPARE_SAMPLE_STRIDE_PX,
     max_pages: int | None = None,
     password_a: str | None = None,
     password_b: str | None = None,
@@ -764,6 +955,8 @@ def compare_pdfs_heatmap(
     """Compare two PDFs visually via sampled pixel diffs and emit a heatmap PDF.
 
     Output pages show PDF A with red overlays where sampled cells differ from B.
+    Sampling walks the page on a pixel stride (not a few probes per cell) so thin
+    deleted/inserted text lines are not skipped.
     No OpenCV; uses MuPDF pixmaps + sampled absolute byte diffs.
     """
     out_path = Path(output_heatmap_pdf)
@@ -777,6 +970,7 @@ def compare_pdfs_heatmap(
         cols, rows = sample_grid
         if cols <= 0 or rows <= 0:
             raise ValueError("sample_grid must be positive")
+        stride = max(1, int(sample_stride_px))
 
         page_limit = min(len(a), len(b))
         if max_pages is not None:
@@ -815,68 +1009,44 @@ def compare_pdfs_heatmap(
             n_b = max(1, pix_b.n)
             samples_a = pix_a.samples
             samples_b = pix_b.samples
+            n = min(n_a, n_b)
+
+            # Aggregate stride samples into the overlay grid (max channel delta).
+            max_delta: list[list[int]] = [
+                [0 for _ in range(cols)] for _ in range(rows)
+            ]
+            for ya in range(0, h_a, stride):
+                # Map A's sample row into B's pixmap space.
+                yb = min(h_b - 1, int(ya * h_b / h_a))
+                row_a = ya * w_a * n_a
+                row_b = yb * w_b * n_b
+                overlay_r = min(rows - 1, ya * rows // h_a)
+                for xa in range(0, w_a, stride):
+                    xb = min(w_b - 1, int(xa * w_b / w_a))
+                    idx_a = row_a + xa * n_a
+                    idx_b = row_b + xb * n_b
+                    cell_max = 0
+                    for k in range(n):
+                        abs_d = abs(int(samples_a[idx_a + k]) - int(samples_b[idx_b + k]))
+                        if abs_d > cell_max:
+                            cell_max = abs_d
+                    if cell_max < byte_diff_threshold:
+                        continue
+                    overlay_c = min(cols - 1, xa * cols // w_a)
+                    if cell_max > max_delta[overlay_r][overlay_c]:
+                        max_delta[overlay_r][overlay_c] = cell_max
 
             diff_intensity: list[list[float]] = [
-                [0.0 for _ in range(cols)] for _ in range(rows)
+                [
+                    min(1.0, max_delta[r][c] / 255.0) if max_delta[r][c] else 0.0
+                    for c in range(cols)
+                ]
+                for r in range(rows)
             ]
-            cell_diff_count = 0
-            total_cells = cols * rows
-            ratios = (0.25, 0.5, 0.75)
-            for r in range(rows):
-                for c in range(cols):
-                    # Sample a few points inside the heatmap cell so small glyphs
-                    # don't get missed when the cell center hits background only.
-                    cell_x0_a = (c * w_a) / cols
-                    cell_x1_a = ((c + 1) * w_a) / cols
-                    cell_y0_a = (r * h_a) / rows
-                    cell_y1_a = ((r + 1) * h_a) / rows
-                    cell_x0_b = (c * w_b) / cols
-                    cell_x1_b = ((c + 1) * w_b) / cols
-                    cell_y0_b = (r * h_b) / rows
-                    cell_y1_b = ((r + 1) * h_b) / rows
-
-                    n = min(n_a, n_b)
-                    max_abs = 0
-                    for rx in ratios:
-                        xa2 = min(
-                            w_a - 1,
-                            max(0, int(round(cell_x0_a + rx * (cell_x1_a - cell_x0_a)))),
-                        )
-                        xb2 = min(
-                            w_b - 1,
-                            max(0, int(round(cell_x0_b + rx * (cell_x1_b - cell_x0_b)))),
-                        )
-                        for ry in ratios:
-                            ya2 = min(
-                                h_a - 1,
-                                max(
-                                    0,
-                                    int(round(cell_y0_a + ry * (cell_y1_a - cell_y0_a))),
-                                ),
-                            )
-                            yb2 = min(
-                                h_b - 1,
-                                max(
-                                    0,
-                                    int(round(cell_y0_b + ry * (cell_y1_b - cell_y0_b))),
-                                ),
-                            )
-                            idx_a2 = (ya2 * w_a + xa2) * n_a
-                            idx_b2 = (yb2 * w_b + xb2) * n_b
-                            for k in range(n):
-                                abs_d = abs(
-                                    int(samples_a[idx_a2 + k]) - int(samples_b[idx_b2 + k])
-                                )
-                                if abs_d > max_abs:
-                                    max_abs = abs_d
-
-                    if max_abs >= byte_diff_threshold:
-                        cell_diff_count += 1
-                        diff_intensity[r][c] = min(1.0, max_abs / 255.0)
-
-            page_diffs.append(
-                cell_diff_count / float(total_cells) if total_cells else 0.0
+            cell_diff_count = sum(
+                1 for r in range(rows) for c in range(cols) if max_delta[r][c]
             )
+            page_diffs.append(cell_diff_count / float(cols * rows))
 
             out_page = out.new_page(
                 width=float(a_rect.width), height=float(a_rect.height)
@@ -900,7 +1070,7 @@ def compare_pdfs_heatmap(
                         fill=(1, 0, 0),
                         width=0,
                         overlay=True,
-                        fill_opacity=0.25 + 0.45 * intensity,
+                        fill_opacity=0.30 + 0.45 * intensity,
                     )
 
         overall = sum(page_diffs) / float(len(page_diffs)) if page_diffs else 0.0

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from pagedrop.ui.compare_window import CompareWindow
 from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.pdf_tab import PdfTab
@@ -77,7 +78,10 @@ class WindowManager(QObject):
             if widget is ignoring:
                 continue
             if (
-                isinstance(widget, (MergeWindow, ConvertWindow, ToolsWindow))
+                isinstance(
+                    widget,
+                    (MergeWindow, ConvertWindow, ToolsWindow, CompareWindow),
+                )
                 and widget.isVisible()
             ):
                 return

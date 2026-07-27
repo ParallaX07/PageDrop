@@ -706,35 +706,18 @@ def _launch_zip(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
 
 
 def _launch_compare(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
+    from pagedrop.ui.compare_window import CompareWindow
+
     initial = ctx.path if ctx else ""
-
-    def build(form: QFormLayout, w: dict) -> None:
-        w["a"] = _PathRow(tools, browse_title="Choose first PDF", initial=initial)
-        w["b"] = _PathRow(tools, browse_title="Choose second PDF")
-        form.addRow("PDF A", w["a"])
-        form.addRow("PDF B", w["b"])
-
-    widgets = _form_dialog(tools, title="Compare PDFs", build=build)
-    if widgets is None:
-        return
-    a = widgets["a"].text()
-    b = widgets["b"].text()
-    if not a or not Path(a).is_file() or not b or not Path(b).is_file():
-        QMessageBox.warning(tools, "Compare PDFs", "Choose two valid PDFs.")
-        return
-    output = _pick_save_pdf(
-        tools, "Save heatmap PDF", _default_out_path(a, "compare")
-    )
-    if not output:
-        return
-    _run_organize_job(
-        tools,
-        job_type="compare",
-        inputs=[a, b],
-        output=output,
-        progress_message="Comparing PDFs…",
-        success_toast="Compare heatmap saved",
-    )
+    window = getattr(tools, "_compare_window", None)
+    if window is None:
+        window = CompareWindow()
+        tools._compare_window = window  # type: ignore[attr-defined]
+    if initial:
+        window.prefill_a(initial)
+    window.show()
+    window.raise_()
+    window.activateWindow()
 
 
 def _launch_metadata(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
