@@ -39,6 +39,8 @@ class JobContext:
     cancel: CancelToken
     progress: ProgressCallback
     temp_manager: TempManager
+    # Transient secrets (encrypt passwords, etc.) — never on JobSpec / disk.
+    secrets: dict[str, str]
 
 
 class SerializedJobRunner:
@@ -75,6 +77,7 @@ class SerializedJobRunner:
         credentials: RuntimeCredentials | None = None,
         progress: ProgressCallback | None = None,
         cancel: CancelToken | None = None,
+        secrets: dict[str, str] | None = None,
     ) -> Path:
         """Execute *spec*; return the promoted user output path."""
         # Hygiene: only path-like option values — nested dicts/lists/ints are not Documents.
@@ -96,6 +99,7 @@ class SerializedJobRunner:
         token = cancel or CancelToken()
         report = progress or _noop_progress
         creds = credentials or RuntimeCredentials()
+        runtime_secrets = dict(secrets or {})
         staging = JobStaging(self._temp_manager)
         staged = staging.stage_file(Path(spec.output).name)
 
@@ -119,6 +123,7 @@ class SerializedJobRunner:
                     cancel=token,
                     progress=report,
                     temp_manager=self._temp_manager,
+                    secrets=runtime_secrets,
                 )
                 result_staged = Path(handler(ctx))
                 token.check()
@@ -130,6 +135,7 @@ class SerializedJobRunner:
             staging.cleanup()
             raise
         finally:
+            runtime_secrets.clear()
             with self._active_lock:
                 if self._active_cancel is token:
                     self._active_cancel = None

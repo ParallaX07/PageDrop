@@ -355,18 +355,21 @@ def test_coming_soon_hidden_by_default_and_toggle_shows(qtbot):
     window.show()
 
     visible_ids = {t.entry.id for t in window.visible_tiles()}
-    assert "compress" not in visible_ids
-    assert "encrypt" not in visible_ids
     assert "export_tiff" not in visible_ids
+    assert "export_xlsx" not in visible_ids
+    assert "import_heic" not in visible_ids
     assert "viewer" not in visible_ids
+    # Phase 27 Optimize & Secure tiles are live (not coming-soon).
+    assert "compress" in visible_ids
+    assert "encrypt" in visible_ids
 
     assert window._upcoming_btn.isVisible()
     assert "Show upcoming tools" in window._upcoming_btn.text()
     window._upcoming_btn.setChecked(True)
     visible_ids = {t.entry.id for t in window.visible_tiles()}
-    assert "compress" in visible_ids
-    assert "encrypt" in visible_ids
     assert "export_tiff" in visible_ids
+    assert "export_xlsx" in visible_ids
+    assert "import_heic" in visible_ids
     assert "Hide upcoming tools" in window._upcoming_btn.text()
     window.close()
 

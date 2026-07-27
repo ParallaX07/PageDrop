@@ -70,7 +70,7 @@ class ToolEntry:
     keywords: tuple[str, ...] = ()
     capability_id: str | None = None
     coming_soon: bool = False
-    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf"
+    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure"
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -260,15 +260,39 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Reduce file size with a new copy",
         "Optimize",
         keywords=("shrink", "optimize"),
-        coming_soon=True,
+        action="optimize_secure",
+    ),
+    ToolEntry(
+        "repair",
+        "Repair PDF",
+        "Rewrite a clean copy of a damaged PDF",
+        "Optimize",
+        keywords=("fix", "rewrite", "recover"),
+        action="optimize_secure",
     ),
     ToolEntry(
         "encrypt",
         "Encrypt PDF",
         "Password-protect a new copy",
         "Secure",
-        keywords=("password", "protect"),
-        coming_soon=True,
+        keywords=("password", "protect", "permissions"),
+        action="optimize_secure",
+    ),
+    ToolEntry(
+        "decrypt",
+        "Decrypt PDF",
+        "Write an unlocked copy (password required)",
+        "Secure",
+        keywords=("password", "unlock", "remove password"),
+        action="optimize_secure",
+    ),
+    ToolEntry(
+        "sanitize",
+        "Sanitize PDF",
+        "Strip metadata and optional annotations",
+        "Secure",
+        keywords=("scrub", "metadata", "privacy", "annotations"),
+        action="optimize_secure",
     ),
 )
 
@@ -857,6 +881,11 @@ class ToolsWindow(QMainWindow):
             from pagedrop.ui.office_convert_window import open_office_convert_shell
 
             open_office_convert_shell(self)
+            return
+        if entry.action == "optimize_secure":
+            from pagedrop.ui.optimize_secure_shell import open_optimize_secure_shell
+
+            open_optimize_secure_shell(self, entry.id)
             return
 
     def _on_preview_result(self, path: str) -> None:

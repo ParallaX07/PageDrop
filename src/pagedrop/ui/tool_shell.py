@@ -251,11 +251,15 @@ def run_tool_job(
     existing_paths: list[Path] | None = None,
     progress_message: str = "Working…",
     success_toast: str | None = None,
+    secrets: dict[str, str] | None = None,
 ) -> None:
     """Password preflight → overwrite confirm → job runner (shared with Tools hub).
 
     *host* must provide ``begin_job``, ``end_job``, ``job_runner``, ``set_job_progress``,
     and ``WINDOW_TITLE`` (same shape as ``ToolsWindow`` / ``ToolShellWindow``).
+
+    *secrets* are runtime-only (e.g. encrypt passwords) — never written to
+    ``JobSpec``, settings, or logs.
     """
     begin = host.begin_job
     end = host.end_job
@@ -291,6 +295,7 @@ def run_tool_job(
             credentials=credentials,
             progress=set_progress,
             cancel=token,
+            secrets=secrets,
         )
     except JobCancelledError:
         end(status="Cancelled", toast="Job cancelled", toast_kind="info")
