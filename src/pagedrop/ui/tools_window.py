@@ -240,7 +240,8 @@ def _matches_query(entry: ToolEntry, query: str) -> bool:
     haystack = " ".join(
         (entry.title, entry.description, entry.category, *entry.keywords)
     ).casefold()
-    return query.casefold() in haystack
+    # Multi-token: every whitespace-separated term must appear in the haystack.
+    return all(term in haystack for term in query.casefold().split())
 
 
 def _absence_subtitle(status: CapabilityStatus) -> str:
@@ -418,6 +419,16 @@ class ToolsWindow(QMainWindow):
     def set_editor(self, editor: QWidget | None) -> None:
         self._editor = editor
 
+    @property
+    def editor(self) -> QWidget | None:
+        return self._editor
+
+    def show_toast(self, message: str, *, kind: str = "info") -> None:
+        self._toast.show_toast(message, kind=kind)
+
+    def show_result(self, path: str | Path) -> None:
+        self._result_bar.show_for(path)
+
     def job_runner(self) -> SerializedJobRunner:
         if self._job_runner is None:
             from pagedrop.ui.organize_tools import ensure_organize_runner
@@ -497,6 +508,8 @@ class ToolsWindow(QMainWindow):
         root.addWidget(self._result_bar)
 
         self._busy_overlay = BusyOverlay(central)
+        self._busy_overlay.set_cancellable(True)
+        self._busy_overlay.cancelled.connect(self.cancel_active_job)
         self._toast = ToastOverlay(central)
 
     def grid_columns(self) -> int:
@@ -541,6 +554,7 @@ class ToolsWindow(QMainWindow):
     ) -> None:
         self._job_running = False
         self._cancel_token = None
+        self._result_bar.clear()
         self._busy_overlay.hide_overlay()
         self._search.setEnabled(True)
         if error:

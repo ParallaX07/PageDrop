@@ -863,14 +863,32 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {busy_overlay_bg};
     }}
 
+    QWidget#BusyOverlayPanel {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
     QLabel#BusyOverlayMessage {{
         color: {text_primary};
         font-size: 14px;
         font-weight: 600;
-        padding: 16px 24px;
-        background-color: {bg_surface};
+        background-color: transparent;
+        border: none;
+    }}
+
+    QPushButton#BusyOverlayCancel {{
+        color: {text_primary};
+        font-size: 13px;
+        font-weight: 600;
+        padding: 6px 16px;
+        background-color: {bg_card};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QPushButton#BusyOverlayCancel:hover {{
+        background-color: {bg_card_hover};
     }}
 
     QWidget#ToastOverlay {{

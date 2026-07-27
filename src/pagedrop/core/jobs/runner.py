@@ -77,10 +77,14 @@ class SerializedJobRunner:
         cancel: CancelToken | None = None,
     ) -> Path:
         """Execute *spec*; return the promoted user output path."""
+        # Hygiene: only path-like option values — nested dicts/lists/ints are not Documents.
+        option_paths = [
+            v for v in spec.options.values() if isinstance(v, (str, Path))
+        ]
         ensure_no_fitz_document(
             *spec.inputs,
             spec.output,
-            *spec.options.values(),
+            *option_paths,
             what="JobSpec",
         )
         ensure_output_destination(

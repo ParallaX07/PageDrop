@@ -892,8 +892,8 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
             QMessageBox.critical(tools, "Attachments", str(exc))
             return
         tools.statusBar().showMessage(f"Extracted {out.name}")
-        tools._toast.show_toast(f"Extracted {out.name}", kind="success")
-        tools._result_bar.show_for(str(out))
+        tools.show_toast(f"Extracted {out.name}", kind="success")
+        tools.show_result(str(out))
         return
 
     if not name:
@@ -970,5 +970,5 @@ def launch_organize_tool(tools: ToolsWindow, tool_id: str) -> None:
             "A job is already running. Wait for it to finish or cancel it.",
         )
         return
-    ctx = editor_pdf_context(tools._editor)
+    ctx = editor_pdf_context(tools.editor)
     launcher(tools, ctx)

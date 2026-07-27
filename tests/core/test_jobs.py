@@ -259,3 +259,45 @@ def test_cancel_token_check() -> None:
     token.cancel()
     with pytest.raises(JobCancelledError):
         token.check()
+
+
+def test_run_filters_non_path_options(tmp_path: Path) -> None:
+    """Nested option values must not reach ensure_no_fitz_document."""
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    sidecar = tmp_path / "note.txt"
+    _write_pdf(src)
+
+    seen_options: list[dict] = []
+
+    def handler(ctx: JobContext) -> Path:
+        seen_options.append(dict(ctx.spec.options))
+        shutil.copy2(ctx.spec.inputs[0], ctx.staged_output)
+        return ctx.staged_output
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("copy", handler)
+        result = runner.run(
+            JobSpec.create(
+                "copy",
+                inputs=[src],
+                output=out,
+                options={
+                    "updates": {"title": "Nested"},
+                    "labels": [{"startpage": 0}],
+                    "ranges": [(0, 1)],
+                    "flag": True,
+                    "count": 3,
+                    "output_dir": str(tmp_path),
+                    "note_path": sidecar,
+                },
+            ),
+        )
+        assert result == out
+        assert seen_options[0]["updates"] == {"title": "Nested"}
+        assert seen_options[0]["output_dir"] == str(tmp_path)
+        assert seen_options[0]["note_path"] == sidecar
+    finally:
+        temp.cleanup()

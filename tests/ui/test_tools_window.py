@@ -78,6 +78,20 @@ def test_search_filters_category_grid(qtbot):
     window.close()
 
 
+def test_search_matches_multiple_words(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    window._search.setText("split extract")
+    visible = window.visible_tiles()
+    assert any(t.entry.id == "split" for t in visible)
+    # Full query as one substring would miss; both tokens must match.
+    window._search.setText("split zzz-no-match")
+    assert not window.visible_tiles()
+    window.close()
+
+
 def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
     window = ToolsWindow()
     qtbot.addWidget(window)
@@ -105,6 +119,43 @@ def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
     assert not window._busy_overlay.isVisible()
     assert status.currentMessage() == "Job failed"
     assert window._toast.isVisible()
+    window.close()
+
+
+def test_end_job_error_clears_result_bar(qtbot, tmp_path, monkeypatch):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    out = tmp_path / "prev.pdf"
+    out.write_bytes(b"%PDF-1.4")
+    window.show_result(out)
+    assert window._result_bar.isVisible()
+
+    monkeypatch.setattr(
+        "pagedrop.ui.tools_window.QMessageBox.critical",
+        lambda *args, **kwargs: 0,
+    )
+    window.begin_job("Running…")
+    window.end_job(error="Failed after a prior success")
+    assert not window._result_bar.isVisible()
+    window.close()
+
+
+def test_busy_overlay_cancel_aborts_job(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    token = window.begin_job("Working…")
+    assert window._busy_overlay._cancel_btn.isVisible()
+    assert not token.is_cancelled()
+
+    window._busy_overlay._cancel_btn.click()
+    assert token.is_cancelled()
+    assert window.is_job_running()  # overlay cancel does not end_job by itself
+    window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+    assert not window.is_job_running()
     window.close()
 
 

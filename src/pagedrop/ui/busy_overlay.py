@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 # info | success | error | undo — property drives theme chrome
@@ -12,6 +12,8 @@ ToastKind = str
 class BusyOverlay(QWidget):
     """Semi-transparent overlay that blocks interaction while work is in progress."""
 
+    cancelled = pyqtSignal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("BusyOverlay")
@@ -20,11 +22,34 @@ class BusyOverlay(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self._panel = QWidget()
+        self._panel.setObjectName("BusyOverlayPanel")
+        panel_layout = QVBoxLayout(self._panel)
+        panel_layout.setContentsMargins(16, 16, 16, 16)
+        panel_layout.setSpacing(12)
+        panel_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self._message = QLabel("Loading…")
         self._message.setObjectName("BusyOverlayMessage")
         self._message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._message.setWordWrap(True)
-        layout.addWidget(self._message)
+        panel_layout.addWidget(self._message)
+
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setObjectName("BusyOverlayCancel")
+        self._cancel_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._cancel_btn.setAccessibleName("Cancel")
+        self._cancel_btn.clicked.connect(self.cancelled.emit)
+        self._cancel_btn.hide()
+        panel_layout.addWidget(
+            self._cancel_btn, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
+
+        layout.addWidget(self._panel)
+
+    def set_cancellable(self, enabled: bool) -> None:
+        """Show or hide the inline Cancel button (Tools jobs enable this)."""
+        self._cancel_btn.setVisible(enabled)
 
     def show_message(self, message: str) -> None:
         self._message.setText(message)
