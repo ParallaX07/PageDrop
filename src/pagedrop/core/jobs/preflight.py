@@ -39,6 +39,9 @@ def preflight_pdf_inputs(
         if cancel is not None:
             cancel.check()
         path = str(raw)
+        # Native convert jobs may mix non-PDF inputs; only unlock real PDFs.
+        if Path(path).suffix.lower() != ".pdf":
+            continue
         filename = Path(path).name
         password = creds.get(path)
 

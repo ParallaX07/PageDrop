@@ -342,6 +342,8 @@ class ToolShellWindow(QMainWindow):
         multi: bool = False,
         browse_title: str = "Choose PDF",
         empty_prompt: str = "Drop PDF here, or click to browse",
+        accept: Callable[[str], bool] | None = None,
+        dialog_filter: str = _PDF_FILTER,
     ) -> None:
         super().__init__(None)
         self.WINDOW_TITLE = title
@@ -375,6 +377,8 @@ class ToolShellWindow(QMainWindow):
 
         self._drop_zone = FileDropZone(
             self,
+            accept=accept,
+            dialog_filter=dialog_filter,
             multi=multi,
             browse_title=browse_title,
             empty_prompt=empty_prompt,

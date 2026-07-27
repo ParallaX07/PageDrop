@@ -73,7 +73,28 @@ def _page_indices(doc: fitz.Document, pages: Sequence[int] | None) -> list[int]:
     return indices
 
 
-def _collision_safe_path(path: Path) -> Path:
+# Raster / SVG exports write one file per page.
+MULTI_PAGE_EXPORT_IDS: frozenset[str] = frozenset(
+    {"png", "jpeg", "webp", "tiff", "svg"}
+)
+
+_EXPORT_SUFFIX: dict[str, str] = {
+    "png": ".png",
+    "jpeg": ".jpg",
+    "webp": ".webp",
+    "tiff": ".tiff",
+    "svg": ".svg",
+    "text": ".txt",
+    "json": ".json",
+    "xml": ".xml",
+    "cbz": ".cbz",
+    "csv": ".csv",
+    "xlsx": ".xlsx",
+}
+
+
+def collision_safe_path(path: Path) -> Path:
+    """Return *path*, or ``stem_2.ext`` / ``stem_3.ext`` … if it already exists."""
     if not path.exists():
         return path
     stem, suffix = path.stem, path.suffix
@@ -83,6 +104,25 @@ def _collision_safe_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         index += 1
+
+
+def _collision_safe_path(path: Path) -> Path:
+    return collision_safe_path(path)
+
+
+def predicted_export_paths(
+    output_path: str | Path,
+    *,
+    format_id: str,
+    pages: Sequence[int],
+) -> list[Path]:
+    """Paths a multi/single-page export would write for *pages* (0-based)."""
+    output = Path(output_path)
+    suffix = _EXPORT_SUFFIX[format_id]
+    if format_id not in MULTI_PAGE_EXPORT_IDS:
+        return [output if output.suffix else output.with_suffix(suffix)]
+    out_dir, stem = _output_dir_and_stem(output, multi=True)
+    return [out_dir / f"{stem}_p{index + 1:03d}{suffix}" for index in pages]
 
 
 # --- Import → PDF -----------------------------------------------------------
