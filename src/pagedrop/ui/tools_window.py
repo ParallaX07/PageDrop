@@ -27,9 +27,10 @@ from pagedrop.core.capabilities import (
     CapabilityStatus,
     probe,
 )
-from pagedrop.core.jobs import CancelToken
+from pagedrop.core.jobs import CancelToken, SerializedJobRunner
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import prompt_cancel_running_job, prompt_missing_capability
+from pagedrop.ui.organize_tools import launch_organize_tool
 from pagedrop.ui.result_actions import (
     ResultActionsBar,
     open_in_editor,
@@ -37,6 +38,7 @@ from pagedrop.ui.result_actions import (
     show_in_folder,
 )
 from pagedrop.ui.theme import tool_tile_stylesheet
+from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
     from pagedrop.ui.window_manager import WindowManager
@@ -78,11 +80,115 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
     ),
     ToolEntry(
         "split",
-        "Split PDF",
+        "Split / extract",
         "Split by ranges into new files",
         "Organize",
-        keywords=("extract", "ranges"),
-        coming_soon=True,
+        keywords=("extract", "ranges", "split"),
+        action="organize",
+    ),
+    ToolEntry(
+        "alternate",
+        "Alternate pages",
+        "Mix pages from two PDFs",
+        "Organize",
+        keywords=("interleave", "mix"),
+        action="organize",
+    ),
+    ToolEntry(
+        "reverse",
+        "Reverse pages",
+        "Reverse order; optional blank page",
+        "Organize",
+        keywords=("flip", "blank"),
+        action="organize",
+    ),
+    ToolEntry(
+        "n_up",
+        "N-up",
+        "Pack pages onto a grid",
+        "Organize",
+        keywords=("impose", "grid", "2-up", "4-up"),
+        action="organize",
+    ),
+    ToolEntry(
+        "booklet",
+        "Booklet",
+        "Simple 2-up booklet imposition",
+        "Organize",
+        keywords=("impose", "print"),
+        action="organize",
+    ),
+    ToolEntry(
+        "posterize",
+        "Posterize",
+        "Split each page into tiles",
+        "Organize",
+        keywords=("tiles", "poster"),
+        action="organize",
+    ),
+    ToolEntry(
+        "divide",
+        "Divide pages",
+        "Split each page horizontally or vertically",
+        "Organize",
+        keywords=("halve", "cut"),
+        action="organize",
+    ),
+    ToolEntry(
+        "combine",
+        "Combine to long page",
+        "Stack all pages into one long page",
+        "Organize",
+        keywords=("scroll", "strip"),
+        action="organize",
+    ),
+    ToolEntry(
+        "normalize",
+        "Normalize page size",
+        "Fit or fill pages to a target size",
+        "Organize",
+        keywords=("resize", "paper", "a4", "letter"),
+        action="organize",
+    ),
+    ToolEntry(
+        "attachments",
+        "Attachments",
+        "List, add, extract, or remove embedded files",
+        "Organize",
+        keywords=("embed", "embfile"),
+        action="organize",
+    ),
+    ToolEntry(
+        "metadata",
+        "Metadata",
+        "View, edit, or strip document info",
+        "Organize",
+        keywords=("info", "xmp", "strip"),
+        action="organize",
+    ),
+    ToolEntry(
+        "page_labels",
+        "Page labels",
+        "Set PDF page label style",
+        "Organize",
+        keywords=("roman", "numbering"),
+        action="organize",
+    ),
+    ToolEntry(
+        "zip",
+        "ZIP PDFs",
+        "Pack PDFs into a ZIP archive",
+        "Organize",
+        keywords=("archive", "compress"),
+        action="organize",
+    ),
+    ToolEntry(
+        "compare",
+        "Compare PDFs",
+        "Visual sample diff with a heatmap PDF",
+        "Organize",
+        keywords=("diff", "heatmap"),
+        action="organize",
     ),
     ToolEntry(
         "create_pdf",
@@ -293,6 +399,7 @@ class ToolsWindow(QMainWindow):
         self._window_manager = window_manager
         self._job_running = False
         self._cancel_token: CancelToken | None = None
+        self._job_runner: SerializedJobRunner | None = None
         self._tiles: list[ToolTile] = []
         self._category_sections: dict[str, QWidget] = {}
         self._grid_columns = _GRID_COLUMNS
@@ -310,6 +417,13 @@ class ToolsWindow(QMainWindow):
 
     def set_editor(self, editor: QWidget | None) -> None:
         self._editor = editor
+
+    def job_runner(self) -> SerializedJobRunner:
+        if self._job_runner is None:
+            from pagedrop.ui.organize_tools import ensure_organize_runner
+
+            self._job_runner = ensure_organize_runner(TempManager())
+        return self._job_runner
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -504,6 +618,9 @@ class ToolsWindow(QMainWindow):
             return
 
         editor = self._editor
+        if entry.action == "organize":
+            launch_organize_tool(self, entry.id)
+            return
         if entry.action == "merge":
             open_fn = getattr(editor, "_open_merge_window", None)
             if callable(open_fn):

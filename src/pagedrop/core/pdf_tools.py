@@ -69,6 +69,27 @@ def _assert_not_overwrite(source_path: str, output_path: str) -> None:
         raise ValueError("Output path must not equal source path")
 
 
+def predicted_range_output_paths(
+    ranges: list[tuple[int, int]],
+    output_dir: str | Path,
+    *,
+    base_name: str = "range",
+    zero_pad: int = 4,
+) -> list[Path]:
+    """Return the paths ``extract_ranges_to_folder`` would write for *ranges*."""
+    out_dir = Path(output_dir)
+    paths: list[Path] = []
+    for start, end in ranges:
+        if start < 0 or end < start:
+            raise ValueError(f"Invalid range: {(start, end)}")
+        name = (
+            f"{base_name}_range_{start + 1:0{zero_pad}d}-"
+            f"{end + 1:0{zero_pad}d}.pdf"
+        )
+        paths.append(out_dir / name)
+    return paths
+
+
 def extract_ranges_to_folder(
     source_pdf: str,
     ranges: list[tuple[int, int]],
@@ -76,6 +97,7 @@ def extract_ranges_to_folder(
     *,
     base_name: str = "range",
     zero_pad: int = 4,
+    password: str | None = None,
 ) -> list[Path]:
     """Extract each inclusive (start,end) page range into a separate PDF.
 
@@ -84,7 +106,7 @@ def extract_ranges_to_folder(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out_paths: list[Path] = []
     try:
         for start, end in ranges:
@@ -101,6 +123,8 @@ def extract_ranges_to_folder(
                     f"{end + 1:0{zero_pad}d}.pdf"
                 )
                 out_path = out_dir / name
+                if Path(out_path).resolve() == Path(source_pdf).resolve():
+                    raise ValueError("Output path must not equal source path")
                 out.save(str(out_path))
                 out_paths.append(out_path)
             finally:
@@ -117,6 +141,8 @@ def alternate_pdfs(
     output_path: str,
     *,
     start_with_a: bool = True,
+    password_a: str | None = None,
+    password_b: str | None = None,
 ) -> None:
     """Create a new PDF by alternating pages from `pdf_a` and `pdf_b`.
 
@@ -125,8 +151,8 @@ def alternate_pdfs(
     if Path(output_path).resolve() in {Path(pdf_a).resolve(), Path(pdf_b).resolve()}:
         raise ValueError("Output path must not match any input path")
 
-    a = _open(pdf_a)
-    b = _open(pdf_b)
+    a = _open(pdf_a, password=password_a)
+    b = _open(pdf_b, password=password_b)
     out = fitz.open()
     try:
         i = 0
@@ -162,6 +188,7 @@ def reverse_pdf_pages(
     *,
     add_blank_page: bool = False,
     blank_size_from: str = "last",
+    password: str | None = None,
 ) -> None:
     """Reverse page order and optionally append a blank page.
 
@@ -169,7 +196,7 @@ def reverse_pdf_pages(
     """
     _assert_not_overwrite(source_pdf, output_path)
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         for pno in reversed(range(len(src))):
@@ -202,6 +229,7 @@ def normalize_pdf_page_size(
     *,
     strategy: str = "fit",
     margins_pt: float | tuple[float, float] = 0.0,
+    password: str | None = None,
 ) -> None:
     """Normalize every page to an explicit target size.
 
@@ -216,7 +244,7 @@ def normalize_pdf_page_size(
     if target_width_pt <= 0 or target_height_pt <= 0:
         raise ValueError("target_* must be positive")
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         if isinstance(margins_pt, tuple):
@@ -251,13 +279,14 @@ def n_up_pdf(
     cols: int,
     margin_pt: float = 0.0,
     keep_proportion: bool = True,
+    password: str | None = None,
 ) -> None:
     """Pack multiple pages onto a grid (row-major order)."""
     _assert_not_overwrite(source_pdf, output_path)
     if rows <= 0 or cols <= 0:
         raise ValueError("rows/cols must be positive")
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -305,6 +334,7 @@ def booklet_pdf(
     output_path: str,
     *,
     margin_pt: float = 0.0,
+    password: str | None = None,
 ) -> None:
     """Simple 2-up "booklet-like" imposition.
 
@@ -312,7 +342,7 @@ def booklet_pdf(
     Full duplex fold imposition rules can be added later if needed.
     """
     _assert_not_overwrite(source_pdf, output_path)
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -354,13 +384,14 @@ def posterize_pdf(
     *,
     rows: int,
     cols: int,
+    password: str | None = None,
 ) -> None:
     """Split each page into a grid of cropped tiles (each tile becomes a page)."""
     _assert_not_overwrite(source_pdf, output_path)
     if rows <= 0 or cols <= 0:
         raise ValueError("rows/cols must be positive")
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -395,6 +426,7 @@ def divide_pdf_pages(
     output_path: str,
     *,
     direction: str,
+    password: str | None = None,
 ) -> None:
     """Divide each page into 2 tiles and return a 2x page-count output.
 
@@ -406,7 +438,7 @@ def divide_pdf_pages(
     if direction not in {"vertical", "horizontal"}:
         raise ValueError("direction must be 'vertical' or 'horizontal'")
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -475,13 +507,14 @@ def combine_pages_to_single_long(
     output_path: str,
     *,
     axis: str = "vertical",
+    password: str | None = None,
 ) -> None:
     """Combine all pages into one long page (vertical stacking)."""
     _assert_not_overwrite(source_pdf, output_path)
     if axis != "vertical":
         raise ValueError("axis must be 'vertical'")
 
-    src = _open(source_pdf)
+    src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
         # Standardize to first page width; scale other pages proportionally.
@@ -695,6 +728,9 @@ def page_labels_set(
 def zip_pdfs(paths: Iterable[str | Path], output_zip_path: str | Path) -> Path:
     """Zip PDF files into a new archive."""
     out_zip = Path(output_zip_path)
+    sources = [Path(p).resolve() for p in paths]
+    if out_zip.resolve() in sources:
+        raise ValueError("Output path must not equal any source path")
     out_zip.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for p in paths:
@@ -719,14 +755,18 @@ def compare_pdfs_heatmap(
     sample_grid: tuple[int, int] = (12, 12),
     byte_diff_threshold: int = 20,
     max_pages: int | None = None,
+    password_a: str | None = None,
+    password_b: str | None = None,
 ) -> CompareResult:
     """Compare two PDFs visually via sampled pixel diffs and emit a heatmap PDF.
 
     No OpenCV; uses MuPDF pixmaps + sampled absolute byte diffs.
     """
-    a = _open(pdf_a)
-    b = _open(pdf_b)
     out_path = Path(output_heatmap_pdf)
+    if out_path.resolve() in {Path(pdf_a).resolve(), Path(pdf_b).resolve()}:
+        raise ValueError("Output path must not match any input path")
+    a = _open(pdf_a, password=password_a)
+    b = _open(pdf_b, password=password_b)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out = fitz.open()
     try:

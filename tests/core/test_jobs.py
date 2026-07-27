@@ -83,6 +83,37 @@ def test_job_success_promotes_staged_output(tmp_path: Path) -> None:
         temp.cleanup()
 
 
+def test_promote_falls_back_on_cross_device_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """os.replace fails with EXDEV when /tmp and home are different mounts."""
+    import errno
+    import os
+
+    from pagedrop.core.jobs.staging import JobStaging
+
+    real_replace = os.replace
+
+    def exdev_replace(src: object, dst: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "replace", exdev_replace)
+
+    temp = TempManager()
+    try:
+        staging = JobStaging(temp)
+        staged = staging.stage_file("out.pdf")
+        staged.write_bytes(b"%PDF-1.4 cross-device")
+        dest = tmp_path / "Downloads" / "out.pdf"
+        result = staging.promote(staged, dest)
+        assert result == dest
+        assert dest.read_bytes() == b"%PDF-1.4 cross-device"
+        assert not staged.exists()
+    finally:
+        monkeypatch.setattr(os, "replace", real_replace)
+        temp.cleanup()
+
+
 def test_cancel_removes_partial_and_orphans(tmp_path: Path) -> None:
     src = tmp_path / "in.pdf"
     out = tmp_path / "out.pdf"
