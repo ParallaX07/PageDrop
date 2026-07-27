@@ -196,6 +196,10 @@ def _windows_office_progids() -> list[str]:
 # User-configured soffice path (Settings / tests). Checked before PATH.
 _configured_soffice_path: str | None = None
 
+# Preferred Office → PDF backend: ``auto`` | ``com`` | ``libreoffice``.
+_configured_office_backend: str = "auto"
+_OFFICE_BACKEND_VALUES = frozenset({"auto", "com", "libreoffice"})
+
 
 def set_configured_soffice_path(path: str | None) -> None:
     """Set or clear the user-configured LibreOffice ``soffice`` path.
@@ -211,6 +215,18 @@ def set_configured_soffice_path(path: str | None) -> None:
 def configured_soffice_path() -> str | None:
     """Return the path last set via :func:`set_configured_soffice_path`."""
     return _configured_soffice_path
+
+
+def set_configured_office_backend(backend: str | None) -> None:
+    """Set preferred Office → PDF backend (``auto`` / ``com`` / ``libreoffice``)."""
+    global _configured_office_backend
+    raw = (backend or "auto").strip().lower()
+    _configured_office_backend = raw if raw in _OFFICE_BACKEND_VALUES else "auto"
+
+
+def configured_office_backend() -> str:
+    """Return the preferred backend last set via :func:`set_configured_office_backend`."""
+    return _configured_office_backend
 
 
 def _probe_libreoffice() -> CapabilityStatus:

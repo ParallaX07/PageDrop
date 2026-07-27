@@ -36,6 +36,9 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setStyle("Fusion")
     install_accessibility(app)
+    from pagedrop.ui.settings import apply_office_settings_to_capabilities
+
+    apply_office_settings_to_capabilities()
     icon = app_icon()
     app.setWindowIcon(icon)
     manager = WindowManager(app)

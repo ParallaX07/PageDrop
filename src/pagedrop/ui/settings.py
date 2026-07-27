@@ -20,6 +20,15 @@ KEY_LIGHT_THEME = "view/light_theme"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
+KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
+KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
+
+OfficePreferredBackend = Literal["auto", "com", "libreoffice"]
+OFFICE_BACKEND_VALUES: tuple[OfficePreferredBackend, ...] = (
+    "auto",
+    "com",
+    "libreoffice",
+)
 
 # Confirm multi-page delete when selection size exceeds this (instant for ≤3).
 DELETE_CONFIRM_THRESHOLD = 3
@@ -211,3 +220,53 @@ def has_seen_tips() -> bool:
 
 def set_has_seen_tips(seen: bool = True) -> None:
     _settings().setValue(KEY_HAS_SEEN_TIPS, bool(seen))
+
+
+def office_preferred_backend() -> OfficePreferredBackend:
+    """Preferred Office → PDF engine (default: auto)."""
+    raw = str(_settings().value(KEY_OFFICE_PREFERRED_BACKEND, "auto")).lower()
+    if raw in OFFICE_BACKEND_VALUES:
+        return raw  # type: ignore[return-value]
+    return "auto"
+
+
+def set_office_preferred_backend(backend: OfficePreferredBackend | str) -> None:
+    value = str(backend).lower()
+    if value not in OFFICE_BACKEND_VALUES:
+        raise ValueError(f"Unknown office backend preference: {backend!r}")
+    _settings().setValue(KEY_OFFICE_PREFERRED_BACKEND, value)
+    from pagedrop.core.capabilities import set_configured_office_backend
+
+    set_configured_office_backend(value)
+
+
+def office_soffice_path() -> str:
+    """User-configured LibreOffice ``soffice`` path, or empty when unset."""
+    value = _settings().value(KEY_OFFICE_SOFFICE_PATH, "")
+    return str(value).strip() if value else ""
+
+
+def set_office_soffice_path(path: str | Path | None) -> None:
+    """Persist custom soffice path and push it into the capability registry."""
+    raw = str(path).strip() if path else ""
+    if raw:
+        _settings().setValue(KEY_OFFICE_SOFFICE_PATH, raw)
+    else:
+        _settings().remove(KEY_OFFICE_SOFFICE_PATH)
+    from pagedrop.core.capabilities import clear_cache, set_configured_soffice_path
+
+    set_configured_soffice_path(raw or None)
+    clear_cache()
+
+
+def apply_office_settings_to_capabilities() -> None:
+    """Load QSettings Office prefs into the in-process capability registry."""
+    from pagedrop.core.capabilities import (
+        clear_cache,
+        set_configured_office_backend,
+        set_configured_soffice_path,
+    )
+
+    set_configured_office_backend(office_preferred_backend())
+    set_configured_soffice_path(office_soffice_path() or None)
+    clear_cache()

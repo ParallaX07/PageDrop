@@ -1,0 +1,242 @@
+"""Office → PDF orchestration — capability report, auto route, stage/validate, retry."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import fitz
+import pytest
+
+from pagedrop.core.backends import office
+from pagedrop.core.backends.office import (
+    OfficeCapabilityReport,
+    OfficeComFailedNeedsRetry,
+    OfficeConversionError,
+    capability_report,
+    com_supports_path,
+    convert_office_to_pdf,
+    resolve_backend,
+    validate_pdf,
+)
+from pagedrop.core.backends.office_com import OfficeComConversionError
+from pagedrop.core.capabilities import (
+    LIBREOFFICE,
+    OFFICE_COM,
+    AbsenceReason,
+    CapabilityStatus,
+    clear_cache,
+    set_configured_office_backend,
+    set_configured_soffice_path,
+)
+from pagedrop.core.jobs.errors import BackendUnavailableError
+
+
+@pytest.fixture(autouse=True)
+def _reset_office_config() -> None:
+    set_configured_soffice_path(None)
+    set_configured_office_backend("auto")
+    clear_cache()
+    yield
+    set_configured_soffice_path(None)
+    set_configured_office_backend("auto")
+    clear_cache()
+
+
+def _pdf_bytes(pages: int = 1) -> bytes:
+    doc = fitz.open()
+    try:
+        for _ in range(pages):
+            doc.new_page(width=200, height=200)
+        return doc.tobytes()
+    finally:
+        doc.close()
+
+
+def _mock_report(
+    *, com: bool, lo: bool, apps: list[str] | None = None
+) -> OfficeCapabilityReport:
+    com_status = (
+        CapabilityStatus(
+            id=OFFICE_COM,
+            available=True,
+            detail="mocked",
+            extras={"apps": apps or []},
+        )
+        if com
+        else CapabilityStatus(
+            id=OFFICE_COM,
+            available=False,
+            reason=AbsenceReason.ENGINE_MISSING,
+            detail="no com",
+        )
+    )
+    lo_status = (
+        CapabilityStatus(
+            id=LIBREOFFICE,
+            available=True,
+            detail="mocked",
+            extras={"path": "/bin/soffice"},
+        )
+        if lo
+        else CapabilityStatus(
+            id=LIBREOFFICE,
+            available=False,
+            reason=AbsenceReason.ENGINE_MISSING,
+            detail="no lo",
+        )
+    )
+    return OfficeCapabilityReport(
+        com=com_status,
+        libreoffice=lo_status,
+        preferred="auto",
+        soffice_path=None,
+    )
+
+
+def test_detect_com_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_probe(cid: str, refresh: bool = False) -> CapabilityStatus:
+        if cid == OFFICE_COM:
+            return CapabilityStatus(
+                id=OFFICE_COM,
+                available=True,
+                detail="mocked",
+                extras={"apps": ["word", "excel"]},
+            )
+        return CapabilityStatus(
+            id=LIBREOFFICE,
+            available=False,
+            reason=AbsenceReason.ENGINE_MISSING,
+            detail="no lo",
+        )
+
+    monkeypatch.setattr("pagedrop.core.backends.office.probe", fake_probe)
+    report = capability_report()
+    assert report.com.available
+    assert report.com.extras["apps"] == ["word", "excel"]
+    assert not report.libreoffice.available
+
+
+def test_detect_libreoffice_mocked_path_and_which(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = tmp_path / "soffice"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake.chmod(0o755)
+    set_configured_soffice_path(str(fake))
+    clear_cache()
+    report = capability_report(refresh=True)
+    assert report.libreoffice.available
+    assert Path(str(report.libreoffice.extras["path"])) == fake.resolve()
+
+
+def test_auto_prefers_com_when_format_supported() -> None:
+    report = _mock_report(com=True, lo=True, apps=["word", "excel"])
+    assert resolve_backend("doc.docx", preference="auto", report=report) == "com"
+    assert resolve_backend("sheet.xlsx", preference="auto", report=report) == "com"
+    # PowerPoint ProgID absent → LibreOffice
+    assert resolve_backend("deck.pptx", preference="auto", report=report) == "libreoffice"
+
+
+def test_com_failure_offers_explicit_lo_retry_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "a.docx"
+    src.write_bytes(b"docx")
+    dst = tmp_path / "a.pdf"
+    report = _mock_report(com=True, lo=True, apps=["word"])
+
+    monkeypatch.setattr(office, "capability_report", lambda **_k: report)
+    monkeypatch.setattr(
+        office.office_com,
+        "convert_via_com",
+        MagicMock(side_effect=OfficeComConversionError("boom", code="fail")),
+    )
+    lo_mock = MagicMock()
+    monkeypatch.setattr(office.libreoffice, "convert_via_libreoffice", lo_mock)
+
+    with pytest.raises(OfficeComFailedNeedsRetry) as exc:
+        convert_office_to_pdf(src, dst, backend="auto")
+    assert exc.value.retry_with_libreoffice is True
+    lo_mock.assert_not_called()  # no silent swap
+
+    def fake_lo(inp, out, **_kwargs):
+        Path(out).write_bytes(_pdf_bytes(1))
+        return Path(out)
+
+    lo_mock.side_effect = fake_lo
+    result = convert_office_to_pdf(src, dst, backend="libreoffice")
+    assert result.backend == "libreoffice"
+    assert result.path.is_file()
+    lo_mock.assert_called_once()
+
+
+def test_missing_backend_actionable_error() -> None:
+    report = _mock_report(com=False, lo=False)
+    with pytest.raises(BackendUnavailableError):
+        resolve_backend("a.docx", preference="auto", report=report)
+
+
+def test_stage_validate_promote_rejects_non_pdf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "a.docx"
+    src.write_bytes(b"docx")
+    dst = tmp_path / "out.pdf"
+    report = _mock_report(com=False, lo=True)
+    monkeypatch.setattr(office, "capability_report", lambda **_k: report)
+
+    def fake_lo(inp, out, **_kwargs):
+        Path(out).write_bytes(b"%PDF-not-really")
+        return Path(out)
+
+    monkeypatch.setattr(office.libreoffice, "convert_via_libreoffice", fake_lo)
+    with pytest.raises(OfficeConversionError) as exc:
+        convert_office_to_pdf(src, dst, backend="libreoffice")
+    assert exc.value.code == "invalid_pdf"
+    assert not dst.exists()
+
+
+def test_stage_validate_promote_happy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "a.docx"
+    src.write_bytes(b"docx")
+    dst = tmp_path / "out.pdf"
+    report = _mock_report(com=False, lo=True)
+    monkeypatch.setattr(office, "capability_report", lambda **_k: report)
+
+    def fake_lo(inp, out, **_kwargs):
+        Path(out).write_bytes(_pdf_bytes(2))
+        return Path(out)
+
+    monkeypatch.setattr(office.libreoffice, "convert_via_libreoffice", fake_lo)
+    result = convert_office_to_pdf(src, dst, backend="libreoffice")
+    assert result.page_count == 2
+    assert dst.is_file()
+    assert validate_pdf(dst) == 2
+
+
+def test_source_hash_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "a.docx"
+    src.write_bytes(b"stable-office-bytes")
+    before = hashlib.sha256(src.read_bytes()).hexdigest()
+    dst = tmp_path / "out.pdf"
+    report = _mock_report(com=False, lo=True)
+    monkeypatch.setattr(office, "capability_report", lambda **_k: report)
+
+    def fake_lo(inp, out, **_kwargs):
+        Path(out).write_bytes(_pdf_bytes())
+        return Path(out)
+
+    monkeypatch.setattr(office.libreoffice, "convert_via_libreoffice", fake_lo)
+    convert_office_to_pdf(src, dst, backend="libreoffice")
+    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+
+
+def test_com_supports_path_uses_apps() -> None:
+    assert com_supports_path("x.docx", apps=["word"])
+    assert not com_supports_path("x.pptx", apps=["word"])

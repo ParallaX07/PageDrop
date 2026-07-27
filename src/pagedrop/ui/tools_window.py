@@ -70,7 +70,7 @@ class ToolEntry:
     keywords: tuple[str, ...] = ()
     capability_id: str | None = None
     coming_soon: bool = False
-    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf"
+    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf"
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -218,6 +218,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("export", "png", "jpeg", "webp", "svg", "csv"),
         action="export_from_pdf",
+    ),
+    ToolEntry(
+        "office_to_pdf",
+        "Office to PDF",
+        "Word, Excel, PowerPoint → PDF via Office or LibreOffice",
+        "Convert",
+        keywords=("word", "excel", "powerpoint", "docx", "xlsx", "pptx", "libreoffice"),
+        action="office_to_pdf",
     ),
     ToolEntry(
         "export_tiff",
@@ -844,6 +852,12 @@ class ToolsWindow(QMainWindow):
             from pagedrop.ui.native_convert_shell import open_conversion_shell
 
             open_conversion_shell(self, entry.id)
+            return
+        if entry.action == "office_to_pdf":
+            from pagedrop.ui.office_convert_window import open_office_convert_shell
+
+            open_office_convert_shell(self)
+            return
 
     def _on_preview_result(self, path: str) -> None:
         preview_pdf(path, parent=self)

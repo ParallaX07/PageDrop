@@ -353,6 +353,7 @@ class ToolShellWindow(QMainWindow):
         self._cancel_token = None
         self._job_runner: SerializedJobRunner | None = None
         self._run_handler: Callable[[], None] | None = None
+        self._run_enabled_check: Callable[[], bool] | None = None
 
         self.setWindowTitle(title)
         self.setObjectName("ToolShellWindow")
@@ -439,6 +440,11 @@ class ToolShellWindow(QMainWindow):
     def set_run_handler(self, handler: Callable[[], None]) -> None:
         self._run_handler = handler
 
+    def set_run_enabled_check(self, check: Callable[[], bool] | None) -> None:
+        """Optional extra gate for Run (e.g. backend present). Re-evaluates now."""
+        self._run_enabled_check = check
+        self._update_run_enabled()
+
     def job_runner(self) -> SerializedJobRunner:
         if self._job_runner is None:
             from pagedrop.ui.organize_tools import ensure_organize_runner
@@ -508,7 +514,10 @@ class ToolShellWindow(QMainWindow):
         self._toast.show_toast(message, kind=kind)
 
     def _update_run_enabled(self) -> None:
-        self._run_btn.setEnabled(bool(self._drop_zone.paths()) and not self._job_running)
+        ok = bool(self._drop_zone.paths()) and not self._job_running
+        if ok and self._run_enabled_check is not None:
+            ok = bool(self._run_enabled_check())
+        self._run_btn.setEnabled(ok)
 
     def _on_run(self) -> None:
         if self._job_running:

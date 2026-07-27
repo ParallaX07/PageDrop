@@ -281,6 +281,12 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+/",
         )
         actions.register("tips", "Show &Tips", slot=self._show_tips_overlay)
+        actions.register(
+            "preferences",
+            "&Preferences…",
+            slot=self._open_preferences,
+            shortcut="Ctrl+,",
+        )
 
         self._preview_action = actions.register(
             "preview",
@@ -432,6 +438,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(a["confirm_delete"])
         edit_menu.addAction(a["confirm_close_dirty"])
         edit_menu.addAction(a["remember_geometry"])
+        edit_menu.addSeparator()
+        edit_menu.addAction(a["preferences"])
 
         view_menu = menubar.addMenu("&View")
         view_menu.addAction(a["light_theme"])
@@ -1417,6 +1425,11 @@ class MainWindow(QMainWindow):
 
     def _show_keyboard_shortcuts(self) -> None:
         KeyboardShortcutsDialog(self).exec()
+
+    def _open_preferences(self) -> None:
+        from pagedrop.ui.preferences_dialog import open_preferences
+
+        open_preferences(self)
 
     def eventFilter(self, obj, event) -> bool:
         if (
