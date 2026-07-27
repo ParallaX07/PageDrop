@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import zipfile
 
 import fitz
+import pytest
 
 from pagedrop.core import pdf_tools
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _make_text_pdf(
@@ -74,6 +80,7 @@ def _make_single_page_with_quadrant_labels(
 def test_split_extract_ranges_to_folder(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=[f"P{i}" for i in range(6)], page_size=(200, 200))
+    source_hash = _file_hash(src)
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()
@@ -85,6 +92,7 @@ def test_split_extract_ranges_to_folder(tmp_path: Path) -> None:
     )
 
     assert [p.name for p in out_paths] == ["doc_range_0001-0002.pdf", "doc_range_0003-0006.pdf"]
+    assert _file_hash(src) == source_hash
 
     first = fitz.open(str(out_paths[0]))
     try:
@@ -125,10 +133,12 @@ def test_alternate_pdfs_page_order(tmp_path: Path) -> None:
 def test_reverse_pages_and_add_blank(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=["R0", "R1", "R2"], page_size=(200, 200))
+    source_hash = _file_hash(src)
 
     out = tmp_path / "rev.pdf"
     pdf_tools.reverse_pdf_pages(str(src), str(out), add_blank_page=True)
 
+    assert _file_hash(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert doc.page_count == 4
@@ -143,10 +153,12 @@ def test_reverse_pages_and_add_blank(tmp_path: Path) -> None:
 def test_n_up_layout_row_major(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=["N0", "N1", "N2", "N3"], page_size=(200, 200), text_pos=(20, 20))
+    source_hash = _file_hash(src)
 
     out = tmp_path / "nup.pdf"
     pdf_tools.n_up_pdf(str(src), str(out), rows=2, cols=2, margin_pt=0.0)
 
+    assert _file_hash(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert doc.page_count == 1
@@ -277,6 +289,7 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
+    source_hash = _file_hash(src)
 
     out_added = tmp_path / "with_attach.pdf"
     pdf_tools.attachment_add(
@@ -287,6 +300,7 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
         filename="note.txt",
         overwrite=False,
     )
+    assert _file_hash(src) == source_hash
 
     names = [a.name for a in pdf_tools.attachments_list(str(out_added))]
     assert "note.txt" in names
@@ -313,9 +327,11 @@ def test_metadata_set_strip_and_xmp_v1(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
+    source_hash = _file_hash(src)
 
     out_set = tmp_path / "set.pdf"
     pdf_tools.metadata_set(str(src), str(out_set), updates={"title": "new"})
+    assert _file_hash(src) == source_hash
     meta = pdf_tools.metadata_get(str(out_set))
     assert meta["title"] == "new"
 
@@ -347,6 +363,7 @@ def test_page_labels_get_set(tmp_path: Path) -> None:
 def test_zip_pdfs_members(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=[f"P{i}" for i in range(3)], page_size=(200, 200))
+    source_hash = _file_hash(src)
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     parts = pdf_tools.extract_ranges_to_folder(
@@ -357,6 +374,7 @@ def test_zip_pdfs_members(tmp_path: Path) -> None:
     )
     zip_path = tmp_path / "bundle.zip"
     pdf_tools.zip_pdfs(parts, zip_path)
+    assert _file_hash(src) == source_hash
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         names = sorted(zf.namelist())
@@ -381,6 +399,8 @@ def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
         doc.save(str(b))
     finally:
         doc.close()
+    hash_a = _file_hash(a)
+    hash_b = _file_hash(b)
 
     heatmap = tmp_path / "heatmap.pdf"
     result = pdf_tools.compare_pdfs_heatmap(
@@ -393,10 +413,56 @@ def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
     )
     assert heatmap.exists()
     assert result.page_diffs and result.page_diffs[0] > 0.0
+    assert _file_hash(a) == hash_a
+    assert _file_hash(b) == hash_b
 
     out_doc = fitz.open(str(heatmap))
     try:
         assert out_doc.page_count == 1
+        # Base page shows PDF A content; red overlays mark diffs (not blank white).
+        assert out_doc[0].search_for("A")
+        assert out_doc[0].get_drawings()
+    finally:
+        out_doc.close()
+
+
+def test_compare_keeps_pixmap_cache_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compare streams page pairs at a clamped DPI — never full-document pixmap caches."""
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    page_count = 6
+    _make_text_pdf(a, page_texts=[f"A{i}" for i in range(page_count)], page_size=(600, 600))
+    _make_text_pdf(b, page_texts=[f"B{i}" for i in range(page_count)], page_size=(600, 600))
+
+    widths: list[int] = []
+    real_get_pixmap = fitz.Page.get_pixmap
+
+    def tracking_get_pixmap(self, *args, **kwargs):
+        pix = real_get_pixmap(self, *args, **kwargs)
+        widths.append(pix.width)
+        return pix
+
+    monkeypatch.setattr(fitz.Page, "get_pixmap", tracking_get_pixmap)
+
+    heatmap = tmp_path / "heatmap.pdf"
+    # High DPI would exceed COMPARE_MAX_RENDER_WIDTH_PX without the clamp.
+    result = pdf_tools.compare_pdfs_heatmap(
+        str(a),
+        str(b),
+        heatmap,
+        dpi=720,
+        sample_grid=(4, 4),
+        byte_diff_threshold=5,
+    )
+
+    assert widths
+    assert max(widths) <= pdf_tools.COMPARE_MAX_RENDER_WIDTH_PX
+    # One pair per page (streaming), not a retained full-doc pixmap list.
+    assert len(widths) == page_count * 2
+    assert len(result.page_diffs) == page_count
+    out_doc = fitz.open(str(heatmap))
+    try:
+        assert out_doc.page_count == page_count
     finally:
         out_doc.close()
 

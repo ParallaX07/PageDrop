@@ -31,6 +31,9 @@ STANDARD_METADATA_KEYS: tuple[str, ...] = (
     "trapped",
 )
 
+# Compare streams one page-pair at a time; never keep full-doc pixmaps.
+COMPARE_MAX_RENDER_WIDTH_PX = 2048
+
 
 def _open(path: str, password: str | None = None) -> fitz.Document:
     pdf_path = Path(path)
@@ -760,6 +763,7 @@ def compare_pdfs_heatmap(
 ) -> CompareResult:
     """Compare two PDFs visually via sampled pixel diffs and emit a heatmap PDF.
 
+    Output pages show PDF A with red overlays where sampled cells differ from B.
     No OpenCV; uses MuPDF pixmaps + sampled absolute byte diffs.
     """
     out_path = Path(output_heatmap_pdf)
@@ -792,8 +796,8 @@ def compare_pdfs_heatmap(
             a_target_w = int(round(float(a_rect.width) * scale))
             b_target_w = int(round(float(b_rect.width) * scale))
             # Safety: keep render sizes bounded.
-            a_target_w = max(1, min(a_target_w, 2048))
-            b_target_w = max(1, min(b_target_w, 2048))
+            a_target_w = max(1, min(a_target_w, COMPARE_MAX_RENDER_WIDTH_PX))
+            b_target_w = max(1, min(b_target_w, COMPARE_MAX_RENDER_WIDTH_PX))
             a_scale_eff = a_target_w / float(a_rect.width)
             b_scale_eff = b_target_w / float(b_rect.width)
             mat_a = fitz.Matrix(a_scale_eff, a_scale_eff)
@@ -807,12 +811,6 @@ def compare_pdfs_heatmap(
             w_b = pix_b.width
             h_b = pix_b.height
 
-            # Sampling point coordinates per grid cell (in each pixmap space).
-            xs_a = [int((c + 0.5) * w_a / cols) for c in range(cols)]
-            ys_a = [int((r + 0.5) * h_a / rows) for r in range(rows)]
-            xs_b = [int((c + 0.5) * w_b / cols) for c in range(cols)]
-            ys_b = [int((r + 0.5) * h_b / rows) for r in range(rows)]
-
             n_a = max(1, pix_a.n)
             n_b = max(1, pix_b.n)
             samples_a = pix_a.samples
@@ -823,6 +821,7 @@ def compare_pdfs_heatmap(
             ]
             cell_diff_count = 0
             total_cells = cols * rows
+            ratios = (0.25, 0.5, 0.75)
             for r in range(rows):
                 for c in range(cols):
                     # Sample a few points inside the heatmap cell so small glyphs
@@ -836,66 +835,54 @@ def compare_pdfs_heatmap(
                     cell_y0_b = (r * h_b) / rows
                     cell_y1_b = ((r + 1) * h_b) / rows
 
-                    ratios = (0.25, 0.5, 0.75)
                     n = min(n_a, n_b)
                     max_abs = 0
                     for rx in ratios:
-                        xa2 = min(w_a - 1, max(0, int(round(cell_x0_a + rx * (cell_x1_a - cell_x0_a)))))
-                        xb2 = min(w_b - 1, max(0, int(round(cell_x0_b + rx * (cell_x1_b - cell_x0_b)))))
+                        xa2 = min(
+                            w_a - 1,
+                            max(0, int(round(cell_x0_a + rx * (cell_x1_a - cell_x0_a)))),
+                        )
+                        xb2 = min(
+                            w_b - 1,
+                            max(0, int(round(cell_x0_b + rx * (cell_x1_b - cell_x0_b)))),
+                        )
                         for ry in ratios:
-                            ya2 = min(h_a - 1, max(0, int(round(cell_y0_a + ry * (cell_y1_a - cell_y0_a)))))
-                            yb2 = min(h_b - 1, max(0, int(round(cell_y0_b + ry * (cell_y1_b - cell_y0_b)))))
+                            ya2 = min(
+                                h_a - 1,
+                                max(
+                                    0,
+                                    int(round(cell_y0_a + ry * (cell_y1_a - cell_y0_a))),
+                                ),
+                            )
+                            yb2 = min(
+                                h_b - 1,
+                                max(
+                                    0,
+                                    int(round(cell_y0_b + ry * (cell_y1_b - cell_y0_b))),
+                                ),
+                            )
                             idx_a2 = (ya2 * w_a + xa2) * n_a
                             idx_b2 = (yb2 * w_b + xb2) * n_b
                             for k in range(n):
-                                da = samples_a[idx_a2 + k]
-                                db = samples_b[idx_b2 + k]
-                                abs_d = abs(int(da) - int(db))
+                                abs_d = abs(
+                                    int(samples_a[idx_a2 + k]) - int(samples_b[idx_b2 + k])
+                                )
                                 if abs_d > max_abs:
                                     max_abs = abs_d
 
-                    is_diff = max_abs >= byte_diff_threshold
-                    if is_diff:
-                        cell_diff_count += 1
-
-            diff_ratio = cell_diff_count / float(total_cells) if total_cells else 0.0
-            page_diffs.append(diff_ratio)
-
-            # Store intensity for diff cells during sampling.
-            for r in range(rows):
-                for c in range(cols):
-                    n = min(n_a, n_b)
-                    max_abs = 0
-                    cell_x0_a = (c * w_a) / cols
-                    cell_x1_a = ((c + 1) * w_a) / cols
-                    cell_y0_a = (r * h_a) / rows
-                    cell_y1_a = ((r + 1) * h_a) / rows
-                    cell_x0_b = (c * w_b) / cols
-                    cell_x1_b = ((c + 1) * w_b) / cols
-                    cell_y0_b = (r * h_b) / rows
-                    cell_y1_b = ((r + 1) * h_b) / rows
-
-                    ratios = (0.25, 0.5, 0.75)
-                    for rx in ratios:
-                        xa2 = min(w_a - 1, max(0, int(round(cell_x0_a + rx * (cell_x1_a - cell_x0_a)))))
-                        xb2 = min(w_b - 1, max(0, int(round(cell_x0_b + rx * (cell_x1_b - cell_x0_b)))))
-                        for ry in ratios:
-                            ya2 = min(h_a - 1, max(0, int(round(cell_y0_a + ry * (cell_y1_a - cell_y0_a)))))
-                            yb2 = min(h_b - 1, max(0, int(round(cell_y0_b + ry * (cell_y1_b - cell_y0_b)))))
-                            idx_a2 = (ya2 * w_a + xa2) * n_a
-                            idx_b2 = (yb2 * w_b + xb2) * n_b
-                            for k in range(n):
-                                da = samples_a[idx_a2 + k]
-                                db = samples_b[idx_b2 + k]
-                                abs_d = abs(int(da) - int(db))
-                                if abs_d > max_abs:
-                                    max_abs = abs_d
                     if max_abs >= byte_diff_threshold:
+                        cell_diff_count += 1
                         diff_intensity[r][c] = min(1.0, max_abs / 255.0)
+
+            page_diffs.append(
+                cell_diff_count / float(total_cells) if total_cells else 0.0
+            )
 
             out_page = out.new_page(
                 width=float(a_rect.width), height=float(a_rect.height)
             )
+            # Show PDF A as the base so the heatmap isn't a blank white page.
+            out_page.show_pdf_page(out_page.rect, a, pno)
             for r in range(rows):
                 for c in range(cols):
                     intensity = diff_intensity[r][c]
@@ -913,7 +900,7 @@ def compare_pdfs_heatmap(
                         fill=(1, 0, 0),
                         width=0,
                         overlay=True,
-                        fill_opacity=0.15 + 0.35 * intensity,
+                        fill_opacity=0.25 + 0.45 * intensity,
                     )
 
         overall = sum(page_diffs) / float(len(page_diffs)) if page_diffs else 0.0
