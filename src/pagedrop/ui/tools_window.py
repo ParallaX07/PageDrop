@@ -23,9 +23,9 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.capabilities import (
-    OPENPYXL,
     PI_HEIF,
     PILLOW,
+    TESSDATA,
     AbsenceReason,
     CapabilityStatus,
     probe,
@@ -71,7 +71,7 @@ class ToolEntry:
     keywords: tuple[str, ...] = ()
     capability_id: str | None = None
     coming_soon: bool = False
-    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure" | "modify"
+    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure" | "modify" | "ocr" | "extract_tables"
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -229,6 +229,23 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         action="office_to_pdf",
     ),
     ToolEntry(
+        "ocr_pdf",
+        "OCR to searchable PDF",
+        "Add a text layer via tessdata (new file)",
+        "Convert",
+        keywords=("ocr", "tesseract", "searchable", "scan", "tessdata"),
+        capability_id=TESSDATA,
+        action="ocr",
+    ),
+    ToolEntry(
+        "extract_tables",
+        "Extract tables",
+        "Export tables to CSV, JSON, or Excel",
+        "Convert",
+        keywords=("tables", "csv", "json", "xlsx", "excel", "spreadsheet"),
+        action="extract_tables",
+    ),
+    ToolEntry(
         "crop",
         "Crop pages",
         "Crop by margins (CropBox or rebuild)",
@@ -307,15 +324,6 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("image", "tiff"),
         capability_id=PILLOW,
-        coming_soon=True,
-    ),
-    ToolEntry(
-        "export_xlsx",
-        "Export tables XLSX",
-        "Extract tables to an Excel workbook",
-        "Convert",
-        keywords=("tables", "excel", "xlsx", "spreadsheet"),
-        capability_id=OPENPYXL,
         coming_soon=True,
     ),
     ToolEntry(
@@ -979,6 +987,11 @@ class ToolsWindow(QWidget):
             from pagedrop.ui.modify_tools_shell import open_modify_shell
 
             open_modify_shell(self, entry.id)
+            return
+        if entry.action in {"ocr", "extract_tables"}:
+            from pagedrop.ui.ocr_shell import open_ocr_shell
+
+            open_ocr_shell(self, entry.id)
             return
 
     def _on_preview_result(self, path: str) -> None:

@@ -16,14 +16,17 @@ from pagedrop.core.backends.libreoffice import (
 )
 from pagedrop.core.capabilities import (
     LIBREOFFICE,
+    TESSDATA,
     AbsenceReason,
     CapabilityStatus,
     clear_cache,
     probe,
 )
+from pagedrop.core.tessdata_pack import ENG_FAST_URL, download_eng_fast, user_tessdata_dir
 from pagedrop.ui.settings import (
     DELETE_CONFIRM_THRESHOLD,
     confirm_before_deleting_multiple_pages,
+    set_tessdata_path,
 )
 
 _REASON_COPY: dict[AbsenceReason, tuple[str, str]] = {
@@ -258,6 +261,8 @@ def prompt_missing_capability(
         return "recheck"
     if status.id == LIBREOFFICE:
         return prompt_missing_libreoffice(parent, status, tool_title=tool_title)
+    if status.id == TESSDATA:
+        return prompt_missing_tessdata(parent, status, tool_title=tool_title)
 
     reason = status.reason or AbsenceReason.ENGINE_MISSING
     headline, guidance = _REASON_COPY.get(
@@ -314,6 +319,137 @@ def prompt_missing_capability(
         )
         return "configure"
     return "cancel"
+
+
+def prompt_missing_tessdata(
+    parent: QWidget | None,
+    status: CapabilityStatus | None = None,
+    *,
+    tool_title: str | None = None,
+) -> str:
+    """Contextual setup when OCR language data is missing (not a first-launch nag).
+
+    Returns ``recheck``, ``download``, ``configure``, or ``cancel``.
+    """
+    if status is not None and status.available:
+        return "recheck"
+
+    subject = tool_title or "OCR"
+    detail = ""
+    if status is not None and status.detail.strip():
+        detail = status.detail.strip()
+
+    if os.environ.get("PAGEDROP_TESTING") == "1":
+        return "cancel"
+
+    message = build_missing_tessdata_dialog(parent, subject=subject, detail=detail)
+    message.exec()
+    clicked = message.clickedButton()
+    name = clicked.objectName() if clicked is not None else ""
+    if name == "tess_recheck":
+        clear_cache()
+        refreshed = probe(TESSDATA, refresh=True)
+        if refreshed.available:
+            QMessageBox.information(
+                parent,
+                "OCR data",
+                "tessdata is now available.",
+            )
+            return "recheck"
+        return prompt_missing_tessdata(parent, refreshed, tool_title=tool_title)
+    if name == "tess_download":
+        return _download_eng_tessdata(parent)
+    if name == "tess_configure":
+        QMessageBox.information(
+            parent,
+            "Configure tessdata",
+            "Point Preferences at a folder that contains language files "
+            "(for example eng.traineddata), or download the optional English pack.\n\n"
+            "PageDrop uses PyMuPDF’s built-in OCR — you do not need a separate "
+            "Tesseract executable as the primary path.\n\n"
+            f"Optional download URL:\n{ENG_FAST_URL}",
+        )
+        return "configure"
+    return "cancel"
+
+
+def build_missing_tessdata_dialog(
+    parent: QWidget | None,
+    *,
+    subject: str = "OCR",
+    detail: str = "",
+) -> QMessageBox:
+    """Build (do not exec) the missing-tessdata prompt — testable without UI loop."""
+    message = QMessageBox(parent)
+    message.setIcon(QMessageBox.Icon.Information)
+    message.setWindowTitle("OCR data required")
+    message.setText(f"{subject}: Language data missing")
+    informative = (
+        "OCR needs tessdata language files (for example eng.traineddata).\n"
+        "Configure a folder, or download the optional English pack — "
+        "PageDrop never downloads this on first launch."
+    )
+    if detail:
+        informative = f"{informative}\n\nDetail: {detail}"
+    message.setInformativeText(informative)
+
+    recheck_btn = message.addButton("Recheck", QMessageBox.ButtonRole.AcceptRole)
+    recheck_btn.setObjectName("tess_recheck")
+    download_btn = message.addButton(
+        "Download eng…",
+        QMessageBox.ButtonRole.ActionRole,
+    )
+    download_btn.setObjectName("tess_download")
+    configure_btn = message.addButton(
+        "Configure…",
+        QMessageBox.ButtonRole.ActionRole,
+    )
+    configure_btn.setObjectName("tess_configure")
+    message.addButton(QMessageBox.StandardButton.Cancel)
+    message.setDefaultButton(recheck_btn)
+    fit_message_box_buttons(message)
+    return message
+
+
+def _download_eng_tessdata(parent: QWidget | None) -> str:
+    """Download eng.traineddata after an explicit confirm; wire into Settings."""
+    dest = user_tessdata_dir()
+    confirm = QMessageBox(parent)
+    confirm.setIcon(QMessageBox.Icon.Question)
+    confirm.setWindowTitle("Download eng tessdata")
+    confirm.setText("Download English (tessdata_fast) language data?")
+    confirm.setInformativeText(
+        f"Saves eng.traineddata to:\n{dest}\n\n"
+        "Only continues if you click Download."
+    )
+    download_btn = confirm.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+    confirm.addButton(QMessageBox.StandardButton.Cancel)
+    confirm.setDefaultButton(download_btn)
+    fit_message_box_buttons(confirm)
+    confirm.exec()
+    if confirm.clickedButton() is not download_btn:
+        return "cancel"
+    try:
+        path = download_eng_fast(dest_dir=dest)
+    except RuntimeError as exc:
+        QMessageBox.warning(parent, "Download eng tessdata", str(exc))
+        return "cancel"
+    set_tessdata_path(path.parent)
+    clear_cache()
+    refreshed = probe(TESSDATA, refresh=True)
+    if refreshed.available:
+        QMessageBox.information(
+            parent,
+            "OCR data",
+            f"Saved:\n{path}\n\ntessdata is now available.",
+        )
+        return "recheck"
+    QMessageBox.warning(
+        parent,
+        "OCR data",
+        f"Downloaded to:\n{path}\n\nbut tessdata still reports unavailable.",
+    )
+    return "download"
 
 
 def prompt_missing_libreoffice(

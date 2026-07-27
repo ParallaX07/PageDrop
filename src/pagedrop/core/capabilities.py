@@ -200,6 +200,9 @@ _configured_soffice_path: str | None = None
 _configured_office_backend: str = "auto"
 _OFFICE_BACKEND_VALUES = frozenset({"auto", "com", "libreoffice"})
 
+# User-configured tessdata directory (Settings / Preferences). Checked first.
+_configured_tessdata_path: str | None = None
+
 
 def set_configured_soffice_path(path: str | None) -> None:
     """Set or clear the user-configured LibreOffice ``soffice`` path.
@@ -227,6 +230,22 @@ def set_configured_office_backend(backend: str | None) -> None:
 def configured_office_backend() -> str:
     """Return the preferred backend last set via :func:`set_configured_office_backend`."""
     return _configured_office_backend
+
+
+def set_configured_tessdata_path(path: str | None) -> None:
+    """Set or clear the user-configured tessdata directory.
+
+    Call from Settings when the user picks a language-data folder. Does not
+    probe; callers should ``clear_cache()`` after changing.
+    """
+    global _configured_tessdata_path
+    raw = (path or "").strip()
+    _configured_tessdata_path = raw or None
+
+
+def configured_tessdata_path() -> str | None:
+    """Return the path last set via :func:`set_configured_tessdata_path`."""
+    return _configured_tessdata_path
 
 
 def _probe_libreoffice() -> CapabilityStatus:
@@ -350,6 +369,9 @@ def _probe_tessdata() -> CapabilityStatus:
 
 def _find_tessdata() -> tuple[Path | None, list[str]]:
     candidates: list[Path] = []
+    for raw in (_configured_tessdata_path,):
+        if raw and raw.strip():
+            candidates.append(Path(raw.strip()))
     for env_key in ("PAGEDROP_TESSDATA", "TESSDATA_PREFIX"):
         raw = os.environ.get(env_key, "").strip()
         if not raw:
@@ -359,6 +381,15 @@ def _find_tessdata() -> tuple[Path | None, list[str]]:
         # TESSDATA_PREFIX may be the parent of the tessdata folder.
         if base.name != "tessdata":
             candidates.append(base / "tessdata")
+    # Optional shipped / downloaded eng (or other) packs — never required at start.
+    try:
+        from pagedrop.core.tessdata_pack import bundled_tessdata_dir, user_tessdata_dir
+
+        for pack in (bundled_tessdata_dir(), user_tessdata_dir()):
+            if pack is not None:
+                candidates.append(pack)
+    except Exception:  # noqa: BLE001 — pack helpers must never break the registry
+        pass
     candidates.extend(
         [
             Path("/usr/share/tessdata"),
@@ -371,21 +402,43 @@ def _find_tessdata() -> tuple[Path | None, list[str]]:
     )
     seen: set[Path] = set()
     for directory in candidates:
-        try:
-            resolved = directory.resolve()
-        except OSError:
-            continue
-        if resolved in seen or not resolved.is_dir():
-            continue
-        seen.add(resolved)
-        langs = sorted(
-            p.stem
-            for p in resolved.glob("*.traineddata")
-            if p.is_file() and p.stem and p.stem != "osd"
-        )
-        if langs:
-            return resolved, langs
+        expanded = list(_tessdata_dir_variants(directory))
+        for candidate in expanded:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen or not resolved.is_dir():
+                continue
+            seen.add(resolved)
+            langs = _languages_in_tessdata(resolved)
+            if langs:
+                return resolved, langs
     return None, []
+
+
+def _tessdata_dir_variants(base: Path) -> list[Path]:
+    """Accept either the tessdata folder itself or its parent."""
+    out = [base]
+    if base.name != "tessdata":
+        out.append(base / "tessdata")
+    return out
+
+
+def _languages_in_tessdata(directory: Path) -> list[str]:
+    return sorted(
+        p.stem
+        for p in directory.glob("*.traineddata")
+        if p.is_file() and p.stem and p.stem != "osd"
+    )
+
+
+def resolve_tessdata_dir() -> Path | None:
+    """Return the active tessdata directory, or ``None`` when unavailable."""
+    directory, langs = _find_tessdata()
+    if directory is None or not langs:
+        return None
+    return directory
 
 
 def _probe_ghostscript() -> CapabilityStatus:

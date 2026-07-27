@@ -863,6 +863,7 @@ _LAUNCHERS = {
 def ensure_organize_runner(temp_manager: TempManager | None = None) -> SerializedJobRunner:
     from pagedrop.core.modify_jobs import register_modify_handlers
     from pagedrop.core.native_conversion_jobs import register_native_conversion_handlers
+    from pagedrop.core.ocr_jobs import register_ocr_handlers
     from pagedrop.core.office_conversion_jobs import register_office_conversion_handlers
     from pagedrop.core.optimize_secure_jobs import register_optimize_secure_handlers
 
@@ -872,6 +873,7 @@ def ensure_organize_runner(temp_manager: TempManager | None = None) -> Serialize
     register_office_conversion_handlers(runner)
     register_optimize_secure_handlers(runner)
     register_modify_handlers(runner)
+    register_ocr_handlers(runner)
     return runner
 
 

@@ -11,6 +11,7 @@ ROOT = Path(SPECPATH)
 SRC = ROOT / "src"
 ENTRY = SRC / "pagedrop" / "main.py"
 ASSETS = SRC / "pagedrop" / "assets"
+TESSDATA = SRC / "pagedrop" / "data" / "tessdata"
 
 datas: list[tuple[str, str]] = [
     (str(ASSETS / "logo.png"), "pagedrop/assets"),
@@ -18,6 +19,9 @@ datas: list[tuple[str, str]] = [
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),
 ]
+# Optional OCR pack directory (may contain only README until eng is shipped).
+if TESSDATA.is_dir():
+    datas.append((str(TESSDATA), "pagedrop/data/tessdata"))
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = [
     "fitz",

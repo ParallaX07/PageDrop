@@ -88,6 +88,7 @@ def test_import_export_registries_cover_phase25_formats():
         "xml",
         "cbz",
         "csv",
+        "tables_json",
         "xlsx",
     } <= export_ids
 

@@ -243,6 +243,7 @@ def _configure_export_from_pdf(
             "xml": ".xml",
             "cbz": ".cbz",
             "csv": ".csv",
+            "tables_json": ".json",
             "xlsx": ".xlsx",
         }
         suffix = suffix_map[format_id]

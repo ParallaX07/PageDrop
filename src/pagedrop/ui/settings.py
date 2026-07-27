@@ -22,6 +22,7 @@ KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
 KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
 KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
+KEY_TESSDATA_PATH = "ocr/tessdata_path"
 
 OfficePreferredBackend = Literal["auto", "com", "libreoffice"]
 OFFICE_BACKEND_VALUES: tuple[OfficePreferredBackend, ...] = (
@@ -270,3 +271,35 @@ def apply_office_settings_to_capabilities() -> None:
     set_configured_office_backend(office_preferred_backend())
     set_configured_soffice_path(office_soffice_path() or None)
     clear_cache()
+
+def tessdata_path() -> str:
+    """User-configured tessdata directory, or empty when unset."""
+    value = _settings().value(KEY_TESSDATA_PATH, "")
+    return str(value).strip() if value else ""
+
+
+def set_tessdata_path(path: str | Path | None) -> None:
+    """Persist tessdata directory and push it into the capability registry."""
+    raw = str(path).strip() if path else ""
+    if raw:
+        _settings().setValue(KEY_TESSDATA_PATH, raw)
+    else:
+        _settings().remove(KEY_TESSDATA_PATH)
+    from pagedrop.core.capabilities import clear_cache, set_configured_tessdata_path
+
+    set_configured_tessdata_path(raw or None)
+    clear_cache()
+
+
+def apply_tessdata_settings_to_capabilities() -> None:
+    """Load QSettings tessdata path into the in-process capability registry."""
+    from pagedrop.core.capabilities import clear_cache, set_configured_tessdata_path
+
+    set_configured_tessdata_path(tessdata_path() or None)
+    clear_cache()
+
+
+def apply_optional_settings_to_capabilities() -> None:
+    """Push Office + OCR prefs into the capability registry (startup / recheck)."""
+    apply_office_settings_to_capabilities()
+    apply_tessdata_settings_to_capabilities()

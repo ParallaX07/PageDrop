@@ -67,6 +67,7 @@ EXPORT_FROM_PDF_FORMATS: tuple[FormatSpec, ...] = (
     FormatSpec("xml", frozenset({".xml"}), "XML structure"),
     FormatSpec("cbz", frozenset({".cbz"}), "CBZ"),
     FormatSpec("csv", frozenset({".csv"}), "Tables CSV"),
+    FormatSpec("tables_json", frozenset({".json"}), "Tables JSON"),
     FormatSpec(
         "xlsx",
         frozenset({".xlsx"}),

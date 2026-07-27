@@ -89,6 +89,7 @@ _EXPORT_SUFFIX: dict[str, str] = {
     "xml": ".xml",
     "cbz": ".cbz",
     "csv": ".csv",
+    "tables_json": ".json",
     "xlsx": ".xlsx",
 }
 
@@ -392,6 +393,7 @@ def export_pdf(
         "xml": _export_xml,
         "cbz": _export_cbz,
         "csv": _export_tables_csv,
+        "tables_json": _export_tables_json,
         "xlsx": _export_tables_xlsx,
     }
     writer = writers[spec.id]
@@ -737,6 +739,47 @@ def _export_tables_csv(
             writer = csv.writer(fh)
             for row in rows:
                 writer.writerow(["" if cell is None else cell for cell in row])
+        return [path]
+    finally:
+        doc.close()
+
+
+def _export_tables_json(
+    source: Path,
+    output: Path,
+    *,
+    pages: Sequence[int] | None,
+    dpi: float,
+    jpeg_quality: int,
+    password: str | None,
+    overwrite: bool,
+    format_id: str,
+) -> list[Path]:
+    del dpi, jpeg_quality, format_id
+    path = _single_file_output(source, output, overwrite=overwrite)
+    doc = _open_pdf(str(source), password)
+    try:
+        indices = _page_indices(doc, pages)
+        tables: list[dict[str, object]] = []
+        for index in indices:
+            finder = doc[index].find_tables()
+            for t_index, table in enumerate(finder.tables):
+                rows = [list(row) for row in table.extract()]
+                tables.append(
+                    {
+                        "page": index,
+                        "table": t_index,
+                        "rows": [
+                            ["" if cell is None else cell for cell in row]
+                            for row in rows
+                        ],
+                    }
+                )
+        payload = {"source": source.name, "tables": tables}
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         return [path]
     finally:
         doc.close()

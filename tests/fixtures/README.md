@@ -50,6 +50,9 @@ PAGEDROP_LO_PATH=/usr/bin/soffice uv run pytest -m libreoffice tests/smoke/test_
 
 # Gated Office COM smoke (Windows + Microsoft Office)
 PAGEDROP_OFFICE_COM=1 uv run pytest -m office_com tests/smoke/test_phase26_office.py -v
+
+# Gated OCR smoke (tessdata_fast eng or similar)
+PAGEDROP_TESSDATA=/path/to/tessdata uv run pytest -m tessdata tests/smoke/test_phase29_ocr.py -v
 ```
 
 Smoke tests skip unless the matching env var is set, even if the binary happens

@@ -373,31 +373,32 @@ def test_coming_soon_hidden_by_default_and_toggle_shows(qtbot):
 
     visible_ids = {t.entry.id for t in window.visible_tiles()}
     assert "export_tiff" not in visible_ids
-    assert "export_xlsx" not in visible_ids
     assert "import_heic" not in visible_ids
     assert "viewer" not in visible_ids
     # Phase 27 Optimize & Secure tiles are live (not coming-soon).
     assert "compress" in visible_ids
     assert "encrypt" in visible_ids
+    # Phase 29 OCR / tables are live.
+    assert "ocr_pdf" in visible_ids
+    assert "extract_tables" in visible_ids
 
     assert window._upcoming_btn.isVisible()
     assert "Show upcoming tools" in window._upcoming_btn.text()
     window._upcoming_btn.setChecked(True)
     visible_ids = {t.entry.id for t in window.visible_tiles()}
     assert "export_tiff" in visible_ids
-    assert "export_xlsx" in visible_ids
     assert "import_heic" in visible_ids
     assert "Hide upcoming tools" in window._upcoming_btn.text()
     window.close()
 
 
 def test_codec_capability_gates_convert_tiles(monkeypatch, qtbot):
-    """TIFF / XLSX / HEIC tiles stay blocked when their codec pack is absent."""
-    from pagedrop.core.capabilities import OPENPYXL, PI_HEIF, CapabilityStatus
+    """TIFF / HEIC tiles stay blocked when their codec pack is absent."""
+    from pagedrop.core.capabilities import PI_HEIF, CapabilityStatus
 
     def _fake_probe(capability_id: str, refresh: bool = False) -> CapabilityStatus:
         del refresh
-        if capability_id in {PILLOW, OPENPYXL, PI_HEIF}:
+        if capability_id in {PILLOW, PI_HEIF}:
             return CapabilityStatus(
                 id=capability_id,
                 available=False,
@@ -413,7 +414,7 @@ def test_codec_capability_gates_convert_tiles(monkeypatch, qtbot):
     window.show()
 
     by_id = {t.entry.id: t for t in window._tiles}
-    for tool_id in ("export_tiff", "export_xlsx", "import_heic"):
+    for tool_id in ("export_tiff", "import_heic"):
         tile = by_id[tool_id]
         assert tile.is_blocked()
         assert "Codec missing" in tile._subtitle.text()
