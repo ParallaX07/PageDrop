@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QTabBar
 
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
@@ -72,6 +72,9 @@ def _open_multi(window: MainWindow, paths: list[Path], monkeypatch) -> None:
 
 
 def _close_tab_at(window: MainWindow, index: int) -> None:
+    # Guard against setTabBar wiping tabsClosable — emit alone hides that bug.
+    btn = window._tab_manager.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide)
+    assert btn is not None, f"tab {index} missing close button"
     window._tab_manager.setCurrentIndex(index)
     window._tab_manager.tabCloseRequested.emit(index)
 

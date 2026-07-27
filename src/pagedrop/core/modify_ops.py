@@ -593,7 +593,7 @@ def generate_toc_page(
             new_toc.append([int(level), str(label), link_page])
             y += 18.0
             if y > toc_page.rect.y1 - 72:
-                break  # ponytail: single TOC page; overflow truncated
+                break  # single TOC page; overflow truncated
 
         doc.set_toc(new_toc)
         _save(doc, output_path)

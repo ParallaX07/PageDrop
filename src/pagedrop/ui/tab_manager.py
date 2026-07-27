@@ -269,7 +269,6 @@ class TabManager(QTabWidget):
         super().__init__(parent)
         self._temp_manager = temp_manager
         self.setObjectName("TabManager")
-        self.setTabsClosable(True)
         self.setDocumentMode(True)
         self.setMovable(True)
         self.setUsesScrollButtons(True)
@@ -277,6 +276,8 @@ class TabManager(QTabWidget):
 
         self._detachable_tab_bar = DetachableTabBar(self)
         self.setTabBar(self._detachable_tab_bar)
+        # setTabBar replaces the bar and drops tabsClosable — apply after.
+        self.setTabsClosable(True)
         self._detachable_tab_bar.tab_detach_requested.connect(
             self.tab_detach_requested.emit
         )
