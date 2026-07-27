@@ -1134,6 +1134,15 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 13px;
     }}
 
+    QScrollArea#ToolShellOptionsScroll {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QWidget#ToolShellOptions {{
+        background-color: transparent;
+    }}
+
     QFrame#ToolShellDropZone {{
         background-color: {bg_surface};
         border: 1px dashed {border_default};

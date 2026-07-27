@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -127,7 +129,9 @@ class FileDropZone(QFrame):
         clear_row.addWidget(self._clear_btn)
         layout.addLayout(clear_row)
 
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(96)
+        self.setMaximumHeight(160)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def paths(self) -> list[str]:
         return list(self._paths)
@@ -362,8 +366,8 @@ class ToolShellWindow(QMainWindow):
 
         self.setWindowTitle(title)
         self.setObjectName("ToolShellWindow")
-        self.setMinimumSize(480, 420)
-        self.resize(560, 520)
+        self.setMinimumSize(520, 480)
+        self.resize(600, 640)
 
         central = QWidget()
         central.setObjectName("ToolShellCentral")
@@ -392,12 +396,28 @@ class ToolShellWindow(QMainWindow):
         self._drop_zone.files_changed.connect(self._update_run_enabled)
         root.addWidget(self._drop_zone)
 
+        self._options_scroll = QScrollArea()
+        self._options_scroll.setObjectName("ToolShellOptionsScroll")
+        self._options_scroll.setWidgetResizable(True)
+        self._options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._options_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._options_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._options_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
         self._options_host = QWidget()
         self._options_host.setObjectName("ToolShellOptions")
         self._options_layout = QVBoxLayout(self._options_host)
-        self._options_layout.setContentsMargins(0, 0, 0, 0)
+        self._options_layout.setContentsMargins(0, 0, 8, 0)
         self._options_layout.setSpacing(8)
-        root.addWidget(self._options_host)
+        self._options_layout.addStretch(1)
+        self._options_scroll.setWidget(self._options_host)
+        root.addWidget(self._options_scroll, stretch=1)
 
         run_row = QHBoxLayout()
         run_row.addStretch(1)
@@ -408,8 +428,6 @@ class ToolShellWindow(QMainWindow):
         self._run_btn.clicked.connect(self._on_run)
         run_row.addWidget(self._run_btn)
         root.addLayout(run_row)
-
-        root.addStretch(1)
 
         self._result_bar = ResultActionsBar()
         self._result_bar.preview_requested.connect(self._on_preview_result)
@@ -440,7 +458,11 @@ class ToolShellWindow(QMainWindow):
             child = item.widget()
             if child is not None:
                 child.deleteLater()
+        widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
         self._options_layout.addWidget(widget)
+        self._options_layout.addStretch(1)
 
     def set_run_handler(self, handler: Callable[[], None]) -> None:
         self._run_handler = handler

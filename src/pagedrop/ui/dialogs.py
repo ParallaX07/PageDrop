@@ -186,6 +186,34 @@ def confirm_delete_pages(parent: QWidget, count: int) -> bool:
     return message.exec() == QMessageBox.StandardButton.Yes
 
 
+def confirm_remove_blank_pages(
+    parent: QWidget,
+    *,
+    blank_count: int,
+    page_count: int,
+    heuristic_hint: str,
+) -> bool:
+    """Confirm heuristic blank-page removal. Never silent mass-delete."""
+    if blank_count <= 0:
+        return False
+    if os.environ.get("PAGEDROP_TESTING") == "1":
+        return True
+
+    message = QMessageBox(parent)
+    message.setIcon(QMessageBox.Icon.Question)
+    message.setWindowTitle("Remove blank pages")
+    message.setText(
+        f"Remove {blank_count} of {page_count} pages that look blank?"
+    )
+    message.setInformativeText(heuristic_hint)
+    message.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    message.setDefaultButton(QMessageBox.StandardButton.No)
+    fit_message_box_buttons(message)
+    return message.exec() == QMessageBox.StandardButton.Yes
+
+
 def prompt_cancel_running_job(
     parent: QWidget,
     *,

@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 CATEGORIES: tuple[str, ...] = (
     "Organize",
     "Convert",
+    "Modify",
     "Optimize",
     "Secure",
 )
@@ -70,7 +71,7 @@ class ToolEntry:
     keywords: tuple[str, ...] = ()
     capability_id: str | None = None
     coming_soon: bool = False
-    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure"
+    action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure" | "modify"
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -226,6 +227,78 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("word", "excel", "powerpoint", "docx", "xlsx", "pptx", "libreoffice"),
         action="office_to_pdf",
+    ),
+    ToolEntry(
+        "crop",
+        "Crop pages",
+        "Crop by margins (CropBox or rebuild)",
+        "Modify",
+        keywords=("trim", "margins", "cropbox"),
+        action="modify",
+    ),
+    ToolEntry(
+        "watermark",
+        "Watermark",
+        "Text or image watermark on every page",
+        "Modify",
+        keywords=("stamp", "overlay", "confidential"),
+        action="modify",
+    ),
+    ToolEntry(
+        "header_footer",
+        "Header & footer",
+        "Add header and footer text with page tokens",
+        "Modify",
+        keywords=("header", "footer", "running"),
+        action="modify",
+    ),
+    ToolEntry(
+        "page_numbers",
+        "Page numbers",
+        "Stamp page numbers on every page",
+        "Modify",
+        keywords=("numbering", "folio"),
+        action="modify",
+    ),
+    ToolEntry(
+        "bates",
+        "Bates numbers",
+        "Sequential Bates stamps across one or more files",
+        "Modify",
+        keywords=("bates", "exhibit", "stamp"),
+        action="modify",
+    ),
+    ToolEntry(
+        "bookmarks",
+        "Bookmarks & TOC",
+        "Edit bookmarks and generate a TOC page",
+        "Modify",
+        keywords=("outline", "toc", "contents"),
+        action="modify",
+    ),
+    ToolEntry(
+        "annotations",
+        "Remove / flatten annotations",
+        "Strip annotations or bake form appearances",
+        "Modify",
+        keywords=("flatten", "bake", "markup", "forms"),
+        action="modify",
+    ),
+    ToolEntry(
+        "blank_pages",
+        "Blank pages",
+        "Detect and remove blank pages (with confirm)",
+        "Modify",
+        keywords=("empty", "detect", "remove"),
+        action="modify",
+    ),
+    ToolEntry(
+        "color_effects",
+        "Color effects",
+        "Greyscale, invert, or background tint",
+        "Modify",
+        keywords=("greyscale", "grayscale", "invert", "scanner"),
+        action="modify",
     ),
     ToolEntry(
         "export_tiff",
@@ -886,6 +959,11 @@ class ToolsWindow(QMainWindow):
             from pagedrop.ui.optimize_secure_shell import open_optimize_secure_shell
 
             open_optimize_secure_shell(self, entry.id)
+            return
+        if entry.action == "modify":
+            from pagedrop.ui.modify_tools_shell import open_modify_shell
+
+            open_modify_shell(self, entry.id)
             return
 
     def _on_preview_result(self, path: str) -> None:
