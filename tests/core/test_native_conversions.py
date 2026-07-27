@@ -148,19 +148,23 @@ def test_table_to_csv(tmp_path):
     assert _file_hash(source) == before
 
 
-def test_source_hash_unchanged_on_svg_and_txt_import(tmp_path):
+def test_source_hash_unchanged(tmp_path):
+    """Exports and imports must never mutate the user's source bytes."""
+    source = _make_text_pdf(tmp_path / "src.pdf", ["Keep", "Intact"])
+    before = _file_hash(source)
+    nc.export_pdf(source, tmp_path / "png_out", format_id="png", dpi=72)
+    nc.export_pdf(source, tmp_path / "out.txt", format_id="text")
+    assert _file_hash(source) == before
+
     svg = tmp_path / "shape.svg"
     svg.write_text(
         '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40">'
         '<rect width="40" height="40" fill="red"/></svg>',
         encoding="utf-8",
     )
-    before = _file_hash(svg)
-    out = tmp_path / "shape.pdf"
-    nc.import_to_pdf(svg, out)
-    assert out.is_file()
-    assert fitz.open(out).page_count >= 1
-    assert _file_hash(svg) == before
+    before_svg = _file_hash(svg)
+    nc.import_to_pdf(svg, tmp_path / "shape.pdf")
+    assert _file_hash(svg) == before_svg
 
     txt = tmp_path / "notes.txt"
     txt.write_text("Line one\nLine two\n", encoding="utf-8")

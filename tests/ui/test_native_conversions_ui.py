@@ -6,7 +6,9 @@ from pathlib import Path
 
 import fitz
 import pytest
+from PyQt6.QtWidgets import QMessageBox
 
+from pagedrop.core.capabilities import OPENPYXL, PI_HEIF, PILLOW, clear_cache
 from pagedrop.ui.native_convert_shell import (
     SHELL_CONVERT_IDS,
     _page_indices_from_text,
@@ -58,6 +60,74 @@ def test_convert_to_pdf_tile_not_coming_soon(qtbot):
     assert by_id["convert_to_pdf"].action == "convert_to_pdf"
     assert by_id["export_from_pdf"].action == "export_from_pdf"
     window.close()
+
+
+def test_unsupported_format_message(qtbot, tmp_path, monkeypatch, isolated_settings):
+    bad = tmp_path / "notes.docx"
+    bad.write_bytes(b"not-a-supported-native-import")
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+
+    shell = open_conversion_shell(tools, "convert_to_pdf")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    # Drop zone accept-filter normally rejects this; inject past it to hit on_run.
+    shell.drop_zone._accept = lambda _p: True
+    shell.drop_zone.set_paths([str(bad)])
+    assert shell._run_btn.isEnabled()
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_warning(parent, title, text, *args, **kwargs):
+        captured.append((title, text))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+    shell._run_btn.click()
+    assert len(captured) == 1
+    assert "Unsupported format" in captured[0][1]
+    assert "notes.docx" in captured[0][1]
+    assert not shell.is_job_running()
+
+
+def test_export_dialog_omits_gated_formats_when_absent(
+    qtbot, monkeypatch, isolated_settings
+):
+    clear_cache()
+
+    class _Absent:
+        available = False
+        detail = "not installed"
+
+        def __init__(self) -> None:
+            from pagedrop.core.capabilities import AbsenceReason
+
+            self.reason = AbsenceReason.CODEC_MISSING
+
+    def fake_probe(capability_id, refresh=False):
+        if capability_id in {PILLOW, OPENPYXL, PI_HEIF}:
+            return _Absent()
+        return type("S", (), {"available": True, "reason": None, "detail": ""})()
+
+    monkeypatch.setattr("pagedrop.core.supported_formats.probe", fake_probe)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+
+    shell = open_conversion_shell(tools, "export_from_pdf")
+    assert shell is not None
+    qtbot.addWidget(shell)
+
+    ids = {shell._format_combo.itemData(i) for i in range(shell._format_combo.count())}
+    assert "png" in ids
+    assert "text" in ids
+    assert "tiff" not in ids
+    assert "xlsx" not in ids
+    assert shell._ranges_edit.placeholderText()
+    assert shell._dpi_spin.value() > 0
 
 
 def test_export_shell_runs_job_via_runner(
