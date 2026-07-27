@@ -1,6 +1,7 @@
 """Full PDF viewer — virtualized read/navigate over ``PdfEditModel``.
 
-Read-only: zoom, search, select/copy, links, outline, layers, attachments, print.
+Zoom, search, select/copy, links, outline, layers, attachments, print, plus
+Phase 30 annotation / AcroForm authoring overlays (applied on Save As).
 Renders go through ``pagedrop.core.pdf_service`` (shared fitz lock), not ad-hoc
 concurrent pools.
 """
@@ -11,8 +12,10 @@ import bisect
 import math
 from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from PyQt6.QtCore import (
     QEvent,
@@ -34,6 +37,7 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
     QPaintEvent,
+    QPen,
     QPixmap,
     QResizeEvent,
     QShowEvent,
@@ -41,16 +45,27 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
+    QColorDialog,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
+    QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QToolButton,
@@ -60,6 +75,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.core.annotations import (
+    MOVABLE_ANNOT_KINDS,
+    AnnotationOp,
+    STAMP_APPROVED,
+)
+from pagedrop.core.forms import FormCreateOp
+from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
 from pagedrop.core.pdf_service import (
@@ -67,6 +89,7 @@ from pagedrop.core.pdf_service import (
     AttachmentInfo,
     LinkInfo,
     SearchHit,
+    WidgetInfo,
     attachments_for_path,
     extract_attachment,
     layers_for_path,
@@ -75,6 +98,7 @@ from pagedrop.core.pdf_service import (
     page_geometry,
     page_links,
     page_text_dict,
+    page_widgets,
     render_ref_png,
     search_model,
 )
@@ -88,11 +112,21 @@ from pagedrop.ui.theme import (
 
 PAGE_GAP_PX = 16
 SIDE_PANEL_WIDTH = 240
+ANNOT_RAIL_WIDTH = 120
+ANNOT_RAIL_COLLAPSED = 28
 CACHE_MAX_PIXMAPS = 48
 RENDER_DEBOUNCE_MS = 80
 DEFAULT_ZOOM_PERCENT = 100
 MIN_ZOOM_PERCENT = 25
 MAX_ZOOM_PERCENT = 400
+# Thin horizontal sweeps still catch a text line.
+_TEXT_MARKUP_Y_PAD_PX = 6.0
+_DEFAULT_FREETEXT_COLOR = (0.1, 0.1, 0.1)
+_DEFAULT_FREETEXT_SIZE = 12.0
+_DEFAULT_MARKUP_COLOR = (1.0, 0.92, 0.23)
+_HANDLE_PX = 7.0
+_MIN_BOX_PDF = 16.0
+_IMAGE_FILTERS = "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff);;All files (*)"
 
 
 class ViewerLayout(str, Enum):
@@ -105,6 +139,239 @@ class ZoomMode(str, Enum):
     FIT_WIDTH = "fit_width"
     FIT_PAGE = "fit_page"
     PERCENT = "percent"
+
+
+class AnnotTool(str, Enum):
+    SELECT = "select"
+    HIGHLIGHT = "highlight"
+    UNDERLINE = "underline"
+    STRIKEOUT = "strikeout"
+    INK = "ink"
+    RECT = "rect"
+    CIRCLE = "circle"
+    LINE = "line"
+    STAMP = "stamp"
+    FREETEXT = "freetext"
+    IMAGE = "image"
+    COMMENT = "comment"
+    FORM_FILL = "form_fill"
+    FORM_TEXT = "form_text"
+    FORM_CHECK = "form_check"
+
+
+# Shared by the right rail and the page context menu.
+ANNOT_TOOL_ITEMS: tuple[tuple[str, AnnotTool], ...] = (
+    ("Select", AnnotTool.SELECT),
+    ("Highlight", AnnotTool.HIGHLIGHT),
+    ("Underline", AnnotTool.UNDERLINE),
+    ("Strikeout", AnnotTool.STRIKEOUT),
+    ("Ink", AnnotTool.INK),
+    ("Rect", AnnotTool.RECT),
+    ("Circle", AnnotTool.CIRCLE),
+    ("Line", AnnotTool.LINE),
+    ("Stamp", AnnotTool.STAMP),
+    ("Text", AnnotTool.FREETEXT),
+    ("Image", AnnotTool.IMAGE),
+    ("Comment", AnnotTool.COMMENT),
+    ("Fill", AnnotTool.FORM_FILL),
+    ("Field", AnnotTool.FORM_TEXT),
+    ("Check", AnnotTool.FORM_CHECK),
+)
+
+_TEXT_MARKUP_TOOLS = frozenset(
+    {AnnotTool.HIGHLIGHT, AnnotTool.UNDERLINE, AnnotTool.STRIKEOUT}
+)
+
+_HANDLE_CURSORS: dict[str, Qt.CursorShape] = {
+    "nw": Qt.CursorShape.SizeFDiagCursor,
+    "se": Qt.CursorShape.SizeFDiagCursor,
+    "ne": Qt.CursorShape.SizeBDiagCursor,
+    "sw": Qt.CursorShape.SizeBDiagCursor,
+    "n": Qt.CursorShape.SizeVerCursor,
+    "s": Qt.CursorShape.SizeVerCursor,
+    "e": Qt.CursorShape.SizeHorCursor,
+    "w": Qt.CursorShape.SizeHorCursor,
+    "move": Qt.CursorShape.SizeAllCursor,
+}
+
+
+def _prompt_freetext(
+    parent: QWidget,
+    *,
+    text: str = "",
+    fontsize: float = _DEFAULT_FREETEXT_SIZE,
+    color: tuple[float, float, float] = _DEFAULT_FREETEXT_COLOR,
+    border: bool = False,
+    title: str = "Free text",
+    allow_delete: bool = False,
+) -> tuple[str, float, tuple[float, float, float], bool] | Literal["delete"] | None:
+    """Edit free-text content, size, color, border. Returns None on cancel."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    edit = QPlainTextEdit()
+    edit.setPlainText(text)
+    edit.setMinimumHeight(80)
+    form.addRow("Text", edit)
+    size = QDoubleSpinBox()
+    size.setRange(6.0, 96.0)
+    size.setDecimals(1)
+    size.setValue(fontsize)
+    form.addRow("Font size", size)
+    rgb = [max(0, min(255, int(c * 255))) for c in color]
+    color_btn = QPushButton()
+    color_btn.setObjectName("FreeTextColorButton")
+
+    def _apply_swatch() -> None:
+        color_btn.setStyleSheet(
+            f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); min-width: 48px;"
+        )
+
+    def _pick_color() -> None:
+        chosen = QColorDialog.getColor(QColor(*rgb), dialog, "Text color")
+        if chosen.isValid():
+            rgb[0], rgb[1], rgb[2] = chosen.red(), chosen.green(), chosen.blue()
+            _apply_swatch()
+
+    _apply_swatch()
+    color_btn.clicked.connect(_pick_color)
+    form.addRow("Color", color_btn)
+    border_cb = QCheckBox("Show border")
+    border_cb.setChecked(border)
+    form.addRow("", border_cb)
+    layout.addLayout(form)
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    deleted = {"value": False}
+
+    def _on_delete() -> None:
+        deleted["value"] = True
+        dialog.accept()
+
+    if allow_delete:
+        delete_btn = buttons.addButton(
+            "Delete", QDialogButtonBox.ButtonRole.DestructiveRole
+        )
+        delete_btn.clicked.connect(_on_delete)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    if deleted["value"]:
+        return "delete"
+    body = edit.toPlainText().strip()
+    if not body:
+        return None
+    return (
+        body,
+        float(size.value()),
+        (rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0),
+        border_cb.isChecked(),
+    )
+
+
+def _apply_box_transform(
+    rect: tuple[float, float, float, float],
+    mode: str,
+    dx: float,
+    dy: float,
+    *,
+    min_size: float = _MIN_BOX_PDF,
+) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = rect
+    if mode == "move":
+        return (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+    if "w" in mode:
+        x0 = min(x0 + dx, x1 - min_size)
+    if "e" in mode:
+        x1 = max(x1 + dx, x0 + min_size)
+    if "n" in mode:
+        y0 = min(y0 + dy, y1 - min_size)
+    if "s" in mode:
+        y1 = max(y1 + dy, y0 + min_size)
+    return (x0, y0, x1, y1)
+
+
+def _hit_resize_handle(wr: QRectF, pos: QPointF, handle_px: float = _HANDLE_PX) -> str | None:
+    """Return handle id (nw/n/ne/…) or None if not on a handle."""
+    x, y = pos.x(), pos.y()
+    left, right = wr.left(), wr.right()
+    top, bottom = wr.top(), wr.bottom()
+    on_l = abs(x - left) <= handle_px
+    on_r = abs(x - right) <= handle_px
+    on_t = abs(y - top) <= handle_px
+    on_b = abs(y - bottom) <= handle_px
+    in_x = left - handle_px <= x <= right + handle_px
+    in_y = top - handle_px <= y <= bottom + handle_px
+    if on_t and on_l:
+        return "nw"
+    if on_t and on_r:
+        return "ne"
+    if on_b and on_l:
+        return "sw"
+    if on_b and on_r:
+        return "se"
+    if on_t and in_x:
+        return "n"
+    if on_b and in_x:
+        return "s"
+    if on_l and in_y:
+        return "w"
+    if on_r and in_y:
+        return "e"
+    return None
+
+
+def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
+    # Outline only — never fill the box (that painted an opaque white cover).
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(QColor(47, 155, 230), 1, Qt.PenStyle.DashLine))
+    painter.drawRect(wr)
+    hs = _HANDLE_PX
+    mid_x = wr.center().x()
+    mid_y = wr.center().y()
+    points = (
+        (wr.left(), wr.top()),
+        (mid_x, wr.top()),
+        (wr.right(), wr.top()),
+        (wr.right(), mid_y),
+        (wr.right(), wr.bottom()),
+        (mid_x, wr.bottom()),
+        (wr.left(), wr.bottom()),
+        (wr.left(), mid_y),
+    )
+    painter.setBrush(QColor(255, 255, 255))
+    painter.setPen(QPen(QColor(47, 155, 230), 1))
+    for px, py in points:
+        painter.drawRect(QRectF(px - hs / 2, py - hs / 2, hs, hs))
+
+
+def _merge_char_rects(
+    chars: list[tuple[float, float, float, float]],
+) -> tuple[tuple[float, float, float, float], ...]:
+    """Merge adjacent character boxes on the same baseline into line fragments."""
+    if not chars:
+        return ()
+    # Sort top-to-bottom, then left-to-right.
+    ordered = sorted(chars, key=lambda r: (round(r[1], 1), r[0]))
+    merged: list[list[float]] = []
+    for x0, y0, x1, y1 in ordered:
+        if not merged:
+            merged.append([x0, y0, x1, y1])
+            continue
+        cur = merged[-1]
+        same_line = abs(y0 - cur[1]) < 2.0 and abs(y1 - cur[3]) < 2.0
+        gap = x0 - cur[2]
+        if same_line and gap <= max(3.0, (cur[3] - cur[1]) * 0.35):
+            cur[2] = max(cur[2], x1)
+            cur[1] = min(cur[1], y0)
+            cur[3] = max(cur[3], y1)
+        else:
+            merged.append([x0, y0, x1, y1])
+    return tuple((a, b, c, d) for a, b, c, d in merged)
 
 
 class _LruPixmapCache:
@@ -279,10 +546,13 @@ def _widget_point_to_pdf(
 
 
 class _PageTile(QWidget):
-    """One visible page surface — pixmap, search highlights, selection, links."""
+    """One visible page surface — pixmap, search highlights, selection, links, markup."""
 
     link_activated = pyqtSignal(int, object)  # logical_page, LinkInfo
     selection_changed = pyqtSignal()
+    markup_gesture = pyqtSignal(int, str, object)  # logical, tool value, payload
+    form_field_activated = pyqtSignal(int, object)  # logical, WidgetInfo
+    context_menu_requested = pyqtSignal(object)  # global QPoint
 
     def __init__(self, logical_page: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -294,17 +564,58 @@ class _PageTile(QWidget):
         self._page_h = 1.0
         self._rotation = 0
         self._links: list[LinkInfo] = []
+        self._widgets: list[WidgetInfo] = []
         self._hits: list[tuple[float, float, float, float]] = []
         self._active_hit: tuple[float, float, float, float] | None = None
         self._text_dict: dict | None = None
         self._text_provider: Callable[[], dict | None] | None = None
+        self._tool = AnnotTool.SELECT
+        self._overlay_entries: list[MarkupEntry] = []
+        self._markup_color = _DEFAULT_MARKUP_COLOR
+        self._selected_op: AnnotationOp | None = None
+        self._transform_mode: str | None = None
+        self._transform_origin: AnnotationOp | None = None
+        self._transform_start_pdf: tuple[float, float] | None = None
+        self._transform_start_rect: tuple[float, float, float, float] | None = None
+        self._live_rect: tuple[float, float, float, float] | None = None
+        self._image_pixmaps: dict[str, QPixmap] = {}
         self._selecting = False
+        self._drawing = False
+        self._ink_points: list[tuple[float, float]] = []
         self._sel_start: QPointF | None = None
         self._sel_end: QPointF | None = None
         self._selected_text = ""
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.IBeamCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._emit_context_menu)
+
+    def _emit_context_menu(self, pos) -> None:
+        self.context_menu_requested.emit(self.mapToGlobal(pos))
+
+    def set_tool(self, tool: AnnotTool) -> None:
+        self._tool = tool
+        self._update_cursor()
+
+    def set_markup_color(self, color: tuple[float, float, float]) -> None:
+        self._markup_color = color
+        self.update()
+
+    def set_selected_op(self, op: AnnotationOp | None) -> None:
+        self._selected_op = op
+        self._live_rect = None
+        self.update()
+
+    def set_overlay_entries(self, entries: list[MarkupEntry]) -> None:
+        self._overlay_entries = entries
+        if self._selected_op is not None:
+            if not any(
+                e.kind == "annotation" and e.annotation == self._selected_op
+                for e in entries
+            ):
+                self._selected_op = None
+        self.update()
 
     def set_page_meta(
         self,
@@ -315,11 +626,13 @@ class _PageTile(QWidget):
         text_dict: dict | None = None,
         *,
         text_provider: Callable[[], dict | None] | None = None,
+        widgets: list[WidgetInfo] | None = None,
     ) -> None:
         self._page_w = page_w
         self._page_h = page_h
         self._rotation = rotation
         self._links = links
+        self._widgets = widgets or []
         self._text_dict = text_dict
         self._text_provider = text_provider
         self.update()
@@ -343,6 +656,8 @@ class _PageTile(QWidget):
 
     def clear_selection(self) -> None:
         self._selecting = False
+        self._drawing = False
+        self._ink_points = []
         self._sel_start = None
         self._sel_end = None
         self._selected_text = ""
@@ -366,8 +681,6 @@ class _PageTile(QWidget):
             painter.fillRect(self.rect(), QColor("#FAFAFA"))
             pix = self._pixmap
             if pix is not None and not pix.isNull():
-                # DPR-aware pixmaps draw at the correct logical size; scale only
-                # when geometry drifted (avoids soft upscale of undersized tiles).
                 target = self.rect()
                 if (
                     pix.devicePixelRatio() > 0
@@ -395,67 +708,524 @@ class _PageTile(QWidget):
                     self._rotation,
                 )
                 if hit == self._active_hit:
-                    # Stronger orange so the current match stands out from peers.
                     painter.fillRect(r, QColor(255, 145, 0, 170))
                     painter.setPen(QColor(200, 90, 0, 220))
                     painter.drawRect(r)
                 else:
                     painter.fillRect(r, QColor(255, 220, 0, 90))
 
+            self._paint_markup_overlays(painter)
+
+            if self._tool == AnnotTool.FORM_FILL:
+                for widget in self._widgets:
+                    wr = _map_pdf_rect_to_widget(
+                        widget.rect,
+                        self._page_w,
+                        self._page_h,
+                        self.width(),
+                        self.height(),
+                        self._rotation,
+                    )
+                    painter.setPen(QPen(QColor(47, 155, 230, 180), 1, Qt.PenStyle.DashLine))
+                    painter.fillRect(wr, QColor(47, 155, 230, 30))
+                    painter.drawRect(wr)
+
             if self._sel_start is not None and self._sel_end is not None:
                 x0 = min(self._sel_start.x(), self._sel_end.x())
                 y0 = min(self._sel_start.y(), self._sel_end.y())
                 x1 = max(self._sel_start.x(), self._sel_end.x())
                 y1 = max(self._sel_start.y(), self._sel_end.y())
-                painter.fillRect(
-                    QRectF(x0, y0, x1 - x0, y1 - y0),
-                    QColor(40, 120, 255, 60),
-                )
+                if self._tool in _TEXT_MARKUP_TOOLS:
+                    preview = self._text_rects_in_selection()
+                    if preview:
+                        for rect in preview:
+                            wr = _map_pdf_rect_to_widget(
+                                rect,
+                                self._page_w,
+                                self._page_h,
+                                self.width(),
+                                self.height(),
+                                self._rotation,
+                            )
+                            self._paint_text_markup_style(
+                                painter,
+                                self._tool.value,
+                                wr,
+                                QColor(
+                                    int(self._markup_color[0] * 255),
+                                    int(self._markup_color[1] * 255),
+                                    int(self._markup_color[2] * 255),
+                                    110,
+                                ),
+                            )
+                    else:
+                        painter.fillRect(
+                            QRectF(x0, y0, x1 - x0, y1 - y0), QColor(255, 220, 0, 40)
+                        )
+                else:
+                    fill = QColor(40, 120, 255, 60)
+                    if self._tool != AnnotTool.SELECT:
+                        fill = QColor(47, 155, 230, 50)
+                    painter.fillRect(QRectF(x0, y0, x1 - x0, y1 - y0), fill)
+                    if self._tool in (
+                        AnnotTool.RECT,
+                        AnnotTool.CIRCLE,
+                        AnnotTool.LINE,
+                        AnnotTool.FORM_TEXT,
+                        AnnotTool.FORM_CHECK,
+                        AnnotTool.IMAGE,
+                    ):
+                        painter.setPen(QPen(QColor(47, 155, 230), 1))
+                        if self._tool == AnnotTool.CIRCLE:
+                            painter.drawEllipse(QRectF(x0, y0, x1 - x0, y1 - y0))
+                        elif self._tool == AnnotTool.LINE:
+                            painter.drawLine(self._sel_start, self._sel_end)
+                        else:
+                            painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+            if len(self._ink_points) >= 2:
+                painter.setPen(QPen(QColor(20, 20, 20), 2))
+                for i in range(1, len(self._ink_points)):
+                    a = self._pdf_to_widget_point(self._ink_points[i - 1])
+                    b = self._pdf_to_widget_point(self._ink_points[i])
+                    painter.drawLine(a, b)
         finally:
             painter.end()
+
+    def _paint_text_markup_style(
+        self,
+        painter: QPainter,
+        kind: str,
+        wr: QRectF,
+        color: QColor,
+    ) -> None:
+        if kind == "highlight":
+            painter.fillRect(wr, color)
+            return
+        pen = QPen(color)
+        pen.setWidth(max(2, int(wr.height() * 0.12)))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        if kind == "underline":
+            y = wr.bottom() - max(1.0, wr.height() * 0.12)
+            painter.drawLine(QPointF(wr.left(), y), QPointF(wr.right(), y))
+        elif kind == "strikeout":
+            y = wr.center().y()
+            painter.drawLine(QPointF(wr.left(), y), QPointF(wr.right(), y))
+        else:
+            painter.fillRect(wr, color)
+
+    def _paint_markup_overlays(self, painter: QPainter) -> None:
+        for entry in self._overlay_entries:
+            if entry.kind != "annotation" or entry.annotation is None:
+                continue
+            op = entry.annotation
+            if op.page_index != self.logical_page:
+                continue
+            color = QColor(
+                int(op.color[0] * 255),
+                int(op.color[1] * 255),
+                int(op.color[2] * 255),
+                90 if op.kind == "highlight" else 220,
+            )
+            display_rects = op.rects
+            if (
+                self._selected_op == op
+                and self._live_rect is not None
+                and op.kind in MOVABLE_ANNOT_KINDS
+            ):
+                display_rects = (self._live_rect,)
+            for rect in display_rects:
+                wr = _map_pdf_rect_to_widget(
+                    rect,
+                    self._page_w,
+                    self._page_h,
+                    self.width(),
+                    self.height(),
+                    self._rotation,
+                )
+                if op.kind in ("highlight", "underline", "strikeout"):
+                    self._paint_text_markup_style(painter, op.kind, wr, color)
+                elif op.kind == "circle":
+                    painter.setPen(QPen(color, 2))
+                    painter.drawEllipse(wr)
+                elif op.kind == "image":
+                    pix = self._image_pixmap(op.image_path)
+                    if pix is not None and not pix.isNull():
+                        painter.drawPixmap(wr.toRect(), pix)
+                    else:
+                        painter.fillRect(wr, QColor(200, 200, 200, 120))
+                        painter.setPen(QColor(120, 120, 120))
+                        painter.drawText(wr, Qt.AlignmentFlag.AlignCenter, "Image")
+                elif op.kind in ("rect", "stamp", "freetext"):
+                    if op.kind == "freetext":
+                        if op.border:
+                            painter.setPen(QPen(color, 2))
+                            painter.drawRect(wr)
+                        if op.text:
+                            painter.setPen(
+                                QColor(
+                                    int(op.color[0] * 255),
+                                    int(op.color[1] * 255),
+                                    int(op.color[2] * 255),
+                                )
+                            )
+                            font = painter.font()
+                            px = max(
+                                8,
+                                int(op.fontsize * (self.height() / max(self._page_h, 1.0))),
+                            )
+                            font.setPointSizeF(float(px))
+                            painter.setFont(font)
+                            painter.drawText(
+                                wr,
+                                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
+                                op.text,
+                            )
+                    else:
+                        painter.setPen(QPen(color, 2))
+                        painter.drawRect(wr)
+                        if op.kind == "stamp":
+                            painter.drawText(wr, Qt.AlignmentFlag.AlignCenter, "Stamp")
+            if (
+                self._selected_op == op
+                and op.kind in MOVABLE_ANNOT_KINDS
+                and display_rects
+            ):
+                wr = _map_pdf_rect_to_widget(
+                    display_rects[0],
+                    self._page_w,
+                    self._page_h,
+                    self.width(),
+                    self.height(),
+                    self._rotation,
+                )
+                _paint_resize_handles(painter, wr)
+            if op.kind == "line" and len(op.points) >= 2:
+                painter.setPen(QPen(color, 2))
+                painter.drawLine(
+                    self._pdf_to_widget_point(op.points[0]),
+                    self._pdf_to_widget_point(op.points[1]),
+                )
+            if op.kind == "ink":
+                painter.setPen(QPen(QColor(20, 20, 20, 180), 2))
+                for stroke in op.strokes:
+                    for i in range(1, len(stroke)):
+                        painter.drawLine(
+                            self._pdf_to_widget_point(stroke[i - 1]),
+                            self._pdf_to_widget_point(stroke[i]),
+                        )
+            if op.kind == "comment" and op.points:
+                pt = self._pdf_to_widget_point(op.points[0])
+                painter.setBrush(QColor(255, 220, 80))
+                painter.setPen(QPen(QColor(180, 140, 0), 1))
+                painter.drawEllipse(pt, 6, 6)
+
+    def _image_pixmap(self, path: str) -> QPixmap | None:
+        if not path:
+            return None
+        cached = self._image_pixmaps.get(path)
+        if cached is not None:
+            return cached
+        pix = QPixmap(path)
+        if pix.isNull():
+            return None
+        self._image_pixmaps[path] = pix
+        return pix
+
+    def _display_rect_for(self, op: AnnotationOp) -> tuple[float, float, float, float] | None:
+        if self._selected_op == op and self._live_rect is not None:
+            return self._live_rect
+        if op.rects:
+            return op.rects[0]
+        return None
+
+    def _movable_at(self, pos: QPointF) -> tuple[AnnotationOp, str] | None:
+        """Return (op, handle|move) under *pos*, preferring the selected op."""
+        candidates: list[AnnotationOp] = []
+        for entry in self._overlay_entries:
+            op = entry.annotation
+            if (
+                entry.kind != "annotation"
+                or op is None
+                or op.page_index != self.logical_page
+                or op.kind not in MOVABLE_ANNOT_KINDS
+                or not op.rects
+            ):
+                continue
+            candidates.append(op)
+        # Top-most last in list; prefer selected.
+        ordered = sorted(
+            candidates,
+            key=lambda o: (0 if o == self._selected_op else 1),
+        )
+        for op in ordered:
+            rect = self._display_rect_for(op)
+            if rect is None:
+                continue
+            wr = _map_pdf_rect_to_widget(
+                rect,
+                self._page_w,
+                self._page_h,
+                self.width(),
+                self.height(),
+                self._rotation,
+            )
+            if op == self._selected_op:
+                handle = _hit_resize_handle(wr, pos)
+                if handle is not None:
+                    return op, handle
+            inflated = wr.adjusted(-_HANDLE_PX, -_HANDLE_PX, _HANDLE_PX, _HANDLE_PX)
+            if inflated.contains(pos):
+                if wr.contains(pos) or op == self._selected_op:
+                    return op, "move" if wr.contains(pos) else (
+                        _hit_resize_handle(wr, pos) or "move"
+                    )
+        return None
+
+    def _pdf_to_widget_point(self, point: tuple[float, float]) -> QPointF:
+        r = _map_pdf_rect_to_widget(
+            (point[0], point[1], point[0] + 0.1, point[1] + 0.1),
+            self._page_w,
+            self._page_h,
+            self.width(),
+            self.height(),
+            self._rotation,
+        )
+        return QPointF(r.x(), r.y())
+
+    def _update_cursor(self, pos: QPointF | None = None) -> None:
+        if self._transform_mode is not None:
+            shape = _HANDLE_CURSORS.get(self._transform_mode, Qt.CursorShape.ArrowCursor)
+            self.setCursor(shape)
+            return
+        if pos is not None:
+            hit = self._movable_at(pos)
+            if hit is not None:
+                _op, mode = hit
+                shape = _HANDLE_CURSORS.get(mode, Qt.CursorShape.SizeAllCursor)
+                self.setCursor(shape)
+                return
+        if self._tool == AnnotTool.SELECT:
+            self.setCursor(Qt.CursorShape.IBeamCursor)
+        elif self._tool == AnnotTool.FORM_FILL:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def _begin_transform(self, op: AnnotationOp, mode: str, pos: QPointF) -> None:
+        rect = self._display_rect_for(op)
+        if rect is None:
+            return
+        self._selected_op = op
+        self._transform_mode = mode
+        self._transform_origin = op
+        self._transform_start_pdf = self._widget_to_pdf(pos)
+        self._transform_start_rect = rect
+        self._live_rect = rect
+        self.markup_gesture.emit(
+            self.logical_page,
+            "select_overlay",
+            {"annotation": op},
+        )
+        self._update_cursor(pos)
+        self.update()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        hit = self._movable_at(event.position())
+        if hit is not None and hit[0].kind == "freetext":
+            self.markup_gesture.emit(
+                self.logical_page,
+                "edit_freetext",
+                {"annotation": hit[0]},
+            )
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return
         pos = event.position()
-        link = self._link_at(pos)
-        if link is not None:
-            self.link_activated.emit(self.logical_page, link)
+
+        # Move / resize pending text & image boxes (Select / Text / Image tools).
+        if self._tool in (AnnotTool.SELECT, AnnotTool.FREETEXT, AnnotTool.IMAGE):
+            hit = self._movable_at(pos)
+            if hit is not None:
+                self._begin_transform(hit[0], hit[1], pos)
+                event.accept()
+                return
+
+        if self._tool == AnnotTool.SELECT:
+            link = self._link_at(pos)
+            if link is not None:
+                self.link_activated.emit(self.logical_page, link)
+                event.accept()
+                return
+            if self._selected_op is not None:
+                self._selected_op = None
+                self._live_rect = None
+                self.markup_gesture.emit(self.logical_page, "select_overlay", {"annotation": None})
+            self._selecting = True
+            self._sel_start = pos
+            self._sel_end = pos
+            self._selected_text = ""
+            self.update()
             event.accept()
             return
+
+        if self._tool == AnnotTool.FORM_FILL:
+            widget = self._widget_at(pos)
+            if widget is not None:
+                self.form_field_activated.emit(self.logical_page, widget)
+            event.accept()
+            return
+
+        if self._tool == AnnotTool.FREETEXT:
+            pdf_pt = self._widget_to_pdf(pos)
+            self.markup_gesture.emit(
+                self.logical_page,
+                self._tool.value,
+                {"point": pdf_pt, "widget_pos": (pos.x(), pos.y())},
+            )
+            event.accept()
+            return
+
+        if self._tool in (AnnotTool.STAMP, AnnotTool.COMMENT):
+            pdf_pt = self._widget_to_pdf(pos)
+            self.markup_gesture.emit(
+                self.logical_page,
+                self._tool.value,
+                {"point": pdf_pt, "widget_pos": (pos.x(), pos.y())},
+            )
+            event.accept()
+            return
+
+        if self._tool == AnnotTool.INK:
+            self._drawing = True
+            self._ink_points = [self._widget_to_pdf(pos)]
+            self.update()
+            event.accept()
+            return
+
+        # Drag tools: highlight/underline/strikeout/shapes/image/form create
         self._selecting = True
         self._sel_start = pos
         self._sel_end = pos
-        self._selected_text = ""
         self.update()
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         pos = event.position()
-        if self._link_at(pos) is not None:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if self._transform_mode and self._transform_start_pdf and self._transform_start_rect:
+            cur = self._widget_to_pdf(pos)
+            dx = cur[0] - self._transform_start_pdf[0]
+            dy = cur[1] - self._transform_start_pdf[1]
+            self._live_rect = _apply_box_transform(
+                self._transform_start_rect, self._transform_mode, dx, dy
+            )
+            self.update()
+            event.accept()
+            return
+        if self._tool == AnnotTool.SELECT:
+            if self._link_at(pos) is not None:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self._update_cursor(pos)
         else:
-            self.setCursor(Qt.CursorShape.IBeamCursor)
+            self._update_cursor(pos)
+        if self._drawing and self._tool == AnnotTool.INK:
+            self._ink_points.append(self._widget_to_pdf(pos))
+            self.update()
+            event.accept()
+            return
         if self._selecting:
             self._sel_end = pos
-            self._selected_text = self._text_in_selection()
+            if self._tool == AnnotTool.SELECT:
+                self._selected_text = self._text_in_selection()
+                self.selection_changed.emit()
             self.update()
-            self.selection_changed.emit()
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._selecting:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+
+        if self._transform_mode and self._transform_origin is not None:
+            mode = self._transform_mode
+            origin = self._transform_origin
+            live = self._live_rect
+            self._transform_mode = None
+            self._transform_origin = None
+            self._transform_start_pdf = None
+            self._transform_start_rect = None
+            if live is not None and origin.rects and live != origin.rects[0]:
+                self.markup_gesture.emit(
+                    self.logical_page,
+                    "transform_overlay",
+                    {"annotation": origin, "rect": live, "mode": mode},
+                )
+            self._live_rect = None
+            self.update()
+            event.accept()
+            return
+
+        if self._drawing and self._tool == AnnotTool.INK:
+            self._drawing = False
+            if len(self._ink_points) >= 2:
+                self.markup_gesture.emit(
+                    self.logical_page,
+                    AnnotTool.INK.value,
+                    {"strokes": [tuple(self._ink_points)]},
+                )
+            self._ink_points = []
+            self.update()
+            event.accept()
+            return
+
+        if self._selecting:
             self._selecting = False
             self._sel_end = event.position()
-            self._selected_text = self._text_in_selection()
-            self.selection_changed.emit()
+            if self._tool == AnnotTool.SELECT:
+                self._selected_text = self._text_in_selection()
+                self.selection_changed.emit()
+                self.update()
+                event.accept()
+                return
+            payload = self._drag_payload()
+            self._sel_start = None
+            self._sel_end = None
             self.update()
+            if payload is not None:
+                self.markup_gesture.emit(self.logical_page, self._tool.value, payload)
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
-    def _link_at(self, pos: QPointF) -> LinkInfo | None:
-        pdf_pt = _widget_point_to_pdf(
+    def _drag_payload(self) -> dict | None:
+        if self._sel_start is None or self._sel_end is None:
+            return None
+        p0 = self._widget_to_pdf(self._sel_start)
+        p1 = self._widget_to_pdf(self._sel_end)
+        if self._tool == AnnotTool.LINE:
+            if abs(p0[0] - p1[0]) < 1 and abs(p0[1] - p1[1]) < 1:
+                return None
+            return {"points": (p0, p1)}
+        x0, x1 = sorted((p0[0], p1[0]))
+        y0, y1 = sorted((p0[1], p1[1]))
+        if x1 - x0 < 2 and y1 - y0 < 2:
+            return None
+        rect = (x0, y0, x1, y1)
+        if self._tool in _TEXT_MARKUP_TOOLS:
+            # Never fall back to the raw drag box — that paints oversized yellow rects.
+            return {"rects": self._text_rects_in_selection()}
+        return {"rect": rect}
+
+    def _widget_to_pdf(self, pos: QPointF) -> tuple[float, float]:
+        return _widget_point_to_pdf(
             pos,
             self._page_w,
             self._page_h,
@@ -463,11 +1233,35 @@ class _PageTile(QWidget):
             self.height(),
             self._rotation,
         )
-        x, y = pdf_pt
+
+    def _link_at(self, pos: QPointF) -> LinkInfo | None:
+        x, y = self._widget_to_pdf(pos)
         for link in self._links:
             x0, y0, x1, y1 = link.rect
             if x0 <= x <= x1 and y0 <= y <= y1:
                 return link
+        return None
+
+    def _widget_at(self, pos: QPointF) -> WidgetInfo | None:
+        x, y = self._widget_to_pdf(pos)
+        for widget in self._widgets:
+            x0, y0, x1, y1 = widget.rect
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return widget
+        return None
+
+    def _freetext_at(self, pos: QPointF) -> AnnotationOp | None:
+        x, y = self._widget_to_pdf(pos)
+        for entry in reversed(self._overlay_entries):
+            if entry.kind != "annotation" or entry.annotation is None:
+                continue
+            op = entry.annotation
+            if op.kind != "freetext" or op.page_index != self.logical_page:
+                continue
+            for rect in op.rects:
+                x0, y0, x1, y1 = rect
+                if x0 <= x <= x1 and y0 <= y <= y1:
+                    return op
         return None
 
     def _ensure_text_dict(self) -> dict | None:
@@ -482,20 +1276,29 @@ class _PageTile(QWidget):
         self._text_provider = None
         return self._text_dict
 
-    def _text_in_selection(self) -> str:
-        text_dict = self._ensure_text_dict()
-        if (
-            text_dict is None
-            or self._sel_start is None
-            or self._sel_end is None
-        ):
-            return ""
+    def _selection_widget_bounds(
+        self, *, inflate_y: float = 0.0
+    ) -> tuple[float, float, float, float] | None:
+        if self._sel_start is None or self._sel_end is None:
+            return None
         ax = min(self._sel_start.x(), self._sel_end.x())
         ay = min(self._sel_start.y(), self._sel_end.y())
         bx = max(self._sel_start.x(), self._sel_end.x())
         by = max(self._sel_start.y(), self._sel_end.y())
         if bx - ax < 2 and by - ay < 2:
+            return None
+        if inflate_y > 0 and (by - ay) < inflate_y * 2:
+            mid = (ay + by) / 2
+            ay = mid - inflate_y
+            by = mid + inflate_y
+        return ax, ay, bx, by
+
+    def _text_in_selection(self) -> str:
+        text_dict = self._ensure_text_dict()
+        bounds = self._selection_widget_bounds(inflate_y=_TEXT_MARKUP_Y_PAD_PX)
+        if text_dict is None or bounds is None:
             return ""
+        ax, ay, bx, by = bounds
         parts: list[str] = []
         for block in text_dict.get("blocks", []):
             if block.get("type", 0) != 0:
@@ -503,6 +1306,87 @@ class _PageTile(QWidget):
             for line in block.get("lines", []):
                 line_bits: list[str] = []
                 for span in line.get("spans", []):
+                    for ch in self._span_chars(span):
+                        glyph, bbox = ch
+                        wr = _map_pdf_rect_to_widget(
+                            bbox,
+                            self._page_w,
+                            self._page_h,
+                            self.width(),
+                            self.height(),
+                            self._rotation,
+                        )
+                        if wr.right() < ax or wr.left() > bx or wr.bottom() < ay or wr.top() > by:
+                            continue
+                        line_bits.append(glyph)
+                    if not self._span_chars(span):
+                        bbox = span.get("bbox")
+                        text = span.get("text") or ""
+                        if not bbox or not text:
+                            continue
+                        wr = _map_pdf_rect_to_widget(
+                            tuple(bbox),
+                            self._page_w,
+                            self._page_h,
+                            self.width(),
+                            self.height(),
+                            self._rotation,
+                        )
+                        if wr.right() < ax or wr.left() > bx or wr.bottom() < ay or wr.top() > by:
+                            continue
+                        line_bits.append(text)
+                if line_bits:
+                    parts.append("".join(line_bits))
+        return "\n".join(parts)
+
+    @staticmethod
+    def _span_chars(
+        span: dict,
+    ) -> list[tuple[str, tuple[float, float, float, float]]]:
+        chars = span.get("chars")
+        if not chars:
+            return []
+        out: list[tuple[str, tuple[float, float, float, float]]] = []
+        for ch in chars:
+            glyph = ch.get("c") or ""
+            bbox = ch.get("bbox")
+            if not glyph or not bbox:
+                continue
+            out.append((glyph, tuple(float(v) for v in bbox)))  # type: ignore[arg-type]
+        return out
+
+    def text_rects_in_selection(self) -> tuple[tuple[float, float, float, float], ...]:
+        return self._text_rects_in_selection()
+
+    def _text_rects_in_selection(self) -> tuple[tuple[float, float, float, float], ...]:
+        text_dict = self._ensure_text_dict()
+        bounds = self._selection_widget_bounds(inflate_y=_TEXT_MARKUP_Y_PAD_PX)
+        if text_dict is None or bounds is None:
+            return ()
+        ax, ay, bx, by = bounds
+        char_rects: list[tuple[float, float, float, float]] = []
+        for block in text_dict.get("blocks", []):
+            if block.get("type", 0) != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    chars = self._span_chars(span)
+                    if chars:
+                        for _glyph, bbox in chars:
+                            wr = _map_pdf_rect_to_widget(
+                                bbox,
+                                self._page_w,
+                                self._page_h,
+                                self.width(),
+                                self.height(),
+                                self._rotation,
+                            )
+                            # Prefer center-in-selection so thin line sweeps work.
+                            cx = (wr.left() + wr.right()) / 2
+                            cy = (wr.top() + wr.bottom()) / 2
+                            if ax <= cx <= bx and ay <= cy <= by:
+                                char_rects.append(bbox)
+                        continue
                     bbox = span.get("bbox")
                     text = span.get("text") or ""
                     if not bbox or not text:
@@ -515,12 +1399,32 @@ class _PageTile(QWidget):
                         self.height(),
                         self._rotation,
                     )
-                    if wr.right() < ax or wr.left() > bx or wr.bottom() < ay or wr.top() > by:
-                        continue
-                    line_bits.append(text)
-                if line_bits:
-                    parts.append("".join(line_bits))
-        return "\n".join(parts)
+                    cx = (wr.left() + wr.right()) / 2
+                    cy = (wr.top() + wr.bottom()) / 2
+                    if ax <= cx <= bx and ay <= cy <= by:
+                        char_rects.append(tuple(float(v) for v in bbox))  # type: ignore[arg-type]
+                    elif not (
+                        wr.right() < ax or wr.left() > bx or wr.bottom() < ay or wr.top() > by
+                    ):
+                        # Partial span overlap without char data: clip to selection in PDF space.
+                        pdf_sel = (
+                            self._widget_to_pdf(QPointF(ax, ay)),
+                            self._widget_to_pdf(QPointF(bx, by)),
+                        )
+                        sx0 = min(pdf_sel[0][0], pdf_sel[1][0])
+                        sy0 = min(pdf_sel[0][1], pdf_sel[1][1])
+                        sx1 = max(pdf_sel[0][0], pdf_sel[1][0])
+                        sy1 = max(pdf_sel[0][1], pdf_sel[1][1])
+                        x0, y0, x1, y1 = (float(v) for v in bbox)
+                        clipped = (
+                            max(x0, sx0),
+                            max(y0, sy0),
+                            min(x1, sx1),
+                            min(y1, sy1),
+                        )
+                        if clipped[2] - clipped[0] > 1 and clipped[3] - clipped[1] > 1:
+                            char_rects.append(clipped)
+        return _merge_char_rects(char_rects)
 
 
 class _ViewerScrollArea(QScrollArea):
@@ -549,6 +1453,7 @@ class PdfViewerWidget(QWidget):
     busy_changed = pyqtSignal(bool, str)
     status_message = pyqtSignal(str)
     render_error = pyqtSignal(str)
+    markup_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -557,6 +1462,10 @@ class PdfViewerWidget(QWidget):
 
         self._model: PdfEditModel | None = None
         self._get_loader: Callable[[str], PdfLoader] | None = None
+        self._markup: MarkupSession | None = None
+        self._tool = AnnotTool.SELECT
+        self._markup_color = _DEFAULT_MARKUP_COLOR
+        self._selected_overlay: AnnotationOp | None = None
         self._layout = ViewerLayout.CONTINUOUS
         self._zoom_mode = ZoomMode.FIT_WIDTH
         self._zoom_percent = DEFAULT_ZOOM_PERCENT
@@ -621,16 +1530,21 @@ class PdfViewerWidget(QWidget):
         self._overlay = BusyOverlay(self._scroll.viewport())
 
         self._hint = QLabel(
-            "PgUp/PgDn pages  ·  Ctrl+scroll zoom  ·  Ctrl+0 reset  ·  Esc back to grid"
+            "Right-click for markup tools  ·  PgUp/PgDn  ·  Ctrl+scroll zoom  ·  Esc grid"
         )
         self._hint.setObjectName("PdfViewerHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center_layout.addWidget(self._hint)
 
+        self._annot_rail = self._build_annot_rail()
+        self._annot_rail_collapsed = False
+
         self._splitter.addWidget(center)
+        self._splitter.addWidget(self._annot_rail)
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setSizes([SIDE_PANEL_WIDTH, 800])
+        self._splitter.setStretchFactor(2, 0)
+        self._splitter.setSizes([SIDE_PANEL_WIDTH, 800, ANNOT_RAIL_WIDTH])
         root.addWidget(self._splitter, stretch=1)
 
     # --- public API ---------------------------------------------------------
@@ -659,10 +1573,15 @@ class PdfViewerWidget(QWidget):
         self,
         model: PdfEditModel | None,
         get_loader: Callable[[str], PdfLoader] | None,
+        *,
+        markup: MarkupSession | None = None,
     ) -> None:
         self._cancel_all()
         self._model = model
         self._get_loader = get_loader
+        self._markup = markup
+        self._tool = AnnotTool.SELECT
+        self._sync_annot_tool_ui()
         self._current_page = 0
         self._hits = []
         self._hit_index = -1
@@ -690,6 +1609,100 @@ class PdfViewerWidget(QWidget):
         self._rebuild_canvas()
         self._update_render_width()
         self._schedule_render()
+
+    @property
+    def markup_session(self) -> MarkupSession | None:
+        return self._markup
+
+    @property
+    def annot_tool(self) -> AnnotTool:
+        return self._tool
+
+    def set_annot_tool(self, tool: AnnotTool) -> None:
+        self._tool = tool
+        self._sync_annot_tool_ui()
+        for tile in self._tiles.values():
+            tile.set_tool(tool)
+            tile.clear_selection()
+        labels = {
+            AnnotTool.SELECT: "Select text — click boxes to move or resize",
+            AnnotTool.HIGHLIGHT: "Highlight — drag over text (color from Markup color)",
+            AnnotTool.UNDERLINE: "Underline — drag over text (color from Markup color)",
+            AnnotTool.STRIKEOUT: "Strikeout — drag over text (color from Markup color)",
+            AnnotTool.INK: "Ink — draw freehand",
+            AnnotTool.RECT: "Rectangle — drag",
+            AnnotTool.CIRCLE: "Circle — drag",
+            AnnotTool.LINE: "Line — drag",
+            AnnotTool.STAMP: "Stamp — click to place",
+            AnnotTool.FREETEXT: "Free text — click to place; drag handles to resize",
+            AnnotTool.IMAGE: "Image — drag a box, then choose a file",
+            AnnotTool.COMMENT: "Comment — click to place",
+            AnnotTool.FORM_FILL: "Fill form — click a field",
+            AnnotTool.FORM_TEXT: "Add text field — drag",
+            AnnotTool.FORM_CHECK: "Add checkbox — drag",
+        }
+        self.status_message.emit(labels.get(tool, tool.value))
+
+    def _sync_annot_tool_ui(self) -> None:
+        if not hasattr(self, "_annot_group"):
+            return
+        for i, (_label, tool) in enumerate(ANNOT_TOOL_ITEMS):
+            btn = self._annot_group.button(i)
+            if btn is not None:
+                btn.setChecked(tool == self._tool)
+
+    def refresh_markup_overlays(self) -> None:
+        entries = self._markup.ops() if self._markup is not None else []
+        for tile in self._tiles.values():
+            tile.set_overlay_entries(entries)
+            tile.set_markup_color(self._markup_color)
+            tile.set_selected_op(
+                self._selected_overlay
+                if self._selected_overlay is not None
+                and self._selected_overlay.page_index == tile.logical_page
+                else None
+            )
+
+    def _set_selected_overlay(self, op: AnnotationOp | None) -> None:
+        self._selected_overlay = op
+        for tile in self._tiles.values():
+            tile.set_selected_op(
+                op if op is not None and op.page_index == tile.logical_page else None
+            )
+
+    def _delete_overlay(self, op: AnnotationOp | None = None) -> bool:
+        if self._markup is None:
+            return False
+        target = op if op is not None else self._selected_overlay
+        if target is None or target.kind not in MOVABLE_ANNOT_KINDS:
+            return False
+        if not self._markup.remove_annotation(target):
+            return False
+        self._set_selected_overlay(None)
+        self.refresh_markup_overlays()
+        self.markup_changed.emit()
+        label = "Image" if target.kind == "image" else "Text"
+        self.status_message.emit(f"{label} removed")
+        return True
+
+    def _pick_markup_color(self) -> None:
+        rgb = [int(c * 255) for c in self._markup_color]
+        chosen = QColorDialog.getColor(QColor(*rgb), self, "Markup color")
+        if not chosen.isValid():
+            return
+        self._markup_color = (chosen.red() / 255.0, chosen.green() / 255.0, chosen.blue() / 255.0)
+        self._sync_markup_color_button()
+        for tile in self._tiles.values():
+            tile.set_markup_color(self._markup_color)
+        self.status_message.emit("Markup color updated")
+
+    def _sync_markup_color_button(self) -> None:
+        if not hasattr(self, "_markup_color_btn"):
+            return
+        r, g, b = (int(c * 255) for c in self._markup_color)
+        self._markup_color_btn.setStyleSheet(
+            f"background-color: rgb({r}, {g}, {b}); min-height: 22px;"
+        )
 
     def set_layout_mode(self, mode: ViewerLayout) -> None:
         if mode == self._layout:
@@ -978,6 +1991,397 @@ class PdfViewerWidget(QWidget):
 
         return bar
 
+    def _build_annot_rail(self) -> QWidget:
+        rail = QFrame()
+        rail.setObjectName("PdfViewerAnnotRail")
+        rail.setMinimumWidth(ANNOT_RAIL_COLLAPSED)
+        rail.setMaximumWidth(ANNOT_RAIL_WIDTH)
+        rail.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+        outer = QVBoxLayout(rail)
+        outer.setContentsMargins(4, 6, 4, 6)
+        outer.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(2)
+        self._annot_rail_title = QLabel("Markup")
+        self._annot_rail_title.setObjectName("PdfViewerAnnotRailTitle")
+        self._annot_rail_title.setAccessibleName("Markup tools")
+        header.addWidget(self._annot_rail_title, stretch=1)
+
+        self._annot_collapse_btn = QToolButton()
+        self._annot_collapse_btn.setObjectName("PdfViewerAnnotCollapse")
+        self._annot_collapse_btn.setText("»")
+        self._annot_collapse_btn.setToolTip("Collapse markup tools")
+        self._annot_collapse_btn.setAccessibleName("Collapse markup tools")
+        self._annot_collapse_btn.clicked.connect(self._toggle_annot_rail)
+        header.addWidget(self._annot_collapse_btn)
+        outer.addLayout(header)
+
+        self._annot_tools_host = QWidget()
+        self._annot_tools_host.setObjectName("PdfViewerAnnotTools")
+        tools_layout = QVBoxLayout(self._annot_tools_host)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(2)
+
+        self._annot_group = QButtonGroup(self)
+        self._annot_group.setExclusive(True)
+        for i, (label, tool) in enumerate(ANNOT_TOOL_ITEMS):
+            btn = QToolButton()
+            btn.setText(label)
+            btn.setCheckable(True)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setAccessibleName(f"Annotation tool {label}")
+            btn.setToolTip(label)
+            if tool == AnnotTool.SELECT:
+                btn.setChecked(True)
+            self._annot_group.addButton(btn, i)
+            btn.clicked.connect(lambda _checked=False, t=tool: self.set_annot_tool(t))
+            tools_layout.addWidget(btn)
+
+        self._markup_color_btn = QToolButton()
+        self._markup_color_btn.setText("Color")
+        self._markup_color_btn.setObjectName("PdfViewerMarkupColor")
+        self._markup_color_btn.setAccessibleName("Markup color")
+        self._markup_color_btn.setToolTip("Color for highlight, underline, and strikeout")
+        self._markup_color_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._markup_color_btn.clicked.connect(self._pick_markup_color)
+        self._sync_markup_color_button()
+        tools_layout.addWidget(self._markup_color_btn)
+
+        flatten_btn = QToolButton()
+        flatten_btn.setText("Flatten forms")
+        flatten_btn.setAccessibleName("Flatten forms")
+        flatten_btn.setToolTip("Bake form appearances on Save As")
+        flatten_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        flatten_btn.clicked.connect(self._on_flatten_forms)
+        tools_layout.addWidget(flatten_btn)
+        tools_layout.addStretch(1)
+        outer.addWidget(self._annot_tools_host, stretch=1)
+
+        self._annot_expand_btn = QToolButton()
+        self._annot_expand_btn.setObjectName("PdfViewerAnnotExpand")
+        self._annot_expand_btn.setText("«")
+        self._annot_expand_btn.setToolTip("Show markup tools")
+        self._annot_expand_btn.setAccessibleName("Show markup tools")
+        self._annot_expand_btn.clicked.connect(self._toggle_annot_rail)
+        self._annot_expand_btn.hide()
+        outer.addWidget(self._annot_expand_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch(0)
+        return rail
+
+    def _toggle_annot_rail(self) -> None:
+        self._annot_rail_collapsed = not self._annot_rail_collapsed
+        collapsed = self._annot_rail_collapsed
+        self._annot_tools_host.setVisible(not collapsed)
+        self._annot_rail_title.setVisible(not collapsed)
+        self._annot_collapse_btn.setVisible(not collapsed)
+        self._annot_expand_btn.setVisible(collapsed)
+        width = ANNOT_RAIL_COLLAPSED if collapsed else ANNOT_RAIL_WIDTH
+        self._annot_rail.setMaximumWidth(width)
+        self._annot_rail.setMinimumWidth(width)
+        sizes = self._splitter.sizes()
+        if len(sizes) >= 3:
+            # Keep left+center; assign rail width.
+            total = sum(sizes)
+            rail = width
+            left = sizes[0]
+            center = max(200, total - left - rail)
+            self._splitter.setSizes([left, center, rail])
+        tip = "Show markup tools" if collapsed else "Collapse markup tools"
+        self.status_message.emit(tip)
+
+    def _show_annot_context_menu(self, global_pos) -> None:
+        menu = QMenu(self)
+        menu.setObjectName("PdfViewerAnnotMenu")
+        for label, tool in ANNOT_TOOL_ITEMS:
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(tool == self._tool)
+            action.triggered.connect(lambda _checked=False, t=tool: self.set_annot_tool(t))
+        if self._selection_has_text():
+            menu.addSeparator()
+            for label, tool in (
+                ("Highlight selection", AnnotTool.HIGHLIGHT),
+                ("Underline selection", AnnotTool.UNDERLINE),
+                ("Strikeout selection", AnnotTool.STRIKEOUT),
+            ):
+                action = menu.addAction(label)
+                action.triggered.connect(
+                    lambda _checked=False, t=tool: self._apply_text_markup_to_selection(t)
+                )
+        if (
+            self._selected_overlay is not None
+            and self._selected_overlay.kind in MOVABLE_ANNOT_KINDS
+        ):
+            menu.addSeparator()
+            delete = menu.addAction("Delete")
+            delete.triggered.connect(lambda: self._delete_overlay())
+        menu.addSeparator()
+        flatten = menu.addAction("Flatten forms…")
+        flatten.triggered.connect(self._on_flatten_forms)
+        menu.exec(global_pos)
+
+    def _selection_has_text(self) -> bool:
+        return any(tile.selected_text() for tile in self._tiles.values())
+
+    def _apply_text_markup_to_selection(self, tool: AnnotTool) -> None:
+        if self._markup is None or tool not in _TEXT_MARKUP_TOOLS:
+            return
+        applied = False
+        for tile in self._tiles.values():
+            rects = tile.text_rects_in_selection()
+            if not rects:
+                continue
+            self._markup.push_annotation(
+                AnnotationOp(
+                    kind=tool.value,  # type: ignore[arg-type]
+                    page_index=tile.logical_page,
+                    rects=rects,
+                    color=self._markup_color,
+                )
+            )
+            tile.clear_selection()
+            applied = True
+        if not applied:
+            self.status_message.emit("No text under selection")
+            return
+        self.refresh_markup_overlays()
+        self.markup_changed.emit()
+        self.status_message.emit("Markup added — Save As to keep")
+
+    def _on_flatten_forms(self) -> None:
+        if self._markup is None:
+            self.status_message.emit("Open a document to flatten forms")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Flatten forms",
+            "Form fields will be baked into page content when you Save As. Continue?",
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._markup.push_form_flatten()
+        self.refresh_markup_overlays()
+        self.markup_changed.emit()
+        self.status_message.emit("Flatten forms queued — Save As to apply")
+
+    def _on_markup_gesture(self, logical: int, tool_value: str, payload: object) -> None:
+        if self._markup is None or not isinstance(payload, dict):
+            return
+        if tool_value == "select_overlay":
+            ann = payload.get("annotation")
+            self._set_selected_overlay(ann if isinstance(ann, AnnotationOp) else None)
+            return
+        if tool_value == "transform_overlay":
+            old = payload.get("annotation")
+            rect = payload.get("rect")
+            if not isinstance(old, AnnotationOp) or not rect:
+                return
+            new = replace(old, rects=(tuple(rect),))  # type: ignore[arg-type]
+            if not self._markup.replace_annotation(old, new):
+                return
+            self._set_selected_overlay(new)
+            self.refresh_markup_overlays()
+            self.markup_changed.emit()
+            self.status_message.emit("Moved — Save As to keep")
+            return
+        if tool_value == "edit_freetext":
+            old = payload.get("annotation")
+            if not isinstance(old, AnnotationOp):
+                return
+            result = _prompt_freetext(
+                self,
+                text=old.text,
+                fontsize=old.fontsize,
+                color=old.color,
+                border=old.border,
+                title="Edit free text",
+                allow_delete=True,
+            )
+            if result is None:
+                return
+            if result == "delete":
+                self._delete_overlay(old)
+                return
+            text, fontsize, color, border = result
+            x0, y0, x1, y1 = old.rects[0] if old.rects else (0.0, 0.0, 160.0, 40.0)
+            width = max(x1 - x0, 40.0 + fontsize * max(len(text), 1) * 0.45)
+            height = max(y1 - y0, fontsize * (1.6 + text.count("\n")))
+            new = AnnotationOp(
+                kind="freetext",
+                page_index=old.page_index,
+                rects=((x0, y0, x0 + width, y0 + height),),
+                text=text,
+                color=color,
+                fontsize=fontsize,
+                border=border,
+            )
+            if not self._markup.replace_annotation(old, new):
+                return
+            self._set_selected_overlay(new)
+            self.refresh_markup_overlays()
+            self.markup_changed.emit()
+            self.status_message.emit("Free text updated — Save As to keep")
+            return
+
+        tool = AnnotTool(tool_value)
+        created: AnnotationOp | None = None
+        if tool in _TEXT_MARKUP_TOOLS:
+            rects = payload.get("rects") or ()
+            if not rects:
+                self.status_message.emit("No text under selection")
+                return
+            created = AnnotationOp(
+                kind=tool.value,  # type: ignore[arg-type]
+                page_index=logical,
+                rects=tuple(rects),
+                color=self._markup_color,
+            )
+            self._markup.push_annotation(created)
+        elif tool == AnnotTool.INK:
+            strokes = payload.get("strokes") or ()
+            if not strokes:
+                return
+            normalized = tuple(
+                tuple((float(x), float(y)) for x, y in stroke) for stroke in strokes
+            )
+            created = AnnotationOp(
+                kind="ink", page_index=logical, strokes=normalized, color=self._markup_color
+            )
+            self._markup.push_annotation(created)
+        elif tool in (AnnotTool.RECT, AnnotTool.CIRCLE):
+            rect = payload.get("rect")
+            if not rect:
+                return
+            created = AnnotationOp(
+                kind=tool.value,  # type: ignore[arg-type]
+                page_index=logical,
+                rects=(rect,),
+                color=(0.9, 0.2, 0.2),
+            )
+            self._markup.push_annotation(created)
+        elif tool == AnnotTool.LINE:
+            points = payload.get("points")
+            if not points:
+                return
+            created = AnnotationOp(
+                kind="line",
+                page_index=logical,
+                points=tuple(points),
+                color=(0.9, 0.2, 0.2),
+            )
+            self._markup.push_annotation(created)
+        elif tool == AnnotTool.STAMP:
+            point = payload.get("point")
+            if not point:
+                return
+            x, y = point
+            rect = (x, y, x + 100, y + 40)
+            created = AnnotationOp(
+                kind="stamp",
+                page_index=logical,
+                rects=(rect,),
+                stamp_id=STAMP_APPROVED,
+            )
+            self._markup.push_annotation(created)
+        elif tool == AnnotTool.FREETEXT:
+            point = payload.get("point")
+            if not point:
+                return
+            result = _prompt_freetext(self)
+            if result is None:
+                return
+            text, fontsize, color, border = result
+            x, y = point
+            width = max(120.0, fontsize * max(len(text), 1) * 0.45)
+            height = max(fontsize * 1.8, fontsize * (1.6 + text.count("\n")))
+            rect = (x, y, x + width, y + height)
+            created = AnnotationOp(
+                kind="freetext",
+                page_index=logical,
+                rects=(rect,),
+                text=text,
+                color=color,
+                fontsize=fontsize,
+                border=border,
+            )
+            self._markup.push_annotation(created)
+            self._set_selected_overlay(created)
+        elif tool == AnnotTool.IMAGE:
+            rect = payload.get("rect")
+            if not rect:
+                return
+            path, _filter = QFileDialog.getOpenFileName(
+                self, "Insert image", "", _IMAGE_FILTERS
+            )
+            if not path:
+                return
+            created = AnnotationOp(
+                kind="image",
+                page_index=logical,
+                rects=(tuple(rect),),  # type: ignore[arg-type]
+                image_path=path,
+            )
+            self._markup.push_annotation(created)
+            self._set_selected_overlay(created)
+        elif tool == AnnotTool.COMMENT:
+            point = payload.get("point")
+            if not point:
+                return
+            text, ok = QInputDialog.getText(self, "Comment", "Comment:")
+            if not ok:
+                return
+            created = AnnotationOp(
+                kind="comment",
+                page_index=logical,
+                points=(tuple(point),),  # type: ignore[arg-type]
+                text=text.strip(),
+            )
+            self._markup.push_annotation(created)
+        elif tool in (AnnotTool.FORM_TEXT, AnnotTool.FORM_CHECK):
+            rect = payload.get("rect")
+            if not rect:
+                return
+            name, ok = QInputDialog.getText(self, "Form field", "Field name:")
+            if not ok or not name.strip():
+                return
+            self._markup.push_form_create(
+                FormCreateOp(
+                    page_index=logical,
+                    field_name=name.strip(),
+                    field_type="checkbox" if tool == AnnotTool.FORM_CHECK else "text",
+                    rect=tuple(rect),  # type: ignore[arg-type]
+                )
+            )
+        else:
+            return
+        self.refresh_markup_overlays()
+        self.markup_changed.emit()
+        self.status_message.emit("Markup added — Save As to keep")
+
+    def _on_form_field_activated(self, logical: int, widget: object) -> None:
+        if self._markup is None or not isinstance(widget, WidgetInfo):
+            return
+        if not widget.name:
+            self.status_message.emit("Field has no name")
+            return
+        text, ok = QInputDialog.getText(
+            self,
+            "Fill form field",
+            f"{widget.name} ({widget.field_type}):",
+            text=widget.value,
+        )
+        if not ok:
+            return
+        self._markup.push_form_fill({widget.name: text})
+        self.markup_changed.emit()
+        self.status_message.emit(f"Queued fill for “{widget.name}” — Save As to keep")
+
     def _build_side_panel(self) -> QTabWidget:
         tabs = QTabWidget()
         tabs.setObjectName("PdfViewerSide")
@@ -1256,6 +2660,18 @@ class PdfViewerWidget(QWidget):
     def _make_tile(self, logical: int) -> _PageTile:
         tile = _PageTile(logical)
         tile.link_activated.connect(self._on_link)
+        tile.markup_gesture.connect(self._on_markup_gesture)
+        tile.form_field_activated.connect(self._on_form_field_activated)
+        tile.context_menu_requested.connect(self._show_annot_context_menu)
+        tile.set_tool(self._tool)
+        tile.set_markup_color(self._markup_color)
+        if self._markup is not None:
+            tile.set_overlay_entries(self._markup.ops())
+        if (
+            self._selected_overlay is not None
+            and self._selected_overlay.page_index == logical
+        ):
+            tile.set_selected_op(self._selected_overlay)
         self._tiles[logical] = tile
         self._pending_meta.add(logical)
         return tile
@@ -1435,6 +2851,10 @@ class PdfViewerWidget(QWidget):
                 links = page_links(ref)
             except Exception:
                 links = []
+            try:
+                widgets = page_widgets(ref.source_path, ref.source_index)
+            except Exception:
+                widgets = []
 
             def _text_provider(
                 r: PageRef = ref,
@@ -1447,8 +2867,15 @@ class PdfViewerWidget(QWidget):
             tile = self._tiles.get(logical)
             if tile is not None:
                 tile.set_page_meta(
-                    pw, ph, ref.rotation, links, text_provider=_text_provider
+                    pw,
+                    ph,
+                    ref.rotation,
+                    links,
+                    text_provider=_text_provider,
+                    widgets=widgets,
                 )
+                if self._markup is not None:
+                    tile.set_overlay_entries(self._markup.ops())
             self._pending_meta.discard(logical)
 
     def _on_render_finished(
@@ -1679,7 +3106,14 @@ class PdfViewerWidget(QWidget):
         key = event.key()
         mods = event.modifiers()
         if key == Qt.Key.Key_Escape:
+            if self._selected_overlay is not None:
+                self._set_selected_overlay(None)
+                event.accept()
+                return
             self.closed.emit()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self._delete_overlay():
             event.accept()
             return
         if key == Qt.Key.Key_0 and mods & Qt.KeyboardModifier.ControlModifier:

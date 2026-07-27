@@ -76,6 +76,16 @@ class PageGeom:
     height: float
 
 
+@dataclass(frozen=True)
+class WidgetInfo:
+    """AcroForm widget geometry on a source page (PDF space)."""
+
+    name: str
+    field_type: str
+    value: str
+    rect: tuple[float, float, float, float]
+
+
 def call(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
     """Run *fn* under the process-wide fitz lock."""
     with FITZ_LOCK:
@@ -186,12 +196,12 @@ def page_text_dict(
     *,
     password: str | None = None,
 ) -> dict:
-    """Raw text dict for selection geometry (PyMuPDF ``get_text('dict')``)."""
+    """Text geometry for selection (PyMuPDF ``get_text('rawdict')`` — includes chars)."""
 
     def _body() -> dict:
         doc = _open(ref.source_path, password)
         try:
-            return doc[ref.source_index].get_text("dict")
+            return doc[ref.source_index].get_text("rawdict")
         finally:
             doc.close()
 
@@ -368,3 +378,37 @@ def logical_index_for_source(
         if ref.source_path == source_path and ref.source_index == source_index:
             return i
     return None
+
+
+def page_widgets(
+    path: str,
+    source_index: int,
+    *,
+    password: str | None = None,
+) -> list[WidgetInfo]:
+    """AcroForm widgets on one source page (empty when XFA / none)."""
+    from pagedrop.core.forms import document_has_xfa
+
+    def _body() -> list[WidgetInfo]:
+        doc = _open(path, password)
+        try:
+            if document_has_xfa(doc):
+                return []
+            if source_index < 0 or source_index >= doc.page_count:
+                return []
+            out: list[WidgetInfo] = []
+            for widget in doc[source_index].widgets() or []:
+                rect = widget.rect
+                out.append(
+                    WidgetInfo(
+                        name=str(widget.field_name or ""),
+                        field_type=str(widget.field_type_string or "unknown"),
+                        value=str(widget.field_value or ""),
+                        rect=(rect.x0, rect.y0, rect.x1, rect.y1),
+                    )
+                )
+            return out
+        finally:
+            doc.close()
+
+    return call(_body)

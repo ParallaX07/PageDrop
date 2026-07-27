@@ -804,6 +804,53 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-bottom: 1px solid {border_subtle};
     }}
 
+    QFrame#PdfViewerAnnotRail {{
+        background-color: {bg_surface};
+        border-left: 1px solid {border_subtle};
+    }}
+
+    QLabel#PdfViewerAnnotRailTitle {{
+        color: {text_secondary};
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 4px;
+    }}
+
+    QWidget#PdfViewerAnnotTools QToolButton {{
+        text-align: left;
+        padding: 5px 8px;
+        border: none;
+        border-radius: {RADIUS_CONTROL}px;
+        color: {text_secondary};
+        background-color: transparent;
+    }}
+
+    QWidget#PdfViewerAnnotTools QToolButton:hover {{
+        color: {text_primary};
+        background-color: {bg_card_hover};
+    }}
+
+    QWidget#PdfViewerAnnotTools QToolButton:checked {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border: 1px solid {ACCENT};
+    }}
+
+    QToolButton#PdfViewerAnnotCollapse,
+    QToolButton#PdfViewerAnnotExpand {{
+        color: {text_muted};
+        border: none;
+        padding: 4px;
+        background-color: transparent;
+    }}
+
+    QToolButton#PdfViewerAnnotCollapse:hover,
+    QToolButton#PdfViewerAnnotExpand:hover {{
+        color: {text_primary};
+        background-color: {bg_card_hover};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
     QTabWidget#PdfViewerSide {{
         background-color: {bg_surface};
         color: {text_primary};

@@ -664,6 +664,7 @@ class MainWindow(QMainWindow):
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
         tab.preview_widget.closed.connect(self._on_viewer_closed)
+        tab.preview_widget.status_message.connect(self._transient_status)
         tab.dirty_changed.connect(self._on_tab_dirty_changed)
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
@@ -701,6 +702,7 @@ class MainWindow(QMainWindow):
             (preview.busy_changed, self._on_preview_busy_changed),
             (preview.render_error, self._on_preview_render_error),
             (preview.closed, self._on_viewer_closed),
+            (preview.status_message, self._transient_status),
             (tab.dirty_changed, self._on_tab_dirty_changed),
         ):
             try:
@@ -710,6 +712,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_dirty_changed(self, _dirty: bool = False) -> None:
         self._update_save_as_action()
+        self._update_undo_redo_actions()
         if self.sender() is self._active_tab():
             self._update_window_title()
 
@@ -1100,11 +1103,13 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         model = tab.edit_model if tab is not None else None
         preview_blocking = tab is not None and tab.is_preview_visible()
+        markup_undo = tab is not None and tab.is_viewer_mode() and tab.markup_session.can_undo()
+        markup_redo = tab is not None and tab.is_viewer_mode() and tab.markup_session.can_redo()
         self._undo_action.setEnabled(
-            model is not None and model.can_undo() and not preview_blocking
+            (markup_undo or (model is not None and model.can_undo() and not preview_blocking))
         )
         self._redo_action.setEnabled(
-            model is not None and model.can_redo() and not preview_blocking
+            (markup_redo or (model is not None and model.can_redo() and not preview_blocking))
         )
 
     def _offer_move_undo(self, count: int, undo: Callable[[], bool]) -> None:
@@ -2000,7 +2005,7 @@ class MainWindow(QMainWindow):
             return False
 
         try:
-            write_pdf(model, path)
+            write_pdf(model, path, markup=target.peek_markup_ops() or None)
         except OSError as exc:
             QMessageBox.critical(
                 self,
@@ -2018,6 +2023,7 @@ class MainWindow(QMainWindow):
 
         remember_directory(path)
         model.mark_saved(path)
+        target.clear_markup_after_save()
         target.clear_custom_tab_title()
         target._sync_dirty_from_model()
         self._tab_manager.update_tab_title(target)

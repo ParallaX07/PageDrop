@@ -6,6 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
+from pagedrop.core.markup import MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.dialogs import confirm_delete_pages
@@ -49,6 +50,7 @@ class PdfTab(QWidget):
         super().__init__(parent)
         self._temp_manager = temp_manager
         self._edit_model: PdfEditModel | None = None
+        self._markup = MarkupSession()
         # Main-thread only — never pass these docs into QRunnable workers
         # (see core.thread_policy). Workers open by path themselves.
         self._loader_cache: dict[str, PdfLoader] = {}
@@ -76,6 +78,7 @@ class PdfTab(QWidget):
         # Preview / Enter / double-click opens the full viewer.
         self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
+        self._preview_widget.markup_changed.connect(self._on_markup_changed)
 
         self._content_stack.addWidget(self._thumbnail_grid)
         self._content_stack.addWidget(self._preview_widget)
@@ -101,6 +104,17 @@ class PdfTab(QWidget):
     @property
     def edit_model(self) -> PdfEditModel | None:
         return self._edit_model
+
+    @property
+    def markup_session(self) -> MarkupSession:
+        return self._markup
+
+    def peek_markup_ops(self):
+        return self._markup.ops()
+
+    def clear_markup_after_save(self) -> None:
+        self._markup.clear()
+        self._preview_widget.refresh_markup_overlays()
 
     @property
     def loader(self) -> PdfLoader | None:
@@ -212,7 +226,9 @@ class PdfTab(QWidget):
         if self._edit_model is None:
             return
         # Re-bind so rotate/reorder while in grid refreshes sizes + cache keys.
-        self._preview_widget.set_model(self._edit_model, self.get_loader)
+        self._preview_widget.set_model(
+            self._edit_model, self.get_loader, markup=self._markup
+        )
         self._preview_widget.reset_zoom_to_fit()
         self._preview_widget.show_page(page_index)
         self._content_stack.setCurrentWidget(self._preview_widget)
@@ -247,6 +263,7 @@ class PdfTab(QWidget):
         loader = PdfLoader(path, password=password)
         self._loader_cache[path] = loader
         self._edit_model = PdfEditModel(path, loader.page_count)
+        self._markup.clear()
         self._pdf_path = path
         self._drop_initialized = False
         self._sync_dirty_from_model()
@@ -273,7 +290,13 @@ class PdfTab(QWidget):
         return True
 
     def undo_edit(self) -> bool:
-        """Undo the last page-list edit and refresh the grid."""
+        """Undo markup (in viewer) or the last page-list edit."""
+        if self.is_viewer_mode() and self._markup.can_undo():
+            if not self._markup.undo():
+                return False
+            self._preview_widget.refresh_markup_overlays()
+            self._sync_dirty_from_model()
+            return True
         if self._edit_model is None or not self._edit_model.can_undo():
             return False
         self.close_preview()
@@ -284,7 +307,13 @@ class PdfTab(QWidget):
         return True
 
     def redo_edit(self) -> bool:
-        """Redo the last undone page-list edit and refresh the grid."""
+        """Redo markup (in viewer) or the last undone page-list edit."""
+        if self.is_viewer_mode() and self._markup.can_redo():
+            if not self._markup.redo():
+                return False
+            self._preview_widget.refresh_markup_overlays()
+            self._sync_dirty_from_model()
+            return True
         if self._edit_model is None or not self._edit_model.can_redo():
             return False
         self.close_preview()
@@ -293,6 +322,21 @@ class PdfTab(QWidget):
         self._thumbnail_grid.reload_from_model()
         self._sync_dirty_from_model()
         return True
+
+    def can_undo_edit(self) -> bool:
+        if self.is_viewer_mode() and self._markup.can_undo():
+            return True
+        return self._edit_model is not None and self._edit_model.can_undo()
+
+    def can_redo_edit(self) -> bool:
+        if self.is_viewer_mode() and self._markup.can_redo():
+            return True
+        return self._edit_model is not None and self._edit_model.can_redo()
+
+    def _on_markup_changed(self) -> None:
+        self._sync_dirty_from_model()
+        # MainWindow listens via dirty_changed for title; undo enable needs a nudge.
+        self.dirty_changed.emit(self._dirty)
 
     def move_selected_pages_up(self) -> bool:
         """Move the current thumbnail selection up; no-op when not movable."""
@@ -362,6 +406,7 @@ class PdfTab(QWidget):
 
         primary = refs[0].source_path
         self._edit_model = PdfEditModel.with_pages(primary, refs)
+        self._markup.clear()
         self._pdf_path = primary
         self._drop_initialized = True
         self._quality_guidance_shown = False
@@ -382,6 +427,7 @@ class PdfTab(QWidget):
         self._drop_initialized = False
         self._custom_tab_title = None
         self._quality_guidance_shown = False
+        self._markup.clear()
         if self._dirty:
             self._dirty = False
             self.dirty_changed.emit(False)
@@ -427,7 +473,8 @@ class PdfTab(QWidget):
                 loader.close()
 
     def _sync_dirty_from_model(self) -> None:
-        dirty = self._edit_model.is_dirty() if self._edit_model is not None else False
+        model_dirty = self._edit_model.is_dirty() if self._edit_model is not None else False
+        dirty = model_dirty or self._markup.is_dirty()
         if dirty != self._dirty:
             self._dirty = dirty
             self.dirty_changed.emit(dirty)

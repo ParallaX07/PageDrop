@@ -707,7 +707,7 @@ def _configure_annotations(shell: ToolShellWindow) -> None:
     form.addRow("Forms", include)
     hint = QLabel(
         "Flatten converts appearances to permanent page content. "
-        "Annotation authoring is a later phase."
+        "Author new markup from the PDF viewer annotation toolbar."
     )
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)

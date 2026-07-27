@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import fitz
 
+from pagedrop.core.markup import MarkupEntry, apply_markup_entries
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
@@ -53,8 +55,17 @@ def merge_pdf_files(file_paths: list[str], output_path: str) -> None:
             doc.close()
 
 
-def write_pdf(model: PdfEditModel, output_path: str) -> None:
-    """Write the logical page list to *output_path*, preserving order."""
+def write_pdf(
+    model: PdfEditModel,
+    output_path: str,
+    *,
+    markup: Sequence[MarkupEntry] | None = None,
+) -> None:
+    """Write the logical page list to *output_path*, preserving order.
+
+    Optional *markup* (viewer annotation / form ops) is applied to the
+    assembled document before save — originals are never modified.
+    """
     docs: dict[str, fitz.Document] = {}
     out = fitz.open()
     try:
@@ -65,6 +76,8 @@ def write_pdf(model: PdfEditModel, output_path: str) -> None:
             if ref.rotation:
                 page = out[-1]
                 page.set_rotation((page.rotation + ref.rotation) % 360)
+        if markup:
+            apply_markup_entries(out, markup)
         out.save(output_path)
     finally:
         out.close()

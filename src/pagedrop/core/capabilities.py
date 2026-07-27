@@ -8,7 +8,7 @@ import-time crashes) from optional deps.
 Absence reasons match the shared configure UX:
 
 - ``engine_missing`` — converter / processing engine (Office COM, LibreOffice,
-  Ghostscript, veraPDF, pyHanko, OpenCV)
+  Ghostscript, veraPDF, OpenCV)
 - ``data_missing`` — language or model data (tessdata)
 - ``codec_missing`` — format codec pack (Pillow, openpyxl, pi-heif)
 - ``licence_blocked`` — present but redistribution / use blocked by policy
@@ -34,7 +34,6 @@ TESSDATA = "tessdata"
 PILLOW = "pillow"
 OPENPYXL = "openpyxl"
 PI_HEIF = "pi_heif"
-PYHANKO = "pyhanko"
 OPENCV = "opencv"
 GHOSTSCRIPT = "ghostscript"
 VERAPDF = "verapdf"
@@ -46,7 +45,6 @@ CAPABILITY_IDS: tuple[str, ...] = (
     PILLOW,
     OPENPYXL,
     PI_HEIF,
-    PYHANKO,
     OPENCV,
     GHOSTSCRIPT,
     VERAPDF,
@@ -483,9 +481,6 @@ _PROBES: dict[str, Callable[[], CapabilityStatus]] = {
     ),
     PI_HEIF: lambda: _probe_python_module(
         PI_HEIF, "pi_heif", AbsenceReason.CODEC_MISSING, "pi-heif"
-    ),
-    PYHANKO: lambda: _probe_python_module(
-        PYHANKO, "pyhanko", AbsenceReason.ENGINE_MISSING, "pyHanko"
     ),
     OPENCV: lambda: _probe_python_module(
         OPENCV, "cv2", AbsenceReason.ENGINE_MISSING, "OpenCV"
