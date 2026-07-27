@@ -69,7 +69,7 @@ def test_compare_window_lists_deleted_text(qtbot, tmp_path: Path):
     window.close()
 
 
-def test_export_heatmap_shows_overall_diff_ratio(
+def test_compare_success_shows_diff_ratio(
     qtbot, tmp_path: Path, monkeypatch
 ):
     """UI should read overall diff ratio sidecar and include it in status/toast."""

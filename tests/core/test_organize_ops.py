@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 import zipfile
 
@@ -376,6 +377,125 @@ def test_attachment_extract_job_runner(tmp_path: Path) -> None:
                 cancel=token,
             )
         assert not out_cancel.exists()
+    finally:
+        temp.cleanup()
+
+
+def test_attachment_extract_uses_job_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard: attachment extract must run under FITZ_LOCK.
+
+    Also verifies cooperative cancel leaves no promoted output and cleans the
+    staged job directory (partial writes).
+    """
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(str(src))
+    finally:
+        doc.close()
+
+    out_added = tmp_path / "with_attach.pdf"
+    pdf_tools.attachment_add(
+        str(src),
+        str(out_added),
+        name="note.txt",
+        data=b"hello",
+        filename="note.txt",
+        overwrite=False,
+    )
+
+    class TrackingLock:
+        def __init__(self) -> None:
+            self.locked = False
+            self.enter_count = 0
+
+        def __enter__(self) -> "TrackingLock":
+            self.locked = True
+            self.enter_count += 1
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.locked = False
+
+    lock = TrackingLock()
+    # SerializedJobRunner imports FITZ_LOCK at module import time; patch the runner module.
+    import pagedrop.core.jobs.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "FITZ_LOCK", lock)
+
+    started = threading.Event()
+    allow_finish = threading.Event()
+    staged_dir: Path | None = None
+
+    def fake_attachment_extract(
+        source_pdf: str,
+        name: str,
+        dest_dir: str | Path,
+        *,
+        password: str | None = None,
+    ) -> Path:
+        nonlocal staged_dir
+        assert lock.locked, "attachment_extract must run under FITZ_LOCK"
+        started.set()
+
+        dest_dir_path = Path(dest_dir)
+        staged_dir = dest_dir_path
+        out = dest_dir_path / name
+        dest_dir_path.mkdir(parents=True, exist_ok=True)
+        # Simulate partial staged output while the handler is still running.
+        out.write_bytes(b"hello")
+
+        # Wait until the test cancels; runner will observe cancel after handler returns.
+        allow_finish.wait(timeout=5)
+        return out
+
+    monkeypatch.setattr(pdf_tools, "attachment_extract", fake_attachment_extract)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+
+        out_cancel = tmp_path / "extracted_cancel_mid" / "note.txt"
+        token = CancelToken()
+
+        err: list[BaseException] = []
+
+        def run_job() -> None:
+            try:
+                runner.run(
+                    JobSpec.create(
+                        "attachment_extract",
+                        inputs=[str(out_added)],
+                        output=out_cancel,
+                        options={"name": "note.txt"},
+                    ),
+                    cancel=token,
+                )
+            except JobCancelledError:
+                return
+            except BaseException as exc:  # pragma: no cover
+                err.append(exc)
+                raise
+            else:  # pragma: no cover
+                err.append(RuntimeError("Expected JobCancelledError"))
+
+        t = threading.Thread(target=run_job, daemon=True)
+        t.start()
+
+        assert started.wait(timeout=5), "attachment_extract handler never ran"
+        token.cancel()
+        allow_finish.set()
+        t.join(timeout=10)
+
+        assert not out_cancel.exists()
+        assert lock.enter_count >= 1
+        assert staged_dir is not None
+        assert not staged_dir.exists(), "staged job dir must be cleaned on cancel"
+        assert not err
     finally:
         temp.cleanup()
 
