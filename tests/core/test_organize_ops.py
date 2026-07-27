@@ -1,0 +1,402 @@
+from __future__ import annotations
+
+from pathlib import Path
+import zipfile
+
+import fitz
+
+from pagedrop.core import pdf_tools
+
+
+def _make_text_pdf(
+    path: Path,
+    *,
+    page_texts: list[str],
+    page_size: tuple[float, float] = (200, 200),
+    text_pos: tuple[float, float] | None = (50, 80),
+) -> Path:
+    doc = fitz.open()
+    try:
+        w, h = page_size
+        for text in page_texts:
+            page = doc.new_page(width=w, height=h)
+            if text_pos is not None:
+                x, y = text_pos
+            else:
+                x, y = (w / 2.0, h / 2.0)
+            page.insert_text((x, y), text, fontsize=18)
+        doc.save(str(path))
+        return path
+    finally:
+        doc.close()
+
+
+def _make_single_page_with_two_labels(
+    path: Path,
+    *,
+    page_size: tuple[float, float] = (200, 200),
+    left_label: str,
+    right_label: str,
+    left_pos: tuple[float, float],
+    right_pos: tuple[float, float],
+) -> Path:
+    doc = fitz.open()
+    try:
+        w, h = page_size
+        page = doc.new_page(width=w, height=h)
+        page.insert_text(left_pos, left_label, fontsize=18)
+        page.insert_text(right_pos, right_label, fontsize=18)
+        doc.save(str(path))
+        return path
+    finally:
+        doc.close()
+
+
+def _make_single_page_with_quadrant_labels(
+    path: Path,
+    *,
+    page_size: tuple[float, float] = (200, 200),
+    tl: str,
+    br: str,
+) -> Path:
+    doc = fitz.open()
+    try:
+        w, h = page_size
+        page = doc.new_page(width=w, height=h)
+        page.insert_text((50, 50), tl, fontsize=18)
+        page.insert_text((150, 150), br, fontsize=18)
+        doc.save(str(path))
+        return path
+    finally:
+        doc.close()
+
+
+def test_split_extract_ranges_to_folder(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_text_pdf(src, page_texts=[f"P{i}" for i in range(6)], page_size=(200, 200))
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    out_paths = pdf_tools.extract_ranges_to_folder(
+        str(src),
+        [(0, 1), (2, 5)],
+        out_dir,
+        base_name="doc",
+    )
+
+    assert [p.name for p in out_paths] == ["doc_range_0001-0002.pdf", "doc_range_0003-0006.pdf"]
+
+    first = fitz.open(str(out_paths[0]))
+    try:
+        assert first.page_count == 2
+        assert first[0].search_for("P0")
+        assert first[1].search_for("P1")
+    finally:
+        first.close()
+
+    second = fitz.open(str(out_paths[1]))
+    try:
+        assert second.page_count == 4
+        assert second[0].search_for("P2")
+        assert second[-1].search_for("P5")
+    finally:
+        second.close()
+
+
+def test_alternate_pdfs_page_order(tmp_path: Path) -> None:
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    _make_text_pdf(a, page_texts=["A0", "A1", "A2"], page_size=(200, 200))
+    _make_text_pdf(b, page_texts=["B0", "B1", "B2"], page_size=(200, 200))
+
+    out = tmp_path / "alt.pdf"
+    pdf_tools.alternate_pdfs(str(a), str(b), str(out), start_with_a=True)
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 6
+        expected = ["A0", "B0", "A1", "B1", "A2", "B2"]
+        for idx, label in enumerate(expected):
+            assert doc[idx].search_for(label), f"missing {label} on page {idx}"
+    finally:
+        doc.close()
+
+
+def test_reverse_pages_and_add_blank(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_text_pdf(src, page_texts=["R0", "R1", "R2"], page_size=(200, 200))
+
+    out = tmp_path / "rev.pdf"
+    pdf_tools.reverse_pdf_pages(str(src), str(out), add_blank_page=True)
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 4
+        assert doc[0].search_for("R2")
+        assert doc[1].search_for("R1")
+        assert doc[2].search_for("R0")
+        assert doc[3].get_text().strip() == ""
+    finally:
+        doc.close()
+
+
+def test_n_up_layout_row_major(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_text_pdf(src, page_texts=["N0", "N1", "N2", "N3"], page_size=(200, 200), text_pos=(20, 20))
+
+    out = tmp_path / "nup.pdf"
+    pdf_tools.n_up_pdf(str(src), str(out), rows=2, cols=2, margin_pt=0.0)
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 1
+        page = doc[0]
+        w = page.rect.width
+        h = page.rect.height
+        cell_w = w / 2.0
+        cell_h = h / 2.0
+
+        expected_cells = {
+            "N0": (0, 0),
+            "N1": (1, 0),
+            "N2": (0, 1),
+            "N3": (1, 1),
+        }
+
+        for label, (col, row) in expected_cells.items():
+            rects = page.search_for(label)
+            assert rects, f"missing {label}"
+            r = rects[0]
+            cx = (r.x0 + r.x1) / 2.0
+            cy = (r.y0 + r.y1) / 2.0
+            assert col * cell_w <= cx <= (col + 1) * cell_w
+            assert row * cell_h <= cy <= (row + 1) * cell_h
+    finally:
+        doc.close()
+
+
+def test_divide_vertical_left_right(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_single_page_with_two_labels(
+        src,
+        left_label="LEFT",
+        right_label="RIGHT",
+        left_pos=(40, 80),
+        # Keep the text fully inside the page so `search_for()` can index it.
+        right_pos=(140, 80),
+        page_size=(200, 200),
+    )
+
+    out = tmp_path / "div.pdf"
+    pdf_tools.divide_pdf_pages(str(src), str(out), direction="vertical")
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 2
+        assert doc[0].search_for("LEFT")
+        assert not doc[0].search_for("RIGHT")
+        assert doc[1].search_for("RIGHT")
+        assert not doc[1].search_for("LEFT")
+    finally:
+        doc.close()
+
+
+def test_posterize_quadrants(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_single_page_with_quadrant_labels(src, tl="TL", br="BR", page_size=(200, 200))
+
+    out = tmp_path / "post.pdf"
+    pdf_tools.posterize_pdf(str(src), str(out), rows=2, cols=2)
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 4
+        # posterize order: r0c0, r0c1, r1c0, r1c1
+        assert doc[0].search_for("TL")
+        assert not doc[1].search_for("TL")
+        assert doc[3].search_for("BR")
+        assert not doc[2].search_for("BR")
+    finally:
+        doc.close()
+
+
+def test_combine_to_single_long_page(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_text_pdf(
+        src,
+        page_texts=["FIRST", "SECOND"],
+        page_size=(200, 200),
+        text_pos=(20, 20),
+    )
+
+    out = tmp_path / "long.pdf"
+    pdf_tools.combine_pages_to_single_long(str(src), str(out))
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 1
+        page = doc[0]
+        rects_first = page.search_for("FIRST")
+        rects_second = page.search_for("SECOND")
+        assert rects_first
+        assert rects_second
+        assert rects_first[0].y0 < rects_second[0].y0
+    finally:
+        doc.close()
+
+
+def test_normalize_page_size_fit(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=100)
+        page.insert_text((20, 50), "X", fontsize=18)
+        doc.save(str(src))
+    finally:
+        doc.close()
+
+    out = tmp_path / "norm.pdf"
+    pdf_tools.normalize_pdf_page_size(str(src), str(out), 300, 300, strategy="fit", margins_pt=0.0)
+
+    out_doc = fitz.open(str(out))
+    try:
+        assert out_doc.page_count == 1
+        rect = out_doc[0].rect
+        assert abs(rect.width - 300) < 0.5
+        assert abs(rect.height - 300) < 0.5
+        assert out_doc[0].search_for("X")
+    finally:
+        out_doc.close()
+
+
+def test_attachments_add_extract_remove(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(str(src))
+    finally:
+        doc.close()
+
+    out_added = tmp_path / "with_attach.pdf"
+    pdf_tools.attachment_add(
+        str(src),
+        str(out_added),
+        name="note.txt",
+        data=b"hello",
+        filename="note.txt",
+        overwrite=False,
+    )
+
+    names = [a.name for a in pdf_tools.attachments_list(str(out_added))]
+    assert "note.txt" in names
+
+    extracted_dir = tmp_path / "extracted"
+    extracted_dir.mkdir()
+    extracted_path = pdf_tools.attachment_extract(str(out_added), "note.txt", extracted_dir)
+    assert extracted_path.read_bytes() == b"hello"
+
+    out_removed = tmp_path / "removed.pdf"
+    pdf_tools.attachment_remove(str(out_added), str(out_removed), name="note.txt")
+
+    names2 = [a.name for a in pdf_tools.attachments_list(str(out_removed))]
+    assert "note.txt" not in names2
+
+
+def test_metadata_set_strip_and_xmp_v1(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.set_metadata({"title": "old", "author": "me"})
+        doc.set_xml_metadata('<x:xmpmeta xmlns:x="adobe:ns:meta/">t</x:xmpmeta>')
+        doc.save(str(src))
+    finally:
+        doc.close()
+
+    out_set = tmp_path / "set.pdf"
+    pdf_tools.metadata_set(str(src), str(out_set), updates={"title": "new"})
+    meta = pdf_tools.metadata_get(str(out_set))
+    assert meta["title"] == "new"
+
+    out_strip = tmp_path / "strip.pdf"
+    pdf_tools.metadata_strip(str(out_set), str(out_strip), strip_xmp_v1=True)
+    meta2 = pdf_tools.metadata_get(str(out_strip))
+    assert meta2["title"] == ""
+    assert pdf_tools.xmp_get(str(out_strip)) == ""
+
+
+def test_page_labels_get_set(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        for _ in range(5):
+            doc.new_page(width=200, height=200)
+        labels = [{"startpage": 0, "prefix": "P", "style": "D", "firstpagenum": 1}]
+        doc.set_page_labels(labels)
+        doc.save(str(src))
+    finally:
+        doc.close()
+
+    out = tmp_path / "labels.pdf"
+    pdf_tools.page_labels_set(str(src), str(out), labels=pdf_tools.page_labels_get(str(src)))
+    got = pdf_tools.page_labels_get(str(out))
+    assert got == [{"startpage": 0, "prefix": "P", "style": "D", "firstpagenum": 1}]
+
+
+def test_zip_pdfs_members(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    _make_text_pdf(src, page_texts=[f"P{i}" for i in range(3)], page_size=(200, 200))
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    parts = pdf_tools.extract_ranges_to_folder(
+        str(src),
+        [(0, 0), (1, 2)],
+        out_dir,
+        base_name="doc",
+    )
+    zip_path = tmp_path / "bundle.zip"
+    pdf_tools.zip_pdfs(parts, zip_path)
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = sorted(zf.namelist())
+    assert names == sorted([p.name for p in parts])
+
+
+def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((100, 100), "A", fontsize=22)
+        doc.save(str(a))
+    finally:
+        doc.close()
+
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((100, 100), "B", fontsize=22)
+        doc.save(str(b))
+    finally:
+        doc.close()
+
+    heatmap = tmp_path / "heatmap.pdf"
+    result = pdf_tools.compare_pdfs_heatmap(
+        str(a),
+        str(b),
+        heatmap,
+        dpi=80,
+        sample_grid=(4, 4),
+        byte_diff_threshold=5,
+    )
+    assert heatmap.exists()
+    assert result.page_diffs and result.page_diffs[0] > 0.0
+
+    out_doc = fitz.open(str(heatmap))
+    try:
+        assert out_doc.page_count == 1
+    finally:
+        out_doc.close()
+
