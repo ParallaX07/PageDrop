@@ -1,15 +1,11 @@
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
-from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QApplication
-
-from pagedrop.assets import app_icon
-from pagedrop.ui.accessibility import install_accessibility
-from pagedrop.ui.window_manager import WindowManager
-
 _APP_NAME = "PageDrop"
 _ORG_NAME = "PageDrop"
+
+# Frozen onedir: Office COM helper re-enters this exe before Qt starts.
+_OFFICE_COM_WORKER_FLAG = "--pagedrop-office-com-worker"
 
 
 def _app_version() -> str:
@@ -20,6 +16,19 @@ def _app_version() -> str:
 
 
 def main() -> int:
+    if _OFFICE_COM_WORKER_FLAG in sys.argv:
+        from pagedrop.helpers.office_com_worker import main as worker_main
+
+        argv = [a for a in sys.argv[1:] if a != _OFFICE_COM_WORKER_FLAG]
+        return worker_main(argv)
+
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from pagedrop.assets import app_icon
+    from pagedrop.ui.accessibility import install_accessibility
+    from pagedrop.ui.window_manager import WindowManager
+
     app = QApplication(sys.argv)
     app.setOrganizationName(_ORG_NAME)
     app.setApplicationName(_APP_NAME)

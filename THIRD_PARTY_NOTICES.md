@@ -41,3 +41,11 @@ and PyMuPDF wheels. See `docs/licensing-decision.md` for the distribution decisi
 - **License:** GPLv2 with a special exception for frozen applications (bootloader exception)
 - **Notes:** Used to produce the onedir bundle; not a runtime dependency of the source
   tree beyond the frozen output.
+
+## pywin32 (optional, Windows Office COM pack only)
+
+- **Project:** [pywin32](https://github.com/mhammond/pywin32)
+- **License:** PSF-style (see project licence)
+- **Notes:** Not part of the base install. Extra `office` / dependency group installs
+  `pywin32` only when `sys_platform == 'win32'`. Linux and macOS wheels must not require
+  it. Used solely for Microsoft Office → PDF via a dedicated helper process.
