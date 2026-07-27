@@ -82,8 +82,16 @@ class DetachableTabBar(QTabBar):
         self._reset_drag_state()
         super().mouseReleaseEvent(event)
 
+    def _page_is_pdf(self, index: int) -> bool:
+        tab_manager = self.parent()
+        if not isinstance(tab_manager, QTabWidget):
+            return False
+        return isinstance(tab_manager.widget(index), PdfTab)
+
     def _should_detach(self, global_pos: QPoint) -> bool:
         if self._drag_start_global is None:
+            return False
+        if self._drag_tab_index < 0 or not self._page_is_pdf(self._drag_tab_index):
             return False
         if (global_pos - self._drag_start_global).manhattanLength() < self.DETACH_THRESHOLD_PX:
             return False
@@ -127,14 +135,18 @@ class DetachableTabBar(QTabBar):
 
         menu = QMenu(self)
         rename_action = None
+        move_action = None
         if tab is not None and tab.can_rename_tab:
             rename_action = menu.addAction("Rename Tab…")
             menu.addSeparator()
-        move_action = menu.addAction("Move to New Window")
+        if tab is not None:
+            move_action = menu.addAction("Move to New Window")
+        if rename_action is None and move_action is None:
+            return
         chosen = menu.exec(self.mapToGlobal(pos))
         if chosen is rename_action:
             self.tab_rename_requested.emit(index)
-        elif chosen is move_action:
+        elif move_action is not None and chosen is move_action:
             self.move_to_new_window_requested.emit(index)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -239,7 +251,7 @@ class DetachableTabBar(QTabBar):
 
 
 class TabManager(QTabWidget):
-    """Browser-style tab bar; each tab is an independent PdfTab workspace."""
+    """Browser-style tab bar; PdfTab workspaces plus optional tool pages."""
 
     active_tab_changed = pyqtSignal(PdfTab)
     tab_added = pyqtSignal(PdfTab)
@@ -299,6 +311,24 @@ class TabManager(QTabWidget):
     def add_blank_tab(self) -> PdfTab:
         return self.add_tab()
 
+    def add_page(self, page: QWidget, title: str | None = None) -> QWidget:
+        """Host a non-PDF tool page in the tab strip."""
+        resolved = title or getattr(page, "tab_title", None) or getattr(
+            page, "WINDOW_TITLE", "Tool"
+        )
+        index = self.addTab(page, str(resolved))
+        self._style_close_button(index)
+        self._apply_page_title(index, str(resolved))
+        self.setCurrentWidget(page)
+        return page
+
+    def find_page_id(self, page_id: str) -> QWidget | None:
+        for index in range(self.count()):
+            widget = self.widget(index)
+            if widget is not None and getattr(widget, "tool_page_id", None) == page_id:
+                return widget
+        return None
+
     def switch_active_tab(self, index: int) -> None:
         if 0 <= index < self.count():
             self.setCurrentIndex(index)
@@ -328,6 +358,14 @@ class TabManager(QTabWidget):
         if index >= 0:
             self._apply_tab_title(index, tab)
 
+    def _apply_page_title(self, index: int, title: str) -> None:
+        metrics = self.tabBar().fontMetrics()
+        self.setTabText(
+            index,
+            metrics.elidedText(title, Qt.TextElideMode.ElideRight, 185),
+        )
+        self.setTabToolTip(index, title)
+
     def _apply_tab_title(self, index: int, tab: PdfTab) -> None:
         # QSS-sized tabs ignore setElideMode and hard-clip long titles, so
         # elide manually. fixed width assumes the theme's 220px tab
@@ -335,17 +373,11 @@ class TabManager(QTabWidget):
         # weight-600 selected font; recompute from the style if tab sizing
         # ever becomes configurable.
         title = tab.tab_title
-        metrics = self.tabBar().fontMetrics()
-        self.setTabText(
-            index,
-            metrics.elidedText(title, Qt.TextElideMode.ElideRight, 185),
-        )
+        self._apply_page_title(index, title)
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
             self.setTabToolTip(index, f"{title} ({count} {noun})")
-        else:
-            self.setTabToolTip(index, title)
 
     def _connect_tab(self, tab: PdfTab, index: int) -> None:
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))

@@ -58,9 +58,14 @@ def test_smoke_tools_opens_and_editor_stays_usable(qtbot, isolated_settings):
     window._open_tools_window()
     tools = window._tools_window
     assert isinstance(tools, ToolsWindow)
-    qtbot.waitUntil(lambda: tools.isVisible(), timeout=5000)
+    qtbot.waitUntil(
+        lambda: window._tab_manager.indexOf(tools) >= 0 and tools.isVisible(),
+        timeout=5000,
+    )
     assert window.isVisible()
-    tools.close()
+    assert window._tab_manager.count() >= 2  # blank PDF tab + Tools
+    index = window._tab_manager.indexOf(tools)
+    assert window._try_close_tab(index)
     window.close()
 
 

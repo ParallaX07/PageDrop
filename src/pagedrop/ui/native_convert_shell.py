@@ -29,6 +29,7 @@ from pagedrop.core.supported_formats import (
 )
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
+from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
 from pagedrop.utils.page_jump import parse_page_ranges
 
@@ -313,8 +314,7 @@ def open_conversion_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow |
     if entry is None:
         return None
 
-    store: dict[str, ToolShellWindow] = getattr(tools, "_tool_shells", None) or {}
-    tools._tool_shells = store  # type: ignore[attr-defined]
+    store = tool_shell_store(tools)  # type: ignore[assignment]
 
     shell = store.get(tool_id)
     ctx = editor_pdf_context(tools.editor)
@@ -359,7 +359,5 @@ def open_conversion_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow |
     if tool_id == "export_from_pdf" and ctx is not None and Path(ctx.path).is_file():
         shell.drop_zone.set_paths([ctx.path])
 
-    shell.show()
-    shell.raise_()
-    shell.activateWindow()
+    present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")
     return shell

@@ -45,6 +45,7 @@ from pagedrop.ui.settings import (
     office_preferred_backend,
     remember_directory,
 )
+from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import ToolShellWindow
 
 if TYPE_CHECKING:
@@ -338,8 +339,7 @@ def open_office_convert_shell(tools: ToolsWindow) -> ToolShellWindow | None:
     if entry is None:
         return None
 
-    store: dict[str, ToolShellWindow] = getattr(tools, "_tool_shells", None) or {}
-    tools._tool_shells = store  # type: ignore[attr-defined]
+    store = tool_shell_store(tools)  # type: ignore[assignment]
 
     shell = store.get(SHELL_OFFICE_ID)
     if shell is None:
@@ -365,7 +365,5 @@ def open_office_convert_shell(tools: ToolsWindow) -> ToolShellWindow | None:
             refresh.setText(report.status_line())
             shell._update_run_enabled()
 
-    shell.show()
-    shell.raise_()
-    shell.activateWindow()
+    present_tool_page(tools.editor, shell, page_id=f"tool:{SHELL_OFFICE_ID}")
     return shell

@@ -587,17 +587,29 @@ def _launch_zip(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
 
 def _launch_compare(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
     from pagedrop.ui.compare_window import CompareWindow
+    from pagedrop.ui.tool_page import present_tool_page
 
     initial = ctx.path if ctx else ""
-    window = getattr(tools, "_compare_window", None)
+    editor = tools.editor
+    page_id = CompareWindow.PAGE_ID
+    window = None
+    if editor is not None:
+        pages = getattr(editor, "_tool_pages", None)
+        if isinstance(pages, dict):
+            candidate = pages.get(page_id)
+            try:
+                if candidate is not None and editor._tab_manager.indexOf(candidate) >= 0:  # type: ignore[attr-defined]
+                    window = candidate
+            except RuntimeError:
+                window = None
+    if window is None:
+        window = getattr(tools, "_compare_window", None)
     if window is None:
         window = CompareWindow()
-        tools._compare_window = window  # type: ignore[attr-defined]
+    tools._compare_window = window  # type: ignore[attr-defined]
     if initial:
         window.prefill_a(initial)
-    window.show()
-    window.raise_()
-    window.activateWindow()
+    present_tool_page(editor, window, page_id=page_id)
 
 
 def _launch_metadata(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:

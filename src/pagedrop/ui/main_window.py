@@ -107,6 +107,8 @@ class MainWindow(QMainWindow):
         self._merge_window: MergeWindow | None = None
         self._convert_window: ConvertWindow | None = None
         self._tools_window: ToolsWindow | None = None
+        self._tool_pages: dict[str, QWidget] = {}
+        self._tool_shells: dict[str, QWidget] = {}
         self._previous_tab_index: int | None = None
         self._last_tab_index: int = 0
         self._pending_move_undo: Callable[[], bool] | None = None
@@ -1590,31 +1592,84 @@ class MainWindow(QMainWindow):
         self._transient_status(f"Extracted {count} {noun} to new window")
         self._show_toast(f"Extracted {count} {noun} to new window", kind="success")
 
+    def open_tool_page(self, page: QWidget, *, page_id: str) -> None:
+        """Focus an existing tool tab or add *page* as a new tab."""
+        page.tool_page_id = page_id  # type: ignore[attr-defined]
+        existing = self._tool_pages.get(page_id)
+        if existing is not None:
+            index = self._tab_manager.indexOf(existing)
+            if index >= 0:
+                self._tab_manager.setCurrentIndex(index)
+                self._sync_toolbar_from_active_tab()
+                return
+        title = getattr(page, "tab_title", None) or getattr(
+            page, "WINDOW_TITLE", "Tool"
+        )
+        self._tool_pages[page_id] = page
+        if page_id == ToolsWindow.PAGE_ID:
+            self._tools_window = page  # type: ignore[assignment]
+        elif page_id == MergeWindow.PAGE_ID:
+            self._merge_window = page  # type: ignore[assignment]
+        elif page_id == ConvertWindow.PAGE_ID:
+            self._convert_window = page  # type: ignore[assignment]
+        self._tab_manager.add_page(page, str(title))
+        self._sync_toolbar_from_active_tab()
+
+    def _forget_tool_page(self, page: QWidget | None) -> None:
+        if page is None:
+            return
+        page_id = getattr(page, "tool_page_id", None)
+        if isinstance(page_id, str):
+            self._tool_pages.pop(page_id, None)
+            if page_id.startswith("tool:"):
+                self._tool_shells.pop(page_id.removeprefix("tool:"), None)
+            if self._tools_window is not None:
+                if page_id.startswith("tool:"):
+                    store = getattr(self._tools_window, "_tool_shells", None)
+                    if isinstance(store, dict):
+                        store.pop(page_id.removeprefix("tool:"), None)
+                if page_id == "compare" and (
+                    getattr(self._tools_window, "_compare_window", None) is page
+                ):
+                    self._tools_window._compare_window = None  # type: ignore[attr-defined]
+        if page is self._tools_window:
+            self._tools_window = None
+        if page is self._merge_window:
+            self._merge_window = None
+        if page is self._convert_window:
+            self._convert_window = None
+
+    def _tool_page_open(self, page: QWidget | None) -> bool:
+        if page is None:
+            return False
+        try:
+            return self._tab_manager.indexOf(page) >= 0
+        except RuntimeError:
+            return False
+
     def _open_merge_window(self) -> None:
-        if self._merge_window is None:
-            self._merge_window = MergeWindow(parent=self)
-        self._merge_window.show()
-        self._merge_window.raise_()
-        self._merge_window.activateWindow()
+        if not self._tool_page_open(self._merge_window):
+            self._merge_window = MergeWindow()
+        assert self._merge_window is not None
+        self.open_tool_page(self._merge_window, page_id=MergeWindow.PAGE_ID)
 
     def _open_convert_window(self) -> None:
-        if self._convert_window is None:
-            self._convert_window = ConvertWindow(parent=self)
-        self._convert_window.show()
-        self._convert_window.raise_()
-        self._convert_window.activateWindow()
+        if not self._tool_page_open(self._convert_window):
+            self._convert_window = ConvertWindow()
+        assert self._convert_window is not None
+        self.open_tool_page(self._convert_window, page_id=ConvertWindow.PAGE_ID)
 
     def _open_tools_window(self) -> None:
-        if self._tools_window is None:
+        if not self._tool_page_open(self._tools_window):
             self._tools_window = ToolsWindow(
                 editor=self,
                 window_manager=self._window_manager,
             )
         else:
+            assert self._tools_window is not None
             self._tools_window.set_editor(self)
-        self._tools_window.show()
-        self._tools_window.raise_()
-        self._tools_window.activateWindow()
+        assert self._tools_window is not None
+        self.open_tool_page(self._tools_window, page_id=ToolsWindow.PAGE_ID)
 
     def _open_pdf(self) -> None:
         start_dir = last_directory()
@@ -2009,27 +2064,34 @@ class MainWindow(QMainWindow):
             return False
 
         tab = self._tab_manager.widget(index)
-        if not isinstance(tab, PdfTab):
+        if isinstance(tab, PdfTab):
+            if tab.is_blank:
+                if self._is_only_blank_tab():
+                    return False
+            elif tab.is_dirty and confirm_before_closing_dirty_tabs():
+                choice = self._prompt_unsaved_changes(tab)
+                if choice == "cancel":
+                    return False
+                if choice == "save" and not self._save_as(tab):
+                    return False
+            self._tab_manager.close_tab(index)
+            return True
+
+        if tab is None:
             return False
-
-        if tab.is_blank:
-            if self._is_only_blank_tab():
-                return False
-        elif tab.is_dirty and confirm_before_closing_dirty_tabs():
-            choice = self._prompt_unsaved_changes(tab)
-            if choice == "cancel":
-                return False
-            if choice == "save" and not self._save_as(tab):
-                return False
-
+        request_close = getattr(tab, "request_close", None)
+        if callable(request_close) and not request_close():
+            return False
+        self._forget_tool_page(tab)
         self._tab_manager.close_tab(index)
         return True
 
     def _close_tab(self) -> None:
-        if self._is_only_blank_tab():
+        index = self._tab_manager.currentIndex()
+        widget = self._tab_manager.widget(index) if index >= 0 else None
+        if isinstance(widget, PdfTab) and self._is_only_blank_tab():
             self._transient_status("Cannot close the last blank tab")
             return
-        index = self._tab_manager.currentIndex()
         if index >= 0 and self._try_close_tab(index):
             self._sync_toolbar_from_active_tab()
             self._transient_status("Tab closed")

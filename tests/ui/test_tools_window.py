@@ -41,19 +41,41 @@ def _wait_for_tab_loaded(qtbot, tab: PdfTab, *, timeout: int = RENDER_TIMEOUT_MS
 
 def test_tools_opens_from_menubar(main_window, qtbot):
     assert "tools" in main_window._actions
+    main_window.show()
     main_window._actions["tools"].trigger()
     qtbot.waitUntil(
         lambda: main_window._tools_window is not None
-        and main_window._tools_window.isVisible(),
+        and main_window._tab_manager.indexOf(main_window._tools_window) >= 0,
         timeout=5000,
     )
     tools = main_window._tools_window
     assert isinstance(tools, ToolsWindow)
+    assert main_window._tab_manager.currentWidget() is tools
     assert tools._search.isVisible()
     assert tools.visible_tiles()
     assert any(t.entry.id == "merge" for t in tools.visible_tiles())
-    tools.close()
-    qtbot.waitUntil(lambda: not tools.isVisible(), timeout=5000)
+    index = main_window._tab_manager.indexOf(tools)
+    assert main_window._try_close_tab(index)
+    qtbot.waitUntil(lambda: main_window._tools_window is None, timeout=5000)
+
+
+def test_tools_reopen_focuses_same_tab(main_window, qtbot):
+    main_window._open_tools_window()
+    tools = main_window._tools_window
+    assert tools is not None
+    main_window._tab_manager.add_blank_tab()
+    main_window._open_tools_window()
+    assert main_window._tab_manager.currentWidget() is tools
+    assert main_window._tool_pages.get("tools") is tools
+
+
+def test_tools_tab_has_no_detach_menu(main_window, qtbot):
+    main_window._open_tools_window()
+    tools = main_window._tools_window
+    assert tools is not None
+    index = main_window._tab_manager.indexOf(tools)
+    bar = main_window._tab_manager.detachable_tab_bar
+    assert not bar._page_is_pdf(index)
 
 
 def test_command_palette_finds_tools(main_window):
@@ -235,7 +257,7 @@ def test_close_while_running_confirms_cancel(qtbot, monkeypatch):
     assert not window.is_job_running()
 
 
-def test_window_manager_keeps_app_alive_with_tools_open(
+def test_closing_editor_with_tools_tab_quits(
     qtbot, five_page_pdf, qapp, monkeypatch
 ):
     manager = WindowManager(qapp)
@@ -249,8 +271,7 @@ def test_window_manager_keeps_app_alive_with_tools_open(
     editor._open_tools_window()
     tools = editor._tools_window
     assert tools is not None
-    qtbot.addWidget(tools)
-    qtbot.waitUntil(lambda: tools.isVisible(), timeout=5000)
+    assert editor._tab_manager.indexOf(tools) >= 0
 
     quit_called: list[bool] = []
 
@@ -261,10 +282,6 @@ def test_window_manager_keeps_app_alive_with_tools_open(
     editor.close()
     qapp.processEvents()
 
-    assert not quit_called
-    assert tools.isVisible()
-    tools.close()
-    qapp.processEvents()
     assert quit_called
 
 

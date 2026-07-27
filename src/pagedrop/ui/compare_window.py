@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -51,6 +50,7 @@ from pagedrop.core.pdf_tools import (
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import confirm_overwrite
 from pagedrop.ui.organize_tools import ensure_organize_runner
+from pagedrop.ui.tool_page import StatusFooter, present_tool_page
 from pagedrop.ui.result_actions import ResultActionsBar, preview_pdf, show_in_folder
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
@@ -205,14 +205,17 @@ class _ComparePane(QWidget):
         self._canvas.set_content(pixmap, page_rect, highlights)
 
 
-class CompareWindow(QMainWindow):
+class CompareWindow(QWidget):
     WINDOW_TITLE = "Compare PDFs"
+    PAGE_ID = "compare"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.tool_page_id = self.PAGE_ID
+        self._status = StatusFooter(initial="Choose two PDFs and click Compare")
         self.setWindowTitle(self.WINDOW_TITLE)
+        self.setObjectName("CompareWindow")
         self.setMinimumSize(960, 640)
-        self.resize(1200, 760)
 
         self._report: CompareReport | None = None
         self._path_a = ""
@@ -224,16 +227,23 @@ class CompareWindow(QMainWindow):
 
         self._build_ui()
         self._connect()
-        self.statusBar().showMessage("Choose two PDFs and click Compare")
+
+    @property
+    def tab_title(self) -> str:
+        return self.WINDOW_TITLE
+
+    def statusBar(self) -> StatusFooter:  # noqa: N802
+        return self._status
+
+    def request_close(self) -> bool:
+        return True
 
     def prefill_a(self, path: str) -> None:
         if path:
             self._row_a.set_text(path)
 
     def _build_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 8)
         root.setSpacing(8)
 
@@ -256,7 +266,7 @@ class CompareWindow(QMainWindow):
 
         toolbar = QToolBar("Compare", self)
         toolbar.setMovable(False)
-        self.addToolBar(toolbar)
+        root.addWidget(toolbar)
         self._mode_label = QLabel("  Side-by-side  ")
         self._mode_label.setStyleSheet(f"color: {ACCENT}; font-weight: 600;")
         toolbar.addWidget(self._mode_label)
@@ -312,8 +322,9 @@ class CompareWindow(QMainWindow):
         self._result_bar = ResultActionsBar()
         root.addWidget(self._result_bar)
 
-        self._busy = BusyOverlay(central)
-        self._toast = ToastOverlay(central)
+        self._busy = BusyOverlay(self)
+        self._toast = ToastOverlay(self)
+        root.addWidget(self._status)
 
     def _connect(self) -> None:
         self._compare_btn.clicked.connect(self._run_compare)

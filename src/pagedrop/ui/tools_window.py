@@ -1,4 +1,4 @@
-"""Modeless Tools hub — searchable category grid over local utilities."""
+"""Tools hub — searchable category grid hosted as an editor tab."""
 
 from __future__ import annotations
 
@@ -7,14 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QObject, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QKeyEvent, QResizeEvent
+from PyQt6.QtGui import QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMainWindow,
     QMessageBox,
     QScrollArea,
     QSizePolicy,
@@ -42,10 +41,11 @@ from pagedrop.ui.result_actions import (
     show_in_folder,
 )
 from pagedrop.ui.theme import tool_tile_stylesheet
+from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
-    from pagedrop.ui.window_manager import WindowManager
+    pass
 
 CATEGORIES: tuple[str, ...] = (
     "Organize",
@@ -549,20 +549,21 @@ class _TileArrowNavFilter(QObject):
         return True
 
 
-class ToolsWindow(QMainWindow):
+class ToolsWindow(QWidget):
     """Searchable Tools catalogue; job progress via BusyOverlay + status `…`."""
 
     WINDOW_TITLE = "Tools"
+    PAGE_ID = "tools"
 
     def __init__(
         self,
         editor: QWidget | None = None,
-        window_manager: WindowManager | None = None,
+        window_manager: object | None = None,
     ) -> None:
-        # Top-level (no QObject parent) so closing the last editor keeps Tools alive.
         super().__init__(None)
         self._editor = editor
-        self._window_manager = window_manager
+        self._window_manager = window_manager  # kept for callers; unused for quit
+        self.tool_page_id = self.PAGE_ID
         self._job_running = False
         self._cancel_token: CancelToken | None = None
         self._job_runner: SerializedJobRunner | None = None
@@ -574,17 +575,23 @@ class ToolsWindow(QMainWindow):
         self._show_upcoming = False
         self._compact = False
         self._grid_columns = _GRID_COLUMNS
+        self._status = StatusFooter(initial="Choose a tool")
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("ToolsWindow")
         self.setMinimumSize(560, 420)
-        self.resize(720, 560)
 
         self._nav_filter = _TileArrowNavFilter(self)
         self._build_ui()
         self.installEventFilter(self._nav_filter)
         self._apply_filter("")
-        self.statusBar().showMessage("Choose a tool")
+
+    @property
+    def tab_title(self) -> str:
+        return self.WINDOW_TITLE
+
+    def statusBar(self) -> StatusFooter:  # noqa: N802
+        return self._status
 
     def set_editor(self, editor: QWidget | None) -> None:
         self._editor = editor
@@ -606,11 +613,18 @@ class ToolsWindow(QMainWindow):
             self._job_runner = ensure_organize_runner(TempManager())
         return self._job_runner
 
+    def request_close(self) -> bool:
+        """Return False to abort closing this tab."""
+        if not self._job_running:
+            return True
+        if not prompt_cancel_running_job(self, window_title=self.WINDOW_TITLE):
+            return False
+        self.cancel_active_job()
+        self.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+        return True
+
     def _build_ui(self) -> None:
-        central = QWidget()
-        central.setObjectName("ToolsCentral")
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
 
@@ -716,11 +730,12 @@ class ToolsWindow(QMainWindow):
         self._result_bar.open_in_editor_requested.connect(self._on_open_result)
         self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
         root.addWidget(self._result_bar)
+        root.addWidget(self._status)
 
-        self._busy_overlay = BusyOverlay(central)
+        self._busy_overlay = BusyOverlay(self)
         self._busy_overlay.set_cancellable(True)
         self._busy_overlay.cancelled.connect(self.cancel_active_job)
-        self._toast = ToastOverlay(central)
+        self._toast = ToastOverlay(self)
 
     def grid_columns(self) -> int:
         return self._grid_columns
@@ -1006,14 +1021,8 @@ class ToolsWindow(QMainWindow):
         if parent is not None:
             self._busy_overlay.setGeometry(parent.rect())
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        if self._job_running:
-            if not prompt_cancel_running_job(self, window_title=self.WINDOW_TITLE):
-                event.ignore()
-                return
-            self.cancel_active_job()
-            self.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if not self.request_close():
+            event.ignore()
+            return
         super().closeEvent(event)
-        # quitOnLastWindowClosed is False — deferred quit after last editor.
-        if event.isAccepted() and self._window_manager is not None:
-            self._window_manager.notify_utility_closed(self)

@@ -122,10 +122,11 @@ def test_menubar_create_pdf_beside_merge(main_window, qtbot):
 
     qtbot.waitUntil(
         lambda: main_window._convert_window is not None
-        and main_window._convert_window.isVisible(),
+        and main_window._tab_manager.indexOf(main_window._convert_window) >= 0,
         timeout=5000,
     )
     assert main_window._convert_window.windowTitle() == "Create PDF"
+    assert main_window._tab_manager.currentWidget() is main_window._convert_window
 
 
 def test_toolbar_zoom_before_primary_action(qtbot):

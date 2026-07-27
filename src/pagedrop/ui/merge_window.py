@@ -3,16 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QResizeEvent
+from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
-    QMainWindow,
     QMessageBox,
     QProgressDialog,
     QStackedWidget,
     QStyle,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -35,6 +35,7 @@ from pagedrop.ui.theme import (
     MIN_THUMBNAIL_WIDTH,
     ZOOM_WHEEL_STEP,
 )
+from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.ui.zoom_controls import ZoomControls
 
 _PREVIEW_FOOTER_HINT = (
@@ -73,27 +74,43 @@ class _MergeWorker(QRunnable):
             self.signals.succeeded.emit(self._output_path)
 
 
-class MergeWindow(QMainWindow):
+class MergeWindow(QWidget):
     WINDOW_TITLE = "Merge PDFs"
+    PAGE_ID = "merge"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.tool_page_id = self.PAGE_ID
         self._model = PdfMergeModel()
         self._page_counts: dict[str, int] = {}
         self._preview_loader: PdfLoader | None = None
         self._merging = False
         self._merge_pool = QThreadPool(self)
         self._merge_pool.setMaxThreadCount(1)
+        self._status = StatusFooter()
 
         self.setWindowTitle(self.WINDOW_TITLE)
+        self.setObjectName("MergeWindow")
         self.setMinimumSize(640, 480)
-        self.resize(760, 560)
 
+        self._root = QVBoxLayout(self)
+        self._root.setContentsMargins(0, 0, 0, 0)
+        self._root.setSpacing(0)
         self._build_central_widget()
+        # Toolbar must sit above the stack: insert at top after stack exists.
         self._build_toolbar()
+        self._root.insertWidget(0, self._toolbar)
+        self._root.addWidget(self._status)
         self._connect_signals()
         self._update_actions()
         self._update_status()
+
+    @property
+    def tab_title(self) -> str:
+        return self.WINDOW_TITLE
+
+    def statusBar(self) -> StatusFooter:  # noqa: N802
+        return self._status
 
     def _build_central_widget(self) -> None:
         self._stack = QStackedWidget()
@@ -105,14 +122,13 @@ class MergeWindow(QMainWindow):
 
         self._stack.addWidget(self._file_grid)
         self._stack.addWidget(self._preview_widget)
-        self.setCentralWidget(self._stack)
+        self._root.addWidget(self._stack, stretch=1)
 
         self._busy_overlay = BusyOverlay(self._stack)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Merge", self)
         toolbar.setMovable(False)
-        self.addToolBar(toolbar)
         self._toolbar = toolbar
 
         def tip(action, text: str) -> None:
@@ -603,15 +619,13 @@ class MergeWindow(QMainWindow):
             self._close_preview()
         self._refresh_grid()
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def request_close(self) -> bool:
         if self._merging:
-            event.ignore()
-            return
+            return False
 
         if self._model.file_count() > 0:
             if self._prompt_discard_file_list() != "discard":
-                event.ignore()
-                return
+                return False
             self._clear_file_list()
 
         if self._preview_loader is not None:
@@ -619,4 +633,10 @@ class MergeWindow(QMainWindow):
             self._preview_loader = None
 
         self._file_grid.cancel_rendering()
+        return True
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if not self.request_close():
+            event.ignore()
+            return
         super().closeEvent(event)

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QDragEnterEvent, QDragMoveEvent, QDropEvent, QResizeEvent
+from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -50,13 +49,13 @@ from pagedrop.ui.result_actions import (
     show_in_folder,
 )
 from pagedrop.ui.settings import last_directory, remember_directory
+from pagedrop.ui.tool_page import StatusFooter, present_tool_page, tool_shell_store
 from pagedrop.utils.page_jump import parse_page_ranges
 from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
     from pagedrop.ui.organize_tools import EditorPdfContext
     from pagedrop.ui.tools_window import ToolsWindow
-    from pagedrop.ui.window_manager import WindowManager
 
 _PRIVACY_LINE = "Files stay on this computer — nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
@@ -338,8 +337,8 @@ def run_tool_job(
     )
 
 
-class ToolShellWindow(QMainWindow):
-    """Reusable modeless tool chrome: title → drop → options → Run → results."""
+class ToolShellWindow(QWidget):
+    """Reusable tool chrome: title → drop → options → Run → results (editor tab)."""
 
     def __init__(
         self,
@@ -347,7 +346,7 @@ class ToolShellWindow(QMainWindow):
         title: str,
         description: str,
         editor: QWidget | None = None,
-        window_manager: WindowManager | None = None,
+        window_manager: object | None = None,
         multi: bool = False,
         browse_title: str = "Choose PDF",
         empty_prompt: str = "Drop PDF here, or click to browse",
@@ -363,16 +362,13 @@ class ToolShellWindow(QMainWindow):
         self._job_runner: SerializedJobRunner | None = None
         self._run_handler: Callable[[], None] | None = None
         self._run_enabled_check: Callable[[], bool] | None = None
+        self._status = StatusFooter(initial="Add a file to begin")
 
         self.setWindowTitle(title)
         self.setObjectName("ToolShellWindow")
         self.setMinimumSize(520, 480)
-        self.resize(600, 640)
 
-        central = QWidget()
-        central.setObjectName("ToolShellCentral")
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
 
@@ -434,12 +430,19 @@ class ToolShellWindow(QMainWindow):
         self._result_bar.open_in_editor_requested.connect(self._on_open_result)
         self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
         root.addWidget(self._result_bar)
+        root.addWidget(self._status)
 
-        self._busy_overlay = BusyOverlay(central)
+        self._busy_overlay = BusyOverlay(self)
         self._busy_overlay.set_cancellable(True)
         self._busy_overlay.cancelled.connect(self.cancel_active_job)
-        self._toast = ToastOverlay(central)
-        self.statusBar().showMessage("Add a file to begin")
+        self._toast = ToastOverlay(self)
+
+    @property
+    def tab_title(self) -> str:
+        return self.WINDOW_TITLE
+
+    def statusBar(self) -> StatusFooter:  # noqa: N802
+        return self._status
 
     def set_editor(self, editor: QWidget | None) -> None:
         self._editor = editor
@@ -451,6 +454,15 @@ class ToolShellWindow(QMainWindow):
     @property
     def drop_zone(self) -> FileDropZone:
         return self._drop_zone
+
+    def request_close(self) -> bool:
+        if not self._job_running:
+            return True
+        if not prompt_cancel_running_job(self, window_title=self.WINDOW_TITLE):
+            return False
+        self.cancel_active_job()
+        self.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+        return True
 
     def set_options_widget(self, widget: QWidget) -> None:
         while self._options_layout.count():
@@ -588,16 +600,11 @@ class ToolShellWindow(QMainWindow):
         if parent is not None:
             self._busy_overlay.setGeometry(parent.rect())
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        if self._job_running:
-            if not prompt_cancel_running_job(self, window_title=self.WINDOW_TITLE):
-                event.ignore()
-                return
-            self.cancel_active_job()
-            self.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if not self.request_close():
+            event.ignore()
+            return
         super().closeEvent(event)
-        if event.isAccepted() and self._window_manager is not None:
-            self._window_manager.notify_utility_closed(self)
 
 
 def _pick_save_pdf(parent: QWidget, title: str, suggested: str) -> str | None:
@@ -755,8 +762,7 @@ def open_organize_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | N
     if entry is None or tool_id not in SHELL_ORGANIZE_IDS:
         return None
 
-    store: dict[str, ToolShellWindow] = getattr(tools, "_tool_shells", None) or {}
-    tools._tool_shells = store  # type: ignore[attr-defined]
+    store = tool_shell_store(tools)  # type: ignore[assignment]
 
     shell = store.get(tool_id)
     ctx = editor_pdf_context(tools.editor)
@@ -783,7 +789,5 @@ def open_organize_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | N
     if ctx is not None and Path(ctx.path).is_file():
         shell.drop_zone.set_paths([ctx.path])
 
-    shell.show()
-    shell.raise_()
-    shell.activateWindow()
+    present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")
     return shell

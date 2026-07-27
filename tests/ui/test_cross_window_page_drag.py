@@ -377,8 +377,7 @@ def test_two_windows_same_pdf_allowed(qtbot, five_page_pdf, qapp):
     assert tab_b.edit_model.logical_count() == 6
 
 
-def test_merge_window_keeps_app_alive(qtbot, five_page_pdf, qapp, monkeypatch):
-    from pagedrop.ui.merge_window import MergeWindow
+def test_merge_opens_as_editor_tab(qtbot, five_page_pdf, qapp):
     from pagedrop.ui.window_manager import WindowManager
 
     manager = WindowManager(qapp)
@@ -389,18 +388,8 @@ def test_merge_window_keeps_app_alive(qtbot, five_page_pdf, qapp, monkeypatch):
     tab.load_pdf(str(five_page_pdf))
     wait_for_grid_loaded(qtbot, tab.thumbnail_grid)
 
-    merge = MergeWindow()
-    qtbot.addWidget(merge)
-    merge.show()
-
-    quit_called: list[bool] = []
-
-    def spy_quit() -> None:
-        quit_called.append(True)
-
-    monkeypatch.setattr(qapp, "quit", spy_quit)
-    editor.close()
-    qapp.processEvents()
-
-    assert not quit_called
-    assert merge.isVisible()
+    editor._open_merge_window()
+    merge = editor._merge_window
+    assert merge is not None
+    assert editor._tab_manager.currentWidget() is merge
+    assert editor._tab_manager.indexOf(merge) >= 0

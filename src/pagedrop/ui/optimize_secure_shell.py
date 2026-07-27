@@ -22,6 +22,7 @@ from pagedrop.core.pdf_loader import PdfLoader, PdfPasswordRequiredError
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import remember_directory
+from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
 
 if TYPE_CHECKING:
@@ -410,8 +411,7 @@ def open_optimize_secure_shell(
     if entry is None:
         return None
 
-    store: dict[str, ToolShellWindow] = getattr(tools, "_tool_shells", None) or {}
-    tools._tool_shells = store  # type: ignore[attr-defined]
+    store = tool_shell_store(tools)  # type: ignore[assignment]
 
     shell = store.get(tool_id)
     ctx = editor_pdf_context(tools.editor)
@@ -435,7 +435,5 @@ def open_optimize_secure_shell(
     if ctx is not None and Path(ctx.path).is_file():
         shell.drop_zone.set_paths([ctx.path])
 
-    shell.show()
-    shell.raise_()
-    shell.activateWindow()
+    present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")
     return shell

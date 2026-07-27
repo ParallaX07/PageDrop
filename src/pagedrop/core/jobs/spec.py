@@ -54,7 +54,7 @@ class JobSpec:
         )
 
     def to_persistable_dict(self) -> dict[str, Any]:
-        """JSON-friendly snapshot safe for logs / workflow files (no secrets)."""
+        """JSON-friendly snapshot safe for logs / debugging (no secrets)."""
         return {
             "job_type": self.job_type,
             "inputs": list(self.inputs),

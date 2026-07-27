@@ -5,12 +5,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from pagedrop.ui.compare_window import CompareWindow
-from pagedrop.ui.merge_window import MergeWindow
-from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.tool_shell import ToolShellWindow
-from pagedrop.ui.tools_window import ToolsWindow
 
 if TYPE_CHECKING:
     from pagedrop.ui.main_window import MainWindow
@@ -66,31 +61,15 @@ class WindowManager(QObject):
             self._maybe_quit()
 
     def notify_utility_closed(self, closing: QWidget | None = None) -> None:
-        """Merge / Convert / Tools closed — quit if no editors remain."""
+        """Backward-compat no-op — tools live in editor tabs now."""
+        del closing
         if not self._windows:
-            self._maybe_quit(ignoring=closing)
+            self._maybe_quit()
 
     def _register(self, window: MainWindow) -> None:
         self._windows.add(window)
 
     def _maybe_quit(self, ignoring: QWidget | None = None) -> None:
-        # During closeEvent the closing window is still isVisible(); ignore it.
-        for widget in self._app.topLevelWidgets():
-            if widget is ignoring:
-                continue
-            if (
-                isinstance(
-                    widget,
-                    (
-                        MergeWindow,
-                        ConvertWindow,
-                        ToolsWindow,
-                        CompareWindow,
-                        ToolShellWindow,
-                    ),
-                )
-                and widget.isVisible()
-            ):
-                return
+        del ignoring
         self.last_window_closing.emit()
         self._app.quit()
