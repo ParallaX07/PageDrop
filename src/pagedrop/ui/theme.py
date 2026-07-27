@@ -1118,6 +1118,53 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 24px;
     }}
 
+    QWidget#ToolShellCentral {{
+        background-color: {bg_base};
+    }}
+
+    QLabel#ToolShellTitle {{
+        color: {text_primary};
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+    }}
+
+    QLabel#ToolShellDescription {{
+        color: {text_secondary};
+        font-size: 13px;
+    }}
+
+    QFrame#ToolShellDropZone {{
+        background-color: {bg_surface};
+        border: 1px dashed {border_default};
+        border-radius: {RADIUS_CARD}px;
+    }}
+
+    QFrame#ToolShellDropZone[dropActive="true"] {{
+        border-color: {ACCENT};
+        background-color: {bg_card};
+    }}
+
+    QFrame#ToolShellDropZone:focus {{
+        border-color: {ACCENT};
+    }}
+
+    QLabel#ToolShellDropPrompt {{
+        color: {text_secondary};
+        font-size: 14px;
+        font-weight: 500;
+    }}
+
+    QLabel#ToolShellDropFiles {{
+        color: {text_primary};
+        font-size: 13px;
+    }}
+
+    QLabel#ToolShellDropPrivacy {{
+        color: {text_muted};
+        font-size: 12px;
+    }}
+
     QWidget#ResultActionsBar {{
         background-color: {bg_surface};
         border: 1px solid {border_subtle};

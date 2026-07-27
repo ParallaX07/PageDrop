@@ -9,6 +9,7 @@ from pagedrop.ui.compare_window import CompareWindow
 from pagedrop.ui.merge_window import MergeWindow
 from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
 
 if TYPE_CHECKING:
@@ -80,7 +81,13 @@ class WindowManager(QObject):
             if (
                 isinstance(
                     widget,
-                    (MergeWindow, ConvertWindow, ToolsWindow, CompareWindow),
+                    (
+                        MergeWindow,
+                        ConvertWindow,
+                        ToolsWindow,
+                        CompareWindow,
+                        ToolShellWindow,
+                    ),
                 )
                 and widget.isVisible()
             ):

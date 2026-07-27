@@ -24,20 +24,12 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core import pdf_tools
-from pagedrop.core.jobs import (
-    JobCancelledError,
-    JobError,
-    JobSpec,
-    OutputExistsError,
-    SerializedJobRunner,
-    SourceOverwriteError,
-    preflight_pdf_inputs,
-)
+from pagedrop.core.jobs import SerializedJobRunner
 from pagedrop.core.organize_jobs import register_organize_handlers
 from pagedrop.core.pdf_loader import PdfLoader
-from pagedrop.ui.dialogs import confirm_overwrite, prompt_pdf_password
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.utils.page_jump import format_indices_as_ranges, parse_page_ranges
+from pagedrop.ui.tool_shell import SHELL_ORGANIZE_IDS, open_organize_shell, run_tool_job
+from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
@@ -284,157 +276,19 @@ def _run_organize_job(
     progress_message: str = "Working…",
     success_toast: str | None = None,
 ) -> None:
-    out = Path(output)
-    existing = existing_paths if existing_paths is not None else (
-        [out] if out.exists() else []
-    )
-    if existing and not confirm_overwrite(
-        tools, existing, window_title=tools.WINDOW_TITLE
-    ):
-        tools.statusBar().showMessage("Cancelled")
-        return
-
-    runner = tools.job_runner()
-    token = tools.begin_job(progress_message)
-    try:
-        credentials = preflight_pdf_inputs(
-            inputs,
-            prompt=lambda name, incorrect: prompt_pdf_password(
-                tools, name, incorrect=incorrect
-            ),
-            cancel=token,
-        )
-        result = runner.run(
-            JobSpec.create(
-                job_type,
-                inputs=inputs,
-                output=output,
-                options=options or {},
-                overwrite=True,
-            ),
-            credentials=credentials,
-            progress=tools.set_job_progress,
-            cancel=token,
-        )
-    except JobCancelledError:
-        tools.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
-        return
-    except SourceOverwriteError as exc:
-        tools.end_job(
-            error=f"Output must not overwrite a source file:\n{exc}",
-            toast="Cannot overwrite source",
-            toast_kind="error",
-        )
-        return
-    except OutputExistsError as exc:
-        tools.end_job(
-            error=f"Output already exists:\n{exc}",
-            toast="Output exists",
-            toast_kind="error",
-        )
-        return
-    except (JobError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
-        tools.end_job(error=str(exc), toast="Job failed", toast_kind="error")
-        return
-    except Exception as exc:
-        tools.end_job(
-            error=f"Unexpected error:\n{exc}",
-            toast="Job failed",
-            toast_kind="error",
-        )
-        return
-
-    name = Path(result).name
-    tools.end_job(
-        status=f"Saved {name}",
-        toast=success_toast or f"Saved {name}",
-        toast_kind="success",
-        result_path=str(result),
+    run_tool_job(
+        tools,
+        job_type=job_type,
+        inputs=inputs,
+        output=output,
+        options=options,
+        existing_paths=existing_paths,
+        progress_message=progress_message,
+        success_toast=success_toast,
     )
 
 
 # --- Per-tool dialogs -------------------------------------------------------
-
-
-def _launch_split(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
-    initial = ctx.path if ctx else ""
-    prefill = ctx.range_prefill if ctx else ""
-
-    def build(form: QFormLayout, w: dict) -> None:
-        w["source"] = _PathRow(tools, browse_title="Choose PDF to split", initial=initial)
-        form.addRow("Source PDF", w["source"])
-        w["ranges"] = QLineEdit(prefill)
-        w["ranges"].setPlaceholderText("e.g. 1-3,5,7-9")
-        form.addRow("Page ranges", w["ranges"])
-        hint = QLabel("1-based ranges; selection from the editor is used when possible.")
-        hint.setObjectName("ToolsHint")
-        hint.setWordWrap(True)
-        form.addRow("", hint)
-        w["folder"] = QLineEdit()
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(w["folder"], stretch=1)
-        browse = QPushButton("Browse…")
-        browse.setObjectName("ToolbarSecondary")
-
-        def pick() -> None:
-            folder = _pick_folder(tools, "Choose output folder")
-            if folder:
-                w["folder"].setText(folder)
-
-        browse.clicked.connect(pick)
-        folder_row.addWidget(browse)
-        form.addRow("Output folder", folder_row)
-
-    widgets = _form_dialog(tools, title="Split / extract", build=build)
-    if widgets is None:
-        return
-    source = widgets["source"].text()
-    folder = widgets["folder"].text().strip()
-    ranges_text = widgets["ranges"].text().strip()
-    if not source or not Path(source).is_file():
-        QMessageBox.warning(tools, "Split / extract", "Choose a valid source PDF.")
-        return
-    if not folder:
-        QMessageBox.warning(tools, "Split / extract", "Choose an output folder.")
-        return
-
-    try:
-        loader = PdfLoader(source)
-        try:
-            page_count = loader.page_count
-        finally:
-            loader.close()
-    except Exception as exc:
-        QMessageBox.warning(tools, "Split / extract", f"Could not open PDF:\n{exc}")
-        return
-
-    ranges = parse_page_ranges(ranges_text, page_count)
-    if not ranges:
-        QMessageBox.warning(
-            tools,
-            "Split / extract",
-            "Enter page ranges like 1-3,5,7-9.",
-        )
-        return
-
-    base_name = Path(source).stem
-    predicted = pdf_tools.predicted_range_output_paths(
-        ranges, folder, base_name=base_name
-    )
-    _run_organize_job(
-        tools,
-        job_type="split",
-        inputs=[source],
-        output=str(predicted[0]),
-        options={
-            "ranges": ranges,
-            "output_dir": folder,
-            "base_name": base_name,
-        },
-        existing_paths=[p for p in predicted if p.exists()],
-        progress_message="Splitting PDF…",
-        success_toast=f"Wrote {len(predicted)} file(s)",
-    )
 
 
 def _launch_single_transform(
@@ -477,26 +331,6 @@ def _launch_single_transform(
         output=output,
         options=options,
         progress_message=progress_message,
-    )
-
-
-def _launch_reverse(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
-    def extra(form: QFormLayout, w: dict) -> None:
-        w["blank"] = QCheckBox("Add blank page at end")
-        form.addRow("", w["blank"])
-
-    def opts(w: dict) -> dict:
-        return {"add_blank_page": w["blank"].isChecked()}
-
-    _launch_single_transform(
-        tools,
-        title="Reverse pages",
-        job_type="reverse",
-        suffix="reversed",
-        ctx=ctx,
-        extra_build=extra,
-        collect_options=opts,
-        progress_message="Reversing pages…",
     )
 
 
@@ -934,9 +768,7 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
 
 
 _LAUNCHERS = {
-    "split": _launch_split,
     "alternate": _launch_alternate,
-    "reverse": _launch_reverse,
     "n_up": _launch_n_up,
     "booklet": _launch_booklet,
     "posterize": _launch_posterize,
@@ -958,7 +790,10 @@ def ensure_organize_runner(temp_manager: TempManager | None = None) -> Serialize
 
 
 def launch_organize_tool(tools: ToolsWindow, tool_id: str) -> None:
-    """Open the parameter dialog for an organize tool and run via the job runner."""
+    """Open the parameter dialog or modeless shell for an organize tool."""
+    if tool_id in SHELL_ORGANIZE_IDS:
+        open_organize_shell(tools, tool_id)
+        return
     launcher = _LAUNCHERS.get(tool_id)
     if launcher is None:
         tools.statusBar().showMessage(f"Unknown organize tool: {tool_id}")
