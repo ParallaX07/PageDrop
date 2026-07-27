@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import fitz
 import pytest
 from PyQt6.QtWidgets import QLabel, QPushButton
 
@@ -16,6 +19,7 @@ from pagedrop.core.capabilities import (
 from pagedrop.ui.dialogs import build_missing_libreoffice_dialog
 from pagedrop.ui.office_convert_window import (
     SHELL_OFFICE_ID,
+    _run_office_conversion,
     open_office_convert_shell,
 )
 from pagedrop.ui.tool_shell import ToolShellWindow
@@ -57,6 +61,15 @@ def _report(*, com: bool = False, lo: bool = False) -> OfficeCapabilityReport:
         preferred="auto",
         soffice_path=None,
     )
+
+
+def _pdf_bytes() -> bytes:
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 def test_office_tile_opens_modeless_shell(qtbot, isolated_settings):
@@ -130,7 +143,7 @@ def test_missing_lo_dialog_has_download_and_recheck(qtbot):
     dialog.close()
 
 
-def test_status_names_backend_used(qtbot, monkeypatch, isolated_settings):
+def test_status_names_backend_used(qtbot, tmp_path, monkeypatch, isolated_settings):
     monkeypatch.setattr(
         "pagedrop.ui.office_convert_window.capability_report",
         lambda **_k: _report(lo=True),
@@ -140,7 +153,40 @@ def test_status_names_backend_used(qtbot, monkeypatch, isolated_settings):
     shell = open_office_convert_shell(tools)
     assert shell is not None
     qtbot.addWidget(shell)
-    # Idle status mentions preferred / ready once backends exist
-    msg = shell.statusBar().currentMessage()
-    assert "LibreOffice" in msg or "Ready" in msg or "preferred" in msg.lower()
+
+    src = tmp_path / "note.docx"
+    src.write_bytes(b"docx")
+    out = tmp_path / "note.pdf"
+    ended: list[dict] = []
+
+    class FakeRunner:
+        def run(self, spec, **_kwargs):
+            Path(spec.output).write_bytes(_pdf_bytes())
+            return Path(spec.output)
+
+    monkeypatch.setattr(shell, "job_runner", lambda: FakeRunner())
+    real_end = shell.end_job
+
+    def capture_end(**kwargs):
+        ended.append(dict(kwargs))
+        return real_end(**kwargs)
+
+    monkeypatch.setattr(shell, "end_job", capture_end)
+
+    # Avoid clobbering the success status with idle refresh in this assertion.
+    _run_office_conversion(
+        shell,
+        source=str(src),
+        output=str(out),
+        backend="libreoffice",
+        backend_label="LibreOffice",
+        refresh_status=lambda: None,
+    )
+
+    assert ended, "expected end_job after conversion"
+    status = ended[-1].get("status") or ""
+    toast = ended[-1].get("toast") or ""
+    assert "LibreOffice" in status
+    assert "LibreOffice" in toast
+    assert out.is_file()
     clear_cache()

@@ -26,3 +26,31 @@ the files.
 
 Use generated fixtures in tests via the `one_page_pdf`, `five_page_pdf`, and
 `empty_pdf` fixtures in `tests/conftest.py`.
+
+## Optional backend markers
+
+Registered in `pyproject.toml` (`[tool.pytest.ini_options].markers`) with
+`--strict-markers`. Normal CI runs mocked present/absent capability contracts
+only — do **not** require Office / LibreOffice / tessdata on every machine.
+
+| Marker | Env / condition | What it exercises |
+|--------|-----------------|-------------------|
+| `office_com` | `PAGEDROP_OFFICE_COM=1` | Real Microsoft Office COM → PDF (`tests/smoke/test_phase26_office.py`) |
+| `libreoffice` | `PAGEDROP_LO_PATH=/path/to/soffice` | Real headless LibreOffice → PDF (same smoke module) |
+| `tessdata` | tessdata languages available (`PAGEDROP_TESSDATA` / install) | Real OCR language packs |
+
+Examples:
+
+```bash
+# CI / default — mocked Office convert unit + UI only
+uv run pytest tests/core/test_office_convert.py tests/ui/test_office_convert_ui.py -v
+
+# Gated LibreOffice smoke (when soffice is installed)
+PAGEDROP_LO_PATH=/usr/bin/soffice uv run pytest -m libreoffice tests/smoke/test_phase26_office.py -v
+
+# Gated Office COM smoke (Windows + Microsoft Office)
+PAGEDROP_OFFICE_COM=1 uv run pytest -m office_com tests/smoke/test_phase26_office.py -v
+```
+
+Smoke tests skip unless the matching env var is set, even if the binary happens
+to be on `PATH`.
