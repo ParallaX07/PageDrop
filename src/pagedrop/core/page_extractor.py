@@ -5,7 +5,6 @@ from pathlib import Path
 
 import fitz
 
-from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
@@ -14,6 +13,7 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordError,
     PdfPasswordRequiredError,
 )
+from pagedrop.core.pdf_writer import append_page_refs
 
 
 def _open_pdf(path: str, password: str | None = None) -> fitz.Document:
@@ -41,6 +41,32 @@ def _open_pdf(path: str, password: str | None = None) -> fitz.Document:
         raise
 
 
+def extract_page_refs_to_pdf(
+    refs: list[PageRef],
+    output_path: str | Path,
+    *,
+    passwords: Mapping[str, str] | None = None,
+) -> Path:
+    """Write all *refs* into one multi-page PDF (batched contiguous inserts).
+
+    Use this when a single multi-page file is intended. One-file-per-page drag /
+    folder export stays on ``extract_page_refs_to_files``.
+    """
+    if not refs:
+        raise ValueError("No pages to extract")
+    out_path = Path(output_path)
+    docs: dict[str, fitz.Document] = {}
+    out = fitz.open()
+    try:
+        append_page_refs(out, refs, docs, passwords)
+        out.save(str(out_path))
+    finally:
+        out.close()
+        for doc in docs.values():
+            doc.close()
+    return out_path
+
+
 def extract_page_refs_to_files(
     refs: list[PageRef],
     output_dir: Path,
@@ -48,24 +74,21 @@ def extract_page_refs_to_files(
     *,
     passwords: Mapping[str, str] | None = None,
 ) -> list[Path]:
-    """Extract pages in *refs* order; output filenames use sequential 1-based indices."""
+    """Extract pages in *refs* order; output filenames use sequential 1-based indices.
+
+    Each ref is its own single-page PDF (drag / export-to-folder contract). Source
+    docs are opened once per path and shared across the loop.
+    """
     docs: dict[str, fitz.Document] = {}
     out_paths: list[Path] = []
     try:
         for seq, ref in enumerate(refs, start=1):
-            if ref.source_path not in docs:
-                docs[ref.source_path] = _open_pdf(
-                    ref.source_path,
-                    password=RuntimeCredentials.lookup(passwords, ref.source_path),
-                )
-            src = docs[ref.source_path]
+            out_path = output_dir / f"{base_name}_page_{seq:04d}.pdf"
             out = fitz.open()
             try:
-                out.insert_pdf(src, from_page=ref.source_index, to_page=ref.source_index)
-                if ref.rotation:
-                    page = out[-1]
-                    page.set_rotation((page.rotation + ref.rotation) % 360)
-                out_path = output_dir / f"{base_name}_page_{seq:04d}.pdf"
+                # Single-page file — append_page_refs keeps rotation / password
+                # handling identical to the multi-page extract path.
+                append_page_refs(out, [ref], docs, passwords)
                 out.save(str(out_path))
                 out_paths.append(out_path)
             finally:

@@ -179,3 +179,69 @@ def test_write_encrypted_wrong_password_fails_clearly(tmp_path):
 
     assert _file_hash(enc) == source_hash
     assert not output.exists()
+
+
+def test_write_batches_contiguous_same_source(tmp_path, monkeypatch):
+    source = tmp_path / "hundred.pdf"
+    widths = list(range(100, 200))
+    _write_distinct_pdf(source, widths)
+    model = PdfEditModel(str(source), 100)
+
+    insert_calls: list[tuple[int | None, int | None]] = []
+    real_insert = fitz.Document.insert_pdf
+
+    def _spy(self, docsrc, *args, **kwargs):
+        insert_calls.append((kwargs.get("from_page"), kwargs.get("to_page")))
+        return real_insert(self, docsrc, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Document, "insert_pdf", _spy)
+
+    output = tmp_path / "out.pdf"
+    write_pdf(model, str(output))
+
+    assert insert_calls == [(0, 99)]
+    assert [_page_width(output, i) for i in range(100)] == [float(w) for w in widths]
+
+
+def test_write_batches_break_on_source_gap_and_rotation(tmp_path, monkeypatch):
+    doc_a = tmp_path / "a.pdf"
+    doc_b = tmp_path / "b.pdf"
+    _write_distinct_pdf(doc_a, [110, 120, 130, 140])
+    _write_distinct_pdf(doc_b, [210, 220])
+
+    # A0,A1 | B0,B1 | A2,A3(rotated) — three contiguous runs, four insert calls
+    # because A2/A3 are contiguous in source but split from A0/A1 by B.
+    pages = [
+        PageRef(str(doc_a), 0),
+        PageRef(str(doc_a), 1),
+        PageRef(str(doc_b), 0),
+        PageRef(str(doc_b), 1),
+        PageRef(str(doc_a), 2, rotation=90),
+        PageRef(str(doc_a), 3, rotation=180),
+    ]
+    model = PdfEditModel.with_pages(str(doc_a), pages)
+
+    insert_calls: list[tuple[int | None, int | None]] = []
+    real_insert = fitz.Document.insert_pdf
+
+    def _spy(self, docsrc, *args, **kwargs):
+        insert_calls.append((kwargs.get("from_page"), kwargs.get("to_page")))
+        return real_insert(self, docsrc, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Document, "insert_pdf", _spy)
+
+    output = tmp_path / "out.pdf"
+    write_pdf(model, str(output))
+
+    assert insert_calls == [(0, 1), (0, 1), (2, 3)]
+    assert [_page_width(output, i) for i in range(4)] == [110.0, 120.0, 210.0, 220.0]
+    out = fitz.open(str(output))
+    try:
+        assert out.page_count == 6
+        assert out[4].rotation == 90
+        assert out[5].rotation == 180
+        # mediabox keeps source page size; visible rect swaps under 90° rotation
+        assert float(out[4].mediabox.width) == 130.0
+        assert float(out[5].mediabox.width) == 140.0
+    finally:
+        out.close()
