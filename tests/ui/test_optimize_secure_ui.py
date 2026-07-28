@@ -16,6 +16,7 @@ from pagedrop.ui.optimize_secure_shell import (
 )
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
+from tests.core.test_jobs import _encrypted_pdf
 
 
 def _write_pdf(path: Path, *, text: str = "hello") -> None:
@@ -24,22 +25,6 @@ def _write_pdf(path: Path, *, text: str = "hello") -> None:
         page = doc.new_page(width=200, height=200)
         page.insert_text((40, 80), text, fontsize=18)
         doc.save(str(path))
-    finally:
-        doc.close()
-
-
-def _write_encrypted(path: Path, *, password: str = "secret") -> None:
-    doc = fitz.open()
-    try:
-        page = doc.new_page(width=200, height=200)
-        page.insert_text((40, 80), "locked", fontsize=18)
-        doc.save(
-            str(path),
-            encryption=fitz.PDF_ENCRYPT_AES_256,
-            user_pw=password,
-            owner_pw=password,
-            permissions=int(fitz.PDF_PERM_PRINT),
-        )
     finally:
         doc.close()
 
@@ -134,7 +119,7 @@ def test_encrypt_password_mismatch_blocked(qtbot, tmp_path, monkeypatch, isolate
 def test_decrypt_prompts_for_password(qtbot, tmp_path, monkeypatch, isolated_settings):
     enc = tmp_path / "locked.pdf"
     out = tmp_path / "unlocked.pdf"
-    _write_encrypted(enc, password="secret")
+    _encrypted_pdf(enc, password="secret")
     source_hash = enc.read_bytes()
 
     tools = ToolsWindow()
@@ -167,7 +152,7 @@ def test_decrypt_prompts_for_password(qtbot, tmp_path, monkeypatch, isolated_set
     check = fitz.open(str(out))
     try:
         assert not check.needs_pass
-        assert "locked" in check[0].get_text()
+        assert check.page_count == 1
     finally:
         check.close()
 

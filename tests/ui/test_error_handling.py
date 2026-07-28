@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import fitz
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
@@ -14,20 +13,7 @@ from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 from pagedrop.utils.temp_manager import TempManager
-
-
-def _encrypted_pdf(path, *, password: str = "secret") -> None:
-    doc = fitz.open()
-    try:
-        doc.new_page(width=200, height=200)
-        doc.save(
-            str(path),
-            encryption=fitz.PDF_ENCRYPT_AES_256,
-            user_pw=password,
-            owner_pw="owner",
-        )
-    finally:
-        doc.close()
+from tests.core.test_jobs import _encrypted_pdf
 
 
 def test_open_corrupt_shows_message_box(main_window, corrupt_pdf, monkeypatch):

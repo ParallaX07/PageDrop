@@ -8,6 +8,7 @@ from typing import Any, Iterable, Literal, cast
 
 import fitz
 
+from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
     PdfEmptyError,
@@ -69,11 +70,6 @@ def _open(path: str, password: str | None = None) -> fitz.Document:
         raise
 
 
-def _assert_not_overwrite(source_path: str, output_path: str) -> None:
-    if Path(output_path).resolve() == Path(source_path).resolve():
-        raise ValueError("Output path must not equal source path")
-
-
 def predicted_range_output_paths(
     ranges: list[tuple[int, int]],
     output_dir: str | Path,
@@ -128,8 +124,7 @@ def extract_ranges_to_folder(
                     f"{end + 1:0{zero_pad}d}.pdf"
                 )
                 out_path = out_dir / name
-                if Path(out_path).resolve() == Path(source_pdf).resolve():
-                    raise ValueError("Output path must not equal source path")
+                reject_source_overwrite(out_path, source_pdf)
                 out.save(str(out_path))
                 out_paths.append(out_path)
             finally:
@@ -153,8 +148,7 @@ def alternate_pdfs(
 
     Extra pages from the longer input are appended after the shorter ends.
     """
-    if Path(output_path).resolve() in {Path(pdf_a).resolve(), Path(pdf_b).resolve()}:
-        raise ValueError("Output path must not match any input path")
+    reject_source_overwrite(output_path, pdf_a, pdf_b)
 
     a = _open(pdf_a, password=password_a)
     b = _open(pdf_b, password=password_b)
@@ -199,7 +193,7 @@ def reverse_pdf_pages(
 
     `blank_size_from` is 'last' or 'first' (in source order).
     """
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
 
     src = _open(source_pdf, password=password)
     out = fitz.open()
@@ -244,7 +238,7 @@ def normalize_pdf_page_size(
 
     `margins_pt` is either a single float (uniform) or (x_margin, y_margin).
     """
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
 
     if target_width_pt <= 0 or target_height_pt <= 0:
         raise ValueError("target_* must be positive")
@@ -287,7 +281,7 @@ def n_up_pdf(
     password: str | None = None,
 ) -> None:
     """Pack multiple pages onto a grid (row-major order)."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     if rows <= 0 or cols <= 0:
         raise ValueError("rows/cols must be positive")
 
@@ -346,7 +340,7 @@ def booklet_pdf(
     This is a pragmatic arrangement (left/right spread from ends).
     Full duplex fold imposition rules can be added later if needed.
     """
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     src = _open(source_pdf, password=password)
     out = fitz.open()
     try:
@@ -392,7 +386,7 @@ def posterize_pdf(
     password: str | None = None,
 ) -> None:
     """Split each page into a grid of cropped tiles (each tile becomes a page)."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     if rows <= 0 or cols <= 0:
         raise ValueError("rows/cols must be positive")
 
@@ -439,7 +433,7 @@ def divide_pdf_pages(
     - 'vertical': split into left/right
     - 'horizontal': split into top/bottom
     """
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     if direction not in {"vertical", "horizontal"}:
         raise ValueError("direction must be 'vertical' or 'horizontal'")
 
@@ -515,7 +509,7 @@ def combine_pages_to_single_long(
     password: str | None = None,
 ) -> None:
     """Combine all pages into one long page (vertical stacking)."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     if axis != "vertical":
         raise ValueError("axis must be 'vertical'")
 
@@ -575,7 +569,7 @@ def attachment_add(
     overwrite: bool = False,
 ) -> None:
     """Add (or replace) an embedded file."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     src = _open(source_pdf)
     try:
         names = set(src.embfile_names())
@@ -603,7 +597,7 @@ def attachment_remove(
     missing_ok: bool = False,
 ) -> None:
     """Remove an embedded file by name."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     src = _open(source_pdf)
     try:
         names = set(src.embfile_names())
@@ -649,7 +643,7 @@ def metadata_set(
     password: str | None = None,
 ) -> None:
     """Edit standard metadata fields and write a new file."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
 
     doc = _open(source_pdf, password=password)
     try:
@@ -677,7 +671,7 @@ def metadata_strip(
     XMP strip-only v1: delete XML metadata at the document level, without
     trying to preserve or reserialize any subset.
     """
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
 
     doc = _open(source_pdf, password=password)
     try:
@@ -721,7 +715,7 @@ def page_labels_set(
     password: str | None = None,
 ) -> None:
     """Set page label definitions and write a new file."""
-    _assert_not_overwrite(source_pdf, output_path)
+    reject_source_overwrite(output_path, source_pdf)
     doc = _open(source_pdf, password=password)
     try:
         doc.set_page_labels(labels)
@@ -733,9 +727,7 @@ def page_labels_set(
 def zip_pdfs(paths: Iterable[str | Path], output_zip_path: str | Path) -> Path:
     """Zip PDF files into a new archive."""
     out_zip = Path(output_zip_path)
-    sources = [Path(p).resolve() for p in paths]
-    if out_zip.resolve() in sources:
-        raise ValueError("Output path must not equal any source path")
+    reject_source_overwrite(out_zip, *paths)
     out_zip.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for p in paths:
@@ -960,8 +952,7 @@ def compare_pdfs_heatmap(
     No OpenCV; uses MuPDF pixmaps + sampled absolute byte diffs.
     """
     out_path = Path(output_heatmap_pdf)
-    if out_path.resolve() in {Path(pdf_a).resolve(), Path(pdf_b).resolve()}:
-        raise ValueError("Output path must not match any input path")
+    reject_source_overwrite(out_path, pdf_a, pdf_b)
     a = _open(pdf_a, password=password_a)
     b = _open(pdf_b, password=password_b)
     out_path.parent.mkdir(parents=True, exist_ok=True)
