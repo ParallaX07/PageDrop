@@ -1886,6 +1886,11 @@ class PdfViewerWidget(QWidget):
         self._hit_index = (self._hit_index - 1) % len(self._hits)
         self._reveal_current_hit()
 
+    def focus_find(self) -> None:
+        """Focus the Find field (viewer Ctrl+F)."""
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
     def copy_selection(self) -> bool:
         text = ""
         for tile in self._tiles.values():
@@ -3284,8 +3289,7 @@ class PdfViewerWidget(QWidget):
                 event.accept()
                 return
         if key == Qt.Key.Key_F and mods & Qt.KeyboardModifier.ControlModifier:
-            self._search_edit.setFocus()
-            self._search_edit.selectAll()
+            self.focus_find()
             event.accept()
             return
         if key == Qt.Key.Key_G and mods & Qt.KeyboardModifier.ControlModifier:

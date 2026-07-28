@@ -252,6 +252,72 @@ def test_shortcuts_guarded_in_viewer_mode(main_window, five_page_pdf, qtbot):
     assert grid.selection_manager.selection == before_selection
 
 
+def test_viewer_find_shortcuts_not_stolen(
+    main_window, viewer_text_pdf, qtbot, monkeypatch
+):
+    """Ctrl+F / Ctrl+G must be Find in viewer — not Jump / Go-to window dialogs."""
+    from PyQt6.QtWidgets import QInputDialog
+
+    main_window._load_pdf(str(viewer_text_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    tab = _active_tab(main_window)
+
+    assert main_window._page_jump_action.isEnabled()
+    assert main_window._go_to_page_action.isEnabled()
+
+    main_window._open_preview()
+    _wait_viewer_tiles(qtbot, tab)
+    viewer = tab.viewer_widget
+
+    assert not main_window._page_jump_action.isEnabled()
+    assert not main_window._go_to_page_action.isEnabled()
+
+    dialog_opened: list[str] = []
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *a, **k: dialog_opened.append("jump") or ("1", True),
+    )
+    monkeypatch.setattr(
+        QInputDialog,
+        "getInt",
+        lambda *a, **k: dialog_opened.append("goto") or (1, True),
+    )
+    main_window._page_range_jump_dialog()
+    assert dialog_opened == []
+    assert tab.is_viewer_mode()
+
+    viewer.setFocus()
+    viewer._search_edit.setText("query")
+    ctrl_f = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_F,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    viewer.keyPressEvent(ctrl_f)
+    assert ctrl_f.isAccepted()
+    # selectAll ran (hasFocus is unreliable under offscreen CI)
+    assert viewer._search_edit.selectedText() == "query"
+
+    viewer.search("Alpha")
+    qtbot.waitUntil(lambda: viewer.search_hit_count == 2, timeout=RENDER_TIMEOUT_MS)
+    assert viewer._hit_index == 0
+    ctrl_g = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_G,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    viewer.keyPressEvent(ctrl_g)
+    assert ctrl_g.isAccepted()
+    assert viewer._hit_index == 1
+    assert dialog_opened == []
+
+    main_window._close_preview()
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode(), timeout=5000)
+    assert main_window._page_jump_action.isEnabled()
+    assert main_window._go_to_page_action.isEnabled()
+
+
 def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtbot):
     """After reorder, grid labels and viewer logical order follow the model."""
     main_window._load_pdf(str(reorder_pdf))

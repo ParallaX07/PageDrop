@@ -395,14 +395,14 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+T",
             add_to_window=True,
         )
-        actions.register(
+        self._go_to_page_action = actions.register(
             "go_to_page",
             "Go to page",
             slot=self._go_to_page_dialog,
             shortcut="Ctrl+G",
             add_to_window=True,
         )
-        actions.register(
+        self._page_jump_action = actions.register(
             "page_jump",
             "Select page range",
             slot=self._page_range_jump_dialog,
@@ -932,6 +932,8 @@ class MainWindow(QMainWindow):
         self._move_down_action.setEnabled(False)
         self._undo_action.setEnabled(False)
         self._redo_action.setEnabled(False)
+        self._go_to_page_action.setEnabled(False)
+        self._page_jump_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(
             tab.zoom_level if tab is not None else thumbnail_zoom()
@@ -1246,6 +1248,10 @@ class MainWindow(QMainWindow):
             and not in_preview
             and bool(tab.thumbnail_grid.selection_manager.selection)
         )
+        # Viewer Find (Ctrl+F / Ctrl+G) lives on PdfViewerWidget.keyPressEvent —
+        # disable WindowShortcut actions so they do not steal those keys.
+        self._go_to_page_action.setEnabled(has_pdf and not in_preview)
+        self._page_jump_action.setEnabled(has_pdf and not in_preview)
         self._update_delete_pages_action()
         self._update_move_pages_actions()
         self._update_page_op_actions()
@@ -1333,6 +1339,9 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         if tab is None or tab.edit_model is None:
             return
+        # Grid-only: in viewer mode Ctrl+F focuses Find (action disabled above).
+        if tab.is_viewer_mode():
+            return
         count = tab.edit_model.logical_count()
         if count <= 0:
             return
@@ -1347,8 +1356,6 @@ class MainWindow(QMainWindow):
         if not indices:
             self._transient_status("Enter a page number or range like 12 or 1-5")
             return
-        if tab.is_preview_visible():
-            tab.close_preview()
         tab.thumbnail_grid.jump_to_pages(indices)
         if len(indices) == 1:
             self._transient_status(f"Jumped to page {indices[0] + 1}")
