@@ -1,8 +1,9 @@
-"""Preferences dialog — Office conversion backends, LibreOffice path, OCR tessdata."""
+"""Preferences dialog — accessibility, Office backends, LibreOffice path, OCR tessdata."""
 
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -25,15 +26,17 @@ from pagedrop.ui.settings import (
     apply_tessdata_settings_to_capabilities,
     office_preferred_backend,
     office_soffice_path,
+    reduce_motion,
     set_office_preferred_backend,
     set_office_soffice_path,
+    set_reduce_motion,
     set_tessdata_path,
     tessdata_path,
 )
 
 
 class PreferencesDialog(QDialog):
-    """Modeless-friendly modal prefs: Office backend + tessdata + Recheck."""
+    """Modeless-friendly modal prefs: accessibility + Office/OCR + Recheck."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -43,6 +46,19 @@ class PreferencesDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.setSpacing(12)
+
+        a11y_heading = QLabel("Accessibility")
+        a11y_heading.setObjectName("PreferencesSection")
+        root.addWidget(a11y_heading)
+
+        self._reduce_motion = QCheckBox("Reduce motion")
+        self._reduce_motion.setObjectName("PreferencesReduceMotion")
+        self._reduce_motion.setToolTip(
+            "Minimize non-essential animation (skeleton pulse, hover shadows). "
+            "Platform reduce-motion settings are still honored when available."
+        )
+        self._reduce_motion.setChecked(reduce_motion())
+        root.addWidget(self._reduce_motion)
 
         heading = QLabel("Office to PDF")
         heading.setObjectName("PreferencesSection")
@@ -227,6 +243,7 @@ class PreferencesDialog(QDialog):
         self._ocr_status.setText(self._tess_line(probe(TESSDATA)))
 
     def _on_accept(self) -> None:
+        set_reduce_motion(self._reduce_motion.isChecked())
         set_office_preferred_backend(str(self._backend.currentData()))
         set_office_soffice_path(self._soffice.text().strip() or None)
         set_tessdata_path(self._tessdata.text().strip() or None)

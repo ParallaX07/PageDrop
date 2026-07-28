@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QToolButton
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
 from pagedrop.ui.merge_file_card import MergeFileCard
+from pagedrop.ui.preferences_dialog import PreferencesDialog
 from pagedrop.ui.settings import reduce_motion, set_reduce_motion
 from pagedrop.ui.theme import BG_BASE, TEXT_MUTED, app_stylesheet
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -59,6 +60,39 @@ def test_reduce_motion_setting_gates_shadow_hover(qtbot, isolated_settings):
     assert card._shadow.blurRadius() > 14
     card.leaveEvent(None)
     assert card._shadow is None
+
+
+def test_preferences_reduce_motion_persists(qtbot, isolated_settings):
+    assert reduce_motion() is False
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    assert dialog._reduce_motion.isChecked() is False
+
+    dialog._reduce_motion.setChecked(True)
+    dialog._on_accept()
+    assert reduce_motion() is True
+    assert prefers_reduce_motion() is True
+
+    dialog2 = PreferencesDialog()
+    qtbot.addWidget(dialog2)
+    assert dialog2._reduce_motion.isChecked() is True
+    dialog2._reduce_motion.setChecked(False)
+    dialog2._on_accept()
+    assert reduce_motion() is False
+
+
+def test_skeleton_pulse_skipped_when_reduce_motion(qtbot, isolated_settings):
+    set_reduce_motion(True)
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid._skeleton_count = 1
+    grid._start_skeleton_pulse()
+    assert not grid._skeleton_pulse_timer.isActive()
+
+    set_reduce_motion(False)
+    grid._start_skeleton_pulse()
+    assert grid._skeleton_pulse_timer.isActive()
+    grid._stop_skeleton_pulse()
 
 
 def test_stylesheet_includes_focus_rings_for_controls():
