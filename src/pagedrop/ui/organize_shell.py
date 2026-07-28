@@ -1,4 +1,4 @@
-"""Organize / layout — Phase 22b modeless shells (O7 migration from modal forms)."""
+"""Organize / layout — modeless shells (Phase 22b pattern; O7 finished modal migration)."""
 
 from __future__ import annotations
 
@@ -222,6 +222,8 @@ def _configure_n_up(shell: ToolShellWindow) -> None:
     options = QWidget()
     form = QFormLayout(options)
     form.setContentsMargins(0, 0, 0, 0)
+    # UI caps N-up at 8×8 (common impose); core n_up_pdf has no hard
+    # cap — raise the spin range only with a measured need for denser sheets.
     rows = QSpinBox()
     rows.setRange(1, 8)
     rows.setValue(2)

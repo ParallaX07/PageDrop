@@ -5,6 +5,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+# 512 MiB session quota for drag_* + job_* dirs; raise only with a
+# measured complaint. Upgrade: running byte counter if rglob-on-enforce profiles hot.
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024  # 512 MiB
 
 # Live session roots in this process — multi-window must not scrub each other.
@@ -60,7 +62,8 @@ class TempManager:
 
     def _dir_size(self) -> int:
         # full rglob on each create — fine under 512 MiB / few dirs;
-        # running counter needs caller write hooks (upgrade if enforce shows up in profiles).
+        # callers can write outside TempManager, so a running counter needs write
+        # hooks (upgrade if enforce shows up in profiles).
         if not self._dir.exists():
             return 0
         return sum(

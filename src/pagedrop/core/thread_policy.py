@@ -24,14 +24,16 @@ overlap is covered by sharing ``pdf_service.FITZ_LOCK`` (or public
 ``pdf_service`` helpers that take it). Do not raise pool size to “fix”
 thumbs — more threads worsen MuPDF races.
 
-Migration
----------
+``FITZ_LOCK`` is the intentional global ceiling for in-process fitz;
+upgrade path is a dedicated PDF service process (optimize O10), not more pools.
+
+Current state
+-------------
 - **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` — fitz handlers
   take ``pdf_service.FITZ_LOCK`` (``holds_fitz=True``); Office / LibreOffice
   waits register ``holds_fitz=False`` and lock only around brief fitz validate.
   Stage/promote via ``TempManager``, paths only; never share fitz docs with
-  ad-hoc UI pools. Upgrade path: dedicated PDF service process for fitz-heavy
-  handlers (same stage/promote/cancel API).
+  ad-hoc UI pools.
 - **viewer / UI pools:** ``pdf_service`` helpers or ``with FITZ_LOCK`` around
   open/work/close — not unlocked ``fitz.open`` from ``QThreadPool`` workers.
 """
