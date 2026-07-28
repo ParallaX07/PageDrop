@@ -14,7 +14,6 @@ from PyQt6.QtCore import QObject, QPointF, QRectF, QRunnable, QThreadPool, QTime
 from PyQt6.QtGui import (
     QColor,
     QFont,
-    QFontMetrics,
     QMouseEvent,
     QPainter,
     QPen,
@@ -22,6 +21,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
+from pagedrop.core.modify_ops import watermark_text_box
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_service import page_geometry, render_ref_png
 from pagedrop.core.thread_policy import ensure_no_fitz_document
@@ -92,16 +92,8 @@ class _PageRenderWorker(QRunnable):
                 self.signals.error.emit(self._generation, str(exc))
 
 
-def _text_unit_width(text: str) -> float:
-    """Approx Helvetica advance width at fontsize=1 (matches apply-path helv)."""
-    metrics_font = QFont("Helvetica")
-    metrics_font.setPixelSize(100)
-    w = QFontMetrics(metrics_font).horizontalAdvance(text or " ")
-    return max(w / 100.0, 1e-6)
-
-
 def _overlay_size_pts(state: WatermarkOverlayState, page_w: float, page_h: float) -> tuple[float, float]:
-    """Unrotated watermark width/height in PDF points."""
+    """Unrotated watermark width/height in PDF points (matches apply path)."""
     diag = math.hypot(page_w, page_h)
     if state.kind == "image":
         pix = QPixmap(state.image_path) if state.image_path else QPixmap()
@@ -112,14 +104,20 @@ def _overlay_size_pts(state: WatermarkOverlayState, page_w: float, page_h: float
             w = page_w * max(0.05, min(1.0, state.image_scale))
         return w, w * aspect
 
-    unit = _text_unit_width(state.text)
     if state.size_mode == "diagonal":
-        target_w = diag * (state.diagonal_percent / 100.0)
-        fs = target_w / unit
+        w, h, _fs = watermark_text_box(
+            state.text,
+            page_width=page_w,
+            page_height=page_h,
+            diagonal_percent=state.diagonal_percent,
+        )
     else:
-        fs = max(4.0, state.fontsize)
-    w = unit * fs
-    h = fs * 1.15
+        w, h, _fs = watermark_text_box(
+            state.text,
+            page_width=page_w,
+            page_height=page_h,
+            fontsize=max(4.0, state.fontsize),
+        )
     return w, h
 
 
@@ -386,7 +384,21 @@ class WatermarkPreviewCanvas(QWidget):
             r, g, b = self._state.color
             color = QColor(int(r * 255), int(g * 255), int(b * 255))
             font = QFont("Helvetica")
-            font.setPixelSize(max(8, int(round(wh * 0.85))))
+            if self._state.size_mode == "diagonal":
+                _w, _h, fs = watermark_text_box(
+                    self._state.text,
+                    page_width=self._page_w,
+                    page_height=self._page_h,
+                    diagonal_percent=self._state.diagonal_percent,
+                )
+            else:
+                _w, _h, fs = watermark_text_box(
+                    self._state.text,
+                    page_width=self._page_w,
+                    page_height=self._page_h,
+                    fontsize=max(4.0, self._state.fontsize),
+                )
+            font.setPixelSize(max(8, int(round(fs * sy))))
             painter.setFont(font)
             painter.setPen(color)
             painter.drawText(

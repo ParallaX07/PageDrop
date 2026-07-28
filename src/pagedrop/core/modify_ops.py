@@ -209,6 +209,34 @@ def _resolve_anchor(
     return _position_anchor(rect, position)
 
 
+def watermark_text_box(
+    text: str,
+    *,
+    page_width: float,
+    page_height: float,
+    diagonal_percent: float | None = None,
+    fontsize: float | None = None,
+) -> tuple[float, float, float]:
+    """Unrotated visual (width, height, fontsize) for helv text watermark.
+
+    Shared by apply and live preview so placement/size stay aligned.
+    """
+    font = fitz.Font("helv")
+    unit_w = max(font.text_length(text or " ", fontsize=1), 1e-6)
+    if diagonal_percent is not None:
+        target_w = _page_diagonal(fitz.Rect(0, 0, page_width, page_height)) * (
+            diagonal_percent / 100.0
+        )
+        fs = target_w / unit_w
+    else:
+        if fontsize is None or fontsize <= 0:
+            raise ValueError("fontsize must be positive when diagonal_percent is unset")
+        fs = float(fontsize)
+    width = font.text_length(text or " ", fontsize=fs)
+    height = (font.ascender - font.descender) * fs
+    return width, height, fs
+
+
 def _normalize_page_indices(
     page_count: int,
     pages: Sequence[int] | None,
@@ -272,21 +300,23 @@ def add_text_watermark(
         raise ValueError("fontsize must be positive when diagonal_percent is unset")
 
     font = fitz.Font("helv")
-    unit_w = max(font.text_length(text, fontsize=1), 1e-6)
     doc = open_pdf(source_pdf, password=password)
     try:
         targets = _normalize_page_indices(doc.page_count, pages)
         for i in targets:
             page = doc[i]
             r = page.rect
-            if diagonal_percent is not None:
-                target_w = _page_diagonal(r) * (diagonal_percent / 100.0)
-                fs = target_w / unit_w
-            else:
-                fs = float(fontsize)
-            text_w = font.text_length(text, fontsize=fs)
+            text_w, _text_h, fs = watermark_text_box(
+                text,
+                page_width=r.width,
+                page_height=r.height,
+                diagonal_percent=diagonal_percent,
+                fontsize=fontsize,
+            )
             anchor = _resolve_anchor(r, position, center_x=center_x, center_y=center_y)
-            pos = fitz.Point(anchor.x - text_w / 2, anchor.y)
+            # Baseline so glyph visual center sits on *anchor* (matches preview box center).
+            baseline_y = anchor.y + (font.ascender + font.descender) / 2 * fs
+            pos = fitz.Point(anchor.x - text_w / 2, baseline_y)
             morph = (anchor, fitz.Matrix(1, 1).prerotate(rotate))
             tw = fitz.TextWriter(page.rect, color=color, opacity=opacity)
             tw.append(pos, text, fontsize=fs, font=font)

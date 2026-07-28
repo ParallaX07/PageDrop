@@ -97,6 +97,7 @@ def test_watermark_free_placement_center_fractions(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="body", width=400, height=400)
     source_hash = _file_hash(src)
     out = tmp_path / "free.pdf"
+    cx_f, cy_f = 0.2, 0.8
     ops.add_text_watermark(
         str(src),
         str(out),
@@ -104,28 +105,117 @@ def test_watermark_free_placement_center_fractions(tmp_path: Path) -> None:
         fontsize=24,
         rotate=0,
         diagonal_percent=None,
-        center_x=0.2,
-        center_y=0.8,
+        center_x=cx_f,
+        center_y=cy_f,
         opacity=1.0,
     )
     assert _file_hash(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert "HERE" in doc[0].get_text()
-        # TextWriter morph keeps glyphs near the free-placement anchor.
-        blocks = doc[0].get_text("blocks")
-        wm = [b for b in blocks if "HERE" in str(b[4])]
-        assert wm
-        x0, y0, x1, y1 = wm[0][:4]
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        assert abs(cx - 80) < 40  # 0.2 * 400
-        assert abs(cy - 320) < 50  # 0.8 * 400
+        # Visual glyph center must match preview page-relative placement.
+        blocks = doc[0].get_text("dict")["blocks"]
+        spans = [
+            span
+            for block in blocks
+            for line in block.get("lines", [])
+            for span in line.get("spans", [])
+            if "HERE" in span["text"]
+        ]
+        assert spans
+        bb = fitz.Rect(spans[0]["bbox"])
+        expect_x, expect_y = cx_f * 400, cy_f * 400
+        assert abs((bb.x0 + bb.x1) / 2 - expect_x) < 2.0
+        assert abs((bb.y0 + bb.y1) / 2 - expect_y) < 2.0
     finally:
         doc.close()
 
     cx, cy = ops.position_center_fractions(400, 400, "center")
     assert abs(cx - 0.5) < 1e-6
     assert abs(cy - 0.5) < 1e-6
+
+    # Snap preset fractions → apply at those coords lands on the same anchor.
+    snap_out = tmp_path / "snap.pdf"
+    sx, sy = ops.position_center_fractions(400, 400, "top-left")
+    ops.add_text_watermark(
+        str(src),
+        str(snap_out),
+        text="SNAP",
+        fontsize=18,
+        rotate=0,
+        diagonal_percent=None,
+        center_x=sx,
+        center_y=sy,
+        opacity=1.0,
+    )
+    doc = fitz.open(str(snap_out))
+    try:
+        spans = [
+            span
+            for block in doc[0].get_text("dict")["blocks"]
+            for line in block.get("lines", [])
+            for span in line.get("spans", [])
+            if "SNAP" in span["text"]
+        ]
+        assert spans
+        bb = fitz.Rect(spans[0]["bbox"])
+        assert abs((bb.x0 + bb.x1) / 2 - sx * 400) < 2.0
+        assert abs((bb.y0 + bb.y1) / 2 - sy * 400) < 2.0
+    finally:
+        doc.close()
+
+
+def test_watermark_image_free_placement_matches_preview_center(tmp_path: Path) -> None:
+    src = _make_pdf(tmp_path / "src.pdf", text="body", width=400, height=400)
+    source_hash = _file_hash(src)
+    img = tmp_path / "wm.png"
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 80, 40), 1)
+    pix.set_rect(pix.irect, (200, 40, 40, 255))
+    pix.save(str(img))
+
+    cx_f, cy_f = 0.25, 0.75
+    out = tmp_path / "img_wm.pdf"
+    ops.add_image_watermark(
+        str(src),
+        str(out),
+        image_path=str(img),
+        rotate=0,
+        opacity=1.0,
+        center_x=cx_f,
+        center_y=cy_f,
+        diagonal_percent=40.0,
+    )
+    assert _file_hash(src) == source_hash
+    expect_x, expect_y = cx_f * 400, cy_f * 400
+    diag = (400**2 + 400**2) ** 0.5
+    expect_w = diag * 0.4
+    expect_h = expect_w * (40 / 80)
+    doc = fitz.open(str(out))
+    try:
+        rects = []
+        for item in doc[0].get_images():
+            rects.extend(doc[0].get_image_rects(item[0]))
+        assert rects
+        r = rects[0]
+        assert abs((r.x0 + r.x1) / 2 - expect_x) < 1.0
+        assert abs((r.y0 + r.y1) / 2 - expect_y) < 1.0
+        assert abs(r.width - expect_w) < 2.0
+        assert abs(r.height - expect_h) < 2.0
+    finally:
+        doc.close()
+
+
+def test_watermark_text_box_shared_with_preview() -> None:
+    """Preview and apply share watermark_text_box for size."""
+    w, h, fs = ops.watermark_text_box(
+        "CONFIDENTIAL",
+        page_width=400,
+        page_height=400,
+        diagonal_percent=50.0,
+    )
+    assert fs > 0
+    assert abs(w - (400**2 + 400**2) ** 0.5 * 0.5) < 0.5
+    assert h > fs  # visual height includes ascender+descender span
 
 
 def test_page_numbers_present(tmp_path: Path) -> None:
