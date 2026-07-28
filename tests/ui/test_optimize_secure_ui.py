@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.ui.optimize_secure_shell import (
     SHELL_OPTIMIZE_SECURE_IDS,
+    _LOSSY_QUALITY_WARNING,
     open_optimize_secure_shell,
     password_strength_label,
 )
@@ -64,6 +65,32 @@ def test_optimize_secure_tiles_open_shells(qtbot, isolated_settings):
         assert shell.isVisible()
         qtbot.addWidget(shell)
         shell.close()
+    tools.close()
+
+
+def test_compress_lossy_presets_and_quality_warning(qtbot, isolated_settings):
+    """Lossy profiles are wired; quality warning is visible before Run."""
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_optimize_secure_shell(tools, "compress")
+    assert shell is not None
+    qtbot.addWidget(shell)
+
+    combo = shell._compress_profile
+    values = [combo.itemData(i) for i in range(combo.count())]
+    assert values == ["lossless", "fast", "max", "screen", "ebook", "print"]
+    assert "does not use lossy" not in shell._compress_hint.text().lower()
+    assert not shell._compress_warning.isVisible()
+
+    idx = combo.findData("screen")
+    assert idx >= 0
+    combo.setCurrentIndex(idx)
+    assert shell._compress_warning.isVisible()
+    assert _LOSSY_QUALITY_WARNING in shell._compress_warning.text()
+    assert "same quality" not in shell._compress_hint.text().lower()
+    assert "72" in shell._compress_hint.text()
+
+    shell.close()
     tools.close()
 
 

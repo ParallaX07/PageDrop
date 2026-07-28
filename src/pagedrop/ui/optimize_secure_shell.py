@@ -18,12 +18,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.core import optimize_secure as ops
 from pagedrop.core.pdf_loader import PdfLoader, PdfPasswordRequiredError
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+
+# Shown when a lossy compress preset is selected (visible before Run).
+_LOSSY_QUALITY_WARNING = (
+    "Image quality can drop with lossy presets. "
+    "Not the same quality as the original."
+)
 
 if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
@@ -111,15 +118,44 @@ def _configure_compress(shell: ToolShellWindow) -> None:
     profile.addItem("Lossless (recommended)", "lossless")
     profile.addItem("Fast", "fast")
     profile.addItem("Maximum cleanup", "max")
+    profile.addItem("Screen (lossy, 72 DPI)", "screen")
+    profile.addItem("Ebook (lossy, 150 DPI)", "ebook")
+    profile.addItem("Print (lossy, 300 DPI)", "print")
     form.addRow("Profile", profile)
-    hint = QLabel(
-        "Writes a new copy with garbage collection and deflate. "
-        "Does not use lossy recompression or linearize."
-    )
+
+    hint = QLabel("")
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
+    warning = QLabel(_LOSSY_QUALITY_WARNING)
+    warning.setObjectName("ToolsHint")
+    warning.setWordWrap(True)
+    warning.setAccessibleName("Lossy quality warning")
+
+    def update_profile_copy() -> None:
+        name = profile.currentData()
+        if ops.is_lossy_profile_name(name):
+            lossy = ops.resolve_lossy_profile(name)
+            hint.setText(
+                f"Downsamples images to about {lossy.dpi} DPI and re-encodes as "
+                f"JPEG (quality {lossy.jpeg_quality}). Writes a new copy — "
+                "source is never overwritten. Does not linearize."
+            )
+            warning.show()
+        else:
+            hint.setText(
+                "Writes a new copy with garbage collection and deflate. "
+                "Does not linearize."
+            )
+            warning.hide()
+
+    profile.currentIndexChanged.connect(update_profile_copy)
+    update_profile_copy()
     form.addRow(hint)
+    form.addRow(warning)
     shell.set_options_widget(options)
+    shell._compress_profile = profile  # type: ignore[attr-defined]
+    shell._compress_hint = hint  # type: ignore[attr-defined]
+    shell._compress_warning = warning  # type: ignore[attr-defined]
 
     def on_run() -> None:
         paths = shell.drop_zone.paths()
