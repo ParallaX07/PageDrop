@@ -15,6 +15,33 @@ def test_imports():
     import pagedrop.ui  # noqa: F401
 
 
+def test_main_window_defers_tool_window_imports():
+    """O9: Merge/Create/Tools must not load until first open."""
+    code = """
+import sys
+from pagedrop.ui.main_window import MainWindow
+
+assert MainWindow is not None
+for name in (
+    "pagedrop.ui.merge_window",
+    "pagedrop.ui.convert_window",
+    "pagedrop.ui.tools_window",
+):
+    assert name not in sys.modules, name
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"deferred-import check failed (code {result.returncode})\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
 def test_main_callable():
     from pagedrop.main import main
 

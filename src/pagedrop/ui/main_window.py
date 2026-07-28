@@ -34,7 +34,6 @@ from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import CommandPalette, action_label
-from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.dialogs import (
     fit_message_box_buttons,
     prompt_pdf_password,
@@ -44,8 +43,6 @@ from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
 )
-from pagedrop.ui.merge_window import MergeWindow
-from pagedrop.ui.tools_window import ToolsWindow
 from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
@@ -86,6 +83,9 @@ from pagedrop.utils.temp_manager import TempManager
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pagedrop.ui.convert_window import ConvertWindow
+    from pagedrop.ui.merge_window import MergeWindow
+    from pagedrop.ui.tools_window import ToolsWindow
     from pagedrop.ui.window_manager import WindowManager
 
 
@@ -1705,11 +1705,12 @@ class MainWindow(QMainWindow):
             page, "WINDOW_TITLE", "Tool"
         )
         self._tool_pages[page_id] = page
-        if page_id == ToolsWindow.PAGE_ID:
+        # PAGE_ID string literals match MergeWindow / ConvertWindow / ToolsWindow.
+        if page_id == "tools":
             self._tools_window = page  # type: ignore[assignment]
-        elif page_id == MergeWindow.PAGE_ID:
+        elif page_id == "merge":
             self._merge_window = page  # type: ignore[assignment]
-        elif page_id == ConvertWindow.PAGE_ID:
+        elif page_id == "create_pdf":
             self._convert_window = page  # type: ignore[assignment]
         self._tab_manager.add_page(page, str(title))
         self._sync_toolbar_from_active_tab()
@@ -1747,6 +1748,8 @@ class MainWindow(QMainWindow):
             return False
 
     def _open_merge_window(self) -> None:
+        from pagedrop.ui.merge_window import MergeWindow
+
         if not self._tool_page_open(self._merge_window):
             self._merge_window = MergeWindow(editor=self)
         else:
@@ -1756,6 +1759,8 @@ class MainWindow(QMainWindow):
         self.open_tool_page(self._merge_window, page_id=MergeWindow.PAGE_ID)
 
     def _open_convert_window(self) -> None:
+        from pagedrop.ui.convert_window import ConvertWindow
+
         if not self._tool_page_open(self._convert_window):
             self._convert_window = ConvertWindow(editor=self)
         else:
@@ -1765,6 +1770,8 @@ class MainWindow(QMainWindow):
         self.open_tool_page(self._convert_window, page_id=ConvertWindow.PAGE_ID)
 
     def _open_tools_window(self) -> None:
+        from pagedrop.ui.tools_window import ToolsWindow
+
         if not self._tool_page_open(self._tools_window):
             self._tools_window = ToolsWindow(
                 editor=self,
