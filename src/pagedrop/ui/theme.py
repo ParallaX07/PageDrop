@@ -31,7 +31,7 @@ CLOSE_TAB_HOVER_BG = "#3D2228"
 # Tinted shadow (cool blue, not pure black)
 SHADOW_RGB = (14, 22, 38)
 
-RADIUS_CARD = 10
+RADIUS_CARD = 12
 RADIUS_CONTROL = 8
 RADIUS_BADGE = 6
 
@@ -64,25 +64,26 @@ def relative_luminance(hex_color: str) -> float:
 def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Light / HC overrides under distinct locals so we never mutate module tokens.
     if light:
-        bg_base = "#F2F3F5"
+        # Cool off-white base; white cards; light borders (Bento light translation).
+        bg_base = "#F7F8FA"
         bg_surface = "#FFFFFF"
-        bg_grid = "#EBEDF0"
+        bg_grid = "#F0F1F4"
         bg_card = "#FFFFFF"
-        bg_card_hover = "#E4E6EB"
-        bg_thumb_empty = "#D5D7DE"
+        bg_card_hover = "#EEF0F4"
+        bg_thumb_empty = "#E2E4EA"
         bg_toolbar = "#FFFFFF"
         bg_status = "#FFFFFF"
-        bg_tab_bar = "#F2F3F5"
+        bg_tab_bar = "#F7F8FA"
         bg_preview_footer = "#FFFFFF"
-        border_subtle_tok = "#D5D7DE"
-        border_default_tok = "#B4B7C0"
-        border_hover = "#8A8E99"
+        border_subtle_tok = "#E5E7EB"
+        border_default_tok = "#D1D5DB"
+        border_hover = "#9CA3AF"
         text_primary = "#1A1A1F"
         text_secondary = "#4A4A55"
         text_muted_tok = "#5A5D68"
         close_tab = "#D14343"
         close_tab_hover_bg = "#F5D6D6"
-        busy_overlay_bg = "rgba(242, 243, 245, 200)"
+        busy_overlay_bg = "rgba(247, 248, 250, 200)"
     else:
         bg_base = BG_BASE
         bg_surface = BG_SURFACE
@@ -378,6 +379,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {border_subtle};
     }}
 
+    QPushButton#ToolbarPrimary,
     QToolBar QToolButton#ToolbarPrimary {{
         background-color: {ACCENT};
         color: #FFFFFF;
@@ -385,18 +387,27 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-weight: 600;
     }}
 
+    QPushButton#ToolbarPrimary:hover,
     QToolBar QToolButton#ToolbarPrimary:hover {{
         background-color: {ACCENT_HOVER};
         border-color: {ACCENT_HOVER};
     }}
 
+    QPushButton#ToolbarPrimary:pressed,
     QToolBar QToolButton#ToolbarPrimary:pressed {{
         background-color: {ACCENT_PRESSED};
         border-color: {ACCENT_PRESSED};
     }}
 
+    QPushButton#ToolbarPrimary:focus,
     QToolBar QToolButton#ToolbarPrimary:focus {{
         border: {focus_width}px solid #FFFFFF;
+    }}
+
+    QPushButton#ToolbarPrimary:disabled {{
+        background-color: {bg_card_hover};
+        color: {text_muted};
+        border-color: {border_subtle};
     }}
 
     QToolButton#NewTabButton {{
@@ -1232,6 +1243,93 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ResultActionsLabel {{
         color: {text_secondary};
         font-size: 13px;
+    }}
+
+    QLabel#ToolsHint {{
+        color: {text_muted};
+        font-size: 12px;
+    }}
+
+    /* Watermark split — Bento-style preview + options cards. */
+    QFrame#WatermarkPreviewCard,
+    QFrame#WatermarkOptionsCard {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CARD}px;
+    }}
+
+    QLabel#WatermarkPreviewTitle {{
+        color: {text_primary};
+        font-size: 13px;
+        font-weight: 600;
+    }}
+
+    QLabel#WatermarkZoomLabel {{
+        color: {text_secondary};
+        font-size: 12px;
+        font-family: {FONT_MONO};
+        min-width: 40px;
+    }}
+
+    QPushButton#WatermarkZoomButton {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 0;
+        font-weight: 600;
+        min-width: 28px;
+        max-width: 28px;
+        min-height: 28px;
+        max-height: 28px;
+    }}
+
+    QPushButton#WatermarkZoomButton:hover:enabled {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#WatermarkZoomButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QWidget#WatermarkKindToggle QToolButton {{
+        padding: 6px 16px;
+        min-width: 64px;
+    }}
+
+    QScrollArea#WatermarkPreviewScroll {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QScrollArea#WatermarkOptionsScroll {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QSlider#WatermarkSlider::groove:horizontal {{
+        height: 4px;
+        background: {border_subtle};
+        border-radius: 2px;
+    }}
+
+    QSlider#WatermarkSlider::handle:horizontal {{
+        background: {ACCENT};
+        border: none;
+        width: 14px;
+        height: 14px;
+        margin: -5px 0;
+        border-radius: 7px;
+    }}
+
+    QSlider#WatermarkSlider::sub-page:horizontal {{
+        background: {ACCENT};
+        border-radius: 2px;
+    }}
+
+    QSlider#WatermarkSlider:focus {{
+        outline: none;
     }}
 
     /* Card / tile chrome — dynamic properties + :hover/:focus; no per-state setStyleSheet. */

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
@@ -184,7 +186,11 @@ def _set_form_row_visible(form: QFormLayout, field: QWidget, visible: bool) -> N
 
 def _configure_watermark(shell: ToolShellWindow) -> None:
     from pagedrop.core.modify_ops import position_center_fractions
-    from pagedrop.ui.watermark_preview import WatermarkOverlayState, WatermarkPreviewCanvas
+    from pagedrop.ui.watermark_preview import (
+        WatermarkOverlayState,
+        WatermarkPreviewCanvas,
+        WatermarkPreviewScroll,
+    )
 
     # —— Chrome: Change File + meta (shown after pick) ——
     chrome = QWidget()
@@ -202,7 +208,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     shell.set_chrome_widget(chrome)
     shell._chrome_host.hide()  # type: ignore[attr-defined]
 
-    # —— Split body: preview | options ——
+    # —— Split body: preview card | options card ——
     body = QWidget()
     body.setObjectName("WatermarkToolBody")
     body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -210,45 +216,92 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     body_row.setContentsMargins(0, 0, 0, 0)
     body_row.setSpacing(12)
 
-    preview_col = QWidget()
-    preview_col.setObjectName("WatermarkPreviewColumn")
-    preview_lay = QVBoxLayout(preview_col)
-    preview_lay.setContentsMargins(0, 0, 0, 0)
-    preview_lay.setSpacing(6)
+    preview_card = QFrame()
+    preview_card.setObjectName("WatermarkPreviewCard")
+    preview_lay = QVBoxLayout(preview_card)
+    preview_lay.setContentsMargins(12, 12, 12, 12)
+    preview_lay.setSpacing(8)
 
-    nav_row = QHBoxLayout()
-    prev_btn = QPushButton("←")
+    header = QHBoxLayout()
+    header.setSpacing(8)
+    preview_title = QLabel("Preview")
+    preview_title.setObjectName("WatermarkPreviewTitle")
+    prev_btn = QPushButton("‹")
     prev_btn.setObjectName("ToolbarSecondary")
-    prev_btn.setFixedWidth(36)
-    next_btn = QPushButton("→")
+    prev_btn.setFixedWidth(32)
+    prev_btn.setAccessibleName("Previous page")
+    next_btn = QPushButton("›")
     next_btn.setObjectName("ToolbarSecondary")
-    next_btn.setFixedWidth(36)
-    page_label = QLabel("Page —")
+    next_btn.setFixedWidth(32)
+    next_btn.setAccessibleName("Next page")
+    page_label = QLabel("—")
     page_label.setObjectName("ToolsHint")
-    nav_row.addWidget(prev_btn)
-    nav_row.addWidget(next_btn)
-    nav_row.addWidget(page_label, stretch=1)
-    preview_lay.addLayout(nav_row)
+    page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    page_label.setMinimumWidth(48)
 
-    canvas = WatermarkPreviewCanvas()
-    preview_lay.addWidget(canvas, stretch=1)
+    zoom_out = QPushButton("−")
+    zoom_out.setObjectName("WatermarkZoomButton")
+    zoom_out.setToolTip("Zoom out (Ctrl+scroll)")
+    zoom_out.setAccessibleName("Zoom out")
+    zoom_label = QLabel("100%")
+    zoom_label.setObjectName("WatermarkZoomLabel")
+    zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    zoom_label.setToolTip("Ctrl+0 resets to fit")
+    zoom_in = QPushButton("+")
+    zoom_in.setObjectName("WatermarkZoomButton")
+    zoom_in.setToolTip("Zoom in (Ctrl+scroll)")
+    zoom_in.setAccessibleName("Zoom in")
+
     drag_hint = QLabel("Drag watermark to position")
     drag_hint.setObjectName("ToolsHint")
-    drag_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    preview_lay.addWidget(drag_hint)
-    body_row.addWidget(preview_col, stretch=3)
 
-    options = QWidget()
-    options.setObjectName("WatermarkOptions")
-    options.setMinimumWidth(260)
-    form = QFormLayout(options)
-    form.setContentsMargins(0, 0, 0, 0)
-    form.setVerticalSpacing(8)
+    header.addWidget(preview_title)
+    header.addStretch(1)
+    header.addWidget(prev_btn)
+    header.addWidget(page_label)
+    header.addWidget(next_btn)
+    header.addSpacing(12)
+    header.addWidget(zoom_out)
+    header.addWidget(zoom_label)
+    header.addWidget(zoom_in)
+    header.addSpacing(8)
+    header.addWidget(drag_hint)
+    preview_lay.addLayout(header)
+
+    canvas = WatermarkPreviewCanvas()
+    preview_scroll = WatermarkPreviewScroll(canvas)
+    preview_lay.addWidget(preview_scroll, stretch=1)
+    body_row.addWidget(preview_card, stretch=3)
+
+    options_card = QFrame()
+    options_card.setObjectName("WatermarkOptionsCard")
+    options_card.setMinimumWidth(280)
+    form = QFormLayout(options_card)
+    form.setContentsMargins(14, 14, 14, 14)
+    form.setVerticalSpacing(10)
+    form.setHorizontalSpacing(10)
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-    kind = QComboBox()
-    kind.addItem("Text", "text")
-    kind.addItem("Image", "image")
+    kind_host = QWidget()
+    kind_host.setObjectName("WatermarkKindToggle")
+    kind_row = QHBoxLayout(kind_host)
+    kind_row.setContentsMargins(0, 0, 0, 0)
+    kind_row.setSpacing(0)
+    kind_group = QButtonGroup(kind_host)
+    kind_group.setExclusive(True)
+    kind_value = {"v": "text"}
+    text_kind = QToolButton()
+    text_kind.setText("Text")
+    text_kind.setCheckable(True)
+    text_kind.setChecked(True)
+    image_kind = QToolButton()
+    image_kind.setText("Image")
+    image_kind.setCheckable(True)
+    kind_group.addButton(text_kind)
+    kind_group.addButton(image_kind)
+    kind_row.addWidget(text_kind)
+    kind_row.addWidget(image_kind)
+    kind_row.addStretch(1)
 
     page_range = QLineEdit("all")
     page_range.setPlaceholderText("all or e.g. 1-3,5,7-9")
@@ -326,16 +379,49 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     image_scale.setSingleStep(0.05)
     image_scale.setValue(0.5)
 
+    # Hidden spins keep range/tests; sliders are the Bento-facing controls.
     opacity = QDoubleSpinBox()
     opacity.setRange(0.05, 1.0)
     opacity.setSingleStep(0.05)
     opacity.setValue(0.3)
+    opacity.hide()
 
     angle = QDoubleSpinBox()
     angle.setRange(-180.0, 180.0)
     angle.setDecimals(0)
     angle.setSuffix("°")
     angle.setValue(-45.0)
+    angle.hide()
+
+    opacity_host = QWidget()
+    opacity_row = QHBoxLayout(opacity_host)
+    opacity_row.setContentsMargins(0, 0, 0, 0)
+    opacity_row.setSpacing(8)
+    opacity_slider = QSlider(Qt.Orientation.Horizontal)
+    opacity_slider.setObjectName("WatermarkSlider")
+    opacity_slider.setRange(5, 100)
+    opacity_slider.setValue(30)
+    opacity_slider.setAccessibleName("Opacity")
+    opacity_value = QLabel("0.3")
+    opacity_value.setObjectName("ToolsHint")
+    opacity_value.setMinimumWidth(28)
+    opacity_row.addWidget(opacity_slider, stretch=1)
+    opacity_row.addWidget(opacity_value)
+
+    angle_host = QWidget()
+    angle_row = QHBoxLayout(angle_host)
+    angle_row.setContentsMargins(0, 0, 0, 0)
+    angle_row.setSpacing(8)
+    angle_slider = QSlider(Qt.Orientation.Horizontal)
+    angle_slider.setObjectName("WatermarkSlider")
+    angle_slider.setRange(-180, 180)
+    angle_slider.setValue(-45)
+    angle_slider.setAccessibleName("Angle")
+    angle_value = QLabel("-45°")
+    angle_value.setObjectName("ToolsHint")
+    angle_value.setMinimumWidth(40)
+    angle_row.addWidget(angle_slider, stretch=1)
+    angle_row.addWidget(angle_value)
 
     pos_host = QWidget()
     pos_grid = QGridLayout(pos_host)
@@ -382,7 +468,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     flatten_hint.setObjectName("ToolsHint")
     flatten_hint.setWordWrap(True)
 
-    form.addRow("Kind", kind)
+    form.addRow(kind_host)
     form.addRow("Page range", page_range)
     form.addRow(page_hint)
     form.addRow("Text", text)
@@ -392,9 +478,14 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     form.addRow("Size mode", size_mode)
     form.addRow("Size (% of diagonal)", diagonal_pct)
     form.addRow("Image scale", image_scale)
-    form.addRow("Opacity", opacity)
-    form.addRow("Angle", angle)
+    form.addRow("Opacity", opacity_host)
+    form.addRow("Angle", angle_host)
     form.addRow("Snap", pos_host)
+    # Hidden spins keep range + test findability; sliders drive the UI.
+    opacity.setParent(options_card)
+    angle.setParent(options_card)
+    opacity.hide()
+    angle.hide()
     form.addRow("", flatten)
     form.addRow(flatten_hint)
 
@@ -403,7 +494,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     options_scroll.setWidgetResizable(True)
     options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
     options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    options_scroll.setWidget(options)
+    options_scroll.setWidget(options_card)
     body_row.addWidget(options_scroll, stretch=2)
 
     while shell._options_layout.count():
@@ -428,7 +519,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             _syncing["v"] = False
 
     def sync_kind_visibility() -> None:
-        is_text = kind.currentData() == "text"
+        is_text = kind_value["v"] == "text"
         absolute = size_mode.currentData() == "absolute"
         _set_form_row_visible(form, text, is_text)
         _set_form_row_visible(form, color_btn, is_text)
@@ -439,7 +530,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
 
     def _sidebar_state() -> WatermarkOverlayState:
         return WatermarkOverlayState(
-            kind=str(kind.currentData()),
+            kind=kind_value["v"],
             text=text.text(),
             image_path=image.text().strip(),
             color=(color_rgb[0], color_rgb[1], color_rgb[2]),
@@ -479,9 +570,42 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             return
         _syncing["v"] = True
         try:
-            angle.setValue(round(value))
+            rounded = round(value)
+            angle.setValue(rounded)
+            angle_slider.setValue(int(rounded))
+            angle_value.setText(f"{int(rounded)}°")
         finally:
             _syncing["v"] = False
+
+    def _on_opacity_slider(v: int) -> None:
+        if _syncing["v"]:
+            return
+        op = max(0.05, min(1.0, v / 100.0))
+        _syncing["v"] = True
+        try:
+            opacity.setValue(op)
+            opacity_value.setText(f"{op:.2g}")
+        finally:
+            _syncing["v"] = False
+        _push_overlay_from_sidebar()
+
+    def _on_angle_slider(v: int) -> None:
+        if _syncing["v"]:
+            return
+        _syncing["v"] = True
+        try:
+            angle.setValue(float(v))
+            angle_value.setText(f"{v}°")
+        finally:
+            _syncing["v"] = False
+        _push_overlay_from_sidebar()
+
+    def _on_kind_toggled(checked: bool) -> None:
+        if not checked:
+            return
+        kind_value["v"] = "text" if text_kind.isChecked() else "image"
+        sync_kind_visibility()
+        _push_overlay_from_sidebar()
 
     def _on_placement(_cx: float, _cy: float) -> None:
         # Free drag clears exclusive snap highlight without changing center again.
@@ -496,14 +620,17 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     def _update_page_label() -> None:
         n = _page_count["n"]
         if n <= 0:
-            page_label.setText("Page —")
+            page_label.setText("—")
             prev_btn.setEnabled(False)
             next_btn.setEnabled(False)
             return
         i = canvas.page_index + 1
-        page_label.setText(f"Page {i} of {n}")
+        page_label.setText(f"{i} / {n}")
         prev_btn.setEnabled(i > 1)
         next_btn.setEnabled(i < n)
+
+    def _update_zoom_label(factor: float) -> None:
+        zoom_label.setText(f"{int(round(factor * 100))}%")
 
     def _on_files_changed() -> None:
         paths = shell.drop_zone.paths()
@@ -540,7 +667,8 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         if checked is not None:
             _apply_snap(position_value["v"])
 
-    kind.currentIndexChanged.connect(lambda *_: (sync_kind_visibility(), _push_overlay_from_sidebar()))
+    text_kind.toggled.connect(_on_kind_toggled)
+    image_kind.toggled.connect(_on_kind_toggled)
     size_mode.currentIndexChanged.connect(
         lambda *_: (sync_kind_visibility(), _push_overlay_from_sidebar())
     )
@@ -551,18 +679,23 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     image_scale.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
     opacity.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
     angle.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    opacity_slider.valueChanged.connect(_on_opacity_slider)
+    angle_slider.valueChanged.connect(_on_angle_slider)
 
     canvas.placement_changed.connect(_on_placement)
     canvas.angle_changed.connect(_pull_angle_from_canvas)
     canvas.size_changed.connect(_pull_size_from_canvas)
     canvas.page_changed.connect(lambda *_: _update_page_label())
     canvas.geometry_ready.connect(_on_geometry_ready)
+    canvas.zoom_changed.connect(_update_zoom_label)
     canvas.render_error.connect(
         lambda msg: QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Preview failed:\n{msg}")
     )
 
     prev_btn.clicked.connect(lambda: canvas.set_page(canvas.page_index - 1))
     next_btn.clicked.connect(lambda: canvas.set_page(canvas.page_index + 1))
+    zoom_out.clicked.connect(lambda: canvas.zoom_by(-0.1))
+    zoom_in.clicked.connect(lambda: canvas.zoom_by(0.1))
 
     sync_kind_visibility()
     shell.drop_zone.files_changed.connect(_on_files_changed)
@@ -610,7 +743,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             return
 
         st = canvas.state
-        k = kind.currentData()
+        k = kind_value["v"]
         use_diag = size_mode.currentData() == "diagonal"
         opts: dict = {
             "kind": k,

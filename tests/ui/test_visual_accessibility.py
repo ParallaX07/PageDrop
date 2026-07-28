@@ -22,7 +22,7 @@ def test_text_muted_meets_wcag_aa_on_bg_base():
 def test_light_text_muted_meets_wcag_aa_on_bg_grid():
     # Keep in sync with app_stylesheet(light=True) text_muted_tok / bg_grid.
     light_muted = "#5A5D68"
-    light_bg_grid = "#EBEDF0"
+    light_bg_grid = "#F0F1F4"
     assert contrast_ratio(light_muted, light_bg_grid) >= 4.5
     assert light_muted in app_stylesheet(light=True)
 
@@ -84,7 +84,7 @@ def test_stylesheet_includes_focus_rings_for_controls():
 
 def test_light_stylesheet_styles_dialogs(isolated_settings):
     light = app_stylesheet(light=True)
-    assert "#F2F3F5" in light
+    assert "#F7F8FA" in light
     assert "QDialog {" in light
     assert "QListWidget::item:selected" in light
     assert "QTreeWidget::item:selected" in light
@@ -93,6 +93,8 @@ def test_light_stylesheet_styles_dialogs(isolated_settings):
     assert "QToolButton," in light
     assert "background-color: #FFFFFF" in light
     assert "color: #1A1A1F" in light
+    assert "QFrame#WatermarkOptionsCard" in light
+    assert "QPushButton#ToolbarPrimary" in light
 
 
 def test_progress_and_empty_state_accessible_names(main_window, qtbot):

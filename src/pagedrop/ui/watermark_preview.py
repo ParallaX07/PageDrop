@@ -14,15 +14,19 @@ from PyQt6.QtCore import QObject, QPointF, QRectF, QRunnable, QThreadPool, QTime
 from PyQt6.QtGui import (
     QColor,
     QFont,
+    QKeyEvent,
     QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
+    QResizeEvent,
+    QWheelEvent,
 )
-from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from pagedrop.core.modify_ops import watermark_text_box
 from pagedrop.core.pdf_editor import PageRef
+from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
 from pagedrop.core.pdf_service import page_geometry, render_ref_png
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 
@@ -32,6 +36,9 @@ _MIN_DIAG_PCT = 1.0
 _MAX_DIAG_PCT = 100.0
 _RENDER_DEBOUNCE_MS = 120
 _PREVIEW_WIDTH_PX = 720
+_MIN_ZOOM = 0.5
+_MAX_ZOOM = 4.0
+_ZOOM_STEP = 0.1
 
 
 @dataclass
@@ -121,6 +128,33 @@ def _overlay_size_pts(state: WatermarkOverlayState, page_w: float, page_h: float
     return w, h
 
 
+class WatermarkPreviewScroll(QScrollArea):
+    """Scroll host that feeds viewport size into the canvas for fit-zoom."""
+
+    def __init__(
+        self, canvas: WatermarkPreviewCanvas, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self._canvas = canvas
+        self.setObjectName("WatermarkPreviewScroll")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setWidget(canvas)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        vp = self.viewport()
+        self._canvas.set_host_size(vp.width(), vp.height())
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._canvas.wheelEvent(event)
+            return
+        super().wheelEvent(event)
+
+
 class WatermarkPreviewCanvas(QWidget):
     """Page pixmap with draggable / scalable / rotatable watermark overlay."""
 
@@ -130,6 +164,7 @@ class WatermarkPreviewCanvas(QWidget):
     page_changed = pyqtSignal(int)
     geometry_ready = pyqtSignal(float, float)  # page_w, page_h
     render_error = pyqtSignal(str)
+    zoom_changed = pyqtSignal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -148,6 +183,10 @@ class WatermarkPreviewCanvas(QWidget):
         self._state = WatermarkOverlayState()
         self._image_cache_path = ""
         self._image_cache = QPixmap()
+        self._zoom = 1.0
+        self._host_w = 240
+        self._host_h = 280
+        self._render_width_px = _PREVIEW_WIDTH_PX
 
         self._generation = 0
         self._pool = QThreadPool(self)
@@ -157,7 +196,7 @@ class WatermarkPreviewCanvas(QWidget):
         self._timer.setInterval(_RENDER_DEBOUNCE_MS)
         self._timer.timeout.connect(self._start_render)
 
-        self._drag_mode: str | None = None  # move | rotate | nw|ne|… 
+        self._drag_mode: str | None = None  # move | rotate | nw|ne|…
         self._drag_origin = QPointF()
         self._drag_center = (0.5, 0.5)
         self._drag_angle = 0.0
@@ -190,6 +229,32 @@ class WatermarkPreviewCanvas(QWidget):
     def page_size(self) -> tuple[float, float]:
         return self._page_w, self._page_h
 
+    @property
+    def zoom_factor(self) -> float:
+        return self._zoom
+
+    def set_host_size(self, width: int, height: int) -> None:
+        self._host_w = max(1, int(width))
+        self._host_h = max(1, int(height))
+        self._update_canvas_size()
+        self.update()
+
+    def set_zoom_factor(self, factor: float) -> None:
+        z = max(_MIN_ZOOM, min(_MAX_ZOOM, float(factor)))
+        if abs(z - self._zoom) < 1e-6:
+            return
+        self._zoom = z
+        self._update_canvas_size()
+        self._schedule_render()
+        self.zoom_changed.emit(self._zoom)
+        self.update()
+
+    def zoom_by(self, delta: float) -> None:
+        self.set_zoom_factor(self._zoom + delta)
+
+    def reset_zoom(self) -> None:
+        self.set_zoom_factor(1.0)
+
     def set_state(self, state: WatermarkOverlayState) -> None:
         self._state = state
         self.update()
@@ -204,7 +269,11 @@ class WatermarkPreviewCanvas(QWidget):
         self._page_index = 0
         self._page_count = 0
         self._page_pix = QPixmap()
+        self._zoom = 1.0
+        self._render_width_px = _PREVIEW_WIDTH_PX
         self._placeholder.show()
+        self._update_canvas_size()
+        self.zoom_changed.emit(self._zoom)
         self.update()
 
     def set_source(self, path: str, *, page_count: int, page_index: int = 0) -> None:
@@ -234,15 +303,23 @@ class WatermarkPreviewCanvas(QWidget):
     def _is_cancelled(self, generation: int) -> bool:
         return generation != self._generation
 
+    def _target_render_width(self) -> int:
+        return min(
+            MAX_RENDER_WIDTH_PX,
+            max(_PREVIEW_WIDTH_PX, int(_PREVIEW_WIDTH_PX * self._zoom)),
+        )
+
     def _start_render(self) -> None:
         if not self._path:
             return
         self._generation += 1
         gen = self._generation
+        width_px = self._target_render_width()
+        self._render_width_px = width_px
         worker = _PageRenderWorker(
             self._path,
             self._page_index,
-            _PREVIEW_WIDTH_PX,
+            width_px,
             gen,
             self._is_cancelled,
         )
@@ -261,6 +338,7 @@ class WatermarkPreviewCanvas(QWidget):
         self._page_w = max(page_w, 1.0)
         self._page_h = max(page_h, 1.0)
         self.geometry_ready.emit(self._page_w, self._page_h)
+        self._update_canvas_size()
         self.update()
 
     def _on_render_error(self, generation: int, message: str) -> None:
@@ -268,21 +346,37 @@ class WatermarkPreviewCanvas(QWidget):
             return
         self.render_error.emit(message)
 
+    def _fit_scale(self) -> float:
+        if self._page_pix.isNull():
+            return 1.0
+        margin = 8.0
+        avail_w = max(1.0, self._host_w - 2 * margin)
+        avail_h = max(1.0, self._host_h - 2 * margin)
+        pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
+        return min(avail_w / pw, avail_h / ph)
+
+    def _update_canvas_size(self) -> None:
+        if self._page_pix.isNull():
+            self.setMinimumSize(max(240, self._host_w), max(280, self._host_h))
+            return
+        margin = 8.0
+        pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
+        scale = self._fit_scale() * self._zoom
+        need_w = int(math.ceil(pw * scale + 2 * margin))
+        need_h = int(math.ceil(ph * scale + 2 * margin))
+        if self._zoom > 1.0 + 1e-6:
+            self.setMinimumSize(max(self._host_w, need_w), max(self._host_h, need_h))
+        else:
+            self.setMinimumSize(self._host_w, self._host_h)
+
     def _page_display_rect(self) -> QRectF:
         if self._page_pix.isNull():
             return QRectF()
-        margin = 8.0
-        avail = QRectF(
-            margin,
-            margin,
-            max(1.0, self.width() - 2 * margin),
-            max(1.0, self.height() - 2 * margin),
-        )
         pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
-        scale = min(avail.width() / pw, avail.height() / ph)
+        scale = self._fit_scale() * self._zoom
         w, h = pw * scale, ph * scale
-        x = avail.x() + (avail.width() - w) / 2
-        y = avail.y() + (avail.height() - h) / 2
+        x = (self.width() - w) / 2
+        y = (self.height() - h) / 2
         return QRectF(x, y, w, h)
 
     def _page_to_widget(self, px: float, py: float) -> QPointF:
@@ -515,6 +609,27 @@ class WatermarkPreviewCanvas(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_mode = None
             event.accept()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+        self.zoom_by(_ZOOM_STEP if delta > 0 else -_ZOOM_STEP)
+        event.accept()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        if (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            and event.key() == Qt.Key.Key_0
+        ):
+            self.reset_zoom()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 def _hit_resize_handle(wr: QRectF, pos: QPointF, handle_px: float = _HANDLE_PX) -> str | None:

@@ -30,7 +30,7 @@ def test_light_theme_stylesheet_differs(isolated_settings):
     dark = app_stylesheet(light=False)
     light = app_stylesheet(light=True)
     assert dark != light
-    assert "#F2F3F5" in light
+    assert "#F7F8FA" in light
     assert "#131316" in dark
 
 

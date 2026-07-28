@@ -44,7 +44,7 @@ def test_modify_tiles_open_shells(qtbot, isolated_settings):
 
 
 def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_settings):
-    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QLabel, QPushButton, QToolButton
+    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QToolButton
 
     from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
 
@@ -56,6 +56,8 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     host = shell._options_host
 
     assert host.findChild(WatermarkPreviewCanvas, "WatermarkPreviewCanvas") is not None
+    assert host.findChild(QFrame, "WatermarkPreviewCard") is not None
+    assert host.findChild(QFrame, "WatermarkOptionsCard") is not None
     assert any(
         isinstance(lab, QLabel) and "Drag watermark" in lab.text()
         for lab in host.findChildren(QLabel)
@@ -63,22 +65,28 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)
     assert any(s.suffix() == "°" for s in spins)
-    pos_buttons = [b for b in host.findChildren(QToolButton) if b.isCheckable()]
+    pos_buttons = [
+        b
+        for b in host.findChildren(QToolButton)
+        if b.isCheckable() and b.text() in {"TL", "T", "TR", "L", "C", "R", "BL", "B", "BR"}
+    ]
     assert len(pos_buttons) == 9
-    assert any(b.isChecked() and b.toolTip() == "Center" for b in pos_buttons)
+    assert any(b.isChecked() and b.text() == "C" for b in pos_buttons)
     assert any(
         isinstance(c, QCheckBox) and "Flatten" in c.text()
         for c in host.findChildren(QCheckBox)
     )
-    # Text | Image kind toggle present.
-    from PyQt6.QtWidgets import QComboBox
-
-    kinds = [
-        c
-        for c in host.findChildren(QComboBox)
-        if c.count() >= 2 and c.itemData(0) == "text" and c.itemData(1) == "image"
+    kind_btns = [
+        b for b in host.findChildren(QToolButton) if b.text() in {"Text", "Image"}
     ]
-    assert kinds
+    assert {b.text() for b in kind_btns} == {"Text", "Image"}
+    assert any(b.isChecked() and b.text() == "Text" for b in kind_btns)
+    zoom_btns = [
+        b
+        for b in host.findChildren(QPushButton)
+        if b.objectName() == "WatermarkZoomButton"
+    ]
+    assert len(zoom_btns) == 2
     shell.resize(900, 640)
     qtbot.wait(20)
     tools.close()
@@ -122,7 +130,7 @@ def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolate
     assert canvas.page_count == 2
 
     # Sidebar text change updates overlay state.
-    from PyQt6.QtWidgets import QLineEdit
+    from PyQt6.QtWidgets import QLineEdit, QToolButton
 
     text_edit = next(
         e for e in shell._options_host.findChildren(QLineEdit) if e.text() == "CONFIDENTIAL"
@@ -131,16 +139,67 @@ def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolate
     assert canvas.state.text == "DRAFT"
 
     # Kind toggle to Image shows image path row still wired.
-    from PyQt6.QtWidgets import QComboBox
-
-    kind = next(
-        c
-        for c in shell._options_host.findChildren(QComboBox)
-        if c.itemData(0) == "text" and c.itemData(1) == "image"
+    image_kind = next(
+        b for b in shell._options_host.findChildren(QToolButton) if b.text() == "Image"
     )
-    kind.setCurrentIndex(1)
+    image_kind.click()
     assert canvas.state.kind == "image"
 
+    tools.close()
+
+
+def test_watermark_preview_zoom_controls(qtbot, tmp_path, isolated_settings):
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QPushButton
+
+    from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
+
+    pdf = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=280)
+        doc.save(str(pdf))
+    finally:
+        doc.close()
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "watermark")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.resize(960, 700)
+    shell.show()
+    shell.drop_zone.set_paths([str(pdf)])
+
+    canvas = shell._options_host.findChild(WatermarkPreviewCanvas)
+    assert canvas is not None
+    qtbot.waitUntil(lambda: not canvas._page_pix.isNull(), timeout=5000)
+    assert canvas.zoom_factor == 1.0
+
+    zoom_in = next(
+        b
+        for b in shell._options_host.findChildren(QPushButton)
+        if b.objectName() == "WatermarkZoomButton" and b.text() == "+"
+    )
+    zoom_in.click()
+    assert abs(canvas.zoom_factor - 1.1) < 1e-6
+
+    event = QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    canvas.wheelEvent(event)
+    assert abs(canvas.zoom_factor - 1.2) < 1e-6
+
+    canvas.reset_zoom()
+    assert canvas.zoom_factor == 1.0
     tools.close()
 
 
