@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 # info | success | error | undo — property drives theme chrome
@@ -25,6 +26,8 @@ class BusyOverlay(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("BusyOverlay")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Busy")
         self.hide()
 
         layout = QVBoxLayout(self)
@@ -49,6 +52,7 @@ class BusyOverlay(QWidget):
         self._cancel_btn.setAccessibleName("Cancel")
         self._cancel_btn.clicked.connect(self.cancelled.emit)
         self._cancel_btn.hide()
+        self._cancel_btn.installEventFilter(self)
         panel_layout.addWidget(
             self._cancel_btn, alignment=Qt.AlignmentFlag.AlignHCenter
         )
@@ -61,16 +65,56 @@ class BusyOverlay(QWidget):
 
     def show_message(self, message: str) -> None:
         self._message.setText(message)
+        self.setAccessibleDescription(message)
         self._sync_geometry()
         self.show()
         self.raise_()
+        self._grab_focus()
 
     def hide_overlay(self) -> None:
         self.hide()
 
+    def _escape_cancels(self) -> bool:
+        return (
+            self.isVisible()
+            and self._cancel_btn.isVisible()
+            and self._cancel_btn.isEnabled()
+        )
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Escape and self._escape_cancels():
+            self.cancelled.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        # Cancel holds focus while busy — Escape must still map to cancel.
+        if (
+            watched is self._cancel_btn
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() == Qt.Key.Key_Escape
+            and self._escape_cancels()
+        ):
+            self.cancelled.emit()
+            return True
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._grab_focus()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_geometry()
+
+    def _grab_focus(self) -> None:
+        """Take keyboard focus so Escape reaches Cancel while the overlay is up."""
+        if self._cancel_btn.isVisible() and self._cancel_btn.isEnabled():
+            self._cancel_btn.setFocus(Qt.FocusReason.PopupFocusReason)
+        else:
+            self.setFocus(Qt.FocusReason.PopupFocusReason)
 
     def _sync_geometry(self) -> None:
         parent = self.parentWidget()

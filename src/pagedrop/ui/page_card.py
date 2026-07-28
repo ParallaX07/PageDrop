@@ -82,6 +82,7 @@ class PageCard(BaseFileCard):
         self._apply_skeleton_size()
         self._sync_page_overlay_visibility()
         self.setToolTip(f"Page {page_index + 1} · Click to select")
+        self._sync_accessible()
 
     def _item_index(self) -> int:
         return self.page_index
@@ -107,6 +108,7 @@ class PageCard(BaseFileCard):
             self.setToolTip(f"Page {index + 1} · Click to select")
         else:
             self._apply_sized_tooltip(*self._size_cached)
+        self._sync_accessible()
 
     def set_page_overlay_visible(self, visible: bool) -> None:
         if self._page_overlay_wanted == visible:
@@ -186,6 +188,18 @@ class PageCard(BaseFileCard):
         self.setToolTip(
             f"Page {page_num} · {width_mm}×{height_mm} mm · Click to select"
         )
+        self._sync_accessible()
+
+    def _sync_accessible(self) -> None:
+        page_num = self.page_index + 1
+        self.setAccessibleName(f"Page {page_num}")
+        if self._size_cached is not None:
+            width_mm, height_mm = self._size_cached
+            self.setAccessibleDescription(
+                f"{width_mm}×{height_mm} mm · Click to select"
+            )
+        else:
+            self.setAccessibleDescription("Click to select")
 
     def _sync_page_overlay_visibility(self) -> None:
         visible = self._page_overlay_wanted or self._is_skeleton

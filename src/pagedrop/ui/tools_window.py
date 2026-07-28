@@ -11,11 +11,11 @@ from PyQt6.QtGui import QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QScrollArea,
     QSizePolicy,
+    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -31,6 +31,7 @@ from pagedrop.core.capabilities import (
 )
 from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.job_chrome import JobChromeMixin
+from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import launch_organize_tool
 from pagedrop.ui.tool_page import StatusFooter
 
@@ -612,16 +613,23 @@ class ToolsWindow(JobChromeMixin, QWidget):
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
 
-        search_row = QHBoxLayout()
-        search_row.setSpacing(8)
+        toolbar = QToolBar("Tools", self)
+        toolbar.setObjectName("ToolsToolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        self._toolbar = toolbar
+
         self._search = QLineEdit()
         self._search.setObjectName("ToolsSearch")
         self._search.setPlaceholderText("Search tools…")
         self._search.setClearButtonEnabled(True)
         self._search.setAccessibleName("Search tools")
+        self._search.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         self._search.textChanged.connect(self._apply_filter)
         self._search.returnPressed.connect(self._focus_first_visible_tile)
-        search_row.addWidget(self._search, stretch=1)
+        toolbar.addWidget(self._search)
 
         self._compact_btn = QToolButton()
         self._compact_btn.setObjectName("ToolsDensityToggle")
@@ -630,8 +638,10 @@ class ToolsWindow(JobChromeMixin, QWidget):
         self._compact_btn.setToolTip("Toggle compact tile density")
         self._compact_btn.setAccessibleName("Compact density")
         self._compact_btn.toggled.connect(self._set_compact)
-        search_row.addWidget(self._compact_btn)
-        root.addLayout(search_row)
+        toolbar.addWidget(self._compact_btn)
+
+        enable_toolbar_keyboard_navigation(toolbar)
+        root.addWidget(toolbar)
 
         self._match_label = QLabel()
         self._match_label.setObjectName("ToolsMatchCount")

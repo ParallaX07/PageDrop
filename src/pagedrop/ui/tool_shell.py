@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +36,7 @@ from pagedrop.ui.dialogs import (
     prompt_pdf_password,
 )
 from pagedrop.ui.job_chrome import JobChromeMixin
+from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import StatusFooter
 
@@ -523,15 +525,27 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._options_scroll.setWidget(self._options_host)
         root.addWidget(self._options_scroll, stretch=1)
 
-        run_row = QHBoxLayout()
-        run_row.addStretch(1)
+        toolbar = QToolBar("Tool", self)
+        toolbar.setObjectName("ToolShellToolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        self._toolbar = toolbar
+
+        spacer = QWidget()
+        spacer.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        toolbar.addWidget(spacer)
+
         self._run_btn = QPushButton("Run")
         self._run_btn.setObjectName("ToolbarPrimary")
         self._run_btn.setDefault(True)
         self._run_btn.setEnabled(False)
         self._run_btn.clicked.connect(self._on_run)
-        run_row.addWidget(self._run_btn)
-        root.addLayout(run_row)
+        toolbar.addWidget(self._run_btn)
+
+        enable_toolbar_keyboard_navigation(toolbar)
+        root.addWidget(toolbar)
 
         self._make_job_chrome_widgets()
         self._wire_result_actions()

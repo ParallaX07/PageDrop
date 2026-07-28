@@ -6,6 +6,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QToolButton
 
 from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
+from pagedrop.ui.tool_shell import ToolShellWindow
+from pagedrop.ui.tools_window import ToolsWindow
 
 
 def _toolbar_tool_buttons(toolbar) -> list[QToolButton]:
@@ -96,3 +98,28 @@ def test_toolbar_buttons_use_strong_focus(main_window, qtbot):
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     assert focusable_toolbar_widgets(toolbar)
+
+
+def test_tools_hub_toolbar_arrow_keys(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+
+    toolbar = window._toolbar
+    assert hasattr(toolbar, "_pagedrop_arrow_nav")
+    # Search stays a normal line edit (arrows move the caret); Compact gets StrongFocus.
+    assert window._compact_btn.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert window._compact_btn in focusable_toolbar_widgets(toolbar)
+
+
+def test_tool_shell_toolbar_has_arrow_nav(qtbot):
+    shell = ToolShellWindow(title="Demo", description="Test shell")
+    qtbot.addWidget(shell)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+    assert hasattr(shell._toolbar, "_pagedrop_arrow_nav")
+    assert shell._run_btn.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    # Run starts disabled until a file is present — enable for focusable list.
+    shell._run_btn.setEnabled(True)
+    assert shell._run_btn in focusable_toolbar_widgets(shell._toolbar)

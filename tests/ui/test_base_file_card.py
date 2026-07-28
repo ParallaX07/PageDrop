@@ -25,3 +25,15 @@ def test_merge_and_convert_emit_file_index(qtbot):
     assert convert._item_index() == 4
     assert merge.toolTip() == "/tmp/a.pdf"
     assert "100 × 200" in convert.toolTip()
+
+
+def test_file_cards_have_accessible_names(qtbot):
+    merge = MergeFileCard(0, "/tmp/report.pdf", 3)
+    convert = ConvertFileCard(1, "/tmp/photo.png", (100, 200))
+    qtbot.addWidget(merge)
+    qtbot.addWidget(convert)
+
+    assert merge.accessibleName() == "report.pdf"
+    assert "3 pages" in merge.accessibleDescription()
+    assert convert.accessibleName() == "photo.png"
+    assert "100 × 200" in convert.accessibleDescription()

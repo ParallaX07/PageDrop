@@ -205,6 +205,9 @@ class InternalReorderFileCard(BaseFileCard):
         self._subtitle_label.setObjectName(f"{object_name}Subtitle")
         self._subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self.setAccessibleName(filename)
+        self.setAccessibleDescription(subtitle)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)

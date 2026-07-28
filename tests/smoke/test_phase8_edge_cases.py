@@ -35,6 +35,10 @@ def _phase8_fixtures():
 
 
 def _scenario_template(body: str, *, auto_dismiss_dialogs: bool = False) -> str:
+    # Blank MainWindow under offscreen Qt can SIGSEGV during normal
+    # interpreter/Qt teardown after app.exec() even when load + close/quit
+    # survive. os._exit(0) after a clean event loop is the reliable smoke gate
+    # (same rationale as test_smoke_drag_without_pdf_survives).
     dismiss = ""
     if auto_dismiss_dialogs:
         dismiss = """
@@ -60,6 +64,7 @@ print("VISIBLE", window.isVisible(), flush=True)
 QTimer.singleShot(50, window.close)
 QTimer.singleShot(100, app.quit)
 app.exec()
+os._exit(0)
 """
 
 

@@ -210,6 +210,46 @@ def test_busy_overlay_cancel_aborts_job(qtbot):
     window.close()
 
 
+def test_busy_overlay_escape_cancels_when_cancellable(qtbot):
+    from PyQt6.QtCore import Qt
+
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+
+    token = window.begin_job("Working…")
+    overlay = window._busy_overlay
+    assert overlay.isVisible()
+    assert overlay._cancel_btn.isVisible()
+    qtbot.waitUntil(lambda: overlay._cancel_btn.hasFocus(), timeout=2000)
+
+    qtbot.keyClick(overlay._cancel_btn, Qt.Key.Key_Escape)
+    assert token.is_cancelled()
+    window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+    window.close()
+
+
+def test_busy_overlay_escape_ignored_without_cancel(qtbot):
+    from PyQt6.QtCore import Qt
+
+    from pagedrop.ui.busy_overlay import BusyOverlay
+
+    host = ToolsWindow()
+    qtbot.addWidget(host)
+    overlay = BusyOverlay(host)
+    qtbot.addWidget(overlay)
+    overlay.set_cancellable(False)
+    cancelled = []
+    overlay.cancelled.connect(lambda: cancelled.append(True))
+    overlay.show_message("Loading…")
+    assert overlay.hasFocus() or not overlay._cancel_btn.isVisible()
+
+    qtbot.keyClick(overlay, Qt.Key.Key_Escape)
+    assert cancelled == []
+    overlay.hide_overlay()
+
+
 def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
     qtbot, tmp_path, monkeypatch
 ):
