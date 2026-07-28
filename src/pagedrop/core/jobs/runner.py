@@ -1,10 +1,13 @@
-"""Serialized job runner — private lock, no UI QThreadPool, paths only.
+"""Serialized job runner — stage / promote / cancel; paths only.
 
 PyMuPDF must not be shared with ad-hoc editor thumbnail / preview pools.
 Handlers open documents by path inside the handler (see ``thread_policy``).
-A process-wide lock serializes job bodies so tool jobs never pile onto UI
-``QThreadPool`` workers. Long-term upgrade: dedicated PDF service process
-(multiprocessing) for fitz-heavy handlers — same stage/promote/cancel API.
+Fitz-using handlers take the shared ``FITZ_LOCK`` around the handler body so
+tool jobs serialize with the viewer PDF service. Handlers that only wait on
+external converters (Office COM / LibreOffice) register with
+``holds_fitz=False`` so subprocess waits never stall interactive fitz work.
+Long-term upgrade: dedicated PDF service process (multiprocessing) for
+fitz-heavy handlers — same stage/promote/cancel API.
 """
 
 from __future__ import annotations
@@ -43,18 +46,32 @@ class JobContext:
     secrets: dict[str, str]
 
 
+@dataclass(frozen=True)
+class _HandlerEntry:
+    handler: JobHandler
+    # When True, run under FITZ_LOCK (whole body is fitz work). When False,
+    # handler must take FITZ_LOCK only around any fitz open/work/close itself.
+    holds_fitz: bool = True
+
+
 class SerializedJobRunner:
-    """Run tool jobs one at a time; stage → handler → promote; cleanup on fail.
+    """Run tool jobs; stage → handler → promote; cleanup on fail.
 
     Never shares ``fitz.Document`` instances with UI thread pools. Callers pass
     paths on ``JobSpec``; handlers open by path. Cancel removes partial staged
-    output. Source overwrite is rejected like Save As. Uses the shared
-    ``FITZ_LOCK`` so jobs serialize with the viewer PDF service.
+    output. Source overwrite is rejected like Save As.
+
+    ponytail: FITZ_LOCK remains process-global for all in-process fitz (UI
+    thumbnail/merge/convert pools must take it too — O2 UI pool checklist).
+    Ceiling: one global gate stalls unrelated fitz while a long fitz *job*
+    holds it. Upgrade: dedicated PDF service process (O10) so jobs never share
+    MuPDF caches with the viewer; until then never hold the lock across
+    Office / LibreOffice / other external waits (``holds_fitz=False``).
     """
 
     def __init__(self, temp_manager: TempManager | None = None) -> None:
         self._temp_manager = temp_manager or TempManager()
-        self._handlers: dict[str, JobHandler] = {}
+        self._handlers: dict[str, _HandlerEntry] = {}
         self._active_cancel: CancelToken | None = None
         self._active_lock = threading.Lock()
 
@@ -62,8 +79,20 @@ class SerializedJobRunner:
     def temp_manager(self) -> TempManager:
         return self._temp_manager
 
-    def register(self, job_type: str, handler: JobHandler) -> None:
-        self._handlers[job_type] = handler
+    def register(
+        self,
+        job_type: str,
+        handler: JobHandler,
+        *,
+        holds_fitz: bool = True,
+    ) -> None:
+        """Register *handler* for *job_type*.
+
+        *holds_fitz* (default True): wrap the handler in ``FITZ_LOCK``. Pass
+        False for Office / LibreOffice / other long external waits; those
+        handlers must lock only around any brief fitz validate/open/close.
+        """
+        self._handlers[job_type] = _HandlerEntry(handler, holds_fitz=holds_fitz)
 
     def cancel_active(self) -> None:
         with self._active_lock:
@@ -103,8 +132,8 @@ class SerializedJobRunner:
         staging = JobStaging(self._temp_manager)
         staged = staging.stage_file(Path(spec.output).name)
 
-        handler = self._handlers.get(spec.job_type)
-        if handler is None:
+        entry = self._handlers.get(spec.job_type)
+        if entry is None:
             staging.cleanup()
             raise JobError(f"No handler registered for job type: {spec.job_type}")
 
@@ -112,25 +141,29 @@ class SerializedJobRunner:
             self._active_cancel = token
 
         try:
-            with FITZ_LOCK:
+            token.check()
+            report(0.0, "Starting…")
+            ctx = JobContext(
+                spec=spec,
+                staging=staging,
+                staged_output=staged,
+                credentials=creds,
+                cancel=token,
+                progress=report,
+                temp_manager=self._temp_manager,
+                secrets=runtime_secrets,
+            )
+            if entry.holds_fitz:
+                with FITZ_LOCK:
+                    result_staged = Path(entry.handler(ctx))
+                    token.check()
+            else:
+                result_staged = Path(entry.handler(ctx))
                 token.check()
-                report(0.0, "Starting…")
-                ctx = JobContext(
-                    spec=spec,
-                    staging=staging,
-                    staged_output=staged,
-                    credentials=creds,
-                    cancel=token,
-                    progress=report,
-                    temp_manager=self._temp_manager,
-                    secrets=runtime_secrets,
-                )
-                result_staged = Path(handler(ctx))
-                token.check()
-                report(0.95, "Promoting output…")
-                promoted = staging.promote(result_staged, Path(spec.output))
-                report(1.0, "Done")
-                return promoted
+            report(0.95, "Promoting output…")
+            promoted = staging.promote(result_staged, Path(spec.output))
+            report(1.0, "Done")
+            return promoted
         except Exception:
             staging.cleanup()
             raise

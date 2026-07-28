@@ -251,25 +251,34 @@ def resolve_backend(
 
 
 def validate_pdf(path: str | Path) -> int:
-    """Open *path* with fitz; return page count. Raises if not a usable PDF."""
+    """Open *path* with fitz; return page count. Raises if not a usable PDF.
+
+    Takes ``FITZ_LOCK`` briefly so Office / LibreOffice waits (outside the
+    job-runner lock) never leave an unlocked fitz open here.
+    """
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
     resolved = Path(path)
     if not resolved.is_file():
         raise OfficeConversionError(
             f"Staged PDF missing: {resolved}", code="empty_output"
         )
-    try:
-        doc = fitz.open(resolved)
-    except Exception as exc:  # noqa: BLE001 — corrupt / non-PDF
-        raise OfficeConversionError(
-            f"Output is not a valid PDF: {exc}", code="invalid_pdf"
-        ) from exc
-    try:
-        count = int(doc.page_count)
-        if count < 1:
-            raise OfficeConversionError("Converted PDF has no pages", code="empty_pdf")
-        return count
-    finally:
-        doc.close()
+    with FITZ_LOCK:
+        try:
+            doc = fitz.open(resolved)
+        except Exception as exc:  # noqa: BLE001 — corrupt / non-PDF
+            raise OfficeConversionError(
+                f"Output is not a valid PDF: {exc}", code="invalid_pdf"
+            ) from exc
+        try:
+            count = int(doc.page_count)
+            if count < 1:
+                raise OfficeConversionError(
+                    "Converted PDF has no pages", code="empty_pdf"
+                )
+            return count
+        finally:
+            doc.close()
 
 
 def convert_office_to_pdf(

@@ -26,10 +26,12 @@ other UI pools remain a known cross-window risk.
 
 Migration
 ---------
-- **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` — uses
-  ``pdf_service.FITZ_LOCK``, stage/promote via ``TempManager``, paths only;
-  never share fitz docs with ad-hoc UI pools. Upgrade path: dedicated PDF
-  service process for fitz-heavy handlers (same stage/promote/cancel API).
+- **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` — fitz handlers
+  take ``pdf_service.FITZ_LOCK`` (``holds_fitz=True``); Office / LibreOffice
+  waits register ``holds_fitz=False`` and lock only around brief fitz validate.
+  Stage/promote via ``TempManager``, paths only; never share fitz docs with
+  ad-hoc UI pools. Upgrade path: dedicated PDF service process for fitz-heavy
+  handlers (same stage/promote/cancel API).
 - **viewer:** ``ui/pdf_viewer.py`` via ``pagedrop.core.pdf_service`` under
   ``FITZ_LOCK`` — not additional concurrent ``QThreadPool`` fitz callers
   outside that lock.

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import threading
+import time
 from pathlib import Path
 
 import fitz
@@ -22,6 +24,8 @@ from pagedrop.core.jobs import (
     preflight_pdf_inputs,
 )
 from pagedrop.core.capabilities import AbsenceReason
+from pagedrop.core.pdf_editor import PageRef
+from pagedrop.core.pdf_service import FITZ_LOCK, render_ref_png
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -300,4 +304,120 @@ def test_run_filters_non_path_options(tmp_path: Path) -> None:
         assert seen_options[0]["output_dir"] == str(tmp_path)
         assert seen_options[0]["note_path"] == sidecar
     finally:
+        temp.cleanup()
+
+
+def test_external_wait_handler_does_not_block_fitz_lock(tmp_path: Path) -> None:
+    """Office/LO-style handlers (holds_fitz=False) must not hold FITZ_LOCK.
+
+    A parallel pdf_service render under the lock must complete while the job
+    is still in its fake external wait.
+    """
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    render_src = tmp_path / "render.pdf"
+    _write_pdf(src)
+    _write_pdf(render_src)
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_office_wait(ctx: JobContext) -> Path:
+        entered.set()
+        assert release.wait(timeout=5), "test never released external wait"
+        ctx.staged_output.write_bytes(src.read_bytes())
+        return ctx.staged_output
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("fake_office", fake_office_wait, holds_fitz=False)
+
+        err: list[BaseException] = []
+
+        def run_job() -> None:
+            try:
+                runner.run(
+                    JobSpec.create("fake_office", inputs=[src], output=out),
+                )
+            except BaseException as exc:  # pragma: no cover
+                err.append(exc)
+
+        t = threading.Thread(target=run_job, daemon=True)
+        t.start()
+        assert entered.wait(timeout=5), "external-wait handler never started"
+
+        # From a different thread than the job: lock must be free during wait.
+        assert FITZ_LOCK.acquire(timeout=1.0), "FITZ_LOCK held during external wait"
+        FITZ_LOCK.release()
+
+        # Must not block for the full fake wait duration.
+        t0 = time.monotonic()
+        png = render_ref_png(PageRef(str(render_src), 0), width_px=64)
+        elapsed = time.monotonic() - t0
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert elapsed < 1.0, f"render blocked {elapsed:.2f}s behind external wait"
+
+        release.set()
+        t.join(timeout=5)
+        assert not err
+        assert out.is_file()
+    finally:
+        release.set()
+        temp.cleanup()
+
+
+def test_external_wait_cancel_cleans_staged_output(tmp_path: Path) -> None:
+    """Cancel mid external-wait job still removes partial staged output."""
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+    source_hash = _file_hash(src)
+
+    started = threading.Event()
+    allow_finish = threading.Event()
+    staged_seen: list[Path] = []
+
+    def fake_office_wait(ctx: JobContext) -> Path:
+        ctx.staged_output.write_bytes(b"%PDF-partial-office")
+        staged_seen.append(ctx.staging.job_dir)
+        started.set()
+        assert allow_finish.wait(timeout=5)
+        ctx.cancel.check()
+        return ctx.staged_output
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("fake_office", fake_office_wait, holds_fitz=False)
+        token = CancelToken()
+        err: list[BaseException] = []
+
+        def run_job() -> None:
+            try:
+                runner.run(
+                    JobSpec.create("fake_office", inputs=[src], output=out),
+                    cancel=token,
+                )
+            except JobCancelledError:
+                return
+            except BaseException as exc:  # pragma: no cover
+                err.append(exc)
+
+        t = threading.Thread(target=run_job, daemon=True)
+        t.start()
+        assert started.wait(timeout=5)
+        token.cancel()
+        allow_finish.set()
+        t.join(timeout=5)
+
+        assert not out.exists()
+        assert _file_hash(src) == source_hash
+        assert staged_seen
+        assert not staged_seen[0].exists()
+        leftovers = list(temp.get_dir().rglob("*"))
+        assert not any(p.is_file() for p in leftovers)
+        assert not err
+    finally:
+        allow_finish.set()
         temp.cleanup()

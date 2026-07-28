@@ -29,4 +29,5 @@ def handle_pdf_to_docx(ctx: JobContext) -> Path:
 
 
 def register_pdf_to_docx_handlers(runner: SerializedJobRunner) -> None:
-    runner.register("pdf_to_docx", handle_pdf_to_docx)
+    # LibreOffice wait only — no in-process fitz; do not hold FITZ_LOCK.
+    runner.register("pdf_to_docx", handle_pdf_to_docx, holds_fitz=False)

@@ -63,7 +63,8 @@ _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 # Organize tools migrated onto this shell in Phase 22b (remaining finish in Phase 24).
 SHELL_ORGANIZE_IDS: frozenset[str] = frozenset({"split", "reverse"})
 
-# Dedicated pool (not thumbnail/render pools) — job runner still holds FITZ_LOCK.
+# Dedicated pool (not thumbnail/render pools). Fitz jobs take FITZ_LOCK;
+# Office / LibreOffice handlers register holds_fitz=False.
 _TOOL_JOB_POOL: QThreadPool | None = None
 # Keep Signals alive until queued finished slots run (autoDelete QRunnable).
 _TOOL_JOB_SIGNAL_REFS: list[QObject] = []

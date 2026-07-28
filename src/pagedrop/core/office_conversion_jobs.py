@@ -38,4 +38,6 @@ def handle_office_to_pdf(ctx: JobContext) -> Path:
 
 
 def register_office_conversion_handlers(runner: SerializedJobRunner) -> None:
-    runner.register("office_to_pdf", handle_office_to_pdf)
+    # External COM / LibreOffice waits must not hold FITZ_LOCK; validate_pdf
+    # takes the lock only around its brief fitz open/close.
+    runner.register("office_to_pdf", handle_office_to_pdf, holds_fitz=False)
