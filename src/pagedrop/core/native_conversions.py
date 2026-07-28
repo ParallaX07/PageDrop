@@ -116,10 +116,6 @@ def collision_safe_path(path: Path) -> Path:
         index += 1
 
 
-def _collision_safe_path(path: Path) -> Path:
-    return collision_safe_path(path)
-
-
 def predicted_export_paths(
     output_path: str | Path,
     *,
@@ -476,7 +472,7 @@ def _page_output_path(
 ) -> Path:
     path = out_dir / f"{stem}_p{page_index + 1:03d}{suffix}"
     if path.exists() and not overwrite:
-        path = _collision_safe_path(path)
+        path = collision_safe_path(path)
     return path
 
 
@@ -609,7 +605,7 @@ def _export_svg(
 def _single_file_output(source: Path, output: Path, *, overwrite: bool) -> Path:
     _assert_outputs_not_source(source, output)
     if output.exists() and not overwrite:
-        return _collision_safe_path(output)
+        return collision_safe_path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     return output
 
