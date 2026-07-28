@@ -75,6 +75,13 @@ def test_merge_runs_in_background_without_blocking_ui(qtbot, one_page_pdf, five_
     assert output.is_file()
     assert not window._busy_overlay.isVisible()
     assert "Merged 2 files" in window.statusBar().currentMessage()
+    assert window._result_bar.isVisible()
+    assert window._result_bar._path == str(output)
+    assert window._toast.isVisible()
+    assert window._toast._message.accessibleName()
+    assert "Merged 2 files" in window._toast._message.text()
+    # Explicit result actions only — merge does not auto-open a PDF editor tab.
+    assert window.editor is None
 
 
 def test_double_click_enters_preview_stack(qtbot, one_page_pdf):

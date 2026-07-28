@@ -35,12 +35,18 @@ from pagedrop.core.supported_formats import (
     is_pdf_path,
     is_supported_image,
 )
-from pagedrop.ui.busy_overlay import BusyOverlay
+from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
 from pagedrop.ui.dialogs import confirm_overwrite, prompt_discard_file_list
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
+)
+from pagedrop.ui.result_actions import (
+    ResultActionsBar,
+    open_in_editor,
+    preview_pdf,
+    show_in_folder,
 )
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
@@ -318,9 +324,15 @@ class ConvertWindow(QWidget):
     WINDOW_TITLE = "Create PDF"
     PAGE_ID = "create_pdf"
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        editor: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.tool_page_id = self.PAGE_ID
+        self._editor = editor
         self._model = ConvertModel()
         self._dimensions: dict[str, tuple[int, int]] = {}
         self._output_mode = _OUTPUT_SINGLE
@@ -339,7 +351,10 @@ class ConvertWindow(QWidget):
         self._build_central_widget()
         self._build_toolbar()
         self._root.insertWidget(0, self._toolbar)
+        self._result_bar = ResultActionsBar()
+        self._root.addWidget(self._result_bar)
         self._root.addWidget(self._status)
+        self._toast = ToastOverlay(self)
         self._connect_signals()
         self._update_actions()
         self._update_status()
@@ -350,6 +365,13 @@ class ConvertWindow(QWidget):
 
     def statusBar(self) -> StatusFooter:  # noqa: N802
         return self._status
+
+    def set_editor(self, editor: QWidget | None) -> None:
+        self._editor = editor
+
+    @property
+    def editor(self) -> QWidget | None:
+        return self._editor
 
     def _build_central_widget(self) -> None:
         self._stack = QStackedWidget()
@@ -462,6 +484,9 @@ class ConvertWindow(QWidget):
         self._preview_widget.closed.connect(self._close_preview)
         self._preview_widget.image_changed.connect(self._on_preview_image_changed)
         self._single_mode_action.toggled.connect(self._on_output_mode_changed)
+        self._result_bar.preview_requested.connect(self._on_preview_result)
+        self._result_bar.open_in_editor_requested.connect(self._on_open_result)
+        self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
 
     def _selected_indices(self) -> list[int]:
         return self._file_grid.selected_indices()
@@ -768,6 +793,7 @@ class ConvertWindow(QWidget):
         overwrite: bool = False,
     ) -> None:
         self._converting = True
+        self._result_bar.clear()
         busy = (
             "Creating PDF…"
             if self._output_mode == _OUTPUT_SINGLE
@@ -801,23 +827,56 @@ class ConvertWindow(QWidget):
         if isinstance(result, str):
             remember_directory(result)
             filename = Path(result).name
-            self.statusBar().showMessage(
-                f"Created PDF from {count} {noun}: {filename}"
-            )
+            status = f"Created PDF from {count} {noun}: {filename}"
+            self.statusBar().showMessage(status)
+            self._toast.show_toast(status, kind="success")
+            self._result_bar.show_for(result, message=status)
             return
 
         written = list(result)
         if written:
             remember_directory(written[0])
         file_noun = "file" if len(written) == 1 else "files"
-        self.statusBar().showMessage(
-            f"Created {len(written)} PDF {file_noun} from {count} {noun}"
-        )
+        status = f"Created {len(written)} PDF {file_noun} from {count} {noun}"
+        self.statusBar().showMessage(status)
+        self._toast.show_toast(status, kind="success")
+        if written:
+            self._result_bar.show_for(written[0], message=status)
 
     def _on_convert_failed(self, message: str) -> None:
         self._finish_convert()
+        self._result_bar.clear()
         self.statusBar().showMessage("Create PDF failed")
         QMessageBox.critical(self, self.WINDOW_TITLE, message)
+
+    def _on_preview_result(self, path: str) -> None:
+        preview_pdf(path, parent=self)
+
+    def _on_open_result(self, path: str) -> None:
+        editor = self._editor
+        if editor is None:
+            self._toast.show_toast("No editor window available", kind="error")
+            return
+        try:
+            open_in_editor(path, editor)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                self.WINDOW_TITLE,
+                f"Could not open in editor:\n{exc}",
+            )
+            return
+        self._toast.show_toast(f"Opened {Path(path).name}", kind="success")
+
+    def _on_show_folder(self, path: str) -> None:
+        if not show_in_folder(path):
+            QMessageBox.warning(
+                self,
+                self.WINDOW_TITLE,
+                "Could not open the folder for this file.",
+            )
+            return
+        self._toast.show_toast("Opened folder", kind="info")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

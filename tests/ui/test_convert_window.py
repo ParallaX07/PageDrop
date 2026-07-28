@@ -99,6 +99,8 @@ def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", _pick_folder)
 
     window = _convert_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
     window._add_paths([str(png)])
     window._separate_mode_action.setChecked(True)
     window._create_pdfs()
@@ -108,6 +110,38 @@ def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):
     assert folder_called["value"]
     assert not save_called["value"]
     assert (out_dir / "alpha.pdf").is_file()
+    assert window._result_bar.isVisible()
+    assert window._result_bar._path == str(out_dir / "alpha.pdf")
+    assert window._toast.isVisible()
+    assert window._toast._message.accessibleName()
+    assert "Created 1 PDF file" in window._toast._message.text()
+
+
+def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monkeypatch):
+    png = tmp_path / "solo.png"
+    _write_test_image(png, 100, 100)
+    output = tmp_path / "solo.pdf"
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+
+    window = _convert_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    window._add_paths([str(png)])
+    window._create_pdfs()
+
+    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+    assert output.is_file()
+    assert "Created PDF from 1 image" in window.statusBar().currentMessage()
+    assert window._result_bar.isVisible()
+    assert window._result_bar._path == str(output)
+    assert window._toast.isVisible()
+    assert window._toast._message.accessibleName() == window._toast._message.text()
+    assert window.editor is None
 
 
 def test_menubar_create_pdf_beside_merge(main_window, qtbot):

@@ -1697,13 +1697,19 @@ class MainWindow(QMainWindow):
 
     def _open_merge_window(self) -> None:
         if not self._tool_page_open(self._merge_window):
-            self._merge_window = MergeWindow()
+            self._merge_window = MergeWindow(editor=self)
+        else:
+            assert self._merge_window is not None
+            self._merge_window.set_editor(self)
         assert self._merge_window is not None
         self.open_tool_page(self._merge_window, page_id=MergeWindow.PAGE_ID)
 
     def _open_convert_window(self) -> None:
         if not self._tool_page_open(self._convert_window):
-            self._convert_window = ConvertWindow()
+            self._convert_window = ConvertWindow(editor=self)
+        else:
+            assert self._convert_window is not None
+            self._convert_window.set_editor(self)
         assert self._convert_window is not None
         self.open_tool_page(self._convert_window, page_id=ConvertWindow.PAGE_ID)
 

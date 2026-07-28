@@ -21,7 +21,7 @@ from pagedrop.core.pdf_merge import PdfMergeModel
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.core.supported_formats import is_pdf_path
-from pagedrop.ui.busy_overlay import BusyOverlay
+from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import prompt_discard_file_list
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
@@ -29,6 +29,12 @@ from pagedrop.ui.keyboard_nav import (
 )
 from pagedrop.ui.merge_file_grid import MergeFileGrid
 from pagedrop.ui.page_preview import PagePreviewWidget
+from pagedrop.ui.result_actions import (
+    ResultActionsBar,
+    open_in_editor,
+    preview_pdf,
+    show_in_folder,
+)
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -80,9 +86,15 @@ class MergeWindow(QWidget):
     WINDOW_TITLE = "Merge PDFs"
     PAGE_ID = "merge"
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        editor: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.tool_page_id = self.PAGE_ID
+        self._editor = editor
         self._model = PdfMergeModel()
         self._page_counts: dict[str, int] = {}
         self._preview_loader: PdfLoader | None = None
@@ -102,7 +114,10 @@ class MergeWindow(QWidget):
         # Toolbar must sit above the stack: insert at top after stack exists.
         self._build_toolbar()
         self._root.insertWidget(0, self._toolbar)
+        self._result_bar = ResultActionsBar()
+        self._root.addWidget(self._result_bar)
         self._root.addWidget(self._status)
+        self._toast = ToastOverlay(self)
         self._connect_signals()
         self._update_actions()
         self._update_status()
@@ -113,6 +128,13 @@ class MergeWindow(QWidget):
 
     def statusBar(self) -> StatusFooter:  # noqa: N802
         return self._status
+
+    def set_editor(self, editor: QWidget | None) -> None:
+        self._editor = editor
+
+    @property
+    def editor(self) -> QWidget | None:
+        return self._editor
 
     def _build_central_widget(self) -> None:
         self._stack = QStackedWidget()
@@ -223,6 +245,9 @@ class MergeWindow(QWidget):
         )
         self._preview_widget.page_changed.connect(self._update_status)
         self._preview_widget.closed.connect(self._close_preview)
+        self._result_bar.preview_requested.connect(self._on_preview_result)
+        self._result_bar.open_in_editor_requested.connect(self._on_open_result)
+        self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
 
     def _selected_indices(self) -> list[int]:
         return self._file_grid.selected_indices()
@@ -576,6 +601,7 @@ class MergeWindow(QWidget):
 
     def _start_merge(self, file_paths: list[str], output_path: str) -> None:
         self._merging = True
+        self._result_bar.clear()
         self._busy_overlay.show_message("Merging PDFs…")
         self.statusBar().showMessage("Merging PDFs…")
         self._update_actions()
@@ -596,12 +622,45 @@ class MergeWindow(QWidget):
         filename = Path(path).name
         file_count = self._model.file_count()
         noun = "file" if file_count == 1 else "files"
-        self.statusBar().showMessage(f"Merged {file_count} {noun} to {filename}")
+        status = f"Merged {file_count} {noun} to {filename}"
+        self.statusBar().showMessage(status)
+        self._toast.show_toast(status, kind="success")
+        self._result_bar.show_for(path, message=status)
 
     def _on_merge_failed(self, message: str) -> None:
         self._finish_merge()
+        self._result_bar.clear()
         self.statusBar().showMessage("Merge failed")
         QMessageBox.critical(self, "Merge PDFs", message)
+
+    def _on_preview_result(self, path: str) -> None:
+        preview_pdf(path, parent=self)
+
+    def _on_open_result(self, path: str) -> None:
+        editor = self._editor
+        if editor is None:
+            self._toast.show_toast("No editor window available", kind="error")
+            return
+        try:
+            open_in_editor(path, editor)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                self.WINDOW_TITLE,
+                f"Could not open in editor:\n{exc}",
+            )
+            return
+        self._toast.show_toast(f"Opened {Path(path).name}", kind="success")
+
+    def _on_show_folder(self, path: str) -> None:
+        if not show_in_folder(path):
+            QMessageBox.warning(
+                self,
+                self.WINDOW_TITLE,
+                "Could not open the folder for this file.",
+            )
+            return
+        self._toast.show_toast("Opened folder", kind="info")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
