@@ -103,6 +103,36 @@ def _secret_byte_forms(secret: str) -> list[bytes]:
     return out
 
 
+def _file_contains_any(
+    path: Path,
+    needles: Sequence[bytes],
+    *,
+    chunk_size: int = 1024 * 1024,
+) -> bytes | None:
+    """Return the first needle found in *path*, scanning in overlapping chunks.
+
+    Avoids loading the whole PDF into RAM (verify used to ``read_bytes()`` the
+    entire output). Overlap is ``max(len(needle)) - 1`` so matches that straddle
+    chunk boundaries are still found.
+    """
+    active = [n for n in needles if n]
+    if not active:
+        return None
+    overlap = max(len(n) for n in active) - 1
+    prev = b""
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            data = prev + chunk if prev else chunk
+            for needle in active:
+                if needle in data:
+                    return needle
+            prev = data[-overlap:] if overlap > 0 else b""
+    return None
+
+
 def _secrets_under_regions(
     doc: fitz.Document, regions: Sequence[RedactionRegion]
 ) -> list[str]:
@@ -199,7 +229,7 @@ def inspect_redaction_result(
     doc = _open(str(path), password=password)
     try:
         secrets = [_normalize_secret(s) for s in absent_text if _normalize_secret(s)]
-        raw_bytes = Path(path).read_bytes()
+        path_obj = Path(path)
 
         for secret in secrets:
             # Text extraction / search.
@@ -217,13 +247,14 @@ def inspect_redaction_result(
                     break
 
             # Raw file / content-stream presence (catches incremental leftovers
-            # and hex-encoded TJ operators).
-            for form in _secret_byte_forms(secret):
-                if form in raw_bytes:
-                    report.failures.append(
-                        f"raw file bytes still contain {secret!r} ({form!r})"
-                    )
-                    break
+            # and hex-encoded TJ operators). Chunked scan — reopen+search alone
+            # misses stream encodings; full read_bytes() would hold the whole
+            # output in RAM.
+            leaked = _file_contains_any(path_obj, _secret_byte_forms(secret))
+            if leaked is not None:
+                report.failures.append(
+                    f"raw file bytes still contain {secret!r} ({leaked!r})"
+                )
 
         if expect_no_redact_annots:
             for i, page in enumerate(doc):

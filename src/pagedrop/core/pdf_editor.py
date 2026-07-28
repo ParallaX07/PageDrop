@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 from pagedrop.utils.list_utils import move_items
 
+# ponytail: 50 snapshots is enough for heavy edit sessions; each entry holds a
+# full PageRef tuple copy. Raise only with a measured memory complaint (or add
+# coalescing) — unbounded growth was the prior ceiling.
+MAX_UNDO = 50
+
 
 @dataclass(frozen=True)
 class PageRef:
@@ -27,7 +32,6 @@ class PdfEditModel:
             PageRef(source_path, index) for index in range(page_count)
         ]
         self._dirty = False
-        # unbounded snapshot stack; cap/coalesce if memory becomes an issue
         self._undo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
         self._redo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
 
@@ -154,7 +158,7 @@ class PdfEditModel:
     def redo(self) -> bool:
         if not self._redo_stack:
             return False
-        self._undo_stack.append((tuple(self._pages), self._dirty))
+        self._append_undo_snapshot((tuple(self._pages), self._dirty))
         pages, dirty = self._redo_stack.pop()
         self._pages = list(pages)
         self._dirty = dirty
@@ -170,6 +174,13 @@ class PdfEditModel:
         self._undo_stack.clear()
         self._redo_stack.clear()
 
+    def _append_undo_snapshot(
+        self, snapshot: tuple[tuple[PageRef, ...], bool]
+    ) -> None:
+        self._undo_stack.append(snapshot)
+        if len(self._undo_stack) > MAX_UNDO:
+            del self._undo_stack[0 : len(self._undo_stack) - MAX_UNDO]
+
     def _push_undo(self) -> None:
-        self._undo_stack.append((tuple(self._pages), self._dirty))
+        self._append_undo_snapshot((tuple(self._pages), self._dirty))
         self._redo_stack.clear()

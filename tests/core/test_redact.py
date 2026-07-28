@@ -337,6 +337,19 @@ def test_no_regions_raises(tmp_path: Path) -> None:
         redact_pdf(src, tmp_path / "out.pdf", [], verify=False)
 
 
+def test_file_contains_any_chunked_scan(tmp_path: Path) -> None:
+    """Raw-byte verify scans in chunks (no full-file read_bytes)."""
+    from pagedrop.core.redact import _file_contains_any
+
+    needle = b"BOUNDARY_SECRET"
+    # Place needle across a 64-byte chunk boundary.
+    prefix = b"x" * (64 - 4)
+    path = tmp_path / "blob.bin"
+    path.write_bytes(prefix + needle + b"tail")
+    assert _file_contains_any(path, [needle], chunk_size=64) == needle
+    assert _file_contains_any(path, [b"missing"], chunk_size=64) is None
+
+
 def test_redact_edit_model_with_markup_session(tmp_path: Path) -> None:
     src = _text_pdf(tmp_path / "src.pdf")
     before = _file_hash(src)

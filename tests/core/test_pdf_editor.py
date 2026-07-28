@@ -155,6 +155,26 @@ def test_rotate_pages_undo():
     assert not model.is_dirty()
 
 
+def test_undo_stack_capped_at_max_undo():
+    """51st push drops the oldest snapshot; remaining undos stay consistent."""
+    from pagedrop.core.pdf_editor import MAX_UNDO
+
+    model = PdfEditModel("/a.pdf", 3)
+    # Each rotate pushes one snapshot. After MAX_UNDO+1 pushes, depth stays MAX_UNDO
+    # and the earliest state is no longer reachable.
+    for i in range(MAX_UNDO + 1):
+        model.rotate_pages([0], 90)
+    assert model.undo_depth() == MAX_UNDO
+    assert model.page_at(0).rotation == ((MAX_UNDO + 1) * 90) % 360
+
+    # Undo all remaining snapshots → still one rotate past the lost oldest.
+    for _ in range(MAX_UNDO):
+        assert model.undo()
+    assert not model.can_undo()
+    assert model.page_at(0).rotation == 90
+    assert model.is_dirty()
+
+
 def test_duplicate_via_insert_after_last_selected():
     model = PdfEditModel("/a.pdf", 4)
     selected = [1, 3]

@@ -586,6 +586,7 @@ class _PageTile(QWidget):
         self._transform_start_pdf: tuple[float, float] | None = None
         self._transform_start_rect: tuple[float, float, float, float] | None = None
         self._live_rect: tuple[float, float, float, float] | None = None
+        # Stamp/image overlay cache; cleared on tile teardown and viewer clear_caches.
         self._image_pixmaps: dict[str, QPixmap] = {}
         self._selecting = False
         self._drawing = False
@@ -952,6 +953,9 @@ class _PageTile(QWidget):
                 painter.setBrush(QColor(255, 220, 80))
                 painter.setPen(QPen(QColor(180, 140, 0), 1))
                 painter.drawEllipse(pt, 6, 6)
+
+    def clear_image_cache(self) -> None:
+        self._image_pixmaps.clear()
 
     def _image_pixmap(self, path: str) -> QPixmap | None:
         if not path:
@@ -1843,6 +1847,8 @@ class PdfViewerWidget(QWidget):
         """Drop pixmap cache + cancel renders (e.g. return to grid)."""
         self._cancel_all()
         self._cache.clear()
+        for tile in self._tiles.values():
+            tile.clear_image_cache()
         self._overlay.hide_overlay()
         self.busy_changed.emit(False, "")
 
@@ -2684,6 +2690,7 @@ class PdfViewerWidget(QWidget):
 
     def _clear_tiles(self) -> None:
         for tile in list(self._tiles.values()):
+            tile.clear_image_cache()
             tile.hide()
             tile.setParent(None)
             tile.deleteLater()
@@ -2801,6 +2808,7 @@ class PdfViewerWidget(QWidget):
         for logical in list(self._tiles):
             if logical not in needed:
                 tile = self._tiles.pop(logical)
+                tile.clear_image_cache()
                 tile.setParent(None)
                 tile.deleteLater()
                 self._pending_meta.discard(logical)

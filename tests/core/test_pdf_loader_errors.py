@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fitz
 import pytest
 
 from pagedrop.core.pdf_loader import (
@@ -13,6 +12,7 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordError,
     PdfPasswordRequiredError,
 )
+from tests.core.test_jobs import _encrypted_pdf
 
 
 def test_corrupt_file_raises_clear_error(corrupt_pdf):
@@ -56,17 +56,7 @@ def test_oserror_on_is_file_becomes_pdf_load_error(tmp_path, monkeypatch):
 
 def test_password_required_and_incorrect(tmp_path):
     path = tmp_path / "locked.pdf"
-    doc = fitz.open()
-    try:
-        doc.new_page(width=200, height=200)
-        doc.save(
-            str(path),
-            encryption=fitz.PDF_ENCRYPT_AES_256,
-            user_pw="secret",
-            owner_pw="owner",
-        )
-    finally:
-        doc.close()
+    _encrypted_pdf(path, password="secret")
 
     with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
         PdfLoader(str(path))

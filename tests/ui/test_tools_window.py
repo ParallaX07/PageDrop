@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
 import pytest
 
 from pagedrop.core.capabilities import (
@@ -23,6 +22,7 @@ from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.result_actions import ResultActionsBar, show_in_folder
 from pagedrop.ui.tools_window import ToolsWindow
 from pagedrop.ui.window_manager import WindowManager
+from tests.core.test_jobs import _encrypted_pdf
 from tests.conftest import RENDER_TIMEOUT_MS
 
 
@@ -186,17 +186,7 @@ def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
 ):
     """Tools jobs reuse prompt_pdf_password: wrong → retry, cancel aborts job."""
     enc = tmp_path / "locked.pdf"
-    doc = fitz.open()
-    try:
-        doc.new_page(width=200, height=200)
-        doc.save(
-            str(enc),
-            encryption=fitz.PDF_ENCRYPT_AES_256,
-            user_pw="secret",
-            owner_pw="owner",
-        )
-    finally:
-        doc.close()
+    _encrypted_pdf(enc, password="secret")
     source_bytes = enc.read_bytes()
 
     window = ToolsWindow()
