@@ -1,4 +1,4 @@
-"""Optimize & Secure PDF helpers (Phase 27).
+"""Optimize & Secure PDF helpers (Phase 27 + Phase 31 lossy compress).
 
 Lossless compress, repair/rewrite, encrypt/decrypt, permissions, and sanitize —
 PyMuPDF only. Outputs are always new paths (never the source).
@@ -24,6 +24,24 @@ max      4        True   True     True             True           True
 streams, 4 (max) also recursively remove unused. ``clean`` rewrites content
 streams; ``deflate*`` zlib-compress streams/images/fonts.
 
+Lossy compress presets → ``Document.rewrite_images`` then lossless save
+-----------------------------------------------------------------------
+
+=======  ===  =============  ==============  ==========
+Preset   DPI  JPEG quality   dpi_threshold   dpi_target
+=======  ===  =============  ==============  ==========
+screen   72   50             100             72
+ebook    150  70             200             150
+print    300  85             400             300
+=======  ===  =============  ==============  ==========
+
+- **screen** — on-screen reading; aggressive downsample + JPEG (quality can drop).
+- **ebook** — tablets / e-readers; moderate downsample + JPEG.
+- **print** — print-ish; light downsample + higher JPEG quality.
+
+``dpi_threshold`` is set notably above ``dpi_target`` (MuPDF guidance) so only
+sharper images are resampled. Quality is never “same as source.”
+
 Linearisation (``linear=True``) is **not** offered: current PyMuPDF raises
 ``Linearisation is no longer supported``.
 
@@ -44,6 +62,8 @@ from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS, _open
 
 SaveProfileName = Literal["fast", "lossless", "max"]
+LossyProfileName = Literal["screen", "ebook", "print"]
+CompressProfileName = SaveProfileName | LossyProfileName
 
 # All permission bits MuPDF exposes (matches Document.save default 4095 intent).
 _ALL_PERMISSIONS = (
@@ -103,6 +123,33 @@ SAVE_PROFILES: dict[SaveProfileName, SaveProfile] = {
 
 
 @dataclass(frozen=True)
+class LossyProfile:
+    """Named lossy recompress preset (see module docstring).
+
+    ``dpi`` is the documented target resolution; ``dpi_threshold`` is the MuPDF
+    gate (notably above ``dpi``) passed to ``Document.rewrite_images``.
+    """
+
+    name: LossyProfileName
+    dpi: int
+    jpeg_quality: int
+    dpi_threshold: int
+
+
+LOSSY_PROFILES: dict[LossyProfileName, LossyProfile] = {
+    "screen": LossyProfile(
+        name="screen", dpi=72, jpeg_quality=50, dpi_threshold=100
+    ),
+    "ebook": LossyProfile(
+        name="ebook", dpi=150, jpeg_quality=70, dpi_threshold=200
+    ),
+    "print": LossyProfile(
+        name="print", dpi=300, jpeg_quality=85, dpi_threshold=400
+    ),
+}
+
+
+@dataclass(frozen=True)
 class RepairResult:
     output_path: str
     was_repaired: bool
@@ -154,6 +201,24 @@ def resolve_save_profile(
         raise ValueError(f"Unknown save profile {profile!r}; expected one of: {known}") from exc
 
 
+def resolve_lossy_profile(
+    profile: LossyProfileName | LossyProfile,
+) -> LossyProfile:
+    if isinstance(profile, LossyProfile):
+        return profile
+    try:
+        return LOSSY_PROFILES[profile]
+    except KeyError as exc:
+        known = ", ".join(LOSSY_PROFILES)
+        raise ValueError(
+            f"Unknown lossy profile {profile!r}; expected one of: {known}"
+        ) from exc
+
+
+def is_lossy_profile_name(name: str) -> bool:
+    return name in LOSSY_PROFILES
+
+
 def _save_with_profile(doc: fitz.Document, output_path: str, profile: SaveProfile) -> None:
     # lossless mirrors ez_save defaults (including no_new_id / preserve_metadata).
     if profile.name == "lossless":
@@ -171,18 +236,40 @@ def _save_with_profile(doc: fitz.Document, output_path: str, profile: SaveProfil
     )
 
 
+def _apply_lossy_images(doc: fitz.Document, profile: LossyProfile) -> None:
+    """Downsample + JPEG-recompress image XObjects via MuPDF (in-place on *doc*)."""
+    doc.rewrite_images(
+        dpi_threshold=profile.dpi_threshold,
+        dpi_target=profile.dpi,
+        quality=profile.jpeg_quality,
+        lossy=True,
+        lossless=True,
+    )
+
+
 def compress_pdf(
     source_pdf: str,
     output_path: str,
     *,
-    profile: SaveProfileName | SaveProfile = "lossless",
+    profile: CompressProfileName | SaveProfile | LossyProfile = "lossless",
     password: str | None = None,
 ) -> None:
-    """Rewrite *source_pdf* with a lossless (or lighter/heavier) save profile."""
+    """Rewrite *source_pdf* with a lossless save profile or a lossy image preset.
+
+    Lossy presets (``screen`` / ``ebook`` / ``print``) run ``rewrite_images``
+    then a lossless GC save. Quality may drop — never claimed identical.
+    """
     reject_source_overwrite(output_path, source_pdf)
-    resolved = resolve_save_profile(profile)
     doc = _open(source_pdf, password=password)
     try:
+        if isinstance(profile, LossyProfile) or (
+            isinstance(profile, str) and is_lossy_profile_name(profile)
+        ):
+            lossy = resolve_lossy_profile(profile)  # type: ignore[arg-type]
+            _apply_lossy_images(doc, lossy)
+            _save_with_profile(doc, output_path, SAVE_PROFILES["lossless"])
+            return
+        resolved = resolve_save_profile(profile)  # type: ignore[arg-type]
         _save_with_profile(doc, output_path, resolved)
     finally:
         doc.close()

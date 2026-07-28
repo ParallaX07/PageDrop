@@ -10,7 +10,10 @@ import pytest
 
 from pagedrop.core import optimize_secure as ops
 from pagedrop.core.jobs.errors import SourceOverwriteError
+from pagedrop.core.jobs import JobSpec, SerializedJobRunner
+from pagedrop.core.optimize_secure_jobs import register_optimize_secure_handlers
 from pagedrop.core.pdf_tools import metadata_get, normalize_pdf_page_size
+from pagedrop.utils.temp_manager import TempManager
 
 
 def _file_hash(path: Path) -> str:
@@ -46,6 +49,41 @@ def test_save_profiles_documented() -> None:
         ops.resolve_save_profile("linearize")  # type: ignore[arg-type]
 
 
+def test_lossy_presets_documented_dpi_and_quality() -> None:
+    assert set(ops.LOSSY_PROFILES) == {"screen", "ebook", "print"}
+    screen = ops.resolve_lossy_profile("screen")
+    assert screen.dpi == 72
+    assert screen.jpeg_quality == 50
+    assert screen.dpi_threshold == 100
+    assert screen.dpi_threshold > screen.dpi
+    ebook = ops.resolve_lossy_profile("ebook")
+    assert ebook.dpi == 150 and ebook.jpeg_quality == 70
+    print_p = ops.resolve_lossy_profile("print")
+    assert print_p.dpi == 300 and print_p.jpeg_quality == 85
+    assert ops.resolve_lossy_profile(screen) is screen
+    with pytest.raises(ValueError, match="Unknown lossy profile"):
+        ops.resolve_lossy_profile("ultra")  # type: ignore[arg-type]
+
+
+def _make_image_heavy_pdf(path: Path, *, width: int = 2400, height: int = 3200) -> Path:
+    """Embed a large RGB image so lossless deflate barely helps vs lossy JPEG."""
+    # Low-periodicity samples so Flate stays large; JPEG+downsample wins.
+    samples = bytearray(width * height * 3)
+    for i in range(0, len(samples), 3):
+        samples[i] = (i * 17 + (i >> 8)) % 256
+        samples[i + 1] = (i * 31 + (i >> 4)) % 256
+        samples[i + 2] = (i * 47 + i) % 256
+    pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(samples), 0)
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=612, height=792)
+        page.insert_image(page.rect, pixmap=pix)
+        doc.save(str(path), deflate=False)
+        return path
+    finally:
+        doc.close()
+
+
 def test_compress_never_overwrites_source(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
     source_hash = _file_hash(src)
@@ -68,6 +106,51 @@ def test_compress_smoke_openable_and_source_unchanged(tmp_path: Path) -> None:
         assert "compress" in doc[0].get_text()
     finally:
         doc.close()
+
+
+def test_compress_lossy_screen_shrinks_image_heavy(tmp_path: Path) -> None:
+    src = _make_image_heavy_pdf(tmp_path / "scan.pdf")
+    source_hash = _file_hash(src)
+    lossless_out = tmp_path / "lossless.pdf"
+    lossy_out = tmp_path / "screen.pdf"
+    ops.compress_pdf(str(src), str(lossless_out), profile="lossless")
+    ops.compress_pdf(str(src), str(lossy_out), profile="screen")
+    assert _file_hash(src) == source_hash
+    assert lossy_out.stat().st_size < lossless_out.stat().st_size
+    assert lossy_out.stat().st_size < src.stat().st_size
+    with fitz.open(str(lossy_out)) as doc:
+        assert doc.page_count == 1
+        assert doc[0].get_images()
+
+
+def test_compress_job_handler_accepts_lossy_profile_params(tmp_path: Path) -> None:
+    src = _make_image_heavy_pdf(tmp_path / "scan.pdf")
+    source_hash = _file_hash(src)
+    out = tmp_path / "job_out.pdf"
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_optimize_secure_handlers(runner)
+        runner.run(
+            JobSpec.create(
+                "compress",
+                inputs=[str(src)],
+                output=str(out),
+                options={
+                    "profile": "screen",
+                    "dpi": 72,
+                    "jpeg_quality": 40,
+                    "dpi_threshold": 100,
+                },
+            )
+        )
+    finally:
+        temp.cleanup()
+    assert _file_hash(src) == source_hash
+    assert out.is_file()
+    assert out.stat().st_size < src.stat().st_size
+    with fitz.open(str(out)) as doc:
+        assert doc.page_count == 1
 
 
 def test_repair_rewrite_surfaces_is_repaired(tmp_path: Path) -> None:

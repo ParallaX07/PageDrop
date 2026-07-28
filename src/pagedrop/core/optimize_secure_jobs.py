@@ -15,12 +15,39 @@ def _password(ctx: JobContext) -> str | None:
 
 
 def handle_compress(ctx: JobContext) -> Path:
-    profile = str(ctx.spec.options.get("profile") or "lossless")
-    ctx.progress(0.3, "Compressing PDF…")
+    profile_name = str(ctx.spec.options.get("profile") or "lossless")
+    if ops.is_lossy_profile_name(profile_name):
+        lossy = ops.resolve_lossy_profile(profile_name)  # type: ignore[arg-type]
+        # Optional overrides from job options (UI / advanced callers).
+        dpi = int(ctx.spec.options.get("dpi") or lossy.dpi)
+        jpeg_quality = int(ctx.spec.options.get("jpeg_quality") or lossy.jpeg_quality)
+        dpi_threshold = int(ctx.spec.options.get("dpi_threshold") or lossy.dpi_threshold)
+        if dpi_threshold <= dpi:
+            dpi_threshold = dpi + 1
+        profile: ops.LossyProfile | str = ops.LossyProfile(
+            name=lossy.name,
+            dpi=dpi,
+            jpeg_quality=jpeg_quality,
+            dpi_threshold=dpi_threshold,
+        )
+        ctx.progress(
+            0.3,
+            f"Compressing PDF (lossy {lossy.name}, {dpi} DPI, Q{jpeg_quality})…",
+        )
+    else:
+        # Validate early so unknown names fail before opening the PDF.
+        if profile_name not in ops.SAVE_PROFILES:
+            known = ", ".join([*ops.SAVE_PROFILES, *ops.LOSSY_PROFILES])
+            raise ValueError(
+                f"Unknown compress profile {profile_name!r}; expected one of: {known}"
+            )
+        profile = profile_name
+        ctx.progress(0.3, "Compressing PDF…")
+
     ops.compress_pdf(
         ctx.spec.inputs[0],
         str(ctx.staged_output),
-        profile=profile,  # type: ignore[arg-type]
+        profile=profile,
         password=_password(ctx),
     )
     return ctx.staged_output
