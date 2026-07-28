@@ -1,10 +1,12 @@
-"""Phase 7 unit tests — TempManager."""
+"""Phase 7 / O4 unit tests — TempManager."""
 
 from __future__ import annotations
 
 import atexit
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from pagedrop.utils.temp_manager import TempManager
@@ -120,3 +122,79 @@ def test_enforce_max_size_removes_oldest_drag_dirs():
         assert new_dir.exists()
     finally:
         tm.cleanup()
+
+
+def test_enforce_max_size_evicts_oldest_job_dirs():
+    tm = TempManager(max_bytes=100)
+    try:
+        old_job = tm.create_job_dir()
+        (old_job / "old.pdf").write_bytes(b"x" * 80)
+
+        new_job = tm.create_job_dir()
+        (new_job / "new.pdf").write_bytes(b"y" * 80)
+
+        tm.create_job_dir()
+        assert not old_job.exists()
+        assert new_job.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_enforce_max_size_evicts_oldest_across_drag_and_job():
+    tm = TempManager(max_bytes=100)
+    try:
+        old_job = tm.create_job_dir()
+        (old_job / "old.pdf").write_bytes(b"x" * 80)
+
+        drag = tm.create_drag_dir()
+        (drag / "drag.pdf").write_bytes(b"y" * 80)
+
+        tm.create_drag_dir()
+        assert not old_job.exists()
+        assert drag.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_init_scrubs_orphan_pagedrop_dirs():
+    orphan = Path(tempfile.mkdtemp(prefix="pagedrop_"))
+    marker = orphan / "leftover.bin"
+    marker.write_bytes(b"orphan")
+    assert orphan.exists()
+
+    tm = TempManager()
+    try:
+        assert not orphan.exists()
+        assert tm.get_dir().exists()
+    finally:
+        tm.cleanup()
+
+
+def test_init_preserves_live_sibling_temp_manager():
+    first = TempManager()
+    try:
+        second = TempManager()
+        try:
+            assert first.get_dir().exists()
+            assert second.get_dir().exists()
+            assert first.get_dir() != second.get_dir()
+        finally:
+            second.cleanup()
+        assert first.get_dir().exists()
+    finally:
+        first.cleanup()
+
+
+def test_init_preserves_backend_temp_prefixes():
+    office = Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_"))
+    lo = Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_"))
+    try:
+        tm = TempManager()
+        try:
+            assert office.exists()
+            assert lo.exists()
+        finally:
+            tm.cleanup()
+    finally:
+        for path in (office, lo):
+            shutil.rmtree(path, ignore_errors=True)
