@@ -12,18 +12,33 @@ from pagedrop.core.capabilities import (
     PILLOW,
 )
 from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
+from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import collect_actions
 from pagedrop.ui.dialogs import (
     prompt_cancel_running_job,
     prompt_missing_capability,
     prompt_pdf_password,
 )
+from pagedrop.ui.job_chrome import JobChromeMixin
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.result_actions import ResultActionsBar, show_in_folder
+from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
 from pagedrop.ui.window_manager import WindowManager
 from tests.core.test_jobs import _encrypted_pdf
 from tests.conftest import RENDER_TIMEOUT_MS
+
+
+def test_catalogue_and_shell_share_job_chrome():
+    """O6: one JobChromeMixin path for Tools hub + shell (not twin copies)."""
+    assert issubclass(ToolsWindow, JobChromeMixin)
+    assert issubclass(ToolShellWindow, JobChromeMixin)
+    assert ToolsWindow.begin_job is JobChromeMixin.begin_job
+    assert ToolsWindow.end_job is JobChromeMixin.end_job
+    assert ToolShellWindow.begin_job is JobChromeMixin.begin_job
+    assert ToolShellWindow.end_job is JobChromeMixin.end_job
+    assert ToolsWindow._on_preview_result is JobChromeMixin._on_preview_result
+    assert ToolShellWindow._on_open_result is JobChromeMixin._on_open_result
 
 
 def _wait_for_tab_loaded(qtbot, tab: PdfTab, *, timeout: int = RENDER_TIMEOUT_MS) -> None:
@@ -140,7 +155,7 @@ def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
         return 0
 
     monkeypatch.setattr(
-        "pagedrop.ui.tools_window.QMessageBox.critical",
+        "pagedrop.ui.job_chrome.QMessageBox.critical",
         fake_critical,
     )
 
@@ -169,7 +184,7 @@ def test_end_job_error_clears_result_bar(qtbot, tmp_path, monkeypatch):
     assert window._result_bar.isVisible()
 
     monkeypatch.setattr(
-        "pagedrop.ui.tools_window.QMessageBox.critical",
+        "pagedrop.ui.job_chrome.QMessageBox.critical",
         lambda *args, **kwargs: 0,
     )
     window.begin_job("Running…")
@@ -245,7 +260,7 @@ def test_close_while_running_confirms_cancel(qtbot, monkeypatch):
     window.begin_job("Working…")
 
     monkeypatch.setattr(
-        "pagedrop.ui.tools_window.prompt_cancel_running_job",
+        "pagedrop.ui.job_chrome.prompt_cancel_running_job",
         lambda *args, **kwargs: False,
     )
     window.close()
@@ -253,7 +268,7 @@ def test_close_while_running_confirms_cancel(qtbot, monkeypatch):
     assert window.is_job_running()
 
     monkeypatch.setattr(
-        "pagedrop.ui.tools_window.prompt_cancel_running_job",
+        "pagedrop.ui.job_chrome.prompt_cancel_running_job",
         lambda *args, **kwargs: True,
     )
     window.close()
@@ -443,8 +458,6 @@ def test_tile_tooltip_uses_description(qtbot):
 
 
 def test_error_toast_uses_longer_timeout(qtbot):
-    from pagedrop.ui.busy_overlay import ToastOverlay
-
     assert ToastOverlay.ERROR_TIMEOUT_MS > ToastOverlay.DEFAULT_TIMEOUT_MS
 
     window = ToolsWindow()

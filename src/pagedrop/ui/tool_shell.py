@@ -36,22 +36,14 @@ from pagedrop.core.jobs import (
     preflight_pdf_inputs,
 )
 from pagedrop.core.supported_formats import is_pdf_path, local_paths_from_mime
-from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import (
     confirm_overwrite,
-    prompt_cancel_running_job,
     prompt_pdf_password,
 )
-from pagedrop.ui.result_actions import (
-    ResultActionsBar,
-    open_in_editor,
-    preview_pdf,
-    show_in_folder,
-)
+from pagedrop.ui.job_chrome import JobChromeMixin
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import StatusFooter, present_tool_page, tool_shell_store
 from pagedrop.utils.page_jump import parse_page_ranges
-from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
     from pagedrop.ui.organize_tools import EditorPdfContext
@@ -458,7 +450,7 @@ def run_tool_job(
     _tool_job_pool().start(worker)
 
 
-class ToolShellWindow(QWidget):
+class ToolShellWindow(JobChromeMixin, QWidget):
     """Reusable tool chrome: title → drop → options → Run → results (editor tab)."""
 
     def __init__(
@@ -480,9 +472,7 @@ class ToolShellWindow(QWidget):
         self.WINDOW_TITLE = title
         self._editor = editor
         self._window_manager = window_manager
-        self._job_running = False
-        self._cancel_token = None
-        self._job_runner: SerializedJobRunner | None = None
+        self._init_job_chrome_state()
         self._run_handler: Callable[[], None] | None = None
         self._run_enabled_check: Callable[[], bool] | None = None
         self._status = StatusFooter(initial="Add a file to begin")
@@ -548,17 +538,10 @@ class ToolShellWindow(QWidget):
         run_row.addWidget(self._run_btn)
         root.addLayout(run_row)
 
-        self._result_bar = ResultActionsBar()
-        self._result_bar.preview_requested.connect(self._on_preview_result)
-        self._result_bar.open_in_editor_requested.connect(self._on_open_result)
-        self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
+        self._make_job_chrome_widgets()
+        self._wire_result_actions()
         root.addWidget(self._result_bar)
         root.addWidget(self._status)
-
-        self._busy_overlay = BusyOverlay(self)
-        self._busy_overlay.set_cancellable(True)
-        self._busy_overlay.cancelled.connect(self.cancel_active_job)
-        self._toast = ToastOverlay(self)
 
     @property
     def tab_title(self) -> str:
@@ -577,15 +560,6 @@ class ToolShellWindow(QWidget):
     @property
     def drop_zone(self) -> FileDropZone:
         return self._drop_zone
-
-    def request_close(self) -> bool:
-        if not self._job_running:
-            return True
-        if not prompt_cancel_running_job(self, window_title=self.WINDOW_TITLE):
-            return False
-        self.cancel_active_job()
-        self.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
-        return True
 
     def set_options_widget(self, widget: QWidget) -> None:
         while self._options_layout.count():
@@ -607,73 +581,12 @@ class ToolShellWindow(QWidget):
         self._run_enabled_check = check
         self._update_run_enabled()
 
-    def job_runner(self) -> SerializedJobRunner:
-        if self._job_runner is None:
-            from pagedrop.ui.organize_tools import ensure_organize_runner
-
-            self._job_runner = ensure_organize_runner(TempManager())
-        return self._job_runner
-
-    def is_job_running(self) -> bool:
-        return self._job_running
-
-    def begin_job(self, message: str = "Working…"):
-        from pagedrop.core.jobs import CancelToken
-
-        if not message.endswith("…"):
-            message = f"{message.rstrip('.')}…"
-        self._job_running = True
-        self._cancel_token = CancelToken()
-        self._result_bar.clear()
-        self._busy_overlay.show_message(message)
-        self.statusBar().showMessage(message)
-        self._run_btn.setEnabled(False)
-        self._drop_zone.setEnabled(False)
-        return self._cancel_token
-
-    def set_job_progress(self, _fraction: float, message: str) -> None:
-        if not self._job_running:
-            return
-        if message and not message.endswith("…") and message != "Done":
-            message = f"{message.rstrip('.')}…"
-        if message == "Done":
-            return
-        self._busy_overlay.show_message(message or "Working…")
-        self.statusBar().showMessage(message or "Working…")
-
-    def end_job(
-        self,
-        *,
-        status: str | None = None,
-        toast: str | None = None,
-        toast_kind: str = "info",
-        result_path: str | None = None,
-        error: str | None = None,
-    ) -> None:
-        self._job_running = False
-        self._cancel_token = None
-        self._result_bar.clear()
-        self._busy_overlay.hide_overlay()
-        self._drop_zone.setEnabled(True)
-        self._update_run_enabled()
-        if error:
-            self.statusBar().showMessage("Job failed")
-            self._toast.show_toast(toast or "Job failed", kind="error")
-            QMessageBox.critical(self, self.WINDOW_TITLE, error)
-            return
-        if status:
-            self.statusBar().showMessage(status)
-        if toast:
-            self._toast.show_toast(toast, kind=toast_kind)
-        if result_path:
-            self._result_bar.show_for(result_path)
-
-    def cancel_active_job(self) -> None:
-        if self._cancel_token is not None:
-            self._cancel_token.cancel()
-
-    def show_toast(self, message: str, *, kind: str = "info") -> None:
-        self._toast.show_toast(message, kind=kind)
+    def _set_job_controls_enabled(self, enabled: bool) -> None:
+        self._drop_zone.setEnabled(enabled)
+        if enabled:
+            self._update_run_enabled()
+        else:
+            self._run_btn.setEnabled(False)
 
     def _update_run_enabled(self) -> None:
         ok = bool(self._drop_zone.paths()) and not self._job_running
@@ -687,35 +600,6 @@ class ToolShellWindow(QWidget):
         if self._run_handler is None:
             return
         self._run_handler()
-
-    def _on_preview_result(self, path: str) -> None:
-        preview_pdf(path, parent=self)
-
-    def _on_open_result(self, path: str) -> None:
-        editor = self._editor
-        if editor is None:
-            self._toast.show_toast("No editor window available", kind="error")
-            return
-        try:
-            open_in_editor(path, editor)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                self.WINDOW_TITLE,
-                f"Could not open in editor:\n{exc}",
-            )
-            return
-        self._toast.show_toast(f"Opened {Path(path).name}", kind="success")
-
-    def _on_show_folder(self, path: str) -> None:
-        if not show_in_folder(path):
-            QMessageBox.warning(
-                self,
-                self.WINDOW_TITLE,
-                "Could not open the folder for this file.",
-            )
-            return
-        self._toast.show_toast("Opened folder", kind="info")
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
