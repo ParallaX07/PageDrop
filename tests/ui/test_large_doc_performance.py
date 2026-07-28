@@ -9,9 +9,11 @@ import fitz
 import pytest
 from PyQt6.QtCore import QObject, QRunnable, QTimer, pyqtSignal
 
+from pagedrop.core import pdf_service
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
-from pagedrop.ui.pdf_viewer import PdfViewerWidget
+from pagedrop.core.pdf_service import doc_cache_size, invalidate_doc_cache
+from pagedrop.ui.pdf_viewer import PdfViewerWidget, ViewerLayout
 from pagedrop.ui.thumbnail_grid import (
     RETAIN_WINDOW_ROWS,
     ThumbnailGrid,
@@ -72,6 +74,85 @@ def test_viewer_set_model_avoids_per_page_opens(
     # Outline may open once more; still never once-per-page.
     assert open_calls["n"] < 20
     loader.close()
+
+
+def test_viewer_scroll_search_hits_doc_cache(
+    qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scroll + search on a multi-page doc must reuse pdf_service's path cache.
+
+    Without the cache, every paint/search would ``fitz.open`` the same path.
+    """
+    path = tmp_path / "scroll_search.pdf"
+    doc = fitz.open()
+    try:
+        for i in range(40):
+            page = doc.new_page(width=300, height=400)
+            page.insert_text((40, 60), f"Page {i} findme", fontsize=14)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+    invalidate_doc_cache()
+    open_calls = {"n": 0}
+    real_open = pdf_service._open
+
+    def counting_open(path_arg: str, password: str | None = None) -> fitz.Document:
+        open_calls["n"] += 1
+        return real_open(path_arg, password)
+
+    monkeypatch.setattr(pdf_service, "_open", counting_open)
+
+    loader = PdfLoader(str(path))
+    model = PdfEditModel(str(path), loader.page_count)
+    cache = {loader.path: loader}
+
+    def get_loader(p: str) -> PdfLoader:
+        if p not in cache:
+            cache[p] = PdfLoader(p)
+        return cache[p]
+
+    viewer = PdfViewerWidget()
+    qtbot.addWidget(viewer)
+    viewer.resize(700, 500)
+    viewer.show()
+    viewer.set_layout_mode(ViewerLayout.CONTINUOUS)
+    viewer.set_model(model, get_loader)
+    qtbot.waitUntil(lambda: len(viewer._tiles) >= 1, timeout=5000)
+    qtbot.waitUntil(lambda: not viewer._side_panel_dirty, timeout=5000)
+    qtbot.waitUntil(
+        lambda: any(
+            t._pixmap is not None and not t._pixmap.isNull()
+            for t in viewer._tiles.values()
+        ),
+        timeout=8000,
+    )
+    assert doc_cache_size() == 1
+    opens_warm = open_calls["n"]
+    assert opens_warm >= 1
+
+    # Scroll through several viewports — each paint must cache-hit, not reopen.
+    bar = viewer._scroll.verticalScrollBar()
+    for frac in (0.25, 0.5, 0.75, 1.0):
+        bar.setValue(int(bar.maximum() * frac))
+        viewer._sync_continuous_tiles()
+        viewer._render_visible()
+        qtbot.waitUntil(
+            lambda: viewer._pool.activeThreadCount() == 0, timeout=10000
+        )
+    assert open_calls["n"] == opens_warm
+    assert doc_cache_size() == 1
+
+    viewer.search("findme")
+    qtbot.waitUntil(lambda: viewer.search_hit_count == 40, timeout=10000)
+    viewer.find_next()
+    assert viewer._hit_index == 1
+    # Search walks every page via the shared cache — still one open.
+    assert open_calls["n"] == opens_warm
+    assert doc_cache_size() == 1
+
+    loader.close()
+    invalidate_doc_cache()
 
 
 def test_viewer_lazy_text_dict_until_selection(
