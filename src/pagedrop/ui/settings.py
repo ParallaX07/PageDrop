@@ -130,7 +130,7 @@ def set_confirm_before_closing_dirty_tabs(enabled: bool) -> None:
 
 
 def remember_window_geometry() -> bool:
-    """Restore main-window size/position on launch (default: True)."""
+    """Restore primary editor size/position on launch (default: True)."""
     return _settings().value(KEY_REMEMBER_GEOMETRY, True, type=bool)
 
 

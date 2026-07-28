@@ -766,6 +766,7 @@ class MainWindow(QMainWindow):
 
     def _new_window(self) -> None:
         if self._window_manager is None:
+            self._transient_status("Cannot open a new window")
             return
         self._window_manager.open_new_window()
 
@@ -816,14 +817,12 @@ class MainWindow(QMainWindow):
         if not isinstance(tab, PdfTab):
             return
 
+        if self._window_manager is None:
+            self._transient_status("Cannot open a new window")
+            return
+
         self._disconnect_tab_signals(tab)
-
-        if self._window_manager is not None:
-            new_window = self._window_manager.open_new_window(tab)
-        else:
-            new_window = MainWindow(initial_tab=tab)
-            new_window.show()
-
+        new_window = self._window_manager.open_new_window(tab)
         new_window.raise_()
         new_window.activateWindow()
         self._sync_toolbar_from_active_tab()
@@ -1670,12 +1669,11 @@ class MainWindow(QMainWindow):
         if not refs:
             return
 
-        if self._window_manager is not None:
-            new_window = self._window_manager.open_new_window()
-        else:
-            new_window = MainWindow()
-            new_window.show()
+        if self._window_manager is None:
+            self._transient_status("Cannot open a new window")
+            return
 
+        new_window = self._window_manager.open_new_window()
         target = new_window._active_tab()
         if target is None or not target.is_blank:
             target = new_window._tab_manager.add_blank_tab()
@@ -1910,12 +1908,11 @@ class MainWindow(QMainWindow):
             self._open_in_new_window(path)
 
     def _open_in_new_window(self, path: str) -> None:
-        if self._window_manager is not None:
-            new_window = self._window_manager.open_new_window()
-        else:
-            new_window = MainWindow()
-            new_window.show()
+        if self._window_manager is None:
+            self._transient_status("Cannot open a new window")
+            return
 
+        new_window = self._window_manager.open_new_window()
         tab = new_window._active_tab()
         if tab is None or not tab.is_blank:
             tab = new_window._tab_manager.add_blank_tab()
@@ -2482,10 +2479,17 @@ class MainWindow(QMainWindow):
             if isinstance(widget, PdfTab):
                 widget.close_loader()
         self._temp_manager.cleanup()
-        save_window_geometry(self.saveGeometry())
+        if self._should_persist_geometry():
+            save_window_geometry(self.saveGeometry())
         super().closeEvent(event)
         if event.isAccepted() and self._window_manager is not None:
             self._window_manager.notify_window_closed(self)
+
+    def _should_persist_geometry(self) -> bool:
+        """Only the primary editor (or unmanaged solo window) saves geometry."""
+        if self._window_manager is None:
+            return True
+        return self._window_manager.is_primary(self)
 
     def restore_saved_geometry(self) -> bool:
         """Apply persisted geometry when the preference is on. Returns True if applied."""

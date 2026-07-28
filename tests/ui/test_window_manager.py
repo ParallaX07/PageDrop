@@ -133,3 +133,99 @@ def test_two_windows_independent_tab_state(
     window_b._tab_manager.setCurrentIndex(0)
     assert window_b._active_tab() is tab_b
     assert window_b._active_tab().thumbnail_grid.selection_manager.selection == {3}
+
+
+def test_secondary_close_does_not_poison_geometry(qtbot, qapp, isolated_settings, monkeypatch):
+    from pagedrop.ui.settings import load_window_geometry, save_window_geometry
+
+    manager = _reset_window_manager(qapp)
+    primary = manager.open_new_window()
+    secondary = manager.open_new_window()
+    qtbot.addWidget(primary)
+    qtbot.addWidget(secondary)
+
+    assert manager.is_primary(primary)
+    assert not manager.is_primary(secondary)
+
+    primary.resize(900, 700)
+    secondary.resize(500, 400)
+    primary_geom = primary.saveGeometry()
+    save_window_geometry(primary_geom)
+
+    quit_called: list[bool] = []
+    monkeypatch.setattr(qapp, "quit", lambda: quit_called.append(True))
+
+    secondary.close()
+    qapp.processEvents()
+
+    assert not quit_called
+    loaded = load_window_geometry()
+    assert loaded is not None
+    assert bytes(loaded) == bytes(primary_geom)
+    assert primary in manager.windows
+    assert secondary not in manager.windows
+
+
+def test_primary_close_persists_geometry_while_secondary_remains(
+    qtbot, qapp, isolated_settings, monkeypatch
+):
+    from pagedrop.ui.settings import load_window_geometry
+
+    manager = _reset_window_manager(qapp)
+    primary = manager.open_new_window()
+    secondary = manager.open_new_window()
+    qtbot.addWidget(primary)
+    qtbot.addWidget(secondary)
+
+    primary.resize(880, 640)
+    expected = primary.saveGeometry()
+
+    quit_called: list[bool] = []
+    monkeypatch.setattr(qapp, "quit", lambda: quit_called.append(True))
+
+    primary.close()
+    qapp.processEvents()
+
+    assert not quit_called
+    assert manager.primary is None
+    loaded = load_window_geometry()
+    assert loaded is not None
+    assert bytes(loaded) == bytes(expected)
+
+
+def test_unmanaged_open_in_new_window_does_not_spawn(qtbot, one_page_pdf):
+    """Unmanaged MainWindow must not create a second top-level editor."""
+    from PyQt6.QtWidgets import QApplication
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    before = {
+        id(w) for w in QApplication.topLevelWidgets() if isinstance(w, MainWindow)
+    }
+    window._open_in_new_window(str(one_page_pdf))
+    after = {
+        id(w) for w in QApplication.topLevelWidgets() if isinstance(w, MainWindow)
+    }
+    assert after == before
+    assert "Cannot open a new window" in window.statusBar().currentMessage()
+
+
+def test_closing_last_of_two_windows_quits(qtbot, qapp, monkeypatch):
+    manager = _reset_window_manager(qapp)
+    first = manager.open_new_window()
+    second = manager.open_new_window()
+    qtbot.addWidget(first)
+    qtbot.addWidget(second)
+
+    quit_called: list[bool] = []
+    monkeypatch.setattr(qapp, "quit", lambda: quit_called.append(True))
+
+    first.close()
+    qapp.processEvents()
+    assert not quit_called
+    assert len(manager.windows) == 1
+
+    second.close()
+    qapp.processEvents()
+    assert quit_called
+    assert not manager.windows

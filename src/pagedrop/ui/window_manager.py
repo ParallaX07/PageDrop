@@ -12,7 +12,13 @@ if TYPE_CHECKING:
 
 
 class WindowManager(QObject):
-    """Registry of open editor windows and factory for new ``MainWindow`` instances."""
+    """Registry of open editor windows and factory for new ``MainWindow`` instances.
+
+    Geometry policy: only the *primary* editor (first registered window) persists
+    size/position on close. Secondary closers must not overwrite next-launch
+    restore. Quit runs when the last registered editor closes
+    (``QuitOnLastWindowClosed`` is False).
+    """
 
     last_window_closing = pyqtSignal()
 
@@ -20,10 +26,18 @@ class WindowManager(QObject):
         super().__init__()
         self._app = app
         self._windows: set[MainWindow] = set()
+        self._primary: MainWindow | None = None
 
     @property
     def windows(self) -> frozenset[MainWindow]:
         return frozenset(self._windows)
+
+    @property
+    def primary(self) -> MainWindow | None:
+        return self._primary
+
+    def is_primary(self, window: MainWindow) -> bool:
+        return window is self._primary
 
     def open_new_window(self, initial_tab: PdfTab | None = None) -> MainWindow:
         """Create, register, and show a new editor window."""
@@ -57,11 +71,15 @@ class WindowManager(QObject):
         if window not in self._windows:
             return
         self._windows.discard(window)
+        if window is self._primary:
+            self._primary = None
         if not self._windows:
             self._maybe_quit()
 
     def _register(self, window: MainWindow) -> None:
         self._windows.add(window)
+        if self._primary is None:
+            self._primary = window
 
     def _maybe_quit(self) -> None:
         self.last_window_closing.emit()
