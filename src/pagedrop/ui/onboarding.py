@@ -31,7 +31,7 @@ SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "File",
         (
             ("Open PDF", "Ctrl+O"),
-            ("Save As", "Ctrl+Shift+S"),
+            ("Save as", "Ctrl+Shift+S"),
             ("New window", "Ctrl+Shift+N"),
         ),
     ),

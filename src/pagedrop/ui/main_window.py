@@ -175,27 +175,27 @@ class MainWindow(QMainWindow):
         )
         self._close_action = actions.register(
             "close_tab",
-            "&Close Tab",
+            "&Close tab",
             slot=self._close_tab,
             shortcut="Ctrl+W",
             add_to_window=True,
         )
         self._save_as_action = actions.register(
             "save_as",
-            "Save &As",
+            "Save &as",
             slot=self._save_as,
             shortcut="Ctrl+Shift+S",
             enabled=False,
         )
         self._export_all_action = actions.register(
             "export_all",
-            "Export All &Pages…",
+            "Export all &pages…",
             slot=self._export_all_pages,
             enabled=False,
         )
         self._new_window_action = actions.register(
             "new_window",
-            "New &Window",
+            "New &window",
             slot=self._new_window,
             shortcut="Ctrl+Shift+N",
         )
@@ -239,7 +239,7 @@ class MainWindow(QMainWindow):
 
         self._light_theme_action = actions.register(
             "light_theme",
-            "Toggle &Light Theme",
+            "Toggle &light theme",
             slot=self._on_light_theme_toggled,
             checkable=True,
             checked=light_theme(),
@@ -284,11 +284,11 @@ class MainWindow(QMainWindow):
         )
         actions.register(
             "keyboard_shortcuts",
-            "&Keyboard Shortcuts",
+            "&Keyboard shortcuts",
             slot=self._show_keyboard_shortcuts,
             shortcut="Ctrl+/",
         )
-        actions.register("tips", "Show &Tips", slot=self._show_tips_overlay)
+        actions.register("tips", "Show &tips", slot=self._show_tips_overlay)
         actions.register(
             "preferences",
             "&Preferences…",
@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
 
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(a["open"])
-        self._open_recent_menu = file_menu.addMenu("Open &Recent")
+        self._open_recent_menu = file_menu.addMenu("Open &recent")
         self._open_recent_menu.aboutToShow.connect(self._populate_open_recent_menu)
         file_menu.addAction(a["close_tab"])
         file_menu.addAction(a["save_as"])
@@ -1526,21 +1526,21 @@ class MainWindow(QMainWindow):
         except (PdfPasswordRequiredError, PdfPasswordError) as exc:
             QMessageBox.critical(
                 self,
-                "Extract Pages",
+                "Extract pages",
                 f"Could not extract pages:\n{exc}",
             )
             return
         except OSError as exc:
             QMessageBox.critical(
                 self,
-                "Extract Pages",
+                "Extract pages",
                 f"Could not write PDFs to the chosen folder:\n{exc}",
             )
             return
         except Exception as exc:
             QMessageBox.critical(
                 self,
-                "Extract Pages",
+                "Extract pages",
                 f"Could not extract pages:\n{exc}",
             )
             return
@@ -1557,7 +1557,7 @@ class MainWindow(QMainWindow):
 
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Export All Pages",
+            "Export all pages",
             last_directory(),
         )
         if not folder:
@@ -1569,21 +1569,21 @@ class MainWindow(QMainWindow):
         except (PdfPasswordRequiredError, PdfPasswordError) as exc:
             QMessageBox.critical(
                 self,
-                "Export All Pages",
+                "Export all pages",
                 f"Could not export pages:\n{exc}",
             )
             return
         except OSError as exc:
             QMessageBox.critical(
                 self,
-                "Export All Pages",
+                "Export all pages",
                 f"Could not write PDFs to the chosen folder:\n{exc}",
             )
             return
         except Exception as exc:
             QMessageBox.critical(
                 self,
-                "Export All Pages",
+                "Export all pages",
                 f"Could not export pages:\n{exc}",
             )
             return
@@ -1805,7 +1805,7 @@ class MainWindow(QMainWindow):
         if not Path(path).is_file():
             QMessageBox.warning(
                 self,
-                "Open Recent",
+                "Open recent",
                 f"File not found:\n{path}",
             )
             return
@@ -2114,7 +2114,7 @@ class MainWindow(QMainWindow):
 
         name, ok = QInputDialog.getText(
             self,
-            "Rename Tab",
+            "Rename tab",
             "Tab name:",
             text=current,
         )
@@ -2274,7 +2274,7 @@ class MainWindow(QMainWindow):
     def _on_page_transfer_failed(self, message: str) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
-        QMessageBox.warning(self, "Page Transfer", message)
+        QMessageBox.warning(self, "Page transfer", message)
         self._transient_status(message)
 
     def _on_pdf_drop_failed(self, exc: object) -> None:
@@ -2306,7 +2306,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.hide()
         QMessageBox.critical(
             self,
-            "Render Thumbnails",
+            "Render thumbnails",
             f"Could not render thumbnails:\n{message}",
         )
         self._transient_status("Rendering failed")

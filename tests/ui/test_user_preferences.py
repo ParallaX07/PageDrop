@@ -73,7 +73,7 @@ def test_command_palette_collects_menu_actions(main_window):
     actions = collect_actions(main_window)
     labels = {action_label(a) for a in actions}
     assert "Open PDF" in labels
-    assert "Toggle Light Theme" in labels
+    assert "Toggle light theme" in labels
     assert "Command palette…" in labels
 
 

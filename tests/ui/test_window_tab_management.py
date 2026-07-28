@@ -29,9 +29,9 @@ def _file_menu(window: MainWindow):
 
 def _open_recent_menu(window: MainWindow):
     for action in _file_menu(window).actions():
-        if action.text().replace("&", "") == "Open Recent":
+        if action.text().replace("&", "") == "Open recent":
             return action.menu()
-    raise AssertionError("Open Recent menu not found")
+    raise AssertionError("Open recent menu not found")
 
 
 def test_window_title_includes_dirty_star(main_window, five_page_pdf, qtbot):

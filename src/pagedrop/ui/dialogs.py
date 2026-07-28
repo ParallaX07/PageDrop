@@ -62,7 +62,7 @@ def prompt_pdf_password(
         label = f'"{filename}" is password-protected.\nEnter password:'
     text, ok = QInputDialog.getText(
         parent,
-        "Password Required",
+        "Password required",
         label,
         QLineEdit.EchoMode.Password,
     )
@@ -117,7 +117,7 @@ def prompt_unsaved_changes(parent: QWidget, display_title: str) -> str:
     title = display_title.rstrip("*") or "document"
     message = QMessageBox(parent)
     message.setIcon(QMessageBox.Icon.Warning)
-    message.setWindowTitle("Unsaved Changes")
+    message.setWindowTitle("Unsaved changes")
     message.setText(f'"{title}" has unsaved changes.')
     message.setInformativeText("Save your changes before closing?")
     save_button = message.addButton(
@@ -179,7 +179,7 @@ def confirm_delete_pages(parent: QWidget, count: int) -> bool:
 
     message = QMessageBox(parent)
     message.setIcon(QMessageBox.Icon.Question)
-    message.setWindowTitle("Delete Pages")
+    message.setWindowTitle("Delete pages")
     message.setText(f"Delete {count} pages?")
     message.setStandardButtons(
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No

@@ -137,6 +137,11 @@ def test_migrated_tool_runs_job_and_shows_result_actions(
     assert out.is_file()
     assert shell._result_bar.isVisible()
     assert shell._result_bar._path == str(out)
+    assert shell._run_btn.text() == "Run"
+    assert shell._busy_overlay._cancel_btn.text() == "Cancel"
+    assert shell._result_bar._preview_btn.text() == "Preview"
+    assert shell._result_bar._open_btn.text() == "Open in editor"
+    assert shell._result_bar._folder_btn.text() == "Show in folder"
 
     reversed_doc = fitz.open(str(out))
     try:

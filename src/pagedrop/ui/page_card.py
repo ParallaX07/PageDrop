@@ -315,21 +315,21 @@ class PageCard(BaseFileCard):
         except (PdfPasswordRequiredError, PdfPasswordError) as exc:
             QMessageBox.critical(
                 self.window(),
-                "Extract Pages",
+                "Extract pages",
                 f"Could not prepare pages for drag-and-drop:\n{exc}",
             )
             return
         except OSError as exc:
             QMessageBox.critical(
                 self.window(),
-                "Extract Pages",
+                "Extract pages",
                 f"Could not prepare pages for drag-and-drop (disk full or write error):\n{exc}",
             )
             return
         except Exception as exc:
             QMessageBox.critical(
                 self.window(),
-                "Extract Pages",
+                "Extract pages",
                 f"Could not prepare pages for drag-and-drop:\n{exc}",
             )
             return

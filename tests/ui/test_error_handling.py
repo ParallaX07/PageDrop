@@ -109,7 +109,7 @@ def test_page_transfer_failed_shows_warning(main_window, five_page_pdf, monkeypa
 
     main_window._thumbnail_grid.page_transfer_failed.emit("Could not move pages")
 
-    assert captured == [("Page Transfer", "Could not move pages")]
+    assert captured == [("Page transfer", "Could not move pages")]
     assert main_window.statusBar().currentMessage() == "Could not move pages"
 
 

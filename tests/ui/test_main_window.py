@@ -32,8 +32,23 @@ def test_menu_actions_exist(main_window):
     actions = _file_menu_actions(main_window)
     labels = {action.text().replace("&", "") for action in actions if not action.isSeparator()}
     assert "Open PDF" in labels
-    assert "Close Tab" in labels
+    assert "Close tab" in labels
     assert "Exit" in labels
+
+
+def test_high_traffic_actions_use_sentence_case(main_window):
+    """Menus/toolbar follow project sentence-case (not Title Case)."""
+    a = main_window._actions
+    assert a["close_tab"].text().replace("&", "") == "Close tab"
+    assert a["save_as"].text().replace("&", "") == "Save as"
+    assert a["export_all"].text().replace("&", "") == "Export all pages…"
+    assert a["new_window"].text().replace("&", "") == "New window"
+    assert a["light_theme"].text().replace("&", "") == "Toggle light theme"
+    assert a["keyboard_shortcuts"].text().replace("&", "") == "Keyboard shortcuts"
+    assert a["tips"].text().replace("&", "") == "Show tips"
+    assert a["move_up"].text() == "Move up"
+    assert a["select_all"].text() == "Select all"
+    assert main_window._open_recent_menu.title().replace("&", "") == "Open recent"
 
 
 def test_toolbar_open_button(main_window):

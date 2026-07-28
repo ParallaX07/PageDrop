@@ -656,14 +656,14 @@ class ConvertWindow(QWidget):
     def _validate_image(self, path: str) -> tuple[int, int] | None:
         reject = self._reject_message_for_path(path)
         if reject is not None:
-            QMessageBox.warning(self, "Add Images", reject)
+            QMessageBox.warning(self, "Add images", reject)
             return None
         try:
             dimensions = inspect_image(path)
         except ImageConvertError as exc:
             QMessageBox.critical(
                 self,
-                "Add Images",
+                "Add images",
                 f"Could not open {Path(path).name}:\n{exc}",
             )
             return None
@@ -691,7 +691,7 @@ class ConvertWindow(QWidget):
         start_dir = last_directory()
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Add Images",
+            "Add images",
             start_dir,
             image_dialog_filter(),
         )

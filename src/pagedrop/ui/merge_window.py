@@ -456,7 +456,7 @@ class MergeWindow(QWidget):
     def _add_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Add Folder",
+            "Add folder",
             last_directory(),
         )
         if not folder:
@@ -467,14 +467,14 @@ class MergeWindow(QWidget):
         if not candidates:
             QMessageBox.information(
                 self,
-                "Add Folder",
+                "Add folder",
                 "No PDF files found in that folder.",
             )
             return
 
         accepted, skipped, cancelled = self._validate_folder_candidates(candidates)
         if cancelled and not accepted:
-            self.statusBar().showMessage("Add Folder cancelled")
+            self.statusBar().showMessage("Add folder cancelled")
             return
 
         if accepted:
@@ -500,7 +500,7 @@ class MergeWindow(QWidget):
                 preview = f"{preview}\n…and {extra} more"
             QMessageBox.warning(
                 self,
-                "Add Folder",
+                "Add folder",
                 f"Could not add {len(skipped)} PDF file(s):\n\n{preview}",
             )
 
@@ -520,7 +520,7 @@ class MergeWindow(QWidget):
                 total,
                 self,
             )
-            progress.setWindowTitle("Add Folder")
+            progress.setWindowTitle("Add folder")
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.setValue(0)

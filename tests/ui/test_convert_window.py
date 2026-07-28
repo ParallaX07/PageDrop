@@ -142,6 +142,9 @@ def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monk
     assert window._toast.isVisible()
     assert window._toast._message.accessibleName() == window._toast._message.text()
     assert window.editor is None
+    assert window._result_bar._preview_btn.text() == "Preview"
+    assert window._result_bar._open_btn.text() == "Open in editor"
+    assert window._result_bar._folder_btn.text() == "Show in folder"
 
 
 def test_menubar_create_pdf_beside_merge(main_window, qtbot):

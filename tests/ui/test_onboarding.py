@@ -72,13 +72,13 @@ def test_help_menu_keyboard_shortcuts_action(main_window):
     assert help_menus
     help_menu = help_menus[0]
     labels = {a.text().replace("&", "") for a in help_menu.actions()}
-    assert "Keyboard Shortcuts" in labels
-    assert "Show Tips" in labels
+    assert "Keyboard shortcuts" in labels
+    assert "Show tips" in labels
 
     action = next(
         a
         for a in help_menu.actions()
-        if a.text().replace("&", "") == "Keyboard Shortcuts"
+        if a.text().replace("&", "") == "Keyboard shortcuts"
     )
     assert action.shortcut() == QKeySequence("Ctrl+/")
 

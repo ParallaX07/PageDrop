@@ -59,6 +59,20 @@ def test_tools_opens_from_menubar(main_window, qtbot):
     qtbot.waitUntil(lambda: main_window._tools_window is None, timeout=5000)
 
 
+def test_tools_hub_tiles_use_sentence_case_titles(qtbot):
+    """Spot-check catalogue titles stay sentence-case (not Title Case)."""
+    from pagedrop.ui.tools_window import TOOL_CATALOGUE
+
+    samples = {e.id: e.title for e in TOOL_CATALOGUE}
+    assert samples["merge"] == "Merge PDFs"
+    assert samples["split"] == "Split / extract"
+    assert samples["create_pdf"] == "Create PDF"
+    assert samples["compress"] == "Compress PDF"
+    # No mid-title Capital Words on multi-word non-acronym titles.
+    assert samples["alternate"] == "Alternate pages"
+    assert samples["normalize"] == "Normalize page size"
+
+
 def test_tools_reopen_focuses_same_tab(main_window, qtbot):
     main_window._open_tools_window()
     tools = main_window._tools_window

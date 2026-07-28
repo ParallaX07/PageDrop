@@ -36,9 +36,9 @@ def test_menu_mnemonics_are_unambiguous(main_window):
         if not action.isSeparator()
     ]
     assert "&Open PDF" in file_labels
-    assert "&Close Tab" in file_labels
-    assert "Save &As" in file_labels
-    assert "New &Window" in file_labels
+    assert "&Close tab" in file_labels
+    assert "Save &as" in file_labels
+    assert "New &window" in file_labels
     assert "E&xit" in file_labels
 
     def mnemonic_letters(labels: list[str]) -> list[str]:
