@@ -192,6 +192,62 @@ def test_watermark_overlay_move_and_angle_sync_sidebar(qtbot, tmp_path, isolated
     tools.close()
 
 
+def test_watermark_run_result_bar_no_auto_open(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    """Modeless shell: Run → BusyOverlay → toast + ResultActionsBar; no editor auto-open."""
+    from pagedrop.ui.busy_overlay import BusyOverlay
+    from pagedrop.ui.job_chrome import JobChromeMixin
+    from pagedrop.ui.result_actions import ResultActionsBar
+
+    src = tmp_path / "src.pdf"
+    out = tmp_path / "src_watermarked.pdf"
+    _write_pdf(src, text="body")
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+    shell = open_modify_shell(tools, "watermark")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    assert isinstance(shell, ToolShellWindow)
+    assert isinstance(shell, JobChromeMixin)
+    assert isinstance(shell._busy_overlay, BusyOverlay)
+    assert isinstance(shell._result_bar, ResultActionsBar)
+    assert shell._busy_overlay._cancel_btn.text() == "Cancel"
+
+    shell.drop_zone.set_paths([str(src)])
+    monkeypatch.setattr(
+        "pagedrop.ui.modify_tools_shell._pick_save_path",
+        lambda parent, title, suggested: str(out),
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "pagedrop.ui.job_chrome.open_in_editor",
+        lambda path, editor: opened.append(str(path)),
+    )
+
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
+    assert out.is_file()
+    assert shell._result_bar.isVisible()
+    assert shell._result_bar._path == str(out)
+    assert shell._result_bar._preview_btn.text() == "Preview"
+    assert shell._result_bar._open_btn.text() == "Open in editor"
+    assert shell._result_bar._folder_btn.text() == "Show in folder"
+    assert opened == []  # success path must not auto-open
+
+    doc = fitz.open(str(out))
+    try:
+        assert "CONFIDENTIAL" in doc[0].get_text()
+        assert "body" in doc[0].get_text()
+    finally:
+        doc.close()
+
+    shell.close()
+    tools.close()
+
+
 def test_blank_remove_requires_confirm(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):
