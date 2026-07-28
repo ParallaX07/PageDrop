@@ -44,6 +44,7 @@ def test_high_traffic_actions_use_sentence_case(main_window):
     assert a["export_all"].text().replace("&", "") == "Export all pages…"
     assert a["new_window"].text().replace("&", "") == "New window"
     assert a["light_theme"].text().replace("&", "") == "Toggle light theme"
+    assert a["chrome_visible"].text().replace("&", "") == "Show menu and toolbar"
     assert a["keyboard_shortcuts"].text().replace("&", "") == "Keyboard shortcuts"
     assert a["tips"].text().replace("&", "") == "Show tips"
     assert a["move_up"].text() == "Move up"

@@ -17,6 +17,7 @@ KEY_CONFIRM_CLOSE_DIRTY = "safety/confirm_before_closing_dirty_tabs"
 KEY_REMEMBER_GEOMETRY = "window/remember_geometry"
 KEY_WINDOW_GEOMETRY = "window/geometry"
 KEY_LIGHT_THEME = "view/light_theme"
+KEY_CHROME_VISIBLE = "view/chrome_visible"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
@@ -163,6 +164,15 @@ def light_theme() -> bool:
 
 def set_light_theme(enabled: bool) -> None:
     _settings().setValue(KEY_LIGHT_THEME, bool(enabled))
+
+
+def chrome_visible() -> bool:
+    """Show the main menu bar and toolbar (default: True)."""
+    return _settings().value(KEY_CHROME_VISIBLE, True, type=bool)
+
+
+def set_chrome_visible(visible: bool) -> None:
+    _settings().setValue(KEY_CHROME_VISIBLE, bool(visible))
 
 
 def thumbnail_quality() -> ThumbnailQuality:

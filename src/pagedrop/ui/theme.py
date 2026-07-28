@@ -439,6 +439,35 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
     }}
 
+    QToolButton#ChromeToggleButton {{
+        background-color: transparent;
+        color: {text_secondary};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+        font-size: 14px;
+        font-weight: 600;
+        min-width: 28px;
+        max-width: 28px;
+        min-height: 28px;
+        max-height: 28px;
+        padding: 0;
+    }}
+
+    QToolButton#ChromeToggleButton:hover {{
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
+    }}
+
+    QToolButton#ChromeToggleButton:pressed {{
+        background-color: {bg_base};
+    }}
+
+    QToolButton#ChromeToggleButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+        color: {text_primary};
+    }}
+
     QLabel#ToolbarFilename {{
         color: {text_secondary};
         font-weight: 500;

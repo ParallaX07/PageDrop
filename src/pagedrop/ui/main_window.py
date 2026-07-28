@@ -50,6 +50,7 @@ from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui.settings import (
+    chrome_visible,
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
     has_seen_tips,
@@ -61,6 +62,7 @@ from pagedrop.ui.settings import (
     remember_recent_file,
     remember_window_geometry,
     save_window_geometry,
+    set_chrome_visible,
     set_confirm_before_closing_dirty_tabs,
     set_confirm_before_deleting_multiple_pages,
     set_light_theme,
@@ -128,6 +130,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_status_widgets()
         self._build_central_widget()
+        self._set_chrome_visible(chrome_visible(), persist=False)
         QApplication.instance().installEventFilter(self)
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
@@ -243,6 +246,16 @@ class MainWindow(QMainWindow):
             slot=self._on_light_theme_toggled,
             checkable=True,
             checked=light_theme(),
+        )
+        self._chrome_visible_action = actions.register(
+            "chrome_visible",
+            "Show &menu and toolbar",
+            slot=self._on_chrome_visible_toggled,
+            shortcut="Ctrl+Shift+H",
+            checkable=True,
+            checked=chrome_visible(),
+            tip="Show or hide the menu and toolbar (Ctrl+Shift+H)",
+            add_to_window=True,
         )
         self._quality_action_group = QActionGroup(self)
         self._quality_action_group.setExclusive(True)
@@ -451,6 +464,7 @@ class MainWindow(QMainWindow):
 
         view_menu = menubar.addMenu("&View")
         view_menu.addAction(a["light_theme"])
+        view_menu.addAction(a["chrome_visible"])
         quality_menu = view_menu.addMenu("Thumbnail &quality")
         for key in ("quality_low", "quality_medium", "quality_high"):
             quality_menu.addAction(a[key])
@@ -530,6 +544,14 @@ class MainWindow(QMainWindow):
             self._detach_tab_to_new_window
         )
         self._tab_manager.tab_rename_requested.connect(self._rename_tab)
+
+        self._chrome_toggle_btn = QToolButton()
+        self._chrome_toggle_btn.setObjectName("ChromeToggleButton")
+        self._chrome_toggle_btn.clicked.connect(self._toggle_chrome_visible)
+        self._tab_manager.setCornerWidget(
+            self._chrome_toggle_btn,
+            Qt.Corner.TopLeftCorner,
+        )
 
         new_tab_button = QToolButton()
         new_tab_button.setObjectName("NewTabButton")
@@ -1411,6 +1433,35 @@ class MainWindow(QMainWindow):
                     action.blockSignals(True)
                     action.setChecked(enabled)
                     action.blockSignals(False)
+
+    def _toggle_chrome_visible(self) -> None:
+        action = getattr(self, "_chrome_visible_action", None)
+        visible = True if action is None else action.isChecked()
+        self._set_chrome_visible(not visible)
+
+    def _on_chrome_visible_toggled(self, visible: bool) -> None:
+        self._set_chrome_visible(visible)
+
+    def _set_chrome_visible(self, visible: bool, *, persist: bool = True) -> None:
+        self.menuBar().setVisible(visible)
+        self._toolbar.setVisible(visible)
+        action = getattr(self, "_chrome_visible_action", None)
+        if action is not None and action.isChecked() != visible:
+            action.blockSignals(True)
+            action.setChecked(visible)
+            action.blockSignals(False)
+        btn = getattr(self, "_chrome_toggle_btn", None)
+        if btn is not None:
+            if visible:
+                btn.setText("⌃")
+                tip = "Hide menu and toolbar"
+            else:
+                btn.setText("⌄")
+                tip = "Show menu and toolbar"
+            btn.setToolTip(tip)
+            btn.setAccessibleName(tip)
+        if persist:
+            set_chrome_visible(visible)
 
     def _on_thumbnail_quality_triggered(self, action: QAction) -> None:
         value = action.data()

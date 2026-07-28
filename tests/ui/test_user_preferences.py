@@ -11,7 +11,9 @@ from pagedrop.ui.command_palette import (
     fuzzy_match,
 )
 from pagedrop.ui.settings import (
+    chrome_visible,
     light_theme,
+    set_chrome_visible,
     set_light_theme,
     set_thumbnail_quality,
     set_thumbnail_zoom,
@@ -39,6 +41,14 @@ def test_light_theme_pref_round_trip(isolated_settings):
     set_light_theme(True)
     assert light_theme() is True
     apply_app_stylesheet()
+
+
+def test_chrome_visible_pref_round_trip(isolated_settings):
+    assert chrome_visible() is True
+    set_chrome_visible(False)
+    assert chrome_visible() is False
+    set_chrome_visible(True)
+    assert chrome_visible() is True
 
 
 def test_thumbnail_quality_caps_render_width(isolated_settings):
@@ -93,6 +103,31 @@ def test_view_menu_theme_and_quality(isolated_settings, main_window, qtbot):
     )
     low.trigger()
     assert thumbnail_quality() == "low"
+
+
+def test_chrome_toggle_hides_menu_and_toolbar(isolated_settings, main_window, qtbot):
+    set_chrome_visible(True)
+    main_window._set_chrome_visible(True)
+
+    assert not main_window.menuBar().isHidden()
+    assert not main_window._toolbar.isHidden()
+    assert main_window._chrome_visible_action.isChecked()
+    assert main_window._chrome_toggle_btn.text() == "⌃"
+    assert main_window._chrome_toggle_btn.toolTip() == "Hide menu and toolbar"
+
+    main_window._chrome_toggle_btn.click()
+    assert main_window.menuBar().isHidden()
+    assert main_window._toolbar.isHidden()
+    assert not main_window._chrome_visible_action.isChecked()
+    assert chrome_visible() is False
+    assert main_window._chrome_toggle_btn.text() == "⌄"
+    assert main_window._chrome_toggle_btn.toolTip() == "Show menu and toolbar"
+
+    main_window._chrome_visible_action.trigger()
+    assert not main_window.menuBar().isHidden()
+    assert not main_window._toolbar.isHidden()
+    assert main_window._chrome_visible_action.isChecked()
+    assert chrome_visible() is True
 
 
 def test_zoom_persisted_on_change(main_window, five_page_pdf, isolated_settings, qtbot):
