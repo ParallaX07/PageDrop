@@ -326,6 +326,54 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
     assert "note.txt" not in names2
 
 
+def test_attachment_extract_all_zip(tmp_path: Path) -> None:
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = _file_hash(src)
+
+    with_attach = tmp_path / "with_attach.pdf"
+    pdf_tools.attachment_add(
+        str(src),
+        str(with_attach),
+        name="note.txt",
+        data=b"hello",
+        filename="note.txt",
+        overwrite=False,
+    )
+    with_two = tmp_path / "with_two.pdf"
+    pdf_tools.attachment_add(
+        str(with_attach),
+        str(with_two),
+        name="data.bin",
+        data=b"\x00\x01\x02",
+        filename="data.bin",
+        overwrite=False,
+    )
+    attached_hash = _file_hash(with_two)
+
+    out_zip = tmp_path / "out" / "src_attachments.zip"
+    result = pdf_tools.attachment_extract_all_zip(str(with_two), out_zip)
+    assert result == out_zip
+    assert out_zip.is_file()
+    assert _file_hash(with_two) == attached_hash
+    assert _file_hash(src) == source_hash
+
+    with zipfile.ZipFile(out_zip) as zf:
+        assert set(zf.namelist()) == {"note.txt", "data.bin"}
+        assert zf.read("note.txt") == b"hello"
+        assert zf.read("data.bin") == b"\x00\x01\x02"
+
+    empty = tmp_path / "empty.pdf"
+    empty.write_bytes(src.read_bytes())
+    with pytest.raises(FileNotFoundError, match="No attachments"):
+        pdf_tools.attachment_extract_all_zip(str(empty), tmp_path / "empty.zip")
+
+
 def test_attachment_extract_job_runner(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     doc = fitz.open()
@@ -344,35 +392,47 @@ def test_attachment_extract_job_runner(tmp_path: Path) -> None:
         filename="note.txt",
         overwrite=False,
     )
+    with_two = tmp_path / "with_two.pdf"
+    pdf_tools.attachment_add(
+        str(out_added),
+        str(with_two),
+        name="data.bin",
+        data=b"bytes",
+        filename="data.bin",
+        overwrite=False,
+    )
 
     temp = TempManager()
     try:
         runner = SerializedJobRunner(temp)
         register_organize_handlers(runner)
 
-        out = tmp_path / "extracted" / "note.txt"
+        out = tmp_path / "extracted" / "with_two_attachments.zip"
         result = runner.run(
             JobSpec.create(
                 "attachment_extract",
-                inputs=[str(out_added)],
+                inputs=[str(with_two)],
                 output=out,
-                options={"name": "note.txt"},
+                options={},
             ),
         )
         assert result == out
         assert out.is_file()
-        assert out.read_bytes() == b"hello"
+        with zipfile.ZipFile(out) as zf:
+            assert set(zf.namelist()) == {"note.txt", "data.bin"}
+            assert zf.read("note.txt") == b"hello"
+            assert zf.read("data.bin") == b"bytes"
 
-        out_cancel = tmp_path / "extracted_cancel" / "note.txt"
+        out_cancel = tmp_path / "extracted_cancel" / "with_two_attachments.zip"
         token = CancelToken()
         token.cancel()
         with pytest.raises(JobCancelledError):
             runner.run(
                 JobSpec.create(
                     "attachment_extract",
-                    inputs=[str(out_added)],
+                    inputs=[str(with_two)],
                     output=out_cancel,
-                    options={"name": "note.txt"},
+                    options={},
                 ),
                 cancel=token,
             )
@@ -430,36 +490,37 @@ def test_attachment_extract_uses_job_runner(
     allow_finish = threading.Event()
     staged_dir: Path | None = None
 
-    def fake_attachment_extract(
+    def fake_attachment_extract_all_zip(
         source_pdf: str,
-        name: str,
-        dest_dir: str | Path,
+        output_zip: str | Path,
         *,
         password: str | None = None,
     ) -> Path:
         nonlocal staged_dir
-        assert lock.locked, "attachment_extract must run under FITZ_LOCK"
+        assert lock.locked, "attachment_extract_all_zip must run under FITZ_LOCK"
         started.set()
 
-        dest_dir_path = Path(dest_dir)
-        staged_dir = dest_dir_path
-        out = dest_dir_path / name
-        dest_dir_path.mkdir(parents=True, exist_ok=True)
+        out = Path(output_zip)
+        staged_dir = out.parent
+        out.parent.mkdir(parents=True, exist_ok=True)
         # Simulate partial staged output while the handler is still running.
-        out.write_bytes(b"hello")
+        with zipfile.ZipFile(out, "w") as zf:
+            zf.writestr("note.txt", b"hello")
 
         # Wait until the test cancels; runner will observe cancel after handler returns.
         allow_finish.wait(timeout=5)
         return out
 
-    monkeypatch.setattr(pdf_tools, "attachment_extract", fake_attachment_extract)
+    monkeypatch.setattr(
+        pdf_tools, "attachment_extract_all_zip", fake_attachment_extract_all_zip
+    )
 
     temp = TempManager()
     try:
         runner = SerializedJobRunner(temp)
         register_organize_handlers(runner)
 
-        out_cancel = tmp_path / "extracted_cancel_mid" / "note.txt"
+        out_cancel = tmp_path / "extracted_cancel_mid" / "src_attachments.zip"
         token = CancelToken()
 
         err: list[BaseException] = []
@@ -471,7 +532,7 @@ def test_attachment_extract_uses_job_runner(
                         "attachment_extract",
                         inputs=[str(out_added)],
                         output=out_cancel,
-                        options={"name": "note.txt"},
+                        options={},
                     ),
                     cancel=token,
                 )

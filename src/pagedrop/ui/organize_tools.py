@@ -763,6 +763,18 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
         w["replace"] = QCheckBox("Replace if name already exists")
         form.addRow("", w["replace"])
 
+        def sync_fields(_index: int = 0) -> None:
+            action = w["action"].currentData()
+            extract = action == "extract"
+            add = action == "add"
+            w["name"].setEnabled(not extract)
+            w["file"].setEnabled(add)
+            browse.setEnabled(add)
+            w["replace"].setEnabled(add)
+
+        w["action"].currentIndexChanged.connect(sync_fields)
+        sync_fields()
+
     widgets = _form_dialog(
         tools,
         title="Attachments",
@@ -779,14 +791,18 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
     name = widgets["name"].text().strip()
 
     if action == "extract":
-        if not name:
-            QMessageBox.warning(tools, "Attachments", "Enter the attachment name.")
+        try:
+            attachments = pdf_tools.attachments_list(source)
+        except Exception as exc:
+            QMessageBox.warning(tools, "Attachments", str(exc))
             return
-        folder = _pick_folder(tools, "Extract attachment to folder")
+        if not attachments:
+            QMessageBox.warning(tools, "Attachments", "This PDF has no attachments.")
+            return
+        folder = _pick_folder(tools, "Extract attachments to folder")
         if not folder:
             return
-        safe_name = Path(name).name or "attachment.bin"
-        out = Path(folder) / safe_name
+        out = Path(folder) / f"{Path(source).stem}_attachments.zip"
         if out.exists():
             stem, suffix = out.stem, out.suffix
             n = 1
@@ -796,14 +812,15 @@ def _launch_attachments(tools: ToolsWindow, ctx: EditorPdfContext | None) -> Non
                     out = candidate
                     break
                 n += 1
+        count = len(attachments)
         _run_organize_job(
             tools,
             job_type="attachment_extract",
             inputs=[source],
             output=str(out),
-            options={"name": name},
-            progress_message="Extracting attachment…",
-            success_toast=f"Extracted {out.name}",
+            options={},
+            progress_message="Extracting attachments…",
+            success_toast=f"Extracted {count} attachments to {out.name}",
         )
         return
 

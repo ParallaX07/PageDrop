@@ -202,19 +202,12 @@ def handle_attachment_remove(ctx: JobContext) -> Path:
 
 
 def handle_attachment_extract(ctx: JobContext) -> Path:
-    ctx.progress(0.3, "Extracting attachment…")
-    # Extract directly into the job staging dir, then let the runner promote
-    # the returned staged file to the user-chosen output path.
-    extracted = pdf_tools.attachment_extract(
+    ctx.progress(0.3, "Extracting attachments…")
+    pdf_tools.attachment_extract_all_zip(
         ctx.spec.inputs[0],
-        str(ctx.spec.options["name"]),
-        ctx.staging.job_dir,
+        ctx.staged_output,
         password=_password(ctx),
     )
-    # The runner only guarantees cleanup for `ctx.staged_output`, so ensure
-    # the extracted file is in that location before returning.
-    if extracted != ctx.staged_output:
-        extracted.replace(ctx.staged_output)
     return ctx.staged_output
 
 

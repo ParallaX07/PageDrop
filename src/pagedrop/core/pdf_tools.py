@@ -651,6 +651,45 @@ def attachment_extract(
     )
 
 
+def attachment_extract_all_zip(
+    source_pdf: str,
+    output_zip: str | Path,
+    *,
+    password: str | None = None,
+) -> Path:
+    """Extract every embedded file into a ZIP at `output_zip`."""
+    out_zip = Path(output_zip)
+    reject_source_overwrite(out_zip, source_pdf)
+    out_zip.parent.mkdir(parents=True, exist_ok=True)
+
+    src = _open(source_pdf, password=password)
+    try:
+        names = list(src.embfile_names())
+        if not names:
+            raise FileNotFoundError("No attachments in PDF")
+        used: set[str] = set()
+        with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for name in names:
+                data = src.embfile_get(name)
+                if data is None:
+                    raise FileNotFoundError(f"Attachment not found: {name}")
+                arc = Path(name).name or "attachment.bin"
+                if arc in used:
+                    stem, suffix = Path(arc).stem, Path(arc).suffix
+                    n = 1
+                    while True:
+                        candidate = f"{stem}_{n}{suffix}"
+                        if candidate not in used:
+                            arc = candidate
+                            break
+                        n += 1
+                used.add(arc)
+                zf.writestr(arc, data)
+    finally:
+        src.close()
+    return out_zip
+
+
 def metadata_get(path: str, *, password: str | None = None) -> dict[str, Any]:
     """Return PDF /Info metadata (standard fields)."""
     doc = _open(path, password=password)
