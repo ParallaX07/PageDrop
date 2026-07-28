@@ -30,7 +30,7 @@ from pagedrop.core.supported_formats import (
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import EMPTY_PROMPT_DOCUMENTS, ToolShellWindow, run_tool_job
 from pagedrop.utils.page_jump import parse_page_ranges
 
 if TYPE_CHECKING:
@@ -330,7 +330,7 @@ def open_conversion_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow |
                 accept=lambda p: is_native_import_path(p),
                 dialog_filter=import_to_pdf_dialog_filter(available_only=True),
                 browse_title=f"Choose files — {entry.title}",
-                empty_prompt="Drop documents here, or click to browse",
+                empty_prompt=EMPTY_PROMPT_DOCUMENTS,
             )
             _configure_convert_to_pdf(shell)
         else:

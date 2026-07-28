@@ -95,6 +95,8 @@ def test_double_click_enters_preview_stack(qtbot, one_page_pdf):
     qtbot.waitUntil(lambda: window._is_preview_visible(), timeout=5000)
     assert window._stack.currentWidget() is window._preview_widget
     assert window._preview_widget.current_page == 0
+    assert window._back_to_list_action.text() == "Back to grid"
+    assert "Esc back to grid" in window._preview_widget._hint_label.text()
 
 
 def test_escape_returns_to_grid_from_preview(qtbot, five_page_pdf):

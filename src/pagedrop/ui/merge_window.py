@@ -46,7 +46,7 @@ from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.ui.zoom_controls import ZoomControls
 
 _PREVIEW_FOOTER_HINT = (
-    "← → change page · Ctrl+scroll zoom · Esc back to list"
+    "← → change page · Ctrl+scroll zoom · Esc back to grid"
 )
 
 # Show a progress dialog once folder validation exceeds this many candidates.
@@ -161,11 +161,11 @@ class MergeWindow(QWidget):
 
         self._back_to_list_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
-            "Back to list",
+            "Back to grid",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
         self._back_to_list_action.setVisible(False)
-        tip(self._back_to_list_action, "Return to file list (Esc)")
+        tip(self._back_to_list_action, "Return to file grid (Esc)")
 
         self._add_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),

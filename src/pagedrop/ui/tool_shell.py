@@ -60,6 +60,11 @@ if TYPE_CHECKING:
 _PRIVACY_LINE = "Files stay on this computer — nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 
+# Canonical drop-zone prompts (O5). Prefer these over one-off wording.
+EMPTY_PROMPT_PDF = "Drop PDF here, or click to browse"
+EMPTY_PROMPT_PDFS = "Drop PDFs here, or click to browse"
+EMPTY_PROMPT_DOCUMENTS = "Drop documents here, or click to browse"
+
 # Organize tools migrated onto this shell in Phase 22b (remaining finish in Phase 24).
 SHELL_ORGANIZE_IDS: frozenset[str] = frozenset({"split", "reverse"})
 
@@ -148,9 +153,11 @@ class FileDropZone(QFrame):
         dialog_filter: str = _PDF_FILTER,
         multi: bool = False,
         browse_title: str = "Choose files",
-        empty_prompt: str = "Drop PDF here, or click to browse",
+        empty_prompt: str | None = None,
     ) -> None:
         super().__init__(parent)
+        if empty_prompt is None:
+            empty_prompt = EMPTY_PROMPT_PDFS if multi else EMPTY_PROMPT_PDF
         self.setObjectName("ToolShellDropZone")
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -463,11 +470,13 @@ class ToolShellWindow(QWidget):
         window_manager: object | None = None,
         multi: bool = False,
         browse_title: str = "Choose PDF",
-        empty_prompt: str = "Drop PDF here, or click to browse",
+        empty_prompt: str | None = None,
         accept: Callable[[str], bool] | None = None,
         dialog_filter: str = _PDF_FILTER,
     ) -> None:
         super().__init__(None)
+        if empty_prompt is None:
+            empty_prompt = EMPTY_PROMPT_PDFS if multi else EMPTY_PROMPT_PDF
         self.WINDOW_TITLE = title
         self._editor = editor
         self._window_manager = window_manager

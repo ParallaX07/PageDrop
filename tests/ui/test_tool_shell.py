@@ -98,6 +98,18 @@ def test_drop_zone_accepts_file_urls(qtbot, tmp_path):
     assert zone.paths() == [str(pdf)]
 
 
+def test_drop_zone_default_prompts(qtbot):
+    from pagedrop.ui.tool_shell import EMPTY_PROMPT_PDF, EMPTY_PROMPT_PDFS
+
+    single = FileDropZone()
+    qtbot.addWidget(single)
+    assert single._prompt.text() == EMPTY_PROMPT_PDF
+
+    multi = FileDropZone(multi=True)
+    qtbot.addWidget(multi)
+    assert multi._prompt.text() == EMPTY_PROMPT_PDFS
+
+
 def test_migrated_tool_runs_job_and_shows_result_actions(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):

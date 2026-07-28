@@ -903,11 +903,6 @@ def open_modify_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | Non
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
             browse_title=f"Choose PDF — {entry.title}",
-            empty_prompt=(
-                "Drop PDFs here, or click to browse"
-                if multi
-                else "Drop PDF here, or click to browse"
-            ),
         )
         _CONFIGURERS[tool_id](shell)
         store[tool_id] = shell

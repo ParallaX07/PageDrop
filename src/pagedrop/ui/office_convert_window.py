@@ -352,7 +352,7 @@ def open_office_convert_shell(tools: ToolsWindow) -> ToolShellWindow | None:
             accept=is_office_path,
             dialog_filter=office_dialog_filter(),
             browse_title=f"Choose document — {entry.title}",
-            empty_prompt="Drop an Office document here, or click to browse",
+            empty_prompt="Drop Office document here, or click to browse",
         )
         _configure_office_convert(shell)
         store[SHELL_OFFICE_ID] = shell

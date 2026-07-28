@@ -187,7 +187,6 @@ def open_pdf_to_word_shell(tools: ToolsWindow) -> ToolShellWindow | None:
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
             browse_title=f"Choose PDF — {entry.title}",
-            empty_prompt="Drop a PDF here, or click to browse",
         )
         _configure_pdf_to_word(shell)
         store[SHELL_PDF_TO_WORD_ID] = shell

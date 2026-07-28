@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from pagedrop.utils.list_utils import move_items
 
-# ponytail: 50 snapshots is enough for heavy edit sessions; each entry holds a
+# 50 snapshots is enough for heavy edit sessions; each entry holds a
 # full PageRef tuple copy. Raise only with a measured memory complaint (or add
 # coalescing) — unbounded growth was the prior ceiling.
 MAX_UNDO = 50

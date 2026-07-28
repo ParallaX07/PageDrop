@@ -405,7 +405,6 @@ def open_ocr_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
             browse_title=f"Choose PDF — {entry.title}",
-            empty_prompt="Drop PDF here, or click to browse",
         )
         if tool_id == "ocr_pdf":
             _CONFIGURERS[tool_id](shell, range_prefill=range_prefill)
