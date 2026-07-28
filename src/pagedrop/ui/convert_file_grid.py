@@ -31,6 +31,7 @@ class _ConvertThumbnailWorker(QRunnable):
 
     class Signals(QObject):
         ready = pyqtSignal(str, int, int, object)  # path, width_px, generation, png
+        error = pyqtSignal(str, int, str)  # path, generation, message
 
     def __init__(
         self,
@@ -53,9 +54,18 @@ class _ConvertThumbnailWorker(QRunnable):
             return
         try:
             png = render_image_thumbnail_png(self._path, self._width_px)
-        except Exception:
+        except Exception as exc:
+            if not self._is_cancelled(self._generation):
+                self.signals.error.emit(self._path, self._generation, str(exc))
             return
-        if self._is_cancelled(self._generation) or png is None:
+        if self._is_cancelled(self._generation):
+            return
+        if png is None:
+            self.signals.error.emit(
+                self._path,
+                self._generation,
+                "empty or unreadable image",
+            )
             return
         self.signals.ready.emit(self._path, self._width_px, self._generation, png)
 
@@ -105,6 +115,8 @@ class ConvertFileGrid(BaseFileGrid):
 
         paths_to_render: list[str] = []
         for path in self._paths:
+            if path in self._failed_paths:
+                continue
             if self._render_width_by_path.get(path, 0) >= target:
                 if self._find_card_pixmap(path) is not None:
                     continue
@@ -117,9 +129,17 @@ class ConvertFileGrid(BaseFileGrid):
             for path in paths_to_render:
                 if generation != self._generation:
                     return
-                png = render_image_thumbnail_png(path, target)
-                if png is not None:
-                    self._on_thumbnail_ready(path, target, generation, png)
+                try:
+                    png = render_image_thumbnail_png(path, target)
+                except Exception as exc:
+                    self._on_thumbnail_failed(path, generation, str(exc))
+                    continue
+                if png is None:
+                    self._on_thumbnail_failed(
+                        path, generation, "empty or unreadable image"
+                    )
+                    continue
+                self._on_thumbnail_ready(path, target, generation, png)
             return
 
         for path in paths_to_render:
@@ -130,6 +150,7 @@ class ConvertFileGrid(BaseFileGrid):
                 self._is_cancelled,
             )
             worker.signals.ready.connect(self._on_thumbnail_ready)
+            worker.signals.error.connect(self._on_thumbnail_failed)
             self._render_pool.start(worker)
 
     def _on_thumbnail_ready(

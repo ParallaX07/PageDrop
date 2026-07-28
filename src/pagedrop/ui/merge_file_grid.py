@@ -21,6 +21,7 @@ class _MergeThumbnailWorker(QRunnable):
 
     class Signals(QObject):
         ready = pyqtSignal(str, int, int, object)  # path, width_px, generation, page_pngs
+        error = pyqtSignal(str, int, str)  # path, generation, message
 
     def __init__(
         self,
@@ -54,7 +55,9 @@ class _MergeThumbnailWorker(QRunnable):
                 width_px=page_width,
                 should_cancel=lambda: self._is_cancelled(self._generation),
             )
-        except Exception:
+        except Exception as exc:
+            if not self._is_cancelled(self._generation):
+                self.signals.error.emit(self._path, self._generation, str(exc))
             return
         if self._is_cancelled(self._generation):
             return
@@ -106,6 +109,8 @@ class MergeFileGrid(BaseFileGrid):
 
         paths_to_render: list[tuple[str, int]] = []
         for path in self._paths:
+            if path in self._failed_paths:
+                continue
             if self._render_width_by_path.get(path, 0) >= target:
                 if self._find_card_pixmap(path) is not None:
                     continue
@@ -119,15 +124,19 @@ class MergeFileGrid(BaseFileGrid):
             for path, page_count in paths_to_render:
                 if generation != self._generation:
                     return
-                _layers, _stack_offset, page_width = stack_thumbnail_layout(
-                    target,
-                    page_count,
-                )
-                page_pngs = render_stacked_page_pngs(
-                    path,
-                    page_count,
-                    width_px=page_width,
-                )
+                try:
+                    _layers, _stack_offset, page_width = stack_thumbnail_layout(
+                        target,
+                        page_count,
+                    )
+                    page_pngs = render_stacked_page_pngs(
+                        path,
+                        page_count,
+                        width_px=page_width,
+                    )
+                except Exception as exc:
+                    self._on_thumbnail_failed(path, generation, str(exc))
+                    continue
                 self._on_thumbnail_ready(path, target, generation, page_pngs)
             return
 
@@ -140,6 +149,7 @@ class MergeFileGrid(BaseFileGrid):
                 self._is_cancelled,
             )
             worker.signals.ready.connect(self._on_thumbnail_ready)
+            worker.signals.error.connect(self._on_thumbnail_failed)
             self._render_pool.start(worker)
 
     def _on_thumbnail_ready(

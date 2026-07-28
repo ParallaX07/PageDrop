@@ -46,6 +46,49 @@ def test_merge_reorder_by_drop(qtbot, one_page_pdf, five_page_pdf, tmp_path):
     assert [card.file_index for card in grid._cards] == [0, 1, 2]
 
 
+def test_merge_thumbnail_failure_emits_rendering_error(qtbot, corrupt_pdf):
+    grid = MergeFileGrid()
+    qtbot.addWidget(grid)
+    errors: list[str] = []
+    grid.rendering_error.connect(errors.append)
+
+    path = str(corrupt_pdf)
+    grid.set_files([path], {path: 1})
+
+    assert len(errors) == 1
+    assert corrupt_pdf.name in errors[0]
+    assert "unreadable" in errors[0].lower() or "corrupt" in errors[0].lower()
+    assert path in grid._failed_paths
+
+
+def test_convert_thumbnail_failure_emits_rendering_error(qtbot, tmp_path):
+    bad = tmp_path / "broken.png"
+    bad.write_bytes(b"not an image")
+
+    grid = ConvertFileGrid()
+    qtbot.addWidget(grid)
+    errors: list[str] = []
+    grid.rendering_error.connect(errors.append)
+
+    path = str(bad)
+    grid.set_files([path], {path: (0, 0)})
+
+    assert len(errors) == 1
+    assert bad.name in errors[0]
+    assert path in grid._failed_paths
+
+
+def test_merge_window_surfaces_thumbnail_failure(qtbot, corrupt_pdf):
+    from pagedrop.ui.merge_window import MergeWindow
+
+    window = MergeWindow()
+    qtbot.addWidget(window)
+    path = str(corrupt_pdf)
+    window._file_grid.set_files([path], {path: 1})
+
+    assert corrupt_pdf.name in window.statusBar().currentMessage()
+
+
 def _press_key(widget, key: Qt.Key) -> None:
     event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
     widget.keyPressEvent(event)

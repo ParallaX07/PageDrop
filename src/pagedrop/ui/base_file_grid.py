@@ -9,6 +9,8 @@ Merge/Convert share internal MIME reorder + external file drop via this base.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtCore import QPoint, QThreadPool, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QDragEnterEvent,
@@ -60,6 +62,8 @@ class BaseFileGrid(QScrollArea):
     preview_requested = pyqtSignal(str)
     selection_changed = pyqtSignal()
     zoom_changed = pyqtSignal(int)
+    # Same contract as ThumbnailGrid.rendering_error — window shows status/toast.
+    rendering_error = pyqtSignal(str)
 
     def __init__(
         self,
@@ -81,6 +85,7 @@ class BaseFileGrid(QScrollArea):
         super().__init__(parent)
         self._paths: list[str] = []
         self._render_width_by_path: dict[str, int] = {}
+        self._failed_paths: set[str] = set()
         self._cards: list[InternalReorderFileCard] = []
         self._grid_cols = 0
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
@@ -170,6 +175,18 @@ class BaseFileGrid(QScrollArea):
     def _schedule_thumbnails(self) -> None:
         raise NotImplementedError
 
+    def _on_thumbnail_failed(
+        self, path: str, generation: int, _detail: str = ""
+    ) -> None:
+        """Shared failure path for merge/convert thumb workers (mirrors ThumbnailGrid)."""
+        if generation != self._generation:
+            return
+        self._failed_paths.add(path)
+        self.rendering_error.emit(
+            f"Could not preview {Path(path).name} — "
+            "file may be corrupt or unreadable"
+        )
+
     @property
     def thumbnail_width_px(self) -> int:
         return self._thumbnail_width_px
@@ -192,6 +209,7 @@ class BaseFileGrid(QScrollArea):
 
         self._paths = list(paths)
         self._generation += 1
+        self._failed_paths.clear()
         self._clear_cards()
         self._last_clicked_index = None
         self._focused_index = 0 if paths else None

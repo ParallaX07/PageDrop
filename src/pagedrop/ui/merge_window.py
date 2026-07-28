@@ -214,6 +214,7 @@ class MergeWindow(QWidget):
         self._file_grid.files_dropped.connect(self._add_paths)
         self._file_grid.files_reordered.connect(self._on_files_reordered)
         self._file_grid.zoom_changed.connect(self._on_zoom_changed)
+        self._file_grid.rendering_error.connect(self._on_thumbnail_failed)
         self._zoom_controls.zoom_requested.connect(self._file_grid.set_thumbnail_zoom)
         self._zoom_controls.reset_requested.connect(
             lambda: self._file_grid.set_thumbnail_zoom(DEFAULT_THUMBNAIL_WIDTH)
@@ -262,6 +263,9 @@ class MergeWindow(QWidget):
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         self._zoom_controls.set_value(thumbnail_width_px)
         self.statusBar().showMessage(f"Thumbnail size: {thumbnail_width_px} px")
+
+    def _on_thumbnail_failed(self, message: str) -> None:
+        self.statusBar().showMessage(message)
 
     def _open_preview(self, path: str) -> None:
         if self._preview_loader is not None:
