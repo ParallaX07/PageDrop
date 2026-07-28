@@ -1077,7 +1077,12 @@ class MainWindow(QMainWindow):
 
     def _undo(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.is_preview_visible():
+        if tab is None:
+            return
+        # Grid-edit undo stays blocked while preview is up; viewer markup undo is allowed.
+        if tab.is_preview_visible() and not (
+            tab.is_viewer_mode() and tab.markup_session.can_undo()
+        ):
             return
         if not tab.undo_edit():
             return
@@ -1089,7 +1094,11 @@ class MainWindow(QMainWindow):
 
     def _redo(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.is_preview_visible():
+        if tab is None:
+            return
+        if tab.is_preview_visible() and not (
+            tab.is_viewer_mode() and tab.markup_session.can_redo()
+        ):
             return
         if not tab.redo_edit():
             return

@@ -102,6 +102,47 @@ def test_annot_tools_and_markup_dirty_undo_save(
     assert "Highlight" in types
 
 
+def test_viewer_markup_undo_redo_via_main_window(
+    qtbot, main_window, markup_pdf: Path
+) -> None:
+    """Enabled Undo/Redo in viewer must undo markup — not no-op on preview guard."""
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+
+    # Grid-edit undo exists, then enter viewer: action must stay disabled (no markup yet).
+    tab.thumbnail_grid.selection_manager.set_selection({0})
+    assert tab.delete_selected_pages()
+    assert tab.edit_model.can_undo()
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+    window._update_undo_redo_actions()
+    assert not window._undo_action.isEnabled()
+    window._undo()  # must not close viewer / undo grid
+    assert tab.is_viewer_mode()
+    assert tab.edit_model.can_undo()
+
+    session = tab.markup_session
+    session.push_annotation(
+        AnnotationOp(kind="highlight", page_index=0, rects=((40, 60, 120, 90),))
+    )
+    tab.viewer_widget.markup_changed.emit()
+    qtbot.waitUntil(lambda: window._undo_action.isEnabled(), timeout=2000)
+    assert not window._redo_action.isEnabled()
+
+    window._undo()
+    assert not session.can_undo()
+    assert session.can_redo()
+    assert tab.is_viewer_mode()
+    assert window._redo_action.isEnabled()
+
+    window._redo()
+    assert session.can_undo()
+    assert not session.can_redo()
+    assert tab.is_viewer_mode()
+
+
 def test_text_markup_uses_char_rects_not_drag_box(qtbot) -> None:
     from PyQt6.QtCore import QPointF
 
