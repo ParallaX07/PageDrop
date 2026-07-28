@@ -6,6 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
+from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
@@ -54,6 +55,10 @@ class PdfTab(QWidget):
         # Main-thread only — never pass these docs into QRunnable workers
         # (see core.thread_policy). Workers open by path themselves.
         self._loader_cache: dict[str, PdfLoader] = {}
+        # Runtime-only unlock secrets for open sources (Save As / extract /
+        # get_loader cache miss). Dropped on tab close — never QSettings.
+        # passwords stay as str; Python can't scrub interned strings.
+        self._credentials = RuntimeCredentials()
         self._pdf_path: str | None = None
         self._dirty = False
         self._drop_initialized = False
@@ -108,6 +113,10 @@ class PdfTab(QWidget):
     @property
     def markup_session(self) -> MarkupSession:
         return self._markup
+
+    @property
+    def credentials(self) -> RuntimeCredentials:
+        return self._credentials
 
     def peek_markup_ops(self):
         return self._markup.ops()
@@ -247,7 +256,9 @@ class PdfTab(QWidget):
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""
         if path not in self._loader_cache:
-            self._loader_cache[path] = PdfLoader(path)
+            self._loader_cache[path] = PdfLoader(
+                path, password=self._credentials.get(path)
+            )
         self._evict_idle_loaders(keep={path})
         return self._loader_cache[path]
 
@@ -266,6 +277,8 @@ class PdfTab(QWidget):
         self._quality_guidance_shown = False
 
         loader = PdfLoader(path, password=password)
+        if password is not None:
+            self._credentials.set(path, password)
         self._loader_cache[path] = loader
         self._edit_model = PdfEditModel(path, loader.page_count)
         self._markup.clear()
@@ -401,10 +414,20 @@ class PdfTab(QWidget):
         self.close_preview()
         self._sync_dirty_from_model()
 
-    def init_from_page_refs(self, refs: list[PageRef]) -> None:
+    def init_from_page_refs(
+        self,
+        refs: list[PageRef],
+        *,
+        credentials: RuntimeCredentials | None = None,
+    ) -> None:
         """Initialize a blank tab from a cross-window page transfer."""
         if not refs or self._edit_model is not None:
             return
+
+        if credentials is not None:
+            self._credentials.adopt(
+                credentials, {ref.source_path for ref in refs}
+            )
 
         for ref in refs:
             self.get_loader(ref.source_path)
@@ -462,6 +485,7 @@ class PdfTab(QWidget):
         for loader in self._loader_cache.values():
             loader.close()
         self._loader_cache.clear()
+        self._credentials.clear()
 
     def _evict_idle_loaders(self, *, keep: set[str] | None = None) -> None:
         """Close unreferenced source loaders beyond LOADER_CACHE_IDLE_MAX."""

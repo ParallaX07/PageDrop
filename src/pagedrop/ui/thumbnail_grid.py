@@ -1362,12 +1362,24 @@ class ThumbnailGrid(QScrollArea):
         if self._model is None:
             if tab is None or not tab.is_blank:
                 return False
-            tab.init_from_page_refs(refs)
+            source_tab = (
+                source_grid._parent_tab() if source_grid is not None else None
+            )
+            creds = source_tab.credentials if source_tab is not None else None
+            tab.init_from_page_refs(refs, credentials=creds)
             inited_blank_tab = True
-        elif not self.insert_page_refs(refs, drop_index):
-            return False
-        elif tab is not None:
-            tab._on_pages_inserted()
+        else:
+            if source_grid is not None and tab is not None:
+                source_tab = source_grid._parent_tab()
+                if source_tab is not None:
+                    tab.credentials.adopt(
+                        source_tab.credentials,
+                        {ref.source_path for ref in refs},
+                    )
+            if not self.insert_page_refs(refs, drop_index):
+                return False
+            if tab is not None:
+                tab._on_pages_inserted()
 
         target_name = ""
         if tab is not None and tab.edit_model is not None:
@@ -1679,6 +1691,7 @@ class ThumbnailGrid(QScrollArea):
             refs,
             output_dir,
             base_name,
+            passwords=self._source_passwords(),
         )
 
     def extract_all_to_folder(self, output_dir) -> list:
@@ -1690,7 +1703,18 @@ class ThumbnailGrid(QScrollArea):
             return []
         refs = [self._model.page_at(i) for i in range(total)]
         base_name = Path(self._model.original_path).stem
-        return extract_page_refs_to_files(refs, output_dir, base_name)
+        return extract_page_refs_to_files(
+            refs,
+            output_dir,
+            base_name,
+            passwords=self._source_passwords(),
+        )
+
+    def _source_passwords(self) -> dict[str, str] | None:
+        tab = self._parent_tab()
+        if tab is None:
+            return None
+        return tab.credentials.snapshot()
 
     def _set_focused_index(self, index: int) -> None:
         if not self._cards:

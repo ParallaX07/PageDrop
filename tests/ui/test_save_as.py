@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+
+import fitz
 from PyQt6.QtCore import QMimeData
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QInputDialog
 
 from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, encode_page_refs
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import remember_directory
 from tests.conftest import wait_for_pdf_loaded
+from tests.core.test_jobs import _encrypted_pdf
+
+
+def _file_hash(path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _active_tab(window: MainWindow) -> PdfTab:
@@ -146,3 +154,47 @@ def test_close_dirty_tab_shows_prompt(main_window, five_page_pdf, monkeypatch, q
     assert prompt_calls == [tab]
     assert main_window._tab_manager.count() == count_before
     assert tab.is_dirty
+
+
+def test_encrypted_save_as_uses_runtime_credentials(
+    main_window, tmp_path, monkeypatch, qtbot
+):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = _file_hash(enc)
+    output = tmp_path / "copy.pdf"
+
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("secret", True),
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+
+    main_window.showMinimized()
+    main_window._load_pdf(str(enc))
+    assert main_window._loader is not None
+    tab = _active_tab(main_window)
+
+    assert tab.credentials.get(str(enc)) == "secret"
+    # Simulate loader cache miss — reopen must still authenticate via credentials.
+    tab._loader_cache.pop(str(enc)).close()
+    reopened = tab.get_loader(str(enc))
+    assert reopened.page_count == 1
+
+    assert main_window._save_as(tab) is True
+    assert output.is_file()
+    assert _file_hash(enc) == source_hash
+    out = fitz.open(str(output))
+    try:
+        assert out.page_count == 1
+        assert not out.needs_pass
+    finally:
+        out.close()
+
+    tab.close_loader()
+    assert len(tab.credentials) == 0

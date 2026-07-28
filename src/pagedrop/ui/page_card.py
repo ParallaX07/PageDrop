@@ -22,6 +22,7 @@ from pagedrop.core.drag_mime import (
 )
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
+from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.base_file_card import BaseFileCard
 from pagedrop.ui.theme import CARD_PADDING, accent_qcolor, page_card_stylesheet
@@ -307,7 +308,15 @@ class PageCard(BaseFileCard):
                 refs,
                 output_dir,
                 base_name,
+                passwords=self._source_passwords(),
             )
+        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            QMessageBox.critical(
+                self.window(),
+                "Extract Pages",
+                f"Could not prepare pages for drag-and-drop:\n{exc}",
+            )
+            return
         except OSError as exc:
             QMessageBox.critical(
                 self.window(),
@@ -412,6 +421,19 @@ class PageCard(BaseFileCard):
         painter.end()
 
         return canvas
+
+    def _source_passwords(self) -> dict[str, str] | None:
+        from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+
+        current = self.parentWidget()
+        while current is not None:
+            if isinstance(current, ThumbnailGrid):
+                tab = current._parent_tab()
+                if tab is not None:
+                    return tab.credentials.snapshot()
+                return None
+            current = current.parentWidget()
+        return None
 
     def _apply_visual_state(self) -> None:
         self.setStyleSheet(

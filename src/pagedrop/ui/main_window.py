@@ -1494,6 +1494,13 @@ class MainWindow(QMainWindow):
         remember_directory(folder)
         try:
             paths = tab.thumbnail_grid.extract_selected_to_folder(Path(folder))
+        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            QMessageBox.critical(
+                self,
+                "Extract Pages",
+                f"Could not extract pages:\n{exc}",
+            )
+            return
         except OSError as exc:
             QMessageBox.critical(
                 self,
@@ -1530,6 +1537,13 @@ class MainWindow(QMainWindow):
         remember_directory(folder)
         try:
             paths = tab.thumbnail_grid.extract_all_to_folder(Path(folder))
+        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            QMessageBox.critical(
+                self,
+                "Export All Pages",
+                f"Could not export pages:\n{exc}",
+            )
+            return
         except OSError as exc:
             QMessageBox.critical(
                 self,
@@ -1559,7 +1573,7 @@ class MainWindow(QMainWindow):
             return
 
         new_tab = self._tab_manager.add_blank_tab()
-        new_tab.init_from_page_refs(list(refs))
+        new_tab.init_from_page_refs(list(refs), credentials=tab.credentials)
         self._tab_manager.setCurrentWidget(new_tab)
         self._tab_manager.update_tab_title(new_tab)
         self._sync_toolbar_from_active_tab()
@@ -1585,7 +1599,7 @@ class MainWindow(QMainWindow):
         target = new_window._active_tab()
         if target is None or not target.is_blank:
             target = new_window._tab_manager.add_blank_tab()
-        target.init_from_page_refs(list(refs))
+        target.init_from_page_refs(list(refs), credentials=tab.credentials)
         new_window._tab_manager.setCurrentWidget(target)
         new_window._tab_manager.update_tab_title(target)
         new_window._sync_toolbar_from_active_tab()
@@ -2005,7 +2019,19 @@ class MainWindow(QMainWindow):
             return False
 
         try:
-            write_pdf(model, path, markup=target.markup_session.non_redaction_ops() or None)
+            write_pdf(
+                model,
+                path,
+                markup=target.markup_session.non_redaction_ops() or None,
+                passwords=target.credentials.snapshot(),
+            )
+        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            QMessageBox.critical(
+                self,
+                "Save As",
+                f"Could not save PDF:\n{exc}",
+            )
+            return False
         except OSError as exc:
             QMessageBox.critical(
                 self,

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import fitz
 import pytest
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
+from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.pdf_writer import merge_pdf_files, write_pdf
+from tests.core.test_jobs import _encrypted_pdf
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_distinct_pdf(path: Path, widths: list[int]) -> None:
@@ -125,3 +132,50 @@ def test_write_applies_page_rotation(five_page_pdf, tmp_path):
         assert out[3].rotation == 0
     finally:
         out.close()
+
+
+def test_write_encrypted_with_password_leaves_source_unchanged(tmp_path):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = _file_hash(enc)
+
+    model = PdfEditModel(str(enc), 1)
+    output = tmp_path / "unlocked_copy.pdf"
+    write_pdf(model, str(output), passwords={str(enc): "secret"})
+
+    assert _file_hash(enc) == source_hash
+    assert output.resolve() != enc.resolve()
+    out = fitz.open(str(output))
+    try:
+        assert out.page_count == 1
+        assert not out.needs_pass
+    finally:
+        out.close()
+
+
+def test_write_encrypted_without_password_fails_clearly(tmp_path):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = _file_hash(enc)
+
+    model = PdfEditModel(str(enc), 1)
+    output = tmp_path / "out.pdf"
+    with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
+        write_pdf(model, str(output))
+
+    assert _file_hash(enc) == source_hash
+    assert not output.exists()
+
+
+def test_write_encrypted_wrong_password_fails_clearly(tmp_path):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = _file_hash(enc)
+
+    model = PdfEditModel(str(enc), 1)
+    output = tmp_path / "out.pdf"
+    with pytest.raises(PdfPasswordError, match="Incorrect password"):
+        write_pdf(model, str(output), passwords={str(enc): "wrong"})
+
+    assert _file_hash(enc) == source_hash
+    assert not output.exists()
