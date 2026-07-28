@@ -78,6 +78,7 @@ def handle_export_from_pdf(ctx: JobContext) -> Path:
             jpeg_quality=jpeg_quality,
             password=password,
             overwrite=True,
+            cancel=ctx.cancel,
         )
         if not written:
             raise ValueError("Export produced no files")
@@ -102,6 +103,7 @@ def handle_export_from_pdf(ctx: JobContext) -> Path:
         jpeg_quality=jpeg_quality,
         password=password,
         overwrite=True,
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 

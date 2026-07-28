@@ -24,6 +24,7 @@ def handle_split_ranges(ctx: JobContext) -> Path:
         ctx.staging.job_dir,
         base_name=base_name,
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     ctx.cancel.check()
     if not staged:
@@ -45,6 +46,7 @@ def handle_reverse(ctx: JobContext) -> Path:
         add_blank_page=bool(ctx.spec.options.get("add_blank_page", False)),
         blank_size_from=str(ctx.spec.options.get("blank_size_from", "last")),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -59,6 +61,7 @@ def handle_alternate(ctx: JobContext) -> Path:
         start_with_a=bool(ctx.spec.options.get("start_with_a", True)),
         password_a=_password(ctx, a),
         password_b=_password(ctx, b),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -72,6 +75,7 @@ def handle_n_up(ctx: JobContext) -> Path:
         cols=int(ctx.spec.options["cols"]),
         margin_pt=float(ctx.spec.options.get("margin_pt", 0.0)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -83,6 +87,7 @@ def handle_booklet(ctx: JobContext) -> Path:
         str(ctx.staged_output),
         margin_pt=float(ctx.spec.options.get("margin_pt", 0.0)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -95,6 +100,7 @@ def handle_posterize(ctx: JobContext) -> Path:
         rows=int(ctx.spec.options["rows"]),
         cols=int(ctx.spec.options["cols"]),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -106,6 +112,7 @@ def handle_divide(ctx: JobContext) -> Path:
         str(ctx.staged_output),
         direction=str(ctx.spec.options["direction"]),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -116,6 +123,7 @@ def handle_combine_long(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -130,6 +138,7 @@ def handle_normalize(ctx: JobContext) -> Path:
         strategy=str(ctx.spec.options.get("strategy", "fit")),
         margins_pt=float(ctx.spec.options.get("margins_pt", 0.0)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -225,6 +234,7 @@ def handle_compare(ctx: JobContext) -> Path:
         dpi=int(ctx.spec.options.get("dpi", 120)),
         password_a=_password(ctx, a),
         password_b=_password(ctx, b),
+        cancel=ctx.cancel,
     )
     # Stash ratio for UI status via options mutation is forbidden; write a
     # promoted sidecar note next to the exported heatmap PDF.

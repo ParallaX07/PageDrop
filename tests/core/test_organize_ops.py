@@ -783,3 +783,72 @@ def test_compare_keeps_pixmap_cache_bounded(tmp_path: Path, monkeypatch: pytest.
     finally:
         out_doc.close()
 
+
+def test_n_up_cancel_mid_loop_cleans_staged(tmp_path, monkeypatch):
+    """Cancel during N-up sheet loop must not promote and must scrub staging."""
+    src = _make_text_pdf(
+        tmp_path / "src.pdf",
+        page_texts=["A", "B", "C", "D", "E", "F", "G", "H"],
+    )
+    src_hash = _file_hash(src)
+    out = tmp_path / "nup.pdf"
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = pdf_tools._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(pdf_tools, "_check_cancel", counting_check)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(
+                    "n_up",
+                    inputs=[str(src)],
+                    output=out,
+                    options={"rows": 1, "cols": 1, "margin_pt": 0.0},
+                ),
+                cancel=token,
+            )
+        assert not out.exists()
+        assert not any(temp._dir.glob("job_*"))
+        assert _file_hash(src) == src_hash
+    finally:
+        temp.cleanup()
+
+
+def test_compare_heatmap_cancel_mid_page(tmp_path, monkeypatch):
+    """Cancel between compare pages must not write the heatmap output."""
+    a = _make_text_pdf(tmp_path / "a.pdf", page_texts=["A1", "A2", "A3"])
+    b = _make_text_pdf(tmp_path / "b.pdf", page_texts=["B1", "B2", "B3"])
+    heatmap = tmp_path / "heatmap.pdf"
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = pdf_tools._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(pdf_tools, "_check_cancel", counting_check)
+    with pytest.raises(JobCancelledError):
+        pdf_tools.compare_pdfs_heatmap(
+            str(a),
+            str(b),
+            heatmap,
+            dpi=72,
+            sample_grid=(4, 4),
+            cancel=token,
+        )
+    assert not heatmap.exists()
+

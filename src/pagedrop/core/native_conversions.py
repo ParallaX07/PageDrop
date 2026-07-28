@@ -25,6 +25,7 @@ from pagedrop.core.capabilities import (
     probe,
     soft_import,
 )
+from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_tools import _open as _open_pdf
@@ -33,6 +34,11 @@ from pagedrop.core.supported_formats import (
     format_capability_available,
     import_format_for_path,
 )
+
+
+def _check_cancel(cancel: CancelToken | None) -> None:
+    if cancel is not None:
+        cancel.check()
 
 # Letter-ish page for Story layouts (PDF points).
 _STORY_MEDIABOX = fitz.Rect(0, 0, 612, 792)
@@ -406,13 +412,15 @@ def export_pdf(
     jpeg_quality: int = 90,
     password: str | None = None,
     overwrite: bool = False,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     """Export *source_path* to *format_id*; return written path(s).
 
     Multi-page image/SVG exports write into *output_path* when it is a
     directory, or beside a file path using ``stem_pNNN.ext`` naming.
     Single-file formats (text/json/xml/cbz/csv/xlsx) write exactly to
-    *output_path*.
+    *output_path*. Cooperative *cancel* is checked between pages; partial
+    staged files are the caller's responsibility.
     """
     source = Path(source_path)
     output = Path(output_path)
@@ -444,6 +452,7 @@ def export_pdf(
         password=password,
         overwrite=overwrite,
         format_id=spec.id,
+        cancel=cancel,
     )
 
 
@@ -481,6 +490,7 @@ def _export_raster(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     suffix = ".png" if format_id == "png" else ".jpg"
     doc = _open_pdf(str(source), password)
@@ -491,6 +501,7 @@ def _export_raster(
         zoom = dpi / 72.0
         matrix = fitz.Matrix(zoom, zoom)
         for index in indices:
+            _check_cancel(cancel)
             path = _page_output_path(
                 out_dir, stem, index, suffix, overwrite=overwrite
             )
@@ -540,6 +551,7 @@ def _export_webp(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del jpeg_quality, format_id
     doc = _open_pdf(str(source), password)
@@ -550,6 +562,7 @@ def _export_webp(
         zoom = dpi / 72.0
         matrix = fitz.Matrix(zoom, zoom)
         for index in indices:
+            _check_cancel(cancel)
             path = _page_output_path(
                 out_dir, stem, index, ".webp", overwrite=overwrite
             )
@@ -572,6 +585,7 @@ def _export_svg(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     doc = _open_pdf(str(source), password)
@@ -580,6 +594,7 @@ def _export_svg(
         out_dir, stem = _output_dir_and_stem(output, multi=True)
         written: list[Path] = []
         for index in indices:
+            _check_cancel(cancel)
             path = _page_output_path(
                 out_dir, stem, index, ".svg", overwrite=overwrite
             )
@@ -609,13 +624,17 @@ def _export_text(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
     doc = _open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
-        chunks = [doc[index].get_text("text") for index in indices]
+        chunks: list[str] = []
+        for index in indices:
+            _check_cancel(cancel)
+            chunks.append(doc[index].get_text("text"))
         path.write_text("\n".join(chunks), encoding="utf-8")
         return [path]
     finally:
@@ -632,19 +651,20 @@ def _export_json(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
     doc = _open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
-        payload = {
-            "source": source.name,
-            "pages": [
+        pages_payload: list[dict[str, object]] = []
+        for index in indices:
+            _check_cancel(cancel)
+            pages_payload.append(
                 {"index": index, "structure": doc[index].get_text("dict")}
-                for index in indices
-            ],
-        }
+            )
+        payload = {"source": source.name, "pages": pages_payload}
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -664,6 +684,7 @@ def _export_xml(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
@@ -672,6 +693,7 @@ def _export_xml(
         indices = _page_indices(doc, pages)
         root = ET.Element("document", source=source.name)
         for index in indices:
+            _check_cancel(cancel)
             page_el = ET.SubElement(root, "page", index=str(index))
             # MuPDF XML is a fragment; wrap as text to keep structure extractable.
             page_el.text = doc[index].get_text("xml")
@@ -692,6 +714,7 @@ def _export_cbz(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
@@ -702,6 +725,7 @@ def _export_cbz(
         matrix = fitz.Matrix(zoom, zoom)
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as zf:
             for n, index in enumerate(indices, start=1):
+                _check_cancel(cancel)
                 pix = doc[index].get_pixmap(matrix=matrix, alpha=False)
                 zf.writestr(f"{n:03d}.png", pix.tobytes("png"))
         return [path]
@@ -712,9 +736,11 @@ def _export_cbz(
 def _extract_table_rows(
     doc: fitz.Document,
     indices: Iterable[int],
+    cancel: CancelToken | None = None,
 ) -> list[list[str | None]]:
     rows: list[list[str | None]] = []
     for index in indices:
+        _check_cancel(cancel)
         finder = doc[index].find_tables()
         for table in finder.tables:
             for row in table.extract():
@@ -732,13 +758,14 @@ def _export_tables_csv(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
     doc = _open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
-        rows = _extract_table_rows(doc, indices)
+        rows = _extract_table_rows(doc, indices, cancel=cancel)
         with path.open("w", encoding="utf-8", newline="") as fh:
             writer = csv.writer(fh)
             for row in rows:
@@ -758,6 +785,7 @@ def _export_tables_json(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
@@ -766,6 +794,7 @@ def _export_tables_json(
         indices = _page_indices(doc, pages)
         tables: list[dict[str, object]] = []
         for index in indices:
+            _check_cancel(cancel)
             finder = doc[index].find_tables()
             for t_index, table in enumerate(finder.tables):
                 rows = [list(row) for row in table.extract()]
@@ -799,6 +828,7 @@ def _export_tables_xlsx(
     password: str | None,
     overwrite: bool,
     format_id: str,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     _require_capability(OPENPYXL)
@@ -814,7 +844,7 @@ def _export_tables_xlsx(
     doc = _open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
-        rows = _extract_table_rows(doc, indices)
+        rows = _extract_table_rows(doc, indices, cancel=cancel)
         workbook = openpyxl.Workbook()
         sheet = workbook.active
         sheet.title = "Tables"

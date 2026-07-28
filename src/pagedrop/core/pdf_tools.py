@@ -8,6 +8,7 @@ from typing import Any, Iterable, Literal, cast
 
 import fitz
 
+from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
@@ -18,6 +19,11 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_service import attachments_for_path, extract_attachment
+
+
+def _check_cancel(cancel: CancelToken | None) -> None:
+    if cancel is not None:
+        cancel.check()
 
 
 STANDARD_METADATA_KEYS: tuple[str, ...] = (
@@ -99,6 +105,7 @@ def extract_ranges_to_folder(
     base_name: str = "range",
     zero_pad: int = 4,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     """Extract each inclusive (start,end) page range into a separate PDF.
 
@@ -111,6 +118,7 @@ def extract_ranges_to_folder(
     out_paths: list[Path] = []
     try:
         for start, end in ranges:
+            _check_cancel(cancel)
             if start < 0 or end < start:
                 raise ValueError(f"Invalid range: {(start, end)}")
             if end >= len(src):
@@ -143,6 +151,7 @@ def alternate_pdfs(
     start_with_a: bool = True,
     password_a: str | None = None,
     password_b: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Create a new PDF by alternating pages from `pdf_a` and `pdf_b`.
 
@@ -158,6 +167,7 @@ def alternate_pdfs(
         j = 0
         a_turn = start_with_a
         while i < len(a) or j < len(b):
+            _check_cancel(cancel)
             if a_turn:
                 if i < len(a):
                     out.insert_pdf(a, from_page=i, to_page=i)
@@ -174,10 +184,10 @@ def alternate_pdfs(
                 a_turn = False
             if j >= len(b):
                 a_turn = True
+        out.save(output_path)
     finally:
         a.close()
         b.close()
-        out.save(output_path)
         out.close()
 
 
@@ -188,6 +198,7 @@ def reverse_pdf_pages(
     add_blank_page: bool = False,
     blank_size_from: str = "last",
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Reverse page order and optionally append a blank page.
 
@@ -199,6 +210,7 @@ def reverse_pdf_pages(
     out = fitz.open()
     try:
         for pno in reversed(range(len(src))):
+            _check_cancel(cancel)
             out.insert_pdf(src, from_page=pno, to_page=pno)
 
         if add_blank_page:
@@ -229,6 +241,7 @@ def normalize_pdf_page_size(
     strategy: str = "fit",
     margins_pt: float | tuple[float, float] = 0.0,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Normalize every page to an explicit target size.
 
@@ -260,6 +273,7 @@ def normalize_pdf_page_size(
 
         dest = fitz.Rect(mx, my, target_width_pt - mx, target_height_pt - my)
         for pno in range(len(src)):
+            _check_cancel(cancel)
             out_page = out.new_page(width=target_width_pt, height=target_height_pt)
             out_page.show_pdf_page(
                 dest, src, pno, keep_proportion=keep_proportion, overlay=True
@@ -279,6 +293,7 @@ def n_up_pdf(
     margin_pt: float = 0.0,
     keep_proportion: bool = True,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Pack multiple pages onto a grid (row-major order)."""
     reject_source_overwrite(output_path, source_pdf)
@@ -303,6 +318,7 @@ def n_up_pdf(
         per_sheet = rows * cols
         pno = 0
         while pno < len(src):
+            _check_cancel(cancel)
             sheet = out.new_page(width=out_w, height=out_h)
             for r in range(rows):
                 for c in range(cols):
@@ -334,6 +350,7 @@ def booklet_pdf(
     *,
     margin_pt: float = 0.0,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Simple 2-up "booklet-like" imposition.
 
@@ -362,6 +379,7 @@ def booklet_pdf(
         )
 
         for k in range(total_padded // 2):
+            _check_cancel(cancel)
             sheet = out.new_page(width=out_w, height=out_h)
             left_idx = k
             right_idx = total_padded - 1 - k
@@ -384,6 +402,7 @@ def posterize_pdf(
     rows: int,
     cols: int,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Split each page into a grid of cropped tiles (each tile becomes a page)."""
     reject_source_overwrite(output_path, source_pdf)
@@ -402,6 +421,7 @@ def posterize_pdf(
 
         dest = fitz.Rect(0, 0, w, h)
         for pno in range(len(src)):
+            _check_cancel(cancel)
             for r in range(rows):
                 for c in range(cols):
                     clip = fitz.Rect(c * tile_w, r * tile_h, (c + 1) * tile_w, (r + 1) * tile_h)
@@ -426,6 +446,7 @@ def divide_pdf_pages(
     *,
     direction: str,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Divide each page into 2 tiles and return a 2x page-count output.
 
@@ -451,6 +472,7 @@ def divide_pdf_pages(
             clip_left = fitz.Rect(0, 0, half_w, h)
             clip_right = fitz.Rect(half_w, 0, w, h)
             for pno in range(len(src)):
+                _check_cancel(cancel)
                 page = out.new_page(width=half_w, height=h)
                 page.show_pdf_page(
                     dest_left,
@@ -476,6 +498,7 @@ def divide_pdf_pages(
             clip_top = fitz.Rect(0, 0, w, half_h)
             clip_bottom = fitz.Rect(0, half_h, w, h)
             for pno in range(len(src)):
+                _check_cancel(cancel)
                 page = out.new_page(width=w, height=half_h)
                 page.show_pdf_page(
                     dest_top,
@@ -507,6 +530,7 @@ def combine_pages_to_single_long(
     *,
     axis: str = "vertical",
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Combine all pages into one long page (vertical stacking)."""
     reject_source_overwrite(output_path, source_pdf)
@@ -522,6 +546,7 @@ def combine_pages_to_single_long(
         scales: list[float] = []
         scaled_heights: list[float] = []
         for pno in range(len(src)):
+            _check_cancel(cancel)
             rect = _page_rect_for_source(src, pno)
             scale = out_w / float(rect.width)
             scales.append(scale)
@@ -532,6 +557,7 @@ def combine_pages_to_single_long(
 
         y = 0.0
         for pno, scale, sh in zip(range(len(src)), scales, scaled_heights, strict=True):
+            _check_cancel(cancel)
             rect = _page_rect_for_source(src, pno)
             # Keep aspect ratio: dest rect already has the scaled height.
             dest = fitz.Rect(0, y, out_w, y + sh)
@@ -943,6 +969,7 @@ def compare_pdfs_heatmap(
     max_pages: int | None = None,
     password_a: str | None = None,
     password_b: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> CompareResult:
     """Compare two PDFs visually via sampled pixel diffs and emit a heatmap PDF.
 
@@ -971,6 +998,7 @@ def compare_pdfs_heatmap(
 
         # Compare page-by-page; heatmap is one page per compared source page.
         for pno in range(page_limit):
+            _check_cancel(cancel)
             a_page = a[pno]
             b_page = b[pno]
             a_rect = a_page.rect

@@ -333,3 +333,80 @@ def test_rejects_source_overwrite(tmp_path):
     source = _make_text_pdf(tmp_path / "src.pdf", ["X"])
     with pytest.raises(Exception):
         nc.export_pdf(source, source, format_id="text", overwrite=True)
+
+
+def test_export_pdf_cancel_mid_page(tmp_path, monkeypatch):
+    """Cooperative cancel between raster pages must stop and leave no full set."""
+    from pagedrop.core.jobs import CancelToken, JobCancelledError
+
+    source = _make_text_pdf(tmp_path / "src.pdf", ["A", "B", "C", "D"])
+    out_dir = tmp_path / "pngs"
+    out_dir.mkdir()
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = nc._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(nc, "_check_cancel", counting_check)
+    with pytest.raises(JobCancelledError):
+        nc.export_pdf(source, out_dir, format_id="png", dpi=72, cancel=token)
+    # At most the page written before the cancelled check (page 1).
+    assert len(list(out_dir.glob("*.png"))) <= 1
+
+
+def test_export_job_cancel_cleans_staged_partials(tmp_path, monkeypatch):
+    """Job-runner cancel mid multi-page export must not promote and must scrub staging."""
+    from pagedrop.core.jobs import (
+        CancelToken,
+        JobCancelledError,
+        JobSpec,
+        SerializedJobRunner,
+    )
+    from pagedrop.core.native_conversion_jobs import register_native_conversion_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    source = _make_text_pdf(tmp_path / "src.pdf", ["A", "B", "C", "D"])
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    first_out = out_dir / "src_p001.png"
+
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = nc._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(nc, "_check_cancel", counting_check)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_native_conversion_handlers(runner)
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(
+                    "export_from_pdf",
+                    inputs=[str(source)],
+                    output=first_out,
+                    options={
+                        "format_id": "png",
+                        "output_dir": str(out_dir),
+                        "base_name": "src",
+                        "dpi": 72,
+                    },
+                ),
+                cancel=token,
+            )
+        assert not any(out_dir.glob("*.png"))
+        assert not any(temp._dir.glob("job_*"))
+    finally:
+        temp.cleanup()
