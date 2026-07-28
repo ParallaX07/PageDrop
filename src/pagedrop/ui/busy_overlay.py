@@ -8,6 +8,14 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidg
 # info | success | error | undo — property drives theme chrome
 ToastKind = str
 
+# Accessible description so AT hears kind, not only the message text.
+_TOAST_KIND_A11Y: dict[str, str] = {
+    "success": "Success notification",
+    "error": "Error notification",
+    "undo": "Undo notification",
+    "info": "Notification",
+}
+
 
 class BusyOverlay(QWidget):
     """Semi-transparent overlay that blocks interaction while work is in progress."""
@@ -133,6 +141,11 @@ class ToastOverlay(QWidget):
     ) -> None:
         self._message.setText(message)
         self._message.setProperty("kind", kind)
+        # Announce to assistive tech when the toast appears (O1).
+        self._message.setAccessibleName(message)
+        self._message.setAccessibleDescription(
+            _TOAST_KIND_A11Y.get(kind, "Notification")
+        )
         style = self._message.style()
         if style is not None:
             style.unpolish(self._message)

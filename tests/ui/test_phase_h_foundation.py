@@ -63,6 +63,21 @@ def test_toast_kinds_and_undo(main_window, qtbot):
     assert not toast.isVisible()
 
 
+def test_toast_announces_message_to_assistive_tech(qtbot):
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    toast = ToastOverlay(parent)
+    qtbot.addWidget(toast)
+
+    toast.show_toast("Job failed", kind="error")
+    assert toast._message.accessibleName() == "Job failed"
+    assert toast._message.accessibleDescription() == "Error notification"
+
+    toast.show_toast("Saved demo.pdf", kind="success")
+    assert toast._message.accessibleName() == "Saved demo.pdf"
+    assert toast._message.accessibleDescription() == "Success notification"
+
+
 def test_prompt_unsaved_and_overwrite_centralised(monkeypatch, qtbot):
     parent = QWidget()
     qtbot.addWidget(parent)
