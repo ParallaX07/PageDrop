@@ -60,16 +60,9 @@ class WindowManager(QObject):
         if not self._windows:
             self._maybe_quit()
 
-    def notify_utility_closed(self, closing: QWidget | None = None) -> None:
-        """Backward-compat no-op — tools live in editor tabs now."""
-        del closing
-        if not self._windows:
-            self._maybe_quit()
-
     def _register(self, window: MainWindow) -> None:
         self._windows.add(window)
 
-    def _maybe_quit(self, ignoring: QWidget | None = None) -> None:
-        del ignoring
+    def _maybe_quit(self) -> None:
         self.last_window_closing.emit()
         self._app.quit()

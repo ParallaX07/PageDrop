@@ -41,9 +41,6 @@ ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS: dict[str, str] = {
     "compare": "Dedicated CompareWindow UI; heatmap export shows overall diff ratio.",
 }
 
-# O7: all remaining Organize tiles use ToolShellWindow; no modal exceptions left.
-ORGANIZE_MODAL_TOOL_EXCEPTIONS: dict[str, str] = {}
-
 
 @dataclass(frozen=True)
 class EditorPdfContext:

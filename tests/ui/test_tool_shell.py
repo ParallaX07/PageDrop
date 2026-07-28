@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import QFileDialog
 from pagedrop.ui.organize_shell import SHELL_ORGANIZE_IDS, open_organize_shell
 from pagedrop.ui.organize_tools import (
     ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS,
-    ORGANIZE_MODAL_TOOL_EXCEPTIONS,
     ORGANIZE_TOOL_IDS,
     launch_organize_tool,
 )
@@ -269,8 +268,7 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch, q
 
 
 def test_migrated_organize_tool_uses_modeless_shell(qtbot, monkeypatch):
-    """Smoke: migrated tool IDs open ToolShellWindow (never modal _form_dialog)."""
-    assert ORGANIZE_MODAL_TOOL_EXCEPTIONS == {}
+    """Smoke: organize tools open ToolShellWindow (never modal catalogue jobs)."""
     assert ORGANIZE_TOOL_IDS == set(SHELL_ORGANIZE_IDS) | set(
         ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS.keys()
     )
