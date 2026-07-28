@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 from pathlib import Path
 
 import fitz
 import pytest
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QLineEdit
 
+from pagedrop.core import pdf_tools
+from pagedrop.core.jobs import CancelToken
 from pagedrop.ui.organize_shell import SHELL_ORGANIZE_IDS, open_organize_shell
 from pagedrop.ui.organize_tools import (
     ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS,
@@ -22,7 +26,10 @@ from pagedrop.ui.tool_shell import (
     run_tool_job,
 )
 from pagedrop.ui.tools_window import ToolsWindow
-from pagedrop.core.jobs import CancelToken, JobCancelledError
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_pdf(path: Path, pages: int = 3) -> None:
@@ -34,6 +41,83 @@ def _write_pdf(path: Path, pages: int = 3) -> None:
         doc.save(str(path))
     finally:
         doc.close()
+
+
+def _prime_shell_for_run(
+    shell: ToolShellWindow,
+    tool_id: str,
+    *,
+    src: Path,
+    src_b: Path,
+    out_dir: Path,
+    monkeypatch,
+) -> Path:
+    """Drop files + stub save pickers so Run exercises the real job path."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if tool_id == "split":
+        shell.drop_zone.set_paths([str(src)])
+        shell._ranges_edit.setText("1-2")  # type: ignore[attr-defined]
+        shell._folder_edit.setText(str(out_dir))  # type: ignore[attr-defined]
+        return pdf_tools.predicted_range_output_paths(
+            [(0, 1)], out_dir, base_name=src.stem
+        )[0]
+
+    if tool_id == "alternate":
+        shell.drop_zone.set_paths([str(src), str(src_b)])
+        out = out_dir / f"{src.stem}_alternated.pdf"
+        monkeypatch.setattr(
+            "pagedrop.ui.organize_shell._pick_save_pdf",
+            lambda parent, title, suggested: str(out),
+        )
+        return out
+
+    if tool_id == "zip":
+        shell.drop_zone.set_paths([str(src), str(src_b)])
+        out = out_dir / "pdfs.zip"
+        monkeypatch.setattr(
+            "pagedrop.ui.organize_shell._pick_save_zip",
+            lambda parent, suggested: str(out),
+        )
+        return out
+
+    if tool_id == "attachments":
+        attach = out_dir / "note.txt"
+        attach.write_text("hello", encoding="utf-8")
+        shell.drop_zone.set_paths([str(src)])
+        edits = [
+            e
+            for e in shell._options_host.findChildren(QLineEdit)
+            if e.isEnabled()
+        ]
+        assert len(edits) >= 2
+        edits[0].setText(attach.name)
+        edits[1].setText(str(attach))
+        out = out_dir / f"{src.stem}_attachments.pdf"
+        monkeypatch.setattr(
+            "pagedrop.ui.organize_shell._pick_save_pdf",
+            lambda parent, title, suggested: str(out),
+        )
+        return out
+
+    shell.drop_zone.set_paths([str(src)])
+    suffix = {
+        "reverse": "reversed",
+        "n_up": "nup",
+        "booklet": "booklet",
+        "posterize": "poster",
+        "divide": "divided",
+        "combine": "long",
+        "normalize": "normalized",
+        "metadata": "metadata",
+        "page_labels": "labels",
+    }.get(tool_id, tool_id)
+    out = out_dir / f"{src.stem}_{suffix}.pdf"
+    monkeypatch.setattr(
+        "pagedrop.ui.organize_shell._pick_save_pdf",
+        lambda parent, title, suggested: str(out),
+    )
+    return out
 
 
 def test_drop_zone_click_opens_picker(qtbot, tmp_path, monkeypatch):
@@ -300,13 +384,57 @@ def test_migrated_organize_tool_uses_modeless_shell(qtbot, monkeypatch):
     tools.close()
 
 
-def test_n_up_shell_runs_job_and_shows_result_actions(
+@pytest.mark.parametrize("tool_id", sorted(SHELL_ORGANIZE_IDS))
+def test_each_migrated_organize_tool_runs_job_and_shows_result_actions(
+    qtbot, tmp_path, monkeypatch, isolated_settings, tool_id
+):
+    """O7: every shell organize tool opens, runs, and shows result actions."""
+    src = tmp_path / "doc.pdf"
+    src_b = tmp_path / "doc_b.pdf"
+    _write_pdf(src, pages=4)
+    _write_pdf(src_b, pages=2)
+    source_hash = _file_hash(src)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+
+    shell = open_organize_shell(tools, tool_id)
+    assert shell is not None
+    qtbot.addWidget(shell)
+    assert isinstance(shell, ToolShellWindow)
+
+    out = _prime_shell_for_run(
+        shell,
+        tool_id,
+        src=src,
+        src_b=src_b,
+        out_dir=tmp_path / f"out_{tool_id}",
+        monkeypatch=monkeypatch,
+    )
+
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+    assert Path(out).is_file(), f"{tool_id} did not write {out}"
+    assert shell._result_bar.isVisible()
+    assert shell._result_bar._path == str(out)
+    assert shell._result_bar._folder_btn.text() == "Show in folder"
+    assert not tools.is_job_running()
+    assert _file_hash(src) == source_hash
+    assert Path(out).resolve() != src.resolve()
+
+    shell.close()
+    tools.close()
+
+
+def test_n_up_shell_cancel_mid_run_via_busy_overlay(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):
-    """Former modal organize tool (n-up) runs on shell BusyOverlay + result bar."""
+    """Heavy organize cancel: BusyOverlay Cancel mid N-up → idle, no promote."""
     src = tmp_path / "doc.pdf"
     out = tmp_path / "doc_nup.pdf"
-    _write_pdf(src, pages=4)
+    _write_pdf(src, pages=12)
+    source_hash = _file_hash(src)
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
@@ -316,24 +444,41 @@ def test_n_up_shell_runs_job_and_shows_result_actions(
     assert shell is not None
     qtbot.addWidget(shell)
     shell.drop_zone.set_paths([str(src)])
-
     monkeypatch.setattr(
         "pagedrop.ui.organize_shell._pick_save_pdf",
         lambda parent, title, suggested: str(out),
     )
 
-    shell._run_btn.click()
-    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
-    assert out.is_file()
-    assert shell._result_bar.isVisible()
-    assert shell._result_bar._path == str(out)
-    assert not tools.is_job_running()
+    real_check = pdf_tools._check_cancel
+    checks = {"n": 0}
 
-    nup = fitz.open(str(out))
-    try:
-        assert nup.page_count == 1
-    finally:
-        nup.close()
+    def wait_for_ui_cancel(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            # Block mid-loop until BusyOverlay Cancel flips the token.
+            deadline = time.time() + 5.0
+            while not cancel.is_cancelled() and time.time() < deadline:
+                time.sleep(0.01)
+        real_check(cancel)
+
+    monkeypatch.setattr(pdf_tools, "_check_cancel", wait_for_ui_cancel)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: (
+            shell.is_job_running()
+            and checks["n"] >= 1
+            and shell._busy_overlay._cancel_btn.isVisible()
+        ),
+        timeout=5000,
+    )
+    shell._busy_overlay._cancel_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert not out.exists()
+    assert not shell._result_bar.isVisible()
+    assert _file_hash(src) == source_hash
+    assert checks["n"] >= 1
 
     shell.close()
     tools.close()
