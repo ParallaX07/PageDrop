@@ -28,6 +28,21 @@ TEXT_MUTED = "#82828E"
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
 
+# Semantic status (compare diffs, validation errors)
+STATUS_SUCCESS = "#4CAF6E"
+STATUS_WARNING = "#F0B43C"
+
+# Viewer page paper — intentional light plane even under dark chrome
+VIEWER_PAGE_BG = "#FAFAFA"
+# Marks drawn on page paper (stay dark regardless of chrome theme)
+PAGE_INK = "#141414"
+# Find / search overlays drawn on the page (content, not chrome)
+SEARCH_HIT = "#FFDC00"
+SEARCH_HIT_ACTIVE = "#FF9100"
+SEARCH_HIT_ACTIVE_EDGE = "#C85A00"
+COMMENT_PIN = "#FFDC50"
+COMMENT_PIN_EDGE = "#B48C00"
+
 # Tinted shadow (cool blue, not pure black)
 SHADOW_RGB = (14, 22, 38)
 
@@ -837,7 +852,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#PdfViewerPage {{
-        background-color: #FAFAFA;
+        background-color: {VIEWER_PAGE_BG};
         border: 1px solid {border_subtle};
     }}
 
@@ -1135,12 +1150,28 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ConvertPreviewImage {{
-        background-color: #FAFAFA;
+        background-color: {VIEWER_PAGE_BG};
     }}
 
     QFrame#DropIndicator {{
         background-color: {ACCENT};
+        border: none;
         border-radius: 2px;
+    }}
+
+    QLabel#ComparePaneTitle,
+    QLabel#CompareSummary {{
+        color: {text_secondary};
+    }}
+
+    QLabel#CompareModeLabel {{
+        color: {ACCENT};
+        font-weight: 600;
+    }}
+
+    QLabel#ToolsErrorHint {{
+        color: {close_tab};
+        font-size: 12px;
     }}
 
     QWidget#ToolsCentral {{
@@ -1486,11 +1517,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     """
 
 
-def accent_qcolor() -> "QColor":
-    """Accent color for programmatic painting (drag badge, etc.)."""
+def token_qcolor(hex_color: str, alpha: int = 255) -> "QColor":
+    """Theme hex (#RRGGBB) → QColor, optional alpha for overlays."""
     from PyQt6.QtGui import QColor
 
-    return QColor(ACCENT)
+    color = QColor(hex_color)
+    if alpha < 255:
+        color.setAlpha(max(0, min(255, alpha)))
+    return color
+
+
+def accent_qcolor(*, alpha: int = 255) -> "QColor":
+    """Accent color for programmatic painting (drag badge, etc.)."""
+    return token_qcolor(ACCENT, alpha)
 
 
 def shadow_qcolor(*, alpha: int = 55) -> "QColor":

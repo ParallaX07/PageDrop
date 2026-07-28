@@ -234,8 +234,7 @@ def _configure_encrypt(shell: ToolShellWindow) -> None:
     strength.setAccessibleName("Password strength")
 
     mismatch = QLabel("")
-    mismatch.setObjectName("ToolsHint")
-    mismatch.setStyleSheet("color: #b00020;")
+    mismatch.setObjectName("ToolsErrorHint")
     mismatch.hide()
 
     def _refresh_strength() -> None:

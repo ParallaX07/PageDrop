@@ -131,6 +131,42 @@ def test_light_stylesheet_styles_dialogs(isolated_settings):
     assert "QPushButton#ToolbarPrimary" in light
 
 
+def test_theme_smoke_light_dark_and_high_contrast():
+    """O8: tokens + objectName chrome present in dark, light, and HC sheets."""
+    from pagedrop.ui.theme import (
+        STATUS_SUCCESS,
+        STATUS_WARNING,
+        VIEWER_PAGE_BG,
+        token_qcolor,
+    )
+
+    dark = app_stylesheet()
+    light = app_stylesheet(light=True)
+    high = app_stylesheet(high_contrast=True)
+
+    for sheet in (dark, light, high):
+        assert "QFrame#DropIndicator" in sheet
+        assert "QLabel#ToolsErrorHint" in sheet
+        assert "QLabel#ComparePaneTitle" in sheet
+        assert "QLabel#CompareModeLabel" in sheet
+        assert "QLabel#CompareSummary" in sheet
+        assert VIEWER_PAGE_BG in sheet
+
+    assert high != dark
+    assert "border: 3px solid" in high
+    assert STATUS_SUCCESS.startswith("#")
+    assert STATUS_WARNING.startswith("#")
+    assert token_qcolor(STATUS_SUCCESS, 90).alpha() == 90
+
+
+def test_drop_indicator_uses_object_name_not_inline_stylesheet(qtbot):
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    assert grid._drop_indicator.objectName() == "DropIndicator"
+    # Theme stylesheet owns the accent fill so theme refresh stays coherent.
+    assert not grid._drop_indicator.styleSheet()
+
+
 def test_progress_and_empty_state_accessible_names(main_window, qtbot):
     assert main_window._progress_bar.accessibleName() == "Page rendering progress"
 

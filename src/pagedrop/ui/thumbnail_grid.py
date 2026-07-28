@@ -64,7 +64,6 @@ from pagedrop.ui.grid_helpers import (
 )
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.theme import (
-    ACCENT,
     CARD_PADDING,
     CARD_WIDTH,
     DEFAULT_THUMBNAIL_WIDTH,
@@ -359,9 +358,6 @@ class ThumbnailGrid(QScrollArea):
         self._drop_insertion_index: int | None = None
         self._drop_indicator = QFrame(self._container)
         self._drop_indicator.setObjectName("DropIndicator")
-        self._drop_indicator.setStyleSheet(
-            f"background-color: {ACCENT}; border: none; border-radius: 1px;"
-        )
         self._drop_indicator.setFixedWidth(3)
         self._drop_indicator.hide()
         self._drag_autoscroller = DragAutoScroller(self)

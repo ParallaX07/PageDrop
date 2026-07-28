@@ -54,16 +54,17 @@ from pagedrop.ui.tool_page import StatusFooter, present_tool_page
 from pagedrop.ui.result_actions import ResultActionsBar, preview_pdf, show_in_folder
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
-    ACCENT,
     BG_CARD,
     CLOSE_TAB,
+    STATUS_SUCCESS,
+    STATUS_WARNING,
     TEXT_MUTED,
-    TEXT_SECONDARY,
+    token_qcolor,
 )
 
-_DELETED = QColor(232, 93, 93, 90)
-_ADDED = QColor(76, 175, 110, 90)
-_MODIFIED = QColor(240, 180, 60, 90)
+_DELETED = token_qcolor(CLOSE_TAB, 90)
+_ADDED = token_qcolor(STATUS_SUCCESS, 90)
+_MODIFIED = token_qcolor(STATUS_WARNING, 90)
 
 
 def _pick_pdf(parent: QWidget, title: str, initial: str = "") -> str | None:
@@ -154,9 +155,9 @@ class _ComparePageCanvas(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(BG_CARD))
+        painter.fillRect(self.rect(), token_qcolor(BG_CARD))
         if self._pixmap.isNull():
-            painter.setPen(QColor(TEXT_MUTED))
+            painter.setPen(token_qcolor(TEXT_MUTED))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No page")
             return
         painter.drawPixmap(0, 0, self._pixmap)
@@ -178,7 +179,7 @@ class _ComparePane(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         self._title = QLabel(title)
-        self._title.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._title.setObjectName("ComparePaneTitle")
         layout.addWidget(self._title)
 
         self._scroll = QScrollArea()
@@ -268,7 +269,7 @@ class CompareWindow(QWidget):
         toolbar.setMovable(False)
         root.addWidget(toolbar)
         self._mode_label = QLabel("  Side-by-side  ")
-        self._mode_label.setStyleSheet(f"color: {ACCENT}; font-weight: 600;")
+        self._mode_label.setObjectName("CompareModeLabel")
         toolbar.addWidget(self._mode_label)
         toolbar.addSeparator()
 
@@ -308,7 +309,7 @@ class CompareWindow(QWidget):
         side_layout.setSpacing(8)
         side_layout.addWidget(QLabel("Changes"))
         self._summary = QLabel("Deleted 0 · Added 0 · Modified 0")
-        self._summary.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._summary.setObjectName("CompareSummary")
         self._summary.setWordWrap(True)
         side_layout.addWidget(self._summary)
         self._change_list = QListWidget()
@@ -459,15 +460,15 @@ class CompareWindow(QWidget):
                 color = CLOSE_TAB
             elif change.kind == "added":
                 prefix = "Added"
-                color = "#4CAF6E"
+                color = STATUS_SUCCESS
             else:
                 prefix = "Changed"
-                color = "#F0B43C"
+                color = STATUS_WARNING
             page = (change.page_a if change.page_a is not None else change.page_b) or 0
             label = f"{prefix} “{_truncate(change.text, 72)}”  ·  p.{page + 1}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, change)
-            item.setForeground(QColor(color))
+            item.setForeground(token_qcolor(color))
             self._change_list.addItem(item)
 
     def _on_change_selected(self, row: int) -> None:
