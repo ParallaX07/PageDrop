@@ -10,17 +10,15 @@ import fitz
 import pytest
 
 from pagedrop.core import native_conversions as nc
-from pagedrop.core.capabilities import OPENPYXL, PI_HEIF, PILLOW, clear_cache
+from pagedrop.core.capabilities import OPENPYXL, clear_cache
 from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.core.supported_formats import (
     EXPORT_FROM_PDF_FORMATS,
     IMPORT_TO_PDF_FORMATS,
     export_from_pdf_dialog_filter,
     export_format,
-    import_extensions,
     import_format_for_path,
     import_to_pdf_dialog_filter,
-    is_native_import_path,
     is_supported_image,
 )
 
@@ -73,7 +71,6 @@ def test_import_export_registries_cover_phase25_formats():
         "text",
         "markdown",
         "html",
-        "heic",
     } <= import_ids
 
     export_ids = {spec.id for spec in EXPORT_FROM_PDF_FORMATS}
@@ -81,7 +78,6 @@ def test_import_export_registries_cover_phase25_formats():
         "png",
         "jpeg",
         "webp",
-        "tiff",
         "svg",
         "text",
         "json",
@@ -92,9 +88,8 @@ def test_import_export_registries_cover_phase25_formats():
         "xlsx",
     } <= export_ids
 
-    assert export_format("tiff").capability_id == PILLOW
     assert export_format("xlsx").capability_id == OPENPYXL
-    assert import_format_for_path("photo.HEIC").capability_id == PI_HEIF
+    assert import_format_for_path("photo.HEIC") is None
     assert not is_supported_image("photo.heic")
 
 
@@ -109,13 +104,12 @@ def test_dialog_filters_omit_gated_codecs_when_absent(monkeypatch):
         lambda capability_id, refresh=False: _Absent(),
     )
     filt = import_to_pdf_dialog_filter(available_only=True)
-    assert "*.heic" not in filt
     assert "*.svg" in filt
-    assert "*.heic" in import_to_pdf_dialog_filter(available_only=False)
+    assert "*.heic" not in filt
 
     export_filt = export_from_pdf_dialog_filter(available_only=True)
-    assert "*.tiff" not in export_filt
     assert "*.xlsx" not in export_filt
+    assert "*.tiff" not in export_filt
     assert "*.png" in export_filt
 
 
@@ -231,41 +225,6 @@ def test_webp_export(tmp_path):
     assert written[0].stat().st_size > 0
 
 
-def test_tiff_export_requires_pillow_when_absent(tmp_path, monkeypatch):
-    source = _make_text_pdf(tmp_path / "src.pdf", ["Tiff"])
-    clear_cache()
-
-    class _Absent:
-        available = False
-        detail = "Pillow not installed"
-
-        def __init__(self) -> None:
-            from pagedrop.core.capabilities import AbsenceReason
-
-            self.reason = AbsenceReason.CODEC_MISSING
-
-    monkeypatch.setattr(
-        "pagedrop.core.native_conversions.probe",
-        lambda capability_id, refresh=False: _Absent()
-        if capability_id == PILLOW
-        else type("S", (), {"available": True, "reason": None, "detail": ""})(),
-    )
-    with pytest.raises(BackendUnavailableError) as excinfo:
-        nc.export_pdf(source, tmp_path / "out", format_id="tiff")
-    assert excinfo.value.capability_id == PILLOW
-
-
-def test_tiff_export_uses_pillow_when_present(tmp_path):
-    pytest.importorskip("PIL")
-    clear_cache()
-    source = _make_text_pdf(tmp_path / "src.pdf", ["Tiff"])
-    before = _file_hash(source)
-    written = nc.export_pdf(source, tmp_path / "tiff_out", format_id="tiff", dpi=72)
-    assert written[0].suffix == ".tiff"
-    assert written[0].is_file()
-    assert _file_hash(source) == before
-
-
 def test_xlsx_export_requires_openpyxl_when_absent(tmp_path, monkeypatch):
     source = _make_table_pdf(tmp_path / "table.pdf")
     clear_cache()
@@ -288,38 +247,6 @@ def test_xlsx_export_requires_openpyxl_when_absent(tmp_path, monkeypatch):
     with pytest.raises(BackendUnavailableError) as excinfo:
         nc.export_pdf(source, tmp_path / "out.xlsx", format_id="xlsx")
     assert excinfo.value.capability_id == OPENPYXL
-
-
-def test_heic_import_requires_pi_heif(tmp_path, monkeypatch):
-    heic = tmp_path / "photo.heic"
-    heic.write_bytes(b"not-a-real-heic")
-    clear_cache()
-
-    class _Absent:
-        available = False
-        detail = "missing"
-
-        def __init__(self) -> None:
-            from pagedrop.core.capabilities import AbsenceReason
-
-            self.reason = AbsenceReason.CODEC_MISSING
-
-    monkeypatch.setattr(
-        "pagedrop.core.native_conversions.probe",
-        lambda capability_id, refresh=False: _Absent()
-        if capability_id == PI_HEIF
-        else type("S", (), {"available": True, "reason": None, "detail": ""})(),
-    )
-    monkeypatch.setattr(
-        "pagedrop.core.supported_formats.probe",
-        lambda capability_id, refresh=False: _Absent()
-        if capability_id == PI_HEIF
-        else type("S", (), {"available": True, "reason": None, "detail": ""})(),
-    )
-    assert not is_native_import_path(heic, available_only=True)
-    assert heic.suffix.lower() in import_extensions(available_only=False)
-    with pytest.raises(BackendUnavailableError):
-        nc.import_to_pdf(heic, tmp_path / "photo.pdf")
 
 
 def test_json_xml_structure_export(tmp_path):

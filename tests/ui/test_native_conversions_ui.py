@@ -8,7 +8,7 @@ import fitz
 import pytest
 from PyQt6.QtWidgets import QMessageBox
 
-from pagedrop.core.capabilities import OPENPYXL, PI_HEIF, PILLOW, clear_cache
+from pagedrop.core.capabilities import OPENPYXL, clear_cache
 from pagedrop.ui.native_convert_shell import (
     SHELL_CONVERT_IDS,
     _page_indices_from_text,
@@ -107,7 +107,7 @@ def test_export_dialog_omits_gated_formats_when_absent(
             self.reason = AbsenceReason.CODEC_MISSING
 
     def fake_probe(capability_id, refresh=False):
-        if capability_id in {PILLOW, OPENPYXL, PI_HEIF}:
+        if capability_id == OPENPYXL:
             return _Absent()
         return type("S", (), {"available": True, "reason": None, "detail": ""})()
 

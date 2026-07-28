@@ -23,8 +23,6 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.capabilities import (
-    PI_HEIF,
-    PILLOW,
     TESSDATA,
     AbsenceReason,
     CapabilityStatus,
@@ -316,24 +314,6 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("greyscale", "grayscale", "invert", "scanner"),
         action="modify",
-    ),
-    ToolEntry(
-        "export_tiff",
-        "Export TIFF",
-        "Export pages as TIFF images",
-        "Convert",
-        keywords=("image", "tiff"),
-        capability_id=PILLOW,
-        coming_soon=True,
-    ),
-    ToolEntry(
-        "import_heic",
-        "HEIC to PDF",
-        "Convert HEIC/HEIF images to PDF",
-        "Convert",
-        keywords=("heic", "heif", "apple", "photo"),
-        capability_id=PI_HEIF,
-        coming_soon=True,
     ),
     ToolEntry(
         "compress",

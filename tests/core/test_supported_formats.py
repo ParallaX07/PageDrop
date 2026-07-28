@@ -74,4 +74,5 @@ def test_native_import_helpers(tmp_path):
     assert is_native_import_path(svg)
     assert not is_native_import_path(tmp_path / "a.png")
     filt = import_to_pdf_dialog_filter(available_only=False)
-    assert "*.svg" in filt and "*.epub" in filt and "*.heic" in filt
+    assert "*.svg" in filt and "*.epub" in filt
+    assert "*.heic" not in filt

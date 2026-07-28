@@ -320,7 +320,7 @@ def test_missing_capability_dialog_reason_copy(monkeypatch, qtbot):
         detail="Pillow not installed",
     )
     monkeypatch.setenv("PAGEDROP_TESTING", "1")
-    assert prompt_missing_capability(host, status, tool_title="Export TIFF") == "cancel"
+    assert prompt_missing_capability(host, status, tool_title="Export XLSX") == "cancel"
 
     assert AbsenceReason.ENGINE_MISSING in dialogs_mod._REASON_COPY
     assert AbsenceReason.DATA_MISSING in dialogs_mod._REASON_COPY
@@ -366,14 +366,17 @@ def test_search_enter_focuses_first_tile(qtbot):
     window.close()
 
 
-def test_coming_soon_hidden_by_default_and_toggle_shows(qtbot):
+def test_coming_soon_toggle_hidden_when_none(qtbot):
+    """No coming-soon tiles remain — upcoming toggle stays hidden."""
+    from pagedrop.ui.tools_window import TOOL_CATALOGUE
+
+    assert not any(e.coming_soon for e in TOOL_CATALOGUE)
+
     window = ToolsWindow()
     qtbot.addWidget(window)
     window.show()
 
     visible_ids = {t.entry.id for t in window.visible_tiles()}
-    assert "export_tiff" not in visible_ids
-    assert "import_heic" not in visible_ids
     assert "viewer" not in visible_ids
     # Phase 27 Optimize & Secure tiles are live (not coming-soon).
     assert "compress" in visible_ids
@@ -382,42 +385,7 @@ def test_coming_soon_hidden_by_default_and_toggle_shows(qtbot):
     assert "ocr_pdf" in visible_ids
     assert "extract_tables" in visible_ids
 
-    assert window._upcoming_btn.isVisible()
-    assert "Show upcoming tools" in window._upcoming_btn.text()
-    window._upcoming_btn.setChecked(True)
-    visible_ids = {t.entry.id for t in window.visible_tiles()}
-    assert "export_tiff" in visible_ids
-    assert "import_heic" in visible_ids
-    assert "Hide upcoming tools" in window._upcoming_btn.text()
-    window.close()
-
-
-def test_codec_capability_gates_convert_tiles(monkeypatch, qtbot):
-    """TIFF / HEIC tiles stay blocked when their codec pack is absent."""
-    from pagedrop.core.capabilities import PI_HEIF, CapabilityStatus
-
-    def _fake_probe(capability_id: str, refresh: bool = False) -> CapabilityStatus:
-        del refresh
-        if capability_id in {PILLOW, PI_HEIF}:
-            return CapabilityStatus(
-                id=capability_id,
-                available=False,
-                reason=AbsenceReason.CODEC_MISSING,
-                detail="missing in test",
-            )
-        return CapabilityStatus(id=capability_id, available=True)
-
-    monkeypatch.setattr("pagedrop.ui.tools_window.probe", _fake_probe)
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window._upcoming_btn.setChecked(True)
-    window.show()
-
-    by_id = {t.entry.id: t for t in window._tiles}
-    for tool_id in ("export_tiff", "import_heic"):
-        tile = by_id[tool_id]
-        assert tile.is_blocked()
-        assert "Codec missing" in tile._subtitle.text()
+    assert not window._upcoming_btn.isVisible()
     window.close()
 
 

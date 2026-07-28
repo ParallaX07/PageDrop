@@ -10,7 +10,7 @@ Absence reasons match the shared configure UX:
 - ``engine_missing`` — converter / processing engine (Office COM, LibreOffice,
   Ghostscript, veraPDF, OpenCV)
 - ``data_missing`` — language or model data (tessdata)
-- ``codec_missing`` — format codec pack (Pillow, openpyxl, pi-heif)
+- ``codec_missing`` — format codec pack (Pillow, openpyxl)
 - ``licence_blocked`` — present but redistribution / use blocked by policy
   (reserved; probes do not invent a block without an explicit gate)
 """
@@ -33,7 +33,6 @@ LIBREOFFICE = "libreoffice"
 TESSDATA = "tessdata"
 PILLOW = "pillow"
 OPENPYXL = "openpyxl"
-PI_HEIF = "pi_heif"
 OPENCV = "opencv"
 GHOSTSCRIPT = "ghostscript"
 VERAPDF = "verapdf"
@@ -44,7 +43,6 @@ CAPABILITY_IDS: tuple[str, ...] = (
     TESSDATA,
     PILLOW,
     OPENPYXL,
-    PI_HEIF,
     OPENCV,
     GHOSTSCRIPT,
     VERAPDF,
@@ -478,9 +476,6 @@ _PROBES: dict[str, Callable[[], CapabilityStatus]] = {
     ),
     OPENPYXL: lambda: _probe_python_module(
         OPENPYXL, "openpyxl", AbsenceReason.CODEC_MISSING, "openpyxl"
-    ),
-    PI_HEIF: lambda: _probe_python_module(
-        PI_HEIF, "pi_heif", AbsenceReason.CODEC_MISSING, "pi-heif"
     ),
     OPENCV: lambda: _probe_python_module(
         OPENCV, "cv2", AbsenceReason.ENGINE_MISSING, "OpenCV"

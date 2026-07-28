@@ -236,7 +236,6 @@ def _configure_export_from_pdf(
             "png": ".png",
             "jpeg": ".jpg",
             "webp": ".webp",
-            "tiff": ".tiff",
             "svg": ".svg",
             "text": ".txt",
             "json": ".json",

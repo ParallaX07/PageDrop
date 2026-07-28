@@ -1,8 +1,8 @@
 """Native non-Office import / export conversions (Phase 25).
 
-PyMuPDF first; Pillow (TIFF), openpyxl (XLSX), and pi-heif (HEIC) only for
-true gaps. Soft-imports optional codecs via the capability registry — never
-import them at module top level.
+PyMuPDF first; Pillow (WebP fallback) and openpyxl (XLSX) only for true gaps.
+Soft-imports optional codecs via the capability registry — never import them
+at module top level.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import fitz
 
 from pagedrop.core.capabilities import (
     OPENPYXL,
-    PI_HEIF,
     PILLOW,
     AbsenceReason,
     probe,
@@ -75,14 +74,13 @@ def _page_indices(doc: fitz.Document, pages: Sequence[int] | None) -> list[int]:
 
 # Raster / SVG exports write one file per page.
 MULTI_PAGE_EXPORT_IDS: frozenset[str] = frozenset(
-    {"png", "jpeg", "webp", "tiff", "svg"}
+    {"png", "jpeg", "webp", "svg"}
 )
 
 _EXPORT_SUFFIX: dict[str, str] = {
     "png": ".png",
     "jpeg": ".jpg",
     "webp": ".webp",
-    "tiff": ".tiff",
     "svg": ".svg",
     "text": ".txt",
     "json": ".json",
@@ -149,9 +147,7 @@ def import_to_pdf(
     if output.exists() and not overwrite:
         raise NativeConvertError(f"Output already exists: {output}")
 
-    if spec.id == "heic":
-        _heic_to_pdf(source, output)
-    elif spec.id in {"markdown", "html"}:
+    if spec.id in {"markdown", "html"}:
         _story_document_to_pdf(source, output, kind=spec.id)
     else:
         _fitz_document_to_pdf(source, output)
@@ -291,69 +287,6 @@ def _markdown_to_controlled_html(md: str) -> str:
     )
 
 
-def _heic_to_pdf(source: Path, output: Path) -> None:
-    """Decode HEIC via pi-heif samples → fitz Pixmap page (no Pillow required)."""
-    _require_capability(PI_HEIF)
-    pi_heif, err = soft_import("pi_heif")
-    if pi_heif is None:
-        raise BackendUnavailableError(
-            PI_HEIF,
-            AbsenceReason.CODEC_MISSING,
-            f"pi-heif import failed: {err}",
-        )
-
-    try:
-        if hasattr(pi_heif, "is_supported") and not pi_heif.is_supported(str(source)):
-            raise NativeConvertError(f"Unsupported HEIC file: {source.name}")
-        heif = pi_heif.open_heif(str(source))
-    except NativeConvertError:
-        raise
-    except Exception as exc:
-        raise NativeConvertError(f"Could not decode HEIC {source.name}: {exc}") from exc
-
-    # open_heif may return a sequence; use primary / first image.
-    if isinstance(heif, (list, tuple)):
-        if not heif:
-            raise NativeConvertError(f"HEIC has no images: {source.name}")
-        heif = heif[0]
-
-    try:
-        width, height = heif.size
-        mode = str(getattr(heif, "mode", "RGB"))
-        data = bytes(heif.data)
-    except Exception as exc:
-        raise NativeConvertError(f"Could not read HEIC pixels: {exc}") from exc
-
-    if mode in {"RGBA", "RGBa"}:
-        colorspace = fitz.csRGB
-        alpha = 1
-    elif mode in {"RGB", "BGR"}:
-        colorspace = fitz.csRGB
-        alpha = 0
-    elif mode in {"L", "LA"}:
-        colorspace = fitz.csGRAY
-        alpha = 1 if mode == "LA" else 0
-    else:
-        raise NativeConvertError(f"Unsupported HEIC pixel mode: {mode}")
-
-    try:
-        pix = fitz.Pixmap(colorspace, width, height, data, alpha)
-        if mode == "BGR":
-            pix = fitz.Pixmap(fitz.csRGB, pix)
-    except Exception as exc:
-        raise NativeConvertError(f"Could not build pixmap from HEIC: {exc}") from exc
-
-    doc = fitz.open()
-    try:
-        page = doc.new_page(width=width, height=height)
-        page.insert_image(page.rect, pixmap=pix)
-        doc.save(str(output))
-    except Exception as exc:
-        raise NativeConvertError(f"Could not write PDF: {exc}") from exc
-    finally:
-        doc.close()
-
-
 # --- Export from PDF --------------------------------------------------------
 
 
@@ -386,7 +319,6 @@ def export_pdf(
         "png": _export_raster,
         "jpeg": _export_raster,
         "webp": _export_webp,
-        "tiff": _export_tiff,
         "svg": _export_svg,
         "text": _export_text,
         "json": _export_json,
@@ -518,40 +450,6 @@ def _export_webp(
             _assert_outputs_not_source(source, path)
             pix = doc[index].get_pixmap(matrix=matrix, alpha=False)
             _write_webp_bytes(pix.tobytes("png"), path)
-            written.append(path)
-        return written
-    finally:
-        doc.close()
-
-
-def _export_tiff(
-    source: Path,
-    output: Path,
-    *,
-    pages: Sequence[int] | None,
-    dpi: float,
-    jpeg_quality: int,
-    password: str | None,
-    overwrite: bool,
-    format_id: str,
-) -> list[Path]:
-    del jpeg_quality, format_id
-    _require_capability(PILLOW)
-    doc = _open_pdf(str(source), password)
-    try:
-        indices = _page_indices(doc, pages)
-        out_dir, stem = _output_dir_and_stem(output, multi=True)
-        written: list[Path] = []
-        zoom = dpi / 72.0
-        matrix = fitz.Matrix(zoom, zoom)
-        for index in indices:
-            path = _page_output_path(
-                out_dir, stem, index, ".tiff", overwrite=overwrite
-            )
-            _assert_outputs_not_source(source, path)
-            pix = doc[index].get_pixmap(matrix=matrix, alpha=False)
-            # Pillow via MuPDF helper — capability already probed.
-            pix.pil_save(str(path))
             written.append(path)
         return written
     finally:

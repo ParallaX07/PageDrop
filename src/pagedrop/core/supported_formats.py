@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from pagedrop.core.capabilities import OPENPYXL, PI_HEIF, PILLOW, probe
+from pagedrop.core.capabilities import OPENPYXL, probe
 
 SUPPORTED_IMAGE_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -47,12 +47,6 @@ IMPORT_TO_PDF_FORMATS: tuple[FormatSpec, ...] = (
     FormatSpec("text", frozenset({".txt"}), "Text"),
     FormatSpec("markdown", frozenset({".md", ".markdown"}), "Markdown"),
     FormatSpec("html", frozenset({".html", ".htm"}), "HTML"),
-    FormatSpec(
-        "heic",
-        frozenset({".heic", ".heif"}),
-        "HEIC",
-        capability_id=PI_HEIF,
-    ),
 )
 
 # PDF → other (Tools Export from PDF).
@@ -60,7 +54,6 @@ EXPORT_FROM_PDF_FORMATS: tuple[FormatSpec, ...] = (
     FormatSpec("png", frozenset({".png"}), "PNG"),
     FormatSpec("jpeg", frozenset({".jpg", ".jpeg"}), "JPEG"),
     FormatSpec("webp", frozenset({".webp"}), "WebP"),
-    FormatSpec("tiff", frozenset({".tif", ".tiff"}), "TIFF", capability_id=PILLOW),
     FormatSpec("svg", frozenset({".svg"}), "SVG"),
     FormatSpec("text", frozenset({".txt"}), "Text"),
     FormatSpec("json", frozenset({".json"}), "JSON structure"),

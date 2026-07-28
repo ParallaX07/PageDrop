@@ -40,7 +40,7 @@ def test_optional_import_failure_does_not_break_registry(
     real_import = importlib.import_module
 
     def boom(name: str, package: str | None = None):
-        if name in {"PIL", "openpyxl", "pi_heif", "cv2", "win32com.client"}:
+        if name in {"PIL", "openpyxl", "cv2", "win32com.client"}:
             raise RuntimeError(f"simulated broken optional: {name}")
         return real_import(name, package)
 
@@ -52,7 +52,6 @@ def test_optional_import_failure_does_not_break_registry(
     for cid in (
         capabilities.PILLOW,
         capabilities.OPENPYXL,
-        capabilities.PI_HEIF,
         capabilities.OPENCV,
     ):
         assert statuses[cid].available is False
@@ -100,7 +99,6 @@ def test_codec_vs_engine_reason_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     statuses = probe_all(refresh=True)
     assert statuses[capabilities.PILLOW].reason == AbsenceReason.CODEC_MISSING
     assert statuses[capabilities.OPENPYXL].reason == AbsenceReason.CODEC_MISSING
-    assert statuses[capabilities.PI_HEIF].reason == AbsenceReason.CODEC_MISSING
     assert statuses[capabilities.OPENCV].reason == AbsenceReason.ENGINE_MISSING
 
 
