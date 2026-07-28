@@ -10,6 +10,7 @@ from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_service import invalidate_doc_cache
 from pagedrop.ui.dialogs import confirm_delete_pages
 from pagedrop.ui.pdf_viewer import PdfViewerWidget
 from pagedrop.ui.settings import thumbnail_quality
@@ -482,10 +483,13 @@ class PdfTab(QWidget):
         )
 
     def _close_loader_cache(self) -> None:
+        paths = list(self._loader_cache)
         for loader in self._loader_cache.values():
             loader.close()
         self._loader_cache.clear()
         self._credentials.clear()
+        for path in paths:
+            invalidate_doc_cache(path)
 
     def _evict_idle_loaders(self, *, keep: set[str] | None = None) -> None:
         """Close unreferenced source loaders beyond LOADER_CACHE_IDLE_MAX."""
@@ -500,6 +504,7 @@ class PdfTab(QWidget):
             loader = self._loader_cache.pop(path, None)
             if loader is not None:
                 loader.close()
+            invalidate_doc_cache(path)
 
     def _sync_dirty_from_model(self) -> None:
         model_dirty = self._edit_model.is_dirty() if self._edit_model is not None else False

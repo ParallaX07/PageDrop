@@ -2,13 +2,16 @@
 
 Viewer, UI thumbnail/preview/merge/convert pools, and the job runner share
 ``FITZ_LOCK`` so MuPDF work never overlaps across Qt pools. Callers pass paths
-only; helpers open and close documents inside the lock. Upgrade path: dedicated
-PDF service process with the same call shapes.
+only; helpers borrow documents from a short-lived path→doc cache inside the
+lock and return bytes / dataclasses only — never a live ``fitz.Document``.
+Upgrade path: dedicated PDF service process with the same call shapes.
 """
 
 from __future__ import annotations
 
 import threading
+import time
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +29,23 @@ T = TypeVar("T")
 
 # Soft ceiling for interactive print; UI should warn above this.
 MAX_PRINT_PAGES = 200
+
+# ponytail: max 8 path→Document, idle TTL 60s. Raise max only if real
+# multi-source sessions regularly need more open paths — do not grow toward
+# the viewer pixmap LRU (48), which caches pixels, not MuPDF docs.
+# Upgrade path: dedicated PDF service process with its own cache.
+_DOC_CACHE_MAX = 8
+_DOC_CACHE_TTL_S = 60.0
+
+
+@dataclass
+class _DocCacheEntry:
+    doc: fitz.Document
+    password: str | None
+    last_used: float
+
+
+_doc_cache: OrderedDict[str, _DocCacheEntry] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -92,7 +112,49 @@ def call(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
         return fn(*args, **kwargs)  # type: ignore[arg-type]
 
 
+def invalidate_doc_cache(path: str | None = None) -> None:
+    """Drop cached docs for *path*, or the whole cache when *path* is None.
+
+    Call on tab close / source path change so the next open sees a fresh
+    ``fitz.Document``. Takes ``FITZ_LOCK`` (re-entrant).
+    """
+    with FITZ_LOCK:
+        if path is None:
+            _clear_doc_cache_locked()
+        else:
+            _evict_doc_locked(path)
+
+
+def doc_cache_size() -> int:
+    """Current cache entry count (tests / diagnostics)."""
+    with FITZ_LOCK:
+        return len(_doc_cache)
+
+
+def _evict_doc_locked(path: str) -> None:
+    entry = _doc_cache.pop(path, None)
+    if entry is not None:
+        entry.doc.close()
+
+
+def _clear_doc_cache_locked() -> None:
+    for entry in _doc_cache.values():
+        entry.doc.close()
+    _doc_cache.clear()
+
+
+def _purge_idle_locked(now: float) -> None:
+    stale = [
+        p
+        for p, entry in _doc_cache.items()
+        if now - entry.last_used > _DOC_CACHE_TTL_S
+    ]
+    for p in stale:
+        _evict_doc_locked(p)
+
+
 def _open(path: str, password: str | None = None) -> fitz.Document:
+    """Open a fresh document. Caller owns close / cache insertion."""
     ensure_no_fitz_document(path, what="pdf_service path")
     doc = fitz.open(path)
     if doc.needs_pass:
@@ -102,14 +164,37 @@ def _open(path: str, password: str | None = None) -> fitz.Document:
     return doc
 
 
+def _cache_get(path: str, password: str | None = None) -> fitz.Document:
+    """Get-or-open under ``FITZ_LOCK``. Document must not leave the lock.
+
+    Caller must already hold ``FITZ_LOCK`` (via ``call``).
+    """
+    now = time.monotonic()
+    _purge_idle_locked(now)
+
+    entry = _doc_cache.get(path)
+    if entry is not None:
+        if entry.password != password:
+            _evict_doc_locked(path)
+        else:
+            entry.last_used = now
+            _doc_cache.move_to_end(path)
+            return entry.doc
+
+    while len(_doc_cache) >= _DOC_CACHE_MAX:
+        old_path, old_entry = _doc_cache.popitem(last=False)
+        old_entry.doc.close()
+
+    doc = _open(path, password)
+    _doc_cache[path] = _DocCacheEntry(doc, password, now)
+    return doc
+
+
 def page_geometry(path: str, source_index: int, *, password: str | None = None) -> PageGeom:
     def _body() -> PageGeom:
-        doc = _open(path, password)
-        try:
-            rect = doc[source_index].rect
-            return PageGeom(rect.width, rect.height)
-        finally:
-            doc.close()
+        doc = _cache_get(path, password)
+        rect = doc[source_index].rect
+        return PageGeom(rect.width, rect.height)
 
     return call(_body)
 
@@ -124,18 +209,15 @@ def render_ref_png(
     """Render one ``PageRef`` to PNG under the fitz lock."""
 
     def _body() -> bytes:
-        doc = _open(ref.source_path, password)
-        try:
-            if ocg_on is not None:
-                _apply_ocg_visibility(doc, ocg_on)
-            return render_page_png(
-                doc,
-                ref.source_index,
-                width_px=width_px,
-                rotation=ref.rotation,
-            )
-        finally:
-            doc.close()
+        doc = _cache_get(ref.source_path, password)
+        if ocg_on is not None:
+            _apply_ocg_visibility(doc, ocg_on)
+        return render_page_png(
+            doc,
+            ref.source_index,
+            width_px=width_px,
+            rotation=ref.rotation,
+        )
 
     return call(_body)
 
@@ -166,27 +248,19 @@ def search_model(
 
     def _body() -> list[SearchHit]:
         hits: list[SearchHit] = []
-        open_docs: dict[str, fitz.Document] = {}
-        try:
-            for logical, ref in enumerate(model.iter_pages()):
-                if is_cancelled is not None and is_cancelled():
-                    return hits
-                doc = open_docs.get(ref.source_path)
-                if doc is None:
-                    doc = _open(ref.source_path, password)
-                    open_docs[ref.source_path] = doc
-                page = doc[ref.source_index]
-                for rect in page.search_for(query):
-                    hits.append(
-                        SearchHit(
-                            logical,
-                            (rect.x0, rect.y0, rect.x1, rect.y1),
-                        )
+        for logical, ref in enumerate(model.iter_pages()):
+            if is_cancelled is not None and is_cancelled():
+                return hits
+            doc = _cache_get(ref.source_path, password)
+            page = doc[ref.source_index]
+            for rect in page.search_for(query):
+                hits.append(
+                    SearchHit(
+                        logical,
+                        (rect.x0, rect.y0, rect.x1, rect.y1),
                     )
-            return hits
-        finally:
-            for doc in open_docs.values():
-                doc.close()
+                )
+        return hits
 
     return call(_body)
 
@@ -199,11 +273,8 @@ def page_text_dict(
     """Text geometry for selection (PyMuPDF ``get_text('rawdict')`` — includes chars)."""
 
     def _body() -> dict:
-        doc = _open(ref.source_path, password)
-        try:
-            return doc[ref.source_index].get_text("rawdict")
-        finally:
-            doc.close()
+        doc = _cache_get(ref.source_path, password)
+        return doc[ref.source_index].get_text("rawdict")
 
     return call(_body)
 
@@ -214,32 +285,29 @@ def page_links(
     password: str | None = None,
 ) -> list[LinkInfo]:
     def _body() -> list[LinkInfo]:
-        doc = _open(ref.source_path, password)
-        try:
-            out: list[LinkInfo] = []
-            for link in doc[ref.source_index].get_links():
-                r = link.get("from")
-                if r is None:
-                    continue
-                rect = (r.x0, r.y0, r.x1, r.y1)
-                kind = link.get("kind")
-                if kind == fitz.LINK_GOTO:
-                    out.append(
-                        LinkInfo(
-                            "goto",
-                            rect,
-                            page=int(link.get("page", 0)),
-                        )
+        doc = _cache_get(ref.source_path, password)
+        out: list[LinkInfo] = []
+        for link in doc[ref.source_index].get_links():
+            r = link.get("from")
+            if r is None:
+                continue
+            rect = (r.x0, r.y0, r.x1, r.y1)
+            kind = link.get("kind")
+            if kind == fitz.LINK_GOTO:
+                out.append(
+                    LinkInfo(
+                        "goto",
+                        rect,
+                        page=int(link.get("page", 0)),
                     )
-                elif kind == fitz.LINK_URI:
-                    out.append(
-                        LinkInfo("uri", rect, uri=str(link.get("uri", "")))
-                    )
-                else:
-                    out.append(LinkInfo("other", rect))
-            return out
-        finally:
-            doc.close()
+                )
+            elif kind == fitz.LINK_URI:
+                out.append(
+                    LinkInfo("uri", rect, uri=str(link.get("uri", "")))
+                )
+            else:
+                out.append(LinkInfo("other", rect))
+        return out
 
     return call(_body)
 
@@ -252,35 +320,32 @@ def outline_for_paths(
     def _body() -> list[OutlineItem]:
         items: list[OutlineItem] = []
         for path in paths:
-            doc = _open(path, password)
-            try:
-                for entry in doc.get_toc(simple=False):
-                    level = int(entry[0])
-                    title = str(entry[1])
-                    page1 = int(entry[2])
-                    source_index = max(0, page1 - 1) if page1 > 0 else 0
-                    top_y: float | None = None
-                    left_x: float | None = None
-                    if len(entry) > 3 and isinstance(entry[3], dict):
-                        dest = entry[3]
-                        dest_page = dest.get("page")
-                        if isinstance(dest_page, int) and dest_page >= 0:
-                            source_index = dest_page
-                        to = dest.get("to")
-                        if to is not None:
-                            try:
-                                left_x = float(to.x)
-                                top_y = float(to.y)
-                            except AttributeError:
-                                left_x = float(to[0])
-                                top_y = float(to[1])
-                    items.append(
-                        OutlineItem(
-                            level, title, path, source_index, top_y, left_x
-                        )
+            doc = _cache_get(path, password)
+            for entry in doc.get_toc(simple=False):
+                level = int(entry[0])
+                title = str(entry[1])
+                page1 = int(entry[2])
+                source_index = max(0, page1 - 1) if page1 > 0 else 0
+                top_y: float | None = None
+                left_x: float | None = None
+                if len(entry) > 3 and isinstance(entry[3], dict):
+                    dest = entry[3]
+                    dest_page = dest.get("page")
+                    if isinstance(dest_page, int) and dest_page >= 0:
+                        source_index = dest_page
+                    to = dest.get("to")
+                    if to is not None:
+                        try:
+                            left_x = float(to.x)
+                            top_y = float(to.y)
+                        except AttributeError:
+                            left_x = float(to[0])
+                            top_y = float(to[1])
+                items.append(
+                    OutlineItem(
+                        level, title, path, source_index, top_y, left_x
                     )
-            finally:
-                doc.close()
+                )
         return items
 
     return call(_body)
@@ -292,21 +357,18 @@ def layers_for_path(
     password: str | None = None,
 ) -> list[LayerInfo]:
     def _body() -> list[LayerInfo]:
-        doc = _open(path, password)
-        try:
-            out: list[LayerInfo] = []
-            for cfg in doc.layer_ui_configs():
-                out.append(
-                    LayerInfo(
-                        number=int(cfg.get("number", 0)),
-                        name=str(cfg.get("text") or cfg.get("name") or "Layer"),
-                        visible=bool(cfg.get("on", True)),
-                        source_path=path,
-                    )
+        doc = _cache_get(path, password)
+        out: list[LayerInfo] = []
+        for cfg in doc.layer_ui_configs():
+            out.append(
+                LayerInfo(
+                    number=int(cfg.get("number", 0)),
+                    name=str(cfg.get("text") or cfg.get("name") or "Layer"),
+                    visible=bool(cfg.get("on", True)),
+                    source_path=path,
                 )
-            return out
-        finally:
-            doc.close()
+            )
+        return out
 
     return call(_body)
 
@@ -317,17 +379,14 @@ def attachments_for_path(
     password: str | None = None,
 ) -> list[AttachmentInfo]:
     def _body() -> list[AttachmentInfo]:
-        doc = _open(path, password)
-        try:
-            names = list(doc.embfile_names())
-            out: list[AttachmentInfo] = []
-            for name in names:
-                info = doc.embfile_info(name) or {}
-                size = int(info.get("size") or info.get("length") or 0)
-                out.append(AttachmentInfo(name=name, size=size, source_path=path))
-            return out
-        finally:
-            doc.close()
+        doc = _cache_get(path, password)
+        names = list(doc.embfile_names())
+        out: list[AttachmentInfo] = []
+        for name in names:
+            info = doc.embfile_info(name) or {}
+            size = int(info.get("size") or info.get("length") or 0)
+            out.append(AttachmentInfo(name=name, size=size, source_path=path))
+        return out
 
     return call(_body)
 
@@ -343,27 +402,24 @@ def extract_attachment(
     dest.mkdir(parents=True, exist_ok=True)
 
     def _body() -> Path:
-        doc = _open(path, password)
-        try:
-            data = doc.embfile_get(name)
-            if data is None:
-                raise FileNotFoundError(f"Attachment not found: {name}")
-            safe = Path(name).name or "attachment.bin"
-            out_path = dest / safe
-            # Collision: append counter rather than overwrite silently.
-            if out_path.exists():
-                stem, suffix = out_path.stem, out_path.suffix
-                n = 1
-                while True:
-                    candidate = dest / f"{stem}_{n}{suffix}"
-                    if not candidate.exists():
-                        out_path = candidate
-                        break
-                    n += 1
-            out_path.write_bytes(data)
-            return out_path
-        finally:
-            doc.close()
+        doc = _cache_get(path, password)
+        data = doc.embfile_get(name)
+        if data is None:
+            raise FileNotFoundError(f"Attachment not found: {name}")
+        safe = Path(name).name or "attachment.bin"
+        out_path = dest / safe
+        # Collision: append counter rather than overwrite silently.
+        if out_path.exists():
+            stem, suffix = out_path.stem, out_path.suffix
+            n = 1
+            while True:
+                candidate = dest / f"{stem}_{n}{suffix}"
+                if not candidate.exists():
+                    out_path = candidate
+                    break
+                n += 1
+        out_path.write_bytes(data)
+        return out_path
 
     return call(_body)
 
@@ -390,25 +446,22 @@ def page_widgets(
     from pagedrop.core.forms import document_has_xfa
 
     def _body() -> list[WidgetInfo]:
-        doc = _open(path, password)
-        try:
-            if document_has_xfa(doc):
-                return []
-            if source_index < 0 or source_index >= doc.page_count:
-                return []
-            out: list[WidgetInfo] = []
-            for widget in doc[source_index].widgets() or []:
-                rect = widget.rect
-                out.append(
-                    WidgetInfo(
-                        name=str(widget.field_name or ""),
-                        field_type=str(widget.field_type_string or "unknown"),
-                        value=str(widget.field_value or ""),
-                        rect=(rect.x0, rect.y0, rect.x1, rect.y1),
-                    )
+        doc = _cache_get(path, password)
+        if document_has_xfa(doc):
+            return []
+        if source_index < 0 or source_index >= doc.page_count:
+            return []
+        out: list[WidgetInfo] = []
+        for widget in doc[source_index].widgets() or []:
+            rect = widget.rect
+            out.append(
+                WidgetInfo(
+                    name=str(widget.field_name or ""),
+                    field_type=str(widget.field_type_string or "unknown"),
+                    value=str(widget.field_value or ""),
+                    rect=(rect.x0, rect.y0, rect.x1, rect.y1),
                 )
-            return out
-        finally:
-            doc.close()
+            )
+        return out
 
     return call(_body)
