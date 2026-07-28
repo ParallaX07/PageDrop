@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtWidgets import QLabel
 
 from pagedrop.ui.page_card import PageCard
+from pagedrop.ui.theme import app_stylesheet
 
 
 def test_set_thumbnail(qtbot):
@@ -16,7 +16,6 @@ def test_set_thumbnail(qtbot):
     pixmap.fill(QColor("red"))
     card.set_thumbnail(pixmap)
 
-    label = card.findChild(QLabel, "")
     thumbnail_label = card._thumbnail_label
     shown = thumbnail_label.pixmap()
     assert shown is not None
@@ -28,11 +27,17 @@ def test_set_selected_styles(qtbot):
     qtbot.addWidget(card)
 
     card.set_selected(False)
-    unselected_style = card.styleSheet()
+    assert card.property("selected") is False
+    assert not card.styleSheet()
 
     card.set_selected(True)
-    selected_style = card.styleSheet()
+    assert card.property("selected") is True
+    assert card.property("focused") is False
 
-    assert unselected_style != selected_style
-    assert "3px" in selected_style
-    assert "1px" in unselected_style
+    card.set_keyboard_focused(True)
+    assert card.property("focused") is True
+
+    sheet = app_stylesheet()
+    assert 'QFrame#PageCard[selected="true"]' in sheet
+    assert "QFrame#PageCard:hover" in sheet
+    assert 'QFrame#PageCard[focused="true"]' in sheet

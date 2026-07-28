@@ -69,6 +69,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         bg_grid = "#EBEDF0"
         bg_card = "#FFFFFF"
         bg_card_hover = "#E4E6EB"
+        bg_thumb_empty = "#D5D7DE"
         bg_toolbar = "#FFFFFF"
         bg_status = "#FFFFFF"
         bg_tab_bar = "#F2F3F5"
@@ -88,6 +89,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         bg_grid = BG_GRID
         bg_card = BG_CARD
         bg_card_hover = BG_CARD_HOVER
+        bg_thumb_empty = "#2A2A32"
         bg_toolbar = BG_TOOLBAR
         bg_status = BG_STATUS
         bg_tab_bar = BG_TAB_BAR
@@ -1231,6 +1233,129 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
         font-size: 13px;
     }}
+
+    /* Card / tile chrome — dynamic properties + :hover/:focus; no per-state setStyleSheet. */
+    QFrame#PageCard,
+    QFrame#MergeFileCard,
+    QFrame#ConvertFileCard {{
+        background-color: {bg_card};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CARD}px;
+    }}
+    QFrame#PageCard:hover,
+    QFrame#MergeFileCard:hover,
+    QFrame#ConvertFileCard:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+    QFrame#PageCard[focused="true"],
+    QFrame#MergeFileCard[focused="true"],
+    QFrame#ConvertFileCard[focused="true"] {{
+        border: 2px solid {ACCENT};
+    }}
+    QFrame#PageCard[selected="true"],
+    QFrame#MergeFileCard[selected="true"],
+    QFrame#ConvertFileCard[selected="true"] {{
+        border: 3px solid {ACCENT};
+    }}
+    QFrame#PageCard[selected="true"]:hover,
+    QFrame#MergeFileCard[selected="true"]:hover,
+    QFrame#ConvertFileCard[selected="true"]:hover {{
+        border-color: {ACCENT_HOVER};
+    }}
+    QLabel#PageCardThumbnail {{
+        background-color: {bg_thumb_empty};
+        border-radius: 6px;
+    }}
+    QLabel#PageCardLabel {{
+        color: {text_secondary};
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+    }}
+    QFrame#PageCard[selected="true"] QLabel#PageCardLabel {{
+        color: {text_primary};
+    }}
+    QLabel#PageCardPageOverlay {{
+        color: #FFFFFF;
+        background-color: rgba(19, 19, 22, 160);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }}
+    QLabel#PageCardRotationOverlay {{
+        color: #FFFFFF;
+        background-color: rgba(19, 19, 22, 160);
+        font-family: {FONT_MONO};
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 5px;
+        border-radius: 4px;
+    }}
+    QLabel#MergeFileCardThumbnail,
+    QLabel#ConvertFileCardThumbnail {{
+        background-color: transparent;
+        border: none;
+    }}
+    QLabel#MergeFileCardTitle,
+    QLabel#ConvertFileCardTitle {{
+        color: {text_primary};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#MergeFileCardSubtitle,
+    QLabel#ConvertFileCardSubtitle {{
+        color: {text_muted};
+        font-size: 11px;
+        font-weight: 500;
+    }}
+    QFrame#MergeFileCard[selected="true"] QLabel#MergeFileCardSubtitle,
+    QFrame#ConvertFileCard[selected="true"] QLabel#ConvertFileCardSubtitle {{
+        color: {text_secondary};
+    }}
+
+    QFrame#ToolTile {{
+        background-color: {bg_card};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CARD}px;
+    }}
+    QFrame#ToolTile:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+    QFrame#ToolTile[blocked="true"]:hover {{
+        background-color: {bg_card};
+        border-color: {border_subtle};
+    }}
+    QFrame#ToolTile:focus {{
+        background-color: {bg_card_hover};
+        border: 2px solid {ACCENT};
+    }}
+    QFrame#ToolTile[compact="true"] {{
+        border-radius: {max(6, RADIUS_CARD - 2)}px;
+    }}
+    QLabel#ToolTileTitle {{
+        color: {text_primary};
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: -0.1px;
+    }}
+    QFrame#ToolTile[blocked="true"] QLabel#ToolTileTitle,
+    QFrame#ToolTile[comingSoon="true"] QLabel#ToolTileTitle {{
+        color: {text_muted};
+    }}
+    QFrame#ToolTile[compact="true"] QLabel#ToolTileTitle {{
+        font-size: 12px;
+    }}
+    QLabel#ToolTileSubtitle {{
+        color: {text_muted};
+        font-size: 11px;
+        font-weight: 400;
+    }}
+    QFrame#ToolTile[compact="true"] QLabel#ToolTileSubtitle {{
+        font-size: 10px;
+    }}
     """
 
 
@@ -1251,35 +1376,6 @@ def shadow_qcolor(*, alpha: int = 55) -> "QColor":
         return QColor(30, 40, 60, min(alpha, 40))
     r, g, b = SHADOW_RGB
     return QColor(r, g, b, alpha)
-
-
-def _card_surface_colors() -> dict[str, str]:
-    """Surface / text / border tokens for per-card stylesheets."""
-    from pagedrop.ui.settings import light_theme
-
-    if light_theme():
-        return {
-            "BG_CARD": "#FFFFFF",
-            "BG_CARD_HOVER": "#E4E6EB",
-            "BG_THUMB_EMPTY": "#D5D7DE",
-            "BORDER_SUBTLE": "#D5D7DE",
-            "BORDER_DEFAULT": "#B4B7C0",
-            "BORDER_HOVER": "#8A8E99",
-            "TEXT_PRIMARY": "#1A1A1F",
-            "TEXT_SECONDARY": "#4A4A55",
-            "TEXT_MUTED": "#5A5D68",
-        }
-    return {
-        "BG_CARD": BG_CARD,
-        "BG_CARD_HOVER": BG_CARD_HOVER,
-        "BG_THUMB_EMPTY": "#2A2A32",
-        "BORDER_SUBTLE": BORDER_SUBTLE,
-        "BORDER_DEFAULT": BORDER_DEFAULT,
-        "BORDER_HOVER": BORDER_HOVER,
-        "TEXT_PRIMARY": TEXT_PRIMARY,
-        "TEXT_SECONDARY": TEXT_SECONDARY,
-        "TEXT_MUTED": TEXT_MUTED,
-    }
 
 
 def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
@@ -1304,183 +1400,3 @@ def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
     painter.end()
 
     return QIcon(pixmap)
-
-
-def page_card_stylesheet(*, selected: bool, hovered: bool, focused: bool = False) -> str:
-    c = _card_surface_colors()
-    border_color = ACCENT if selected else c["BORDER_DEFAULT"]
-    if selected and hovered:
-        border_color = ACCENT_HOVER
-    elif hovered:
-        border_color = c["BORDER_HOVER"]
-    elif focused:
-        border_color = ACCENT
-
-    border_width = 3 if selected else (2 if focused else 1)
-    background = c["BG_CARD_HOVER"] if hovered else c["BG_CARD"]
-    label_color = c["TEXT_PRIMARY"] if selected else c["TEXT_SECONDARY"]
-
-    return f"""
-    QFrame#PageCard {{
-        background-color: {background};
-        border: {border_width}px solid {border_color};
-        border-radius: {RADIUS_CARD}px;
-    }}
-    QLabel#PageCardThumbnail {{
-        background-color: {c["BG_THUMB_EMPTY"]};
-        border-radius: 6px;
-    }}
-    QLabel#PageCardLabel {{
-        color: {label_color};
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.3px;
-    }}
-    QLabel#PageCardPageOverlay {{
-        color: #FFFFFF;
-        background-color: rgba(19, 19, 22, 160);
-        font-size: 11px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
-    }}
-    QLabel#PageCardRotationOverlay {{
-        color: #FFFFFF;
-        background-color: rgba(19, 19, 22, 160);
-        font-family: {FONT_MONO};
-        font-size: 10px;
-        font-weight: 600;
-        padding: 2px 5px;
-        border-radius: 4px;
-    }}
-    """
-
-
-def merge_file_card_stylesheet(
-    *, selected: bool, hovered: bool, focused: bool = False
-) -> str:
-    c = _card_surface_colors()
-    border_color = ACCENT if selected else c["BORDER_DEFAULT"]
-    if selected and hovered:
-        border_color = ACCENT_HOVER
-    elif hovered:
-        border_color = c["BORDER_HOVER"]
-    elif focused:
-        border_color = ACCENT
-
-    border_width = 3 if selected else (2 if focused else 1)
-    background = c["BG_CARD_HOVER"] if hovered else c["BG_CARD"]
-    title_color = c["TEXT_PRIMARY"]
-    subtitle_color = c["TEXT_MUTED"] if not selected else c["TEXT_SECONDARY"]
-
-    return f"""
-    QFrame#MergeFileCard {{
-        background-color: {background};
-        border: {border_width}px solid {border_color};
-        border-radius: {RADIUS_CARD}px;
-    }}
-    QLabel#MergeFileCardThumbnail {{
-        background-color: transparent;
-        border: none;
-    }}
-    QLabel#MergeFileCardTitle {{
-        color: {title_color};
-        font-size: 12px;
-        font-weight: 600;
-    }}
-    QLabel#MergeFileCardSubtitle {{
-        color: {subtitle_color};
-        font-size: 11px;
-        font-weight: 500;
-    }}
-    """
-
-
-def convert_file_card_stylesheet(
-    *, selected: bool, hovered: bool, focused: bool = False
-) -> str:
-    c = _card_surface_colors()
-    border_color = ACCENT if selected else c["BORDER_DEFAULT"]
-    if selected and hovered:
-        border_color = ACCENT_HOVER
-    elif hovered:
-        border_color = c["BORDER_HOVER"]
-    elif focused:
-        border_color = ACCENT
-
-    border_width = 3 if selected else (2 if focused else 1)
-    background = c["BG_CARD_HOVER"] if hovered else c["BG_CARD"]
-    title_color = c["TEXT_PRIMARY"]
-    subtitle_color = c["TEXT_MUTED"] if not selected else c["TEXT_SECONDARY"]
-
-    return f"""
-    QFrame#ConvertFileCard {{
-        background-color: {background};
-        border: {border_width}px solid {border_color};
-        border-radius: {RADIUS_CARD}px;
-    }}
-    QLabel#ConvertFileCardThumbnail {{
-        background-color: transparent;
-        border: none;
-    }}
-    QLabel#ConvertFileCardTitle {{
-        color: {title_color};
-        font-size: 12px;
-        font-weight: 600;
-    }}
-    QLabel#ConvertFileCardSubtitle {{
-        color: {subtitle_color};
-        font-size: 11px;
-        font-weight: 500;
-    }}
-    """
-
-
-def tool_tile_stylesheet(
-    *,
-    focused: bool = False,
-    hovered: bool = False,
-    blocked: bool = False,
-    coming_soon: bool = False,
-    compact: bool = False,
-) -> str:
-    """Quiet catalogue tile — one brand accent on focus only (no category color rails)."""
-    c = _card_surface_colors()
-    if focused:
-        border_color = ACCENT
-        border_width = 2
-        background = c["BG_CARD_HOVER"]
-    elif hovered and not blocked:
-        border_color = c["BORDER_HOVER"]
-        border_width = 1
-        background = c["BG_CARD_HOVER"]
-    else:
-        border_color = c["BORDER_SUBTLE"]
-        border_width = 1
-        background = c["BG_CARD"]
-
-    title_color = c["TEXT_MUTED"] if blocked or coming_soon else c["TEXT_PRIMARY"]
-    subtitle_color = c["TEXT_MUTED"]
-    title_size = 12 if compact else 13
-    subtitle_size = 10 if compact else 11
-    # Slightly tighter radius in compact; keep one radius family with RADIUS_CARD.
-    radius = max(6, RADIUS_CARD - 2) if compact else RADIUS_CARD
-
-    return f"""
-    QFrame#ToolTile {{
-        background-color: {background};
-        border: {border_width}px solid {border_color};
-        border-radius: {radius}px;
-    }}
-    QLabel#ToolTileTitle {{
-        color: {title_color};
-        font-size: {title_size}px;
-        font-weight: 600;
-        letter-spacing: -0.1px;
-    }}
-    QLabel#ToolTileSubtitle {{
-        color: {subtitle_color};
-        font-size: {subtitle_size}px;
-        font-weight: 400;
-    }}
-    """

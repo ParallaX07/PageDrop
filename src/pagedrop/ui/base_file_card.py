@@ -7,7 +7,6 @@ internal reorder drag via InternalReorderFileCard.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, pyqtSignal
@@ -26,6 +25,13 @@ from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.theme import CARD_PADDING, CARD_WIDTH, shadow_qcolor
 
 
+def _repolish(widget: QFrame) -> None:
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
 class BaseFileCard(QFrame):
     """Thumbnail card with hover shadow, selection chrome, and click/drag shell."""
 
@@ -37,7 +43,6 @@ class BaseFileCard(QFrame):
         self._card_width = CARD_WIDTH
         self._source_pixmap: QPixmap | None = None
         self._selected = False
-        self._hovered = False
         self._drag_start_pos: QPoint | None = None
 
         self.setFixedWidth(self._card_width)
@@ -51,6 +56,15 @@ class BaseFileCard(QFrame):
         self._thumbnail_label = QLabel()
         self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._thumbnail_label.setMinimumHeight(80)
+
+    def _item_index(self) -> int:
+        raise NotImplementedError
+
+    def _can_start_drag(self) -> bool:
+        return False
+
+    def _start_drag(self) -> None:
+        raise NotImplementedError
 
     def _ensure_shadow(self) -> QGraphicsDropShadowEffect:
         if self._shadow is None:
@@ -68,23 +82,19 @@ class BaseFileCard(QFrame):
         self.setGraphicsEffect(None)
         self._shadow = None
 
-    def _item_index(self) -> int:
-        raise NotImplementedError
-
-    def _can_start_drag(self) -> bool:
-        return False
-
-    def _start_drag(self) -> None:
-        raise NotImplementedError
-
     def _apply_visual_state(self) -> None:
-        raise NotImplementedError
+        """Sync dynamic properties for shared app QSS (selected / keyboard focus)."""
+        self.setProperty("selected", self._selected)
+        self.setProperty("focused", self._keyboard_focused)
+        _repolish(self)
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         self._source_pixmap = pixmap
         self._refresh_thumbnail_display(fast=False)
 
     def set_selected(self, selected: bool) -> None:
+        if self._selected == selected:
+            return
         self._selected = selected
         self._apply_visual_state()
 
@@ -110,19 +120,15 @@ class BaseFileCard(QFrame):
         self._thumbnail_label.setMinimumHeight(display.height())
 
     def enterEvent(self, event: QEnterEvent) -> None:
-        self._hovered = True
         if not prefers_reduce_motion():
             shadow = self._ensure_shadow()
             shadow.setBlurRadius(18)
             shadow.setOffset(0, 4)
             shadow.setColor(shadow_qcolor(alpha=72))
-        self._apply_visual_state()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        self._hovered = False
         self._clear_shadow()
-        self._apply_visual_state()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -174,14 +180,12 @@ class InternalReorderFileCard(BaseFileCard):
         subtitle: str,
         *,
         object_name: str,
-        stylesheet_fn: Callable[..., str],
         tooltip: str,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.file_index = file_index
         self.path = path
-        self._stylesheet_fn = stylesheet_fn
         self._selection_manager: SelectionManager | None = None
 
         self.setObjectName(object_name)
@@ -208,7 +212,7 @@ class InternalReorderFileCard(BaseFileCard):
         layout.addWidget(self._title_label)
         layout.addWidget(self._subtitle_label)
 
-        self.set_selected(False)
+        self._apply_visual_state()
 
     def _item_index(self) -> int:
         return self.file_index
@@ -266,12 +270,3 @@ class InternalReorderFileCard(BaseFileCard):
                 drag.exec(Qt.DropAction.MoveAction)
         finally:
             QApplication.restoreOverrideCursor()
-
-    def _apply_visual_state(self) -> None:
-        self.setStyleSheet(
-            self._stylesheet_fn(
-                selected=self._selected,
-                hovered=self._hovered,
-                focused=self._keyboard_focused,
-            )
-        )

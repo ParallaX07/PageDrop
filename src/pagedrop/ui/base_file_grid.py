@@ -165,6 +165,7 @@ class BaseFileGrid(QScrollArea):
         self.selection_manager = SelectionManager(
             on_selection_changed=self._on_selection_changed,
         )
+        self._painted_selection: set[int] = set()
 
     def _create_card(self, index: int, path: str) -> InternalReorderFileCard:
         raise NotImplementedError
@@ -220,12 +221,10 @@ class BaseFileGrid(QScrollArea):
             card.set_card_width(self._card_width, refresh_thumbnail=False)
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self._on_card_double_clicked)
-            card.set_selected(index in selected_indices)
             self._cards.append(card)
 
         self.selection_manager.set_page_count(len(paths))
-        if selected_indices:
-            self.selection_manager.set_selection(selected_indices)
+        self.selection_manager.set_selection(selected_indices)
 
         self._reflow_grid(force=True)
         self._update_empty_state()
@@ -355,10 +354,25 @@ class BaseFileGrid(QScrollArea):
         else:
             super().keyPressEvent(event)
 
-    def _on_selection_changed(self, _selection: set[int]) -> None:
-        for index, card in enumerate(self._cards):
-            card.set_selected(index in self.selection_manager.selection)
+    def _on_selection_changed(self, selection: set[int]) -> None:
+        self._sync_selection_chrome(selection)
         self.selection_changed.emit()
+
+    def _sync_selection_chrome(self, selection: set[int]) -> None:
+        n = len(self._cards)
+        applicable = {i for i in selection if 0 <= i < n}
+        for index in self._painted_selection ^ applicable:
+            self._cards[index].set_selected(index in applicable)
+        self._painted_selection = applicable
+
+    def _resync_selection_chrome(self) -> None:
+        """Full chrome pass after card list surgery (reorder)."""
+        selection = self.selection_manager.selection
+        n = len(self._cards)
+        applicable = {i for i in selection if 0 <= i < n}
+        for index, card in enumerate(self._cards):
+            card.set_selected(index in applicable)
+        self._painted_selection = applicable
 
     def _on_card_clicked(self, index: int, modifiers: Qt.KeyboardModifier) -> None:
         if modifiers & Qt.KeyboardModifier.ControlModifier:
@@ -405,6 +419,7 @@ class BaseFileGrid(QScrollArea):
             card.setParent(None)
             card.deleteLater()
         self._cards.clear()
+        self._painted_selection.clear()
         self._focused_index = None
         while self._layout.count():
             item = self._layout.takeAt(0)
@@ -481,6 +496,7 @@ class BaseFileGrid(QScrollArea):
         new_selection = set(range(adjusted, adjusted + len(ordered)))
         self._reflow_grid(force=True)
         self.selection_manager.set_selection(new_selection)
+        self._resync_selection_chrome()
         if self._focused_index is not None:
             self._focused_index = min(self._focused_index, len(self._cards) - 1)
             self._update_focus_highlight()

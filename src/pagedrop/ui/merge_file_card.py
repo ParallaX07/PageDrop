@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pagedrop.ui.base_file_card import InternalReorderFileCard
-from pagedrop.ui.theme import merge_file_card_stylesheet
 
 
 class MergeFileCard(InternalReorderFileCard):
@@ -21,7 +20,6 @@ class MergeFileCard(InternalReorderFileCard):
             path,
             f"{page_count} {noun}",
             object_name="MergeFileCard",
-            stylesheet_fn=merge_file_card_stylesheet,
             tooltip=path,
             parent=parent,
         )

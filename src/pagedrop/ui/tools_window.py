@@ -40,7 +40,6 @@ from pagedrop.ui.result_actions import (
     preview_pdf,
     show_in_folder,
 )
-from pagedrop.ui.theme import tool_tile_stylesheet
 from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.utils.temp_manager import TempManager
 
@@ -435,7 +434,6 @@ class ToolTile(QFrame):
         super().__init__(parent)
         self.entry = entry
         self._compact = False
-        self._hovered = False
         self.setObjectName("ToolTile")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -494,18 +492,15 @@ class ToolTile(QFrame):
         self._refresh_chrome()
 
     def _refresh_chrome(self) -> None:
+        """Sync rare state properties; hover/focus come from shared app QSS."""
         blocked = self.is_blocked()
         self.setProperty("blocked", blocked)
         self.setProperty("comingSoon", self.entry.coming_soon and not blocked)
-        self.setStyleSheet(
-            tool_tile_stylesheet(
-                focused=self.hasFocus(),
-                hovered=self._hovered,
-                blocked=blocked,
-                coming_soon=self.entry.coming_soon and not blocked,
-                compact=self._compact,
-            )
-        )
+        self.setProperty("compact", self._compact)
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
+        self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -520,24 +515,6 @@ class ToolTile(QFrame):
             event.accept()
             return
         super().keyPressEvent(event)
-
-    def enterEvent(self, event) -> None:  # noqa: N802
-        self._hovered = True
-        self._refresh_chrome()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:  # noqa: N802
-        self._hovered = False
-        self._refresh_chrome()
-        super().leaveEvent(event)
-
-    def focusInEvent(self, event) -> None:  # noqa: N802
-        super().focusInEvent(event)
-        self._refresh_chrome()
-
-    def focusOutEvent(self, event) -> None:  # noqa: N802
-        super().focusOutEvent(event)
-        self._refresh_chrome()
 
 
 class _TileArrowNavFilter(QObject):

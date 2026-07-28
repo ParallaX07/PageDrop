@@ -63,24 +63,23 @@ def test_smoke_card_visual_states_differ(qtbot, five_page_pdf):
     card = window._thumbnail_grid._cards[0]
     card.set_selected(False)
     card.set_keyboard_focused(False)
-    default_style = card.styleSheet()
+    assert card.property("selected") is False
+    assert card.property("focused") is False
+    assert not card.styleSheet()
 
     card.set_selected(True)
-    selected_style = card.styleSheet()
-    assert default_style != selected_style
-    assert "3px" in selected_style
+    assert card.property("selected") is True
 
     card.set_selected(False)
     card.set_keyboard_focused(True)
-    focused_style = card.styleSheet()
-    assert focused_style != default_style
+    assert card.property("focused") is True
+    assert card.property("selected") is False
 
-    card.set_selected(False)
-    card.set_keyboard_focused(False)
-    card._hovered = True
-    card._apply_visual_state()
-    hover_style = card.styleSheet()
-    assert hover_style != default_style
+    from pagedrop.ui.theme import app_stylesheet
+
+    sheet = app_stylesheet()
+    assert 'QFrame#PageCard[selected="true"]' in sheet
+    assert "QFrame#PageCard:hover" in sheet
 
     window.close()
 

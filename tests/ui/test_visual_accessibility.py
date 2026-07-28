@@ -48,7 +48,6 @@ def test_reduce_motion_setting_gates_shadow_hover(qtbot, isolated_settings):
 
     pos = QPointF(8, 8)
     card.enterEvent(QEnterEvent(pos, pos, pos))
-    assert card._hovered is True
     # Reduce-motion: no shadow installed on hover either.
     assert card._shadow is None
 

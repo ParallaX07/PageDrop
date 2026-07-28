@@ -25,7 +25,7 @@ from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.base_file_card import BaseFileCard
-from pagedrop.ui.theme import CARD_PADDING, accent_qcolor, page_card_stylesheet
+from pagedrop.ui.theme import CARD_PADDING, accent_qcolor
 from pagedrop.utils.temp_manager import TempManager
 
 # Portrait placeholder while the real thumbnail is rendering.
@@ -78,7 +78,7 @@ class PageCard(BaseFileCard):
         layout.addWidget(self._thumbnail_label)
         layout.addWidget(self._page_label)
 
-        self.set_selected(False)
+        self._apply_visual_state()
         self._apply_skeleton_size()
         self._sync_page_overlay_visibility()
         self.setToolTip(f"Page {page_index + 1} · Click to select")
@@ -435,11 +435,3 @@ class PageCard(BaseFileCard):
             current = current.parentWidget()
         return None
 
-    def _apply_visual_state(self) -> None:
-        self.setStyleSheet(
-            page_card_stylesheet(
-                selected=self._selected,
-                hovered=self._hovered,
-                focused=self._keyboard_focused,
-            )
-        )

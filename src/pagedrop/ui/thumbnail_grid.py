@@ -371,6 +371,7 @@ class ThumbnailGrid(QScrollArea):
         self.selection_manager = SelectionManager(
             on_selection_changed=self._on_selection_changed,
         )
+        self._painted_selection: set[int] = set()
 
     def set_empty_state_message(
         self,
@@ -460,6 +461,7 @@ class ThumbnailGrid(QScrollArea):
             self._cards.append(self._make_page_card(i))
             self._skeleton_count += 1
         self._start_skeleton_pulse()
+        self._sync_selection_chrome(self.selection_manager.selection)
 
     def _make_page_card(self, logical_index: int) -> PageCard:
         assert self._model is not None
@@ -502,6 +504,7 @@ class ThumbnailGrid(QScrollArea):
         if created_this_turn:
             self._start_skeleton_pulse()
             self._append_cards_to_layout(start_index)
+            self._sync_selection_chrome(self.selection_manager.selection)
 
         remaining = len(self._pending_card_indices)
         total = len(self._cards) + remaining
@@ -1134,6 +1137,7 @@ class ThumbnailGrid(QScrollArea):
         self._reorder_cards_to_model()
         self._reindex_cards()
         self.selection_manager.set_page_count(self._model.logical_count())
+        self._resync_selection_chrome()
         self._reflow_grid(force=True)
         self._update_focus_highlight()
 
@@ -1149,6 +1153,7 @@ class ThumbnailGrid(QScrollArea):
 
         total = self._model.logical_count()
         self.selection_manager.set_page_count(total)
+        self._resync_selection_chrome()
         if total == 0:
             self._focused_index = None
             self._reflow_grid(force=True)
@@ -1225,6 +1230,7 @@ class ThumbnailGrid(QScrollArea):
 
         self._reindex_cards()
         self.selection_manager.set_page_count(self._model.logical_count())
+        self._resync_selection_chrome()
         self._reflow_grid(force=True)
         self._start_skeleton_pulse()
         self._start_rendering(
@@ -1974,6 +1980,7 @@ class ThumbnailGrid(QScrollArea):
             card.setParent(None)
             card.deleteLater()
         self._cards.clear()
+        self._painted_selection.clear()
         self._skeleton_count = 0
         self._grid_cols = 0
         while self._layout.count():
@@ -2119,6 +2126,22 @@ class ThumbnailGrid(QScrollArea):
         self.setFocus()
 
     def _on_selection_changed(self, selection: set[int]) -> None:
-        for index, card in enumerate(self._cards):
-            card.set_selected(index in selection)
+        self._sync_selection_chrome(selection)
         self.selection_changed.emit(selection)
+
+    def _sync_selection_chrome(self, selection: set[int]) -> None:
+        """Update only cards whose selected bit flipped."""
+        n = len(self._cards)
+        applicable = {i for i in selection if 0 <= i < n}
+        for index in self._painted_selection ^ applicable:
+            self._cards[index].set_selected(index in applicable)
+        self._painted_selection = applicable
+
+    def _resync_selection_chrome(self) -> None:
+        """Full chrome pass after card list surgery (insert/delete/reorder)."""
+        selection = self.selection_manager.selection
+        n = len(self._cards)
+        applicable = {i for i in selection if 0 <= i < n}
+        for index, card in enumerate(self._cards):
+            card.set_selected(index in applicable)
+        self._painted_selection = applicable
