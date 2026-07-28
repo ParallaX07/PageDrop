@@ -1,9 +1,9 @@
 """Serialized PDF read service — single process-wide fitz lock.
 
-Viewer and the job runner share ``FITZ_LOCK`` so MuPDF work
-never overlaps across Qt pools. Callers pass paths only; helpers open and
-close documents inside the lock. Upgrade path: dedicated PDF service
-process with the same call shapes.
+Viewer, UI thumbnail/preview/merge/convert pools, and the job runner share
+``FITZ_LOCK`` so MuPDF work never overlaps across Qt pools. Callers pass paths
+only; helpers open and close documents inside the lock. Upgrade path: dedicated
+PDF service process with the same call shapes.
 """
 
 from __future__ import annotations

@@ -11,10 +11,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import fitz
-
-from pagedrop.core.pdf_editor import PdfEditModel
-from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader, render_page_png
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
+from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
+from pagedrop.core.pdf_service import render_ref_png
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.theme import (
@@ -57,19 +56,17 @@ class PreviewRenderWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Own open by path; pool max 1. Cross-window fitz overlap is a known risk.
-        doc = None
+        # Public pdf_service helper serializes under FITZ_LOCK; pool max 1.
         try:
             if self._is_cancelled(self._generation):
                 return
-            doc = fitz.open(self._source_path)
-            if self._is_cancelled(self._generation):
-                return
-            png = render_page_png(
-                doc,
-                self._source_index,
-                width_px=self._width_px,
-                rotation=self._rotation,
+            png = render_ref_png(
+                PageRef(
+                    self._source_path,
+                    self._source_index,
+                    rotation=self._rotation,
+                ),
+                self._width_px,
             )
             if self._is_cancelled(self._generation):
                 return
@@ -82,9 +79,6 @@ class PreviewRenderWorker(QRunnable):
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))
-        finally:
-            if doc is not None:
-                doc.close()
 
 
 class _PreviewScrollArea(QScrollArea):

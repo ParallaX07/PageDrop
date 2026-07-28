@@ -29,6 +29,7 @@ from pagedrop.core.image_to_pdf import (
     validate_images,
 )
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.supported_formats import (
     image_dialog_filter,
     is_pdf_path,
@@ -290,21 +291,21 @@ class _ConvertWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Paths only; pool max 1. Prefer job runner / process for new work.
+        # Paths only; FITZ_LOCK around fitz convert; pool max 1.
         try:
-            if self._output_mode == _OUTPUT_SINGLE:
-                assert self._output_path is not None
-                images_to_single_pdf(self._paths, self._output_path)
-                self.signals.succeeded.emit(self._output_path)
-                return
-
-            assert self._output_dir is not None
-            written = images_to_individual_pdfs(
-                self._paths,
-                self._output_dir,
-                overwrite=self._overwrite,
-            )
-            self.signals.succeeded.emit(written)
+            with FITZ_LOCK:
+                if self._output_mode == _OUTPUT_SINGLE:
+                    assert self._output_path is not None
+                    images_to_single_pdf(self._paths, self._output_path)
+                    result: object = self._output_path
+                else:
+                    assert self._output_dir is not None
+                    result = images_to_individual_pdfs(
+                        self._paths,
+                        self._output_dir,
+                        overwrite=self._overwrite,
+                    )
+            self.signals.succeeded.emit(result)
         except ImageConvertError as exc:
             self.signals.failed.emit(str(exc))
         except OSError as exc:

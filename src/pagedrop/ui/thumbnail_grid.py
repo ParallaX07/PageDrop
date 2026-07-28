@@ -52,6 +52,7 @@ from pagedrop.core.drag_mime import (
 from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, render_page_png
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.accessibility import prefers_reduce_motion
@@ -120,32 +121,37 @@ class ThumbnailWorker(QRunnable):
 
     def run(self) -> None:
         # See core.thread_policy: open by path only; never PdfTab._loader_cache.
-        # Pool is max 1, but still overlaps other window pools (shared FITZ_LOCK covers jobs/viewer).
-        docs: dict[str, fitz.Document] = {}
+        # Hold FITZ_LOCK for the whole open/render/close so live docs never
+        # overlap other pools (pool max 1 alone is not enough across windows).
         try:
-            for logical_index, ref in self._pages:
-                if self._is_cancelled(self._generation):
-                    return
-                if ref.source_path not in docs:
-                    docs[ref.source_path] = fitz.open(ref.source_path)
-                doc = docs[ref.source_path]
-                png = render_page_png(
-                    doc,
-                    ref.source_index,
-                    width_px=self._width_px,
-                    rotation=ref.rotation,
-                )
-                if self._is_cancelled(self._generation):
-                    return
-                self.signals.page_ready.emit(self._generation, logical_index, png)
-            if not self._is_cancelled(self._generation):
-                self.signals.finished.emit(self._generation)
+            with FITZ_LOCK:
+                docs: dict[str, fitz.Document] = {}
+                try:
+                    for logical_index, ref in self._pages:
+                        if self._is_cancelled(self._generation):
+                            return
+                        if ref.source_path not in docs:
+                            docs[ref.source_path] = fitz.open(ref.source_path)
+                        doc = docs[ref.source_path]
+                        png = render_page_png(
+                            doc,
+                            ref.source_index,
+                            width_px=self._width_px,
+                            rotation=ref.rotation,
+                        )
+                        if self._is_cancelled(self._generation):
+                            return
+                        self.signals.page_ready.emit(
+                            self._generation, logical_index, png
+                        )
+                    if not self._is_cancelled(self._generation):
+                        self.signals.finished.emit(self._generation)
+                finally:
+                    for doc in docs.values():
+                        doc.close()
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))
-        finally:
-            for doc in docs.values():
-                doc.close()
 
 
 @dataclass

@@ -19,10 +19,10 @@ Rules:
 Short-term allowance
 --------------------
 Existing UI workers keep a private ``QThreadPool`` with ``setMaxThreadCount(1)``
-and open documents by path. That serializes *within* one pool but **does not**
-serialize across windows (editor thumbnails + preview + merge + convert can
-still overlap). Job runner and viewer already share ``pdf_service.FITZ_LOCK``;
-other UI pools remain a known cross-window risk.
+and open documents by path. That serializes *within* one pool; cross-window
+overlap is covered by sharing ``pdf_service.FITZ_LOCK`` (or public
+``pdf_service`` helpers that take it). Do not raise pool size to “fix”
+thumbs — more threads worsen MuPDF races.
 
 Migration
 ---------
@@ -32,9 +32,8 @@ Migration
   Stage/promote via ``TempManager``, paths only; never share fitz docs with
   ad-hoc UI pools. Upgrade path: dedicated PDF service process for fitz-heavy
   handlers (same stage/promote/cancel API).
-- **viewer:** ``ui/pdf_viewer.py`` via ``pagedrop.core.pdf_service`` under
-  ``FITZ_LOCK`` — not additional concurrent ``QThreadPool`` fitz callers
-  outside that lock.
+- **viewer / UI pools:** ``pdf_service`` helpers or ``with FITZ_LOCK`` around
+  open/work/close — not unlocked ``fitz.open`` from ``QThreadPool`` workers.
 """
 
 from __future__ import annotations
@@ -42,16 +41,16 @@ from __future__ import annotations
 from typing import Any
 
 # Current QRunnable / pool sites that call fitz (audit).
-# Each pool is maxThreadCount=1 and opens by path — still unsafe vs *other* pools
-# unless they take ``pdf_service.FITZ_LOCK`` (viewer + job runner do).
+# Each pool is maxThreadCount=1 and serializes via pdf_service.FITZ_LOCK
+# (direct ``with FITZ_LOCK`` or public helpers that call ``pdf_service.call``).
 WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     (
         "ThumbnailWorker",
-        "ui/thumbnail_grid.py — editor page thumbs; own opens; pool max 1",
+        "ui/thumbnail_grid.py — editor page thumbs under FITZ_LOCK; pool max 1",
     ),
     (
         "PreviewRenderWorker",
-        "ui/page_preview.py — single-page preview; own open; pool max 1",
+        "ui/page_preview.py — via pdf_service.render_ref_png; pool max 1",
     ),
     (
         "ViewerRenderWorker",
@@ -59,19 +58,19 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     ),
     (
         "_MergeThumbnailWorker",
-        "ui/merge_file_grid.py — via render_stacked_page_pngs; BaseFileGrid pool max 1",
+        "ui/merge_file_grid.py — render_stacked_page_pngs under FITZ_LOCK; pool max 1",
     ),
     (
         "_ConvertThumbnailWorker",
-        "ui/convert_file_grid.py — image thumbs via fitz.open; BaseFileGrid pool max 1",
+        "ui/convert_file_grid.py — render_image_thumbnail_png under FITZ_LOCK; pool max 1",
     ),
     (
         "_MergeWorker",
-        "ui/merge_window.py — merge_pdf_files in pool max 1; overlaps other windows",
+        "ui/merge_window.py — merge_pdf_files under FITZ_LOCK; pool max 1",
     ),
     (
         "_ConvertWorker",
-        "ui/convert_window.py — image_to_pdf in pool max 1; overlaps other windows",
+        "ui/convert_window.py — image_to_pdf under FITZ_LOCK; pool max 1",
     ),
 )
 

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core.pdf_loader import PdfEmptyError, PdfLoadError, PdfLoader
 from pagedrop.core.pdf_merge import PdfMergeModel
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay
@@ -61,9 +62,10 @@ class _MergeWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Paths only; pool max 1. Prefer job runner / process for new work.
+        # Paths only; FITZ_LOCK around fitz merge; pool max 1.
         try:
-            merge_pdf_files(self._file_paths, self._output_path)
+            with FITZ_LOCK:
+                merge_pdf_files(self._file_paths, self._output_path)
         except PdfLoadError as exc:
             self.signals.failed.emit(f"Could not read a source PDF:\n{exc}")
         except OSError as exc:

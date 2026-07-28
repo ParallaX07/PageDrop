@@ -61,7 +61,7 @@ class SerializedJobRunner:
     paths on ``JobSpec``; handlers open by path. Cancel removes partial staged
     output. Source overwrite is rejected like Save As.
 
-    ponytail: FITZ_LOCK remains process-global for all in-process fitz (UI
+    FITZ_LOCK remains process-global for all in-process fitz (UI
     thumbnail/merge/convert pools must take it too — O2 UI pool checklist).
     Ceiling: one global gate stalls unrelated fitz while a long fitz *job*
     holds it. Upgrade: dedicated PDF service process (O10) so jobs never share

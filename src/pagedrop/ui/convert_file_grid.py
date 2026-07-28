@@ -7,23 +7,25 @@ import fitz
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.supported_formats import image_paths_from_mime
 from pagedrop.ui.base_file_grid import BaseFileGrid
 from pagedrop.ui.convert_file_card import ConvertFileCard
 
 
 def render_image_thumbnail_png(path: str, width_px: int) -> bytes | None:
-    with fitz.open(path) as doc:
-        if doc.page_count == 0:
-            return None
-        page = doc[0]
-        page_width = page.rect.width
-        if page_width <= 0:
-            return None
-        scale = width_px / page_width
-        matrix = fitz.Matrix(scale, scale)
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
-        return pix.tobytes("png")
+    with FITZ_LOCK:
+        with fitz.open(path) as doc:
+            if doc.page_count == 0:
+                return None
+            page = doc[0]
+            page_width = page.rect.width
+            if page_width <= 0:
+                return None
+            scale = width_px / page_width
+            matrix = fitz.Matrix(scale, scale)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            return pix.tobytes("png")
 
 
 class _ConvertThumbnailWorker(QRunnable):
@@ -49,7 +51,7 @@ class _ConvertThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Own fitz.open by path; pool max 1 (BaseFileGrid). Cross-pool overlap is a known risk.
+        # render_image_thumbnail_png takes FITZ_LOCK; pool max 1 (BaseFileGrid).
         if self._is_cancelled(self._generation):
             return
         try:

@@ -41,7 +41,7 @@ class _MergeThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # Opens by path in render_stacked_page_pngs; pool max 1 (BaseFileGrid).
+        # render_stacked_page_pngs takes FITZ_LOCK; pool max 1 (BaseFileGrid).
         if self._is_cancelled(self._generation):
             return
         try:

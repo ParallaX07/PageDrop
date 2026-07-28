@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 
 from pagedrop.core.pdf_loader import render_page_png
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.ui.theme import BORDER_HOVER
 
 MAX_STACK_PAGES = 3
@@ -134,22 +135,24 @@ def render_stacked_page_pngs(
 ) -> list[bytes]:
     """Render the first 1–3 pages of a PDF to PNG bytes.
 
-    Opens *path* locally (see core.thread_policy) — never accepts a shared Document.
+    Opens *path* locally under ``FITZ_LOCK`` (see core.thread_policy) — never
+    accepts a shared Document.
     """
     pages_to_render = min(max(page_count, 0), MAX_STACK_PAGES)
     if pages_to_render == 0:
         return []
 
-    doc = fitz.open(path)
-    try:
-        pngs: list[bytes] = []
-        for page_index in range(pages_to_render):
-            if should_cancel and should_cancel():
-                return []
-            pngs.append(render_page_png(doc, page_index, width_px=width_px))
-        return pngs
-    finally:
-        doc.close()
+    with FITZ_LOCK:
+        doc = fitz.open(path)
+        try:
+            pngs: list[bytes] = []
+            for page_index in range(pages_to_render):
+                if should_cancel and should_cancel():
+                    return []
+                pngs.append(render_page_png(doc, page_index, width_px=width_px))
+            return pngs
+        finally:
+            doc.close()
 
 
 def render_stacked_pdf_thumbnail(
