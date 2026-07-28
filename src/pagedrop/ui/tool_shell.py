@@ -4,20 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -25,7 +20,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import (
     JobCancelledError,
     JobError,
@@ -42,12 +36,7 @@ from pagedrop.ui.dialogs import (
 )
 from pagedrop.ui.job_chrome import JobChromeMixin
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.ui.tool_page import StatusFooter, present_tool_page, tool_shell_store
-from pagedrop.utils.page_jump import parse_page_ranges
-
-if TYPE_CHECKING:
-    from pagedrop.ui.organize_tools import EditorPdfContext
-    from pagedrop.ui.tools_window import ToolsWindow
+from pagedrop.ui.tool_page import StatusFooter
 
 _PRIVACY_LINE = "Files stay on this computer — nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
@@ -56,9 +45,6 @@ _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 EMPTY_PROMPT_PDF = "Drop PDF here, or click to browse"
 EMPTY_PROMPT_PDFS = "Drop PDFs here, or click to browse"
 EMPTY_PROMPT_DOCUMENTS = "Drop documents here, or click to browse"
-
-# Organize tools migrated onto this shell in Phase 22b (remaining finish in Phase 24).
-SHELL_ORGANIZE_IDS: frozenset[str] = frozenset({"split", "reverse"})
 
 # Dedicated pool (not thumbnail/render pools). Fitz jobs take FITZ_LOCK;
 # Office / LibreOffice handlers register holds_fitz=False.
@@ -637,189 +623,3 @@ class ToolShellWindow(JobChromeMixin, QWidget):
             event.ignore()
             return
         super().closeEvent(event)
-
-
-def _pick_save_pdf(parent: QWidget, title: str, suggested: str) -> str | None:
-    path, _ = QFileDialog.getSaveFileName(
-        parent, title, suggested, _PDF_FILTER
-    )
-    if not path:
-        return None
-    if not path.lower().endswith(".pdf"):
-        path = f"{path}.pdf"
-    remember_directory(path)
-    return path
-
-
-def _default_out_path(source: str, suffix: str) -> str:
-    src = Path(source)
-    return str(src.with_name(f"{src.stem}_{suffix}.pdf"))
-
-
-def _build_reverse_options() -> tuple[QWidget, QCheckBox]:
-    host = QWidget()
-    form = QFormLayout(host)
-    form.setContentsMargins(0, 0, 0, 0)
-    blank = QCheckBox("Add blank page at end")
-    form.addRow("", blank)
-    return host, blank
-
-
-def _build_split_options() -> tuple[QWidget, QLineEdit, QLineEdit]:
-    host = QWidget()
-    form = QFormLayout(host)
-    form.setContentsMargins(0, 0, 0, 0)
-    ranges = QLineEdit()
-    ranges.setPlaceholderText("e.g. 1-3,5,7-9")
-    form.addRow("Page ranges", ranges)
-    hint = QLabel("1-based ranges; selection from the editor is used when possible.")
-    hint.setObjectName("ToolsHint")
-    hint.setWordWrap(True)
-    form.addRow("", hint)
-    folder = QLineEdit()
-    folder_row = QHBoxLayout()
-    folder_row.addWidget(folder, stretch=1)
-    browse = QPushButton("Browse…")
-    browse.setObjectName("ToolbarSecondary")
-
-    def pick() -> None:
-        chosen = QFileDialog.getExistingDirectory(
-            host, "Choose output folder", last_directory()
-        )
-        if chosen:
-            remember_directory(chosen)
-            folder.setText(chosen)
-
-    browse.clicked.connect(pick)
-    folder_row.addWidget(browse)
-    form.addRow("Output folder", folder_row)
-    return host, ranges, folder
-
-
-def _configure_reverse(shell: ToolShellWindow) -> None:
-    options, blank = _build_reverse_options()
-    shell.set_options_widget(options)
-    shell._blank_cb = blank  # type: ignore[attr-defined]
-
-    def on_run() -> None:
-        paths = shell.drop_zone.paths()
-        if not paths or not Path(paths[0]).is_file():
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, "Choose a valid source PDF.")
-            return
-        source = paths[0]
-        suggested = _default_out_path(source, "reversed")
-        output = _pick_save_pdf(shell, "Save reversed PDF", suggested)
-        if not output:
-            return
-        run_tool_job(
-            shell,
-            job_type="reverse",
-            inputs=[source],
-            output=output,
-            options={"add_blank_page": blank.isChecked()},
-            progress_message="Reversing pages…",
-        )
-
-    shell.set_run_handler(on_run)
-
-
-def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> None:
-    options, ranges, folder = _build_split_options()
-    shell.set_options_widget(options)
-    shell._ranges_edit = ranges  # type: ignore[attr-defined]
-    shell._folder_edit = folder  # type: ignore[attr-defined]
-    if ctx is not None and ctx.range_prefill:
-        ranges.setText(ctx.range_prefill)
-
-    def on_run() -> None:
-        paths = shell.drop_zone.paths()
-        if not paths or not Path(paths[0]).is_file():
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, "Choose a valid source PDF.")
-            return
-        source = paths[0]
-        out_folder = folder.text().strip()
-        ranges_text = ranges.text().strip()
-        if not out_folder:
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, "Choose an output folder.")
-            return
-        try:
-            from pagedrop.core.pdf_loader import PdfLoader
-
-            loader = PdfLoader(source)
-            try:
-                page_count = loader.page_count
-            finally:
-                loader.close()
-        except Exception as exc:
-            QMessageBox.warning(
-                shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
-            )
-            return
-        parsed = parse_page_ranges(ranges_text, page_count)
-        if not parsed:
-            QMessageBox.warning(
-                shell,
-                shell.WINDOW_TITLE,
-                "Enter page ranges like 1-3,5,7-9.",
-            )
-            return
-        base_name = Path(source).stem
-        predicted = pdf_tools.predicted_range_output_paths(
-            parsed, out_folder, base_name=base_name
-        )
-        run_tool_job(
-            shell,
-            job_type="split",
-            inputs=[source],
-            output=str(predicted[0]),
-            options={
-                "ranges": parsed,
-                "output_dir": out_folder,
-                "base_name": base_name,
-            },
-            existing_paths=[p for p in predicted if p.exists()],
-            progress_message="Splitting PDF…",
-            success_toast=f"Wrote {len(predicted)} file(s)",
-        )
-
-    shell.set_run_handler(on_run)
-
-
-def open_organize_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
-    """Lazy-create / raise a modeless shell for a migrated organize tool."""
-    from pagedrop.ui.organize_tools import editor_pdf_context
-    from pagedrop.ui.tools_window import TOOL_CATALOGUE
-
-    entry = next((e for e in TOOL_CATALOGUE if e.id == tool_id), None)
-    if entry is None or tool_id not in SHELL_ORGANIZE_IDS:
-        return None
-
-    store = tool_shell_store(tools)  # type: ignore[assignment]
-
-    shell = store.get(tool_id)
-    ctx = editor_pdf_context(tools.editor)
-    if shell is None:
-        shell = ToolShellWindow(
-            title=entry.title,
-            description=entry.description,
-            editor=tools.editor,
-            window_manager=getattr(tools, "_window_manager", None),
-            browse_title=f"Choose PDF — {entry.title}",
-        )
-        if tool_id == "reverse":
-            _configure_reverse(shell)
-        elif tool_id == "split":
-            _configure_split(shell, ctx)
-        store[tool_id] = shell
-    else:
-        shell.set_editor(tools.editor)
-        if tool_id == "split" and ctx is not None and ctx.range_prefill:
-            ranges_edit = getattr(shell, "_ranges_edit", None)
-            if ranges_edit is not None:
-                ranges_edit.setText(ctx.range_prefill)
-
-    if ctx is not None and Path(ctx.path).is_file():
-        shell.drop_zone.set_paths([ctx.path])
-
-    present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")
-    return shell

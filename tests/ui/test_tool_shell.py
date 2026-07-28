@@ -10,6 +10,7 @@ from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import QFileDialog
 
+from pagedrop.ui.organize_shell import SHELL_ORGANIZE_IDS, open_organize_shell
 from pagedrop.ui.organize_tools import (
     ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS,
     ORGANIZE_MODAL_TOOL_EXCEPTIONS,
@@ -17,10 +18,8 @@ from pagedrop.ui.organize_tools import (
     launch_organize_tool,
 )
 from pagedrop.ui.tool_shell import (
-    SHELL_ORGANIZE_IDS,
     FileDropZone,
     ToolShellWindow,
-    open_organize_shell,
     run_tool_job,
 )
 from pagedrop.ui.tools_window import ToolsWindow
@@ -128,7 +127,7 @@ def test_migrated_tool_runs_job_and_shows_result_actions(
     shell.drop_zone.set_paths([str(src)])
 
     monkeypatch.setattr(
-        "pagedrop.ui.tool_shell._pick_save_pdf",
+        "pagedrop.ui.organize_shell._pick_save_pdf",
         lambda parent, title, suggested: str(out),
     )
 
@@ -166,7 +165,7 @@ def test_tools_hub_launches_shell_for_migrated_ids(qtbot, monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "pagedrop.ui.organize_tools.open_organize_shell", fake_open
+        "pagedrop.ui.organize_shell.open_organize_shell", fake_open
     )
     for tool_id in sorted(SHELL_ORGANIZE_IDS):
         launch_organize_tool(tools, tool_id)
@@ -271,9 +270,10 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch, q
 
 def test_migrated_organize_tool_uses_modeless_shell(qtbot, monkeypatch):
     """Smoke: migrated tool IDs open ToolShellWindow (never modal _form_dialog)."""
+    assert ORGANIZE_MODAL_TOOL_EXCEPTIONS == {}
     assert ORGANIZE_TOOL_IDS == set(SHELL_ORGANIZE_IDS) | set(
-        ORGANIZE_MODAL_TOOL_EXCEPTIONS.keys()
-    ) | set(ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS.keys())
+        ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS.keys()
+    )
 
     from PyQt6.QtWidgets import QDialog
 
@@ -292,10 +292,50 @@ def test_migrated_organize_tool_uses_modeless_shell(qtbot, monkeypatch):
         store = getattr(tools, "_tool_shells", {}) or {}
         shell = store.get(tool_id)
         assert isinstance(shell, ToolShellWindow)
+        assert shell._run_btn.isDefault()
         opened[tool_id] = shell
         qtbot.addWidget(shell)
 
     # Cleanup (top-level widgets) so later tests don't leak windows.
     for shell in opened.values():
         shell.close()
+    tools.close()
+
+
+def test_n_up_shell_runs_job_and_shows_result_actions(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    """Former modal organize tool (n-up) runs on shell BusyOverlay + result bar."""
+    src = tmp_path / "doc.pdf"
+    out = tmp_path / "doc_nup.pdf"
+    _write_pdf(src, pages=4)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+
+    shell = open_organize_shell(tools, "n_up")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(src)])
+
+    monkeypatch.setattr(
+        "pagedrop.ui.organize_shell._pick_save_pdf",
+        lambda parent, title, suggested: str(out),
+    )
+
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
+    assert out.is_file()
+    assert shell._result_bar.isVisible()
+    assert shell._result_bar._path == str(out)
+    assert not tools.is_job_running()
+
+    nup = fitz.open(str(out))
+    try:
+        assert nup.page_count == 1
+    finally:
+        nup.close()
+
+    shell.close()
     tools.close()

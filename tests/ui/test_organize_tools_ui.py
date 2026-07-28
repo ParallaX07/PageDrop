@@ -108,28 +108,24 @@ def test_tools_window_launches_organize_split(qtbot, monkeypatch):
     window.close()
 
 
-def test_form_dialog_keeps_widgets_alive_after_accept(qtbot, monkeypatch):
-    """Regression: reading fields after exec must not hit deleted Qt objects."""
-    from PyQt6.QtWidgets import QDialog, QFormLayout, QLineEdit
+def test_hub_launch_opens_shell_not_catalogue_job(qtbot):
+    """O7: organize tiles open shells; BusyOverlay stays on the shell, not the hub."""
+    from pagedrop.ui.organize_shell import SHELL_ORGANIZE_IDS, open_organize_shell
+    from pagedrop.ui.organize_tools import launch_organize_tool
+    from pagedrop.ui.tool_shell import ToolShellWindow
 
-    from pagedrop.ui.organize_tools import _PathRow, _form_dialog
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.showMinimized()
 
-    monkeypatch.setattr(
-        QDialog,
-        "exec",
-        lambda self: QDialog.DialogCode.Accepted,
-    )
+    launch_organize_tool(window, "booklet")
+    store = getattr(window, "_tool_shells", {}) or {}
+    shell = store.get("booklet")
+    assert isinstance(shell, ToolShellWindow)
+    assert shell is open_organize_shell(window, "booklet")
+    assert not window.is_job_running()
+    assert shell._run_btn.isDefault()
+    assert "booklet" in SHELL_ORGANIZE_IDS
 
-    parent = ToolsWindow()
-    qtbot.addWidget(parent)
-
-    def build(form: QFormLayout, w: dict) -> None:
-        w["source"] = _PathRow(parent, browse_title="Choose PDF", initial="/tmp/doc.pdf")
-        form.addRow("Source PDF", w["source"])
-        w["ranges"] = QLineEdit("2-3,5")
-        form.addRow("Page ranges", w["ranges"])
-
-    widgets = _form_dialog(parent, title="Split / extract", build=build)
-    assert widgets is not None
-    assert widgets["source"].text() == "/tmp/doc.pdf"
-    assert widgets["ranges"].text() == "2-3,5"
+    shell.close()
+    window.close()

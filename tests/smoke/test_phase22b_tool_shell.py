@@ -9,7 +9,7 @@ import fitz
 import pytest
 
 from pagedrop.core.jobs import JobCancelledError, JobContext, JobSpec
-from pagedrop.ui.tool_shell import open_organize_shell
+from pagedrop.ui.organize_shell import open_organize_shell
 from pagedrop.ui.tools_window import ToolsWindow
 
 
@@ -72,7 +72,7 @@ def test_smoke_shell_open_cancel_success_cleanup(
     assert not shell._result_bar.isVisible()
 
     monkeypatch.setattr(
-        "pagedrop.ui.tool_shell._pick_save_pdf",
+        "pagedrop.ui.organize_shell._pick_save_pdf",
         lambda parent, title, suggested: str(out_ok),
     )
     shell._run_btn.click()
