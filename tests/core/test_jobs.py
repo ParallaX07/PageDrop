@@ -367,6 +367,80 @@ def test_external_wait_handler_does_not_block_fitz_lock(tmp_path: Path) -> None:
         temp.cleanup()
 
 
+def test_fitz_job_serializes_parallel_render(tmp_path: Path) -> None:
+    """holds_fitz=True jobs still stall parallel renders (O10 in-process ceiling).
+
+    Documents the intentional global-lock jank: no crash, but interactive fitz
+    waits until the job releases. Upgrade path remains a PDF service process.
+    """
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    render_src = tmp_path / "render.pdf"
+    _write_pdf(src)
+    _write_pdf(render_src)
+
+    holding = threading.Event()
+    release = threading.Event()
+
+    def long_fitz(ctx: JobContext) -> Path:
+        with fitz.open(str(ctx.spec.inputs[0])) as doc:
+            _ = doc[0].get_pixmap().tobytes("png")
+        holding.set()
+        assert release.wait(timeout=5)
+        ctx.staged_output.write_bytes(src.read_bytes())
+        return ctx.staged_output
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("long_fitz", long_fitz, holds_fitz=True)
+        err: list[BaseException] = []
+
+        def run_job() -> None:
+            try:
+                runner.run(JobSpec.create("long_fitz", inputs=[src], output=out))
+            except BaseException as exc:  # pragma: no cover
+                err.append(exc)
+
+        jt = threading.Thread(target=run_job, daemon=True)
+        jt.start()
+        assert holding.wait(timeout=5), "fitz job never entered hold"
+
+        assert not FITZ_LOCK.acquire(timeout=0.15), (
+            "FITZ_LOCK free during holds_fitz job"
+        )
+
+        render_ms: list[float] = []
+        render_err: list[BaseException] = []
+        done = threading.Event()
+
+        def run_render() -> None:
+            t0 = time.monotonic()
+            try:
+                png = render_ref_png(PageRef(str(render_src), 0), width_px=64)
+                assert png[:8] == b"\x89PNG\r\n\x1a\n"
+            except BaseException as exc:  # pragma: no cover
+                render_err.append(exc)
+            render_ms.append((time.monotonic() - t0) * 1000)
+            done.set()
+
+        rt = threading.Thread(target=run_render, daemon=True)
+        rt.start()
+        time.sleep(0.25)
+        assert not done.is_set(), "render finished while fitz job still held lock"
+        release.set()
+        assert done.wait(timeout=5)
+        jt.join(timeout=5)
+        rt.join(timeout=1)
+
+        assert not err and not render_err
+        assert render_ms and render_ms[0] >= 200
+        assert out.is_file()
+    finally:
+        release.set()
+        temp.cleanup()
+
+
 def test_external_wait_cancel_cleans_staged_output(tmp_path: Path) -> None:
     """Cancel mid external-wait job still removes partial staged output."""
     src = tmp_path / "in.pdf"
