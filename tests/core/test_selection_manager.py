@@ -57,3 +57,20 @@ def test_selection_changed_signal():
 
     manager.clear()
     assert emissions[-1] == set()
+
+
+def test_select_range_noop_skips_emit():
+    emissions: list[set[int]] = []
+    manager = SelectionManager(page_count=10, on_selection_changed=emissions.append)
+    manager.select_range(2, 6)
+    assert len(emissions) == 1
+    manager.select_range(6, 2)
+    assert len(emissions) == 1
+
+
+def test_select_single_noop_skips_emit():
+    emissions: list[set[int]] = []
+    manager = SelectionManager(page_count=5, on_selection_changed=emissions.append)
+    manager.select_single(1)
+    manager.select_single(1)
+    assert len(emissions) == 1

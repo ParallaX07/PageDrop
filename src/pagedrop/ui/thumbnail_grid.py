@@ -372,6 +372,7 @@ class ThumbnailGrid(QScrollArea):
             on_selection_changed=self._on_selection_changed,
         )
         self._painted_selection: set[int] = set()
+        self._page_overlay_on = self._page_overlay_visible()
 
     def set_empty_state_message(
         self,
@@ -670,9 +671,14 @@ class ThumbnailGrid(QScrollArea):
                 self._pending_layout_indices = [
                     i for i in self._pending_layout_indices if i not in pending_set
                 ]
+                overlay_on = self._page_overlay_visible()
                 for index in pending_layout:
                     if 0 <= index < len(self._cards):
-                        self._cards[index].apply_layout_width()
+                        card = self._cards[index]
+                        card.apply_layout_width()
+                        card.refresh_thumbnail_display(fast=True)
+                        # Overlay flag may have been stored without a visibility sync.
+                        card.set_page_overlay_visible(overlay_on)
         if self._pending_thumbnail_refresh:
             pending_thumbs = [
                 i for i in self._pending_thumbnail_refresh if i in visible
@@ -1821,43 +1827,53 @@ class ThumbnailGrid(QScrollArea):
     def _page_overlay_visible(self) -> bool:
         return self._thumbnail_width_px >= PAGE_NUMBER_OVERLAY_MIN_WIDTH
 
-    def _sync_page_overlays(self) -> None:
+    def _sync_page_overlays(self, indices: list[int] | None = None) -> None:
         visible = self._page_overlay_visible()
-        for card in self._cards:
+        if indices is None:
+            cards = self._cards
+        else:
+            cards = (self._cards[i] for i in indices if 0 <= i < len(self._cards))
+        for card in cards:
             card.set_page_overlay_visible(visible)
 
     def _apply_zoom(self, thumbnail_width_px: int) -> None:
         self._thumbnail_width_px = thumbnail_width_px
         self._card_width = thumbnail_width_px + CARD_PADDING
         visible = set(self._get_visible_page_indices())
+        overlay_on = self._page_overlay_visible()
+        overlay_changed = overlay_on != self._page_overlay_on
+        self._page_overlay_on = overlay_on
         deferred_layout: list[int] = []
         for index, card in enumerate(self._cards):
-            in_view = index in visible
-            if in_view:
+            if index in visible:
                 card.set_card_width(
                     self._card_width,
                     fast=True,
                     refresh_thumbnail=True,
                     apply_layout=True,
                 )
+                if overlay_changed:
+                    card.set_page_overlay_visible(overlay_on)
             else:
-                card.set_card_width(
-                    self._card_width,
-                    fast=True,
-                    refresh_thumbnail=False,
-                    apply_layout=False,
-                )
+                # Store target width only — layout/rescale when scrolled into view
+                # or via the idle deferred batch (scroll-extent correction).
+                card._card_width = self._card_width
                 deferred_layout.append(index)
-        self._sync_page_overlays()
-        if deferred_layout:
-            self._schedule_deferred_layout_update(deferred_layout)
+        # Replace pending (rapid zoom must not accumulate duplicate indices).
+        self._schedule_deferred_layout_update(deferred_layout, replace=True)
         self._reflow_grid()
         self.zoom_changed.emit(self._thumbnail_width_px)
         self._schedule_zoom_rerender()
 
-    def _schedule_deferred_layout_update(self, indices: list[int]) -> None:
-        self._pending_layout_indices.extend(indices)
-        if not self._deferred_layout_timer.isActive():
+    def _schedule_deferred_layout_update(
+        self, indices: list[int], *, replace: bool = False
+    ) -> None:
+        if replace:
+            self._pending_layout_indices = list(indices)
+            self._deferred_layout_timer.stop()
+        else:
+            self._pending_layout_indices.extend(indices)
+        if self._pending_layout_indices and not self._deferred_layout_timer.isActive():
             self._deferred_layout_timer.start(0)
 
     def _process_deferred_layout_batch(self) -> None:
@@ -1865,9 +1881,13 @@ class ThumbnailGrid(QScrollArea):
         self._pending_layout_indices = self._pending_layout_indices[
             DEFERRED_LAYOUT_BATCH:
         ]
+        overlay_on = self._page_overlay_on
         for index in batch:
             if 0 <= index < len(self._cards):
-                self._cards[index].apply_layout_width()
+                # Width + overlay only — pixmap rescale waits until visible.
+                card = self._cards[index]
+                card.apply_layout_width()
+                card.set_page_overlay_visible(overlay_on)
         if self._pending_layout_indices:
             self._deferred_layout_timer.start(0)
 

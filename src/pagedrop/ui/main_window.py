@@ -112,6 +112,12 @@ class MainWindow(QMainWindow):
         self._previous_tab_index: int | None = None
         self._last_tab_index: int = 0
         self._pending_move_undo: Callable[[], bool] | None = None
+        self._pending_selection: set[int] | None = None
+        self._last_selection_toolbar_snap: tuple | None = None
+        self._selection_coalesce_timer = QTimer(self)
+        self._selection_coalesce_timer.setSingleShot(True)
+        self._selection_coalesce_timer.setInterval(0)
+        self._selection_coalesce_timer.timeout.connect(self._flush_selection_toolbar)
 
         self.setWindowTitle(self.APP_TITLE)
         self.setMinimumSize(720, 480)
@@ -912,7 +918,12 @@ class MainWindow(QMainWindow):
         self._update_preview_mode_ui()
         self._update_close_tab_action()
         self._update_save_as_action()
-        self._update_selection_status(tab.thumbnail_grid.selection_manager.selection)
+        selection = tab.thumbnail_grid.selection_manager.selection
+        self._pending_selection = selection
+        self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(
+            selection
+        )
+        self._update_selection_status(selection)
 
     def _reset_toolbar_for_blank_tab(self) -> None:
         tab = self._active_tab()
@@ -942,6 +953,8 @@ class MainWindow(QMainWindow):
         self._progress_bar.hide()
         self._update_close_tab_action()
         self._update_save_as_action()
+        self._pending_selection = set()
+        self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(set())
         self._update_selection_status(set())
 
     def _update_save_as_action(self) -> None:
@@ -2327,10 +2340,44 @@ class MainWindow(QMainWindow):
             total = tab.edit_model.logical_count()
             self._persistent_status(f"Page {page} of {total}")
 
+    def _selection_toolbar_snapshot(self, selection: set[int]) -> tuple:
+        """Toolbar-relevant view of selection — skip redundant coalesced flushes."""
+        tab = self._active_tab()
+        if tab is None:
+            return (None, frozenset())
+        if selection:
+            lo, hi = min(selection), max(selection)
+        else:
+            lo = hi = -1
+        return (
+            id(tab),
+            tab.is_preview_visible(),
+            bool(selection),
+            len(selection),
+            lo,
+            hi,
+        )
+
     def _on_selection_changed(self, selection: set[int]) -> None:
         sender = self.sender()
         if sender is not None and not self._grid_belongs_to_active_tab(sender):
             return
+        self._pending_selection = selection
+        # First update in a turn applies immediately (snappy); further emits in
+        # the same turn only refresh pending and ride the 0ms coalesce timer.
+        if self._selection_coalesce_timer.isActive():
+            return
+        self._flush_selection_toolbar()
+        self._selection_coalesce_timer.start()
+
+    def _flush_selection_toolbar(self) -> None:
+        selection = self._pending_selection
+        if selection is None:
+            return
+        snap = self._selection_toolbar_snapshot(selection)
+        if snap == self._last_selection_toolbar_snap:
+            return
+        self._last_selection_toolbar_snap = snap
         tab = self._active_tab()
         has_selection = bool(selection)
         self._deselect_all_action.setEnabled(

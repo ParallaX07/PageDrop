@@ -109,6 +109,8 @@ class PageCard(BaseFileCard):
             self._apply_sized_tooltip(*self._size_cached)
 
     def set_page_overlay_visible(self, visible: bool) -> None:
+        if self._page_overlay_wanted == visible:
+            return
         self._page_overlay_wanted = visible
         self._sync_page_overlay_visibility()
 

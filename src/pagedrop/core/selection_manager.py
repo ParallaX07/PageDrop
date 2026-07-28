@@ -26,11 +26,17 @@ class SelectionManager:
 
     def set_page_count(self, page_count: int) -> None:
         self._page_count = page_count
-        self._selected = {idx for idx in self._selected if idx < page_count}
+        pruned = {idx for idx in self._selected if idx < page_count}
+        if pruned == self._selected:
+            return
+        self._selected = pruned
         self._emit()
 
     def select_single(self, idx: int) -> None:
-        self._selected = {idx}
+        new = {idx}
+        if new == self._selected:
+            return
+        self._selected = new
         self._emit()
 
     def toggle(self, idx: int) -> None:
@@ -42,11 +48,17 @@ class SelectionManager:
 
     def select_range(self, start: int, end: int) -> None:
         low, high = sorted((start, end))
-        self._selected = set(range(low, high + 1))
+        new = set(range(low, high + 1))
+        if new == self._selected:
+            return
+        self._selected = new
         self._emit()
 
     def select_all(self) -> None:
-        self._selected = set(range(self._page_count))
+        new = set(range(self._page_count))
+        if new == self._selected:
+            return
+        self._selected = new
         self._emit()
 
     def clear(self) -> None:

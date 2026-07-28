@@ -30,11 +30,11 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
 
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     assert _selected_indices(cards) == {0}
-    assert selection_status.text() == "1 page selected"
+    qtbot.waitUntil(lambda: selection_status.text() == "1 page selected", timeout=1000)
 
     qtbot.mouseClick(cards[2], Qt.MouseButton.LeftButton)
     assert _selected_indices(cards) == {2}
-    assert selection_status.text() == "1 page selected"
+    qtbot.waitUntil(lambda: selection_status.text() == "1 page selected", timeout=1000)
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
     for index in (0, 2, 4):
@@ -44,7 +44,7 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
             modifier=Qt.KeyboardModifier.ControlModifier,
         )
     assert _selected_indices(cards) == {0, 2, 4}
-    assert selection_status.text() == "3 pages selected"
+    qtbot.waitUntil(lambda: selection_status.text() == "3 pages selected", timeout=1000)
 
     qtbot.mouseClick(cards[1], Qt.MouseButton.LeftButton)
     qtbot.mouseClick(
@@ -53,7 +53,7 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
         modifier=Qt.KeyboardModifier.ShiftModifier,
     )
     assert _selected_indices(cards) == set(range(1, 6))
-    assert selection_status.text() == "5 pages selected"
+    qtbot.waitUntil(lambda: selection_status.text() == "5 pages selected", timeout=1000)
 
     qtbot.keyClick(
         window,
@@ -61,10 +61,10 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
     assert _selected_indices(cards) == set(range(10))
-    assert selection_status.text() == "10 pages selected"
+    qtbot.waitUntil(lambda: selection_status.text() == "10 pages selected", timeout=1000)
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
     assert _selected_indices(cards) == set()
-    assert selection_status.text() == "No selection"
+    qtbot.waitUntil(lambda: selection_status.text() == "No selection", timeout=1000)
 
     window.close()

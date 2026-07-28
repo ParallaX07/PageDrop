@@ -30,7 +30,7 @@ T = TypeVar("T")
 # Soft ceiling for interactive print; UI should warn above this.
 MAX_PRINT_PAGES = 200
 
-# ponytail: max 8 path→Document, idle TTL 60s. Raise max only if real
+# max 8 path→Document, idle TTL 60s. Raise max only if real
 # multi-source sessions regularly need more open paths — do not grow toward
 # the viewer pixmap LRU (48), which caches pixels, not MuPDF docs.
 # Upgrade path: dedicated PDF service process with its own cache.

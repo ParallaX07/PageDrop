@@ -113,7 +113,10 @@ def test_status_bar_matches_selection(qtbot, five_page_pdf):
 
     cards = window._thumbnail_grid._cards
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
-    assert window._selection_status.text() == "1 page selected"
+    qtbot.waitUntil(
+        lambda: window._selection_status.text() == "1 page selected",
+        timeout=1000,
+    )
     assert window._selection_status.isVisible()
 
     qtbot.mouseClick(
@@ -121,8 +124,48 @@ def test_status_bar_matches_selection(qtbot, five_page_pdf):
         Qt.MouseButton.LeftButton,
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
-    assert window._selection_status.text() == "2 pages selected"
+    qtbot.waitUntil(
+        lambda: window._selection_status.text() == "2 pages selected",
+        timeout=1000,
+    )
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
-    assert window._selection_status.text() == "No selection"
+    qtbot.waitUntil(
+        lambda: window._selection_status.text() == "No selection",
+        timeout=1000,
+    )
+    window.close()
+
+
+def test_selection_toolbar_coalesces_storm(qtbot, five_page_pdf) -> None:
+    """Rapid selection emits in one turn → one toolbar flush for the final set."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.showMinimized()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+
+    updates: list[set[int]] = []
+    real_status = window._update_selection_status
+
+    def tracking_status(selection: set[int]) -> None:
+        updates.append(set(selection))
+        real_status(selection)
+
+    window._update_selection_status = tracking_status  # type: ignore[method-assign]
+    updates.clear()
+
+    grid = window._thumbnail_grid
+    # Simulate a selection storm in one turn (timer already armed after first).
+    grid.selection_manager.select_single(0)
+    assert updates == [{0}]
+    assert window._selection_coalesce_timer.isActive()
+    grid.selection_manager.select_range(0, 2)
+    grid.selection_manager.select_range(0, 4)
+    # Coalesced — no extra status update until the 0ms timer fires.
+    assert updates == [{0}]
+    qtbot.waitUntil(lambda: not window._selection_coalesce_timer.isActive(), timeout=1000)
+    assert updates == [{0}, {0, 1, 2, 3, 4}]
+    assert window._selection_status.text() == "5 pages selected"
+    assert window._deselect_all_action.isEnabled()
     window.close()

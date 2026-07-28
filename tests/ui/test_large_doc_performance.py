@@ -270,3 +270,84 @@ def test_cancel_rendering_does_not_block(qtbot) -> None:
     assert elapsed < 0.5
     # Pool may still be finishing asynchronously — wait so teardown is clean.
     qtbot.waitUntil(lambda: grid._render_pool.waitForDone(0), timeout=5000)
+
+
+def test_shift_range_select_diff_chrome_only(qtbot, large_pdf: Path) -> None:
+    """Select-all / range must not re-style every card — only flipped indices."""
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+
+    loader = PdfLoader(str(large_pdf))
+    grid.load_pdf(loader)
+    qtbot.waitUntil(lambda: len(grid._cards) == 800, timeout=60000)
+    qtbot.waitUntil(lambda: not grid._pending_card_indices, timeout=5000)
+
+    calls = {"n": 0}
+    for card in grid._cards:
+        real = card.set_selected
+
+        def counting_set_selected(selected: bool, *, _real=real) -> None:
+            calls["n"] += 1
+            _real(selected)
+
+        card.set_selected = counting_set_selected  # type: ignore[method-assign]
+
+    calls["n"] = 0
+    grid.selection_manager.select_range(0, 99)
+    # Diff chrome: empty → 100 selected → 100 set_selected, not 800.
+    assert calls["n"] == 100
+    assert {c.page_index for c in grid._cards if c.is_selected} == set(range(100))
+
+    calls["n"] = 0
+    grid.selection_manager.select_range(0, 49)
+    # 50 deselected only.
+    assert calls["n"] == 50
+    assert {c.page_index for c in grid._cards if c.is_selected} == set(range(50))
+    loader.close()
+
+
+def test_zoom_defers_offscreen_layout(qtbot, large_pdf: Path, monkeypatch) -> None:
+    """Zoom applies full card layout to visible pages only; off-screen stays pending."""
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+
+    loader = PdfLoader(str(large_pdf))
+    grid.load_pdf(loader)
+    qtbot.waitUntil(lambda: len(grid._cards) == 800, timeout=60000)
+    qtbot.waitUntil(lambda: not grid._pending_card_indices, timeout=5000)
+    # Drain any leftover deferred layout from load/autofit.
+    grid._deferred_layout_timer.stop()
+    grid._pending_layout_indices.clear()
+
+    monkeypatch.setattr(grid, "_get_visible_page_indices", lambda **_: list(range(12)))
+
+    layout_calls: list[int] = []
+    for index, card in enumerate(grid._cards):
+        real = card.apply_layout_width
+
+        def counting_apply(*, _real=real, _i=index) -> None:
+            layout_calls.append(_i)
+            _real()
+
+        card.apply_layout_width = counting_apply  # type: ignore[method-assign]
+
+    off = grid._cards[200]
+    old_width = off.width()
+    target = grid.thumbnail_width_px + 40
+    grid.set_thumbnail_zoom(target)
+    # Don't let the idle batch run before we inspect pending state.
+    grid._deferred_layout_timer.stop()
+
+    # Visible cards get layout during set_card_width; off-screen must not.
+    assert all(i < 12 for i in layout_calls)
+    assert len(grid._pending_layout_indices) == 800 - 12
+    assert 200 in grid._pending_layout_indices
+    assert off._card_width == grid._card_width
+    assert off.width() == old_width
+    loader.close()
