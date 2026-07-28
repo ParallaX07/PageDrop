@@ -38,6 +38,11 @@ from pagedrop.core.supported_formats import (
 _STORY_MEDIABOX = fitz.Rect(0, 0, 612, 792)
 _STORY_WHERE = fitz.Rect(36, 36, 576, 756)
 
+# naive HTML table layout — Story struggles past ~5k×64 cells; raise
+# caps or stream page-chunks if huge sheet → PDF becomes a real workload.
+_SHEET_MAX_ROWS = 5000
+_SHEET_MAX_COLS = 64
+
 
 class NativeConvertError(Exception):
     """Raised when a native import/export conversion fails."""
@@ -149,6 +154,8 @@ def import_to_pdf(
 
     if spec.id in {"markdown", "html"}:
         _story_document_to_pdf(source, output, kind=spec.id)
+    elif spec.id in {"csv", "xlsx"}:
+        _spreadsheet_to_pdf(source, output, kind=spec.id)
     else:
         _fitz_document_to_pdf(source, output)
     return output
@@ -192,10 +199,25 @@ def _story_document_to_pdf(source: Path, output: Path, *, kind: str) -> None:
     else:
         html_doc = _controlled_html_document(text)
 
+    _write_story_html_pdf(html_doc, output, label=source.name)
+
+
+def _spreadsheet_to_pdf(source: Path, output: Path, *, kind: str) -> None:
+    if kind == "csv":
+        rows = _read_csv_rows(source)
+    elif kind == "xlsx":
+        rows = _read_xlsx_rows(source)
+    else:
+        raise NativeConvertError(f"Unsupported spreadsheet kind: {kind}")
+    html_doc = _rows_to_html_table(rows, title=source.name)
+    _write_story_html_pdf(html_doc, output, label=source.name)
+
+
+def _write_story_html_pdf(html_doc: str, output: Path, *, label: str) -> None:
     try:
         story = fitz.Story(html=html_doc)
     except Exception as exc:
-        raise NativeConvertError(f"Could not layout {source.name}: {exc}") from exc
+        raise NativeConvertError(f"Could not layout {label}: {exc}") from exc
 
     try:
         writer = fitz.DocumentWriter(str(output))
@@ -208,6 +230,90 @@ def _story_document_to_pdf(source: Path, output: Path, *, kind: str) -> None:
         writer.close()
     except Exception as exc:
         raise NativeConvertError(f"Could not write PDF: {exc}") from exc
+
+
+def _read_csv_rows(source: Path) -> list[list[str]]:
+    try:
+        raw = source.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        raw = source.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise NativeConvertError(f"Could not read {source.name}: {exc}") from exc
+
+    reader = csv.reader(raw.splitlines())
+    rows: list[list[str]] = []
+    for row in reader:
+        if len(rows) >= _SHEET_MAX_ROWS:
+            raise NativeConvertError(
+                f"{source.name} has more than {_SHEET_MAX_ROWS} rows "
+                "(native CSV→PDF cap; use Office to PDF for large sheets)"
+            )
+        if len(row) > _SHEET_MAX_COLS:
+            raise NativeConvertError(
+                f"{source.name} has more than {_SHEET_MAX_COLS} columns "
+                "(native CSV→PDF cap; use Office to PDF for wide sheets)"
+            )
+        rows.append([str(cell) for cell in row])
+    if not rows:
+        raise NativeConvertError(f"{source.name} is empty")
+    return rows
+
+
+def _read_xlsx_rows(source: Path) -> list[list[str]]:
+    _require_capability(OPENPYXL)
+    openpyxl, err = soft_import("openpyxl")
+    if openpyxl is None:
+        raise BackendUnavailableError(
+            OPENPYXL,
+            AbsenceReason.CODEC_MISSING,
+            f"openpyxl import failed: {err}",
+        )
+    try:
+        workbook = openpyxl.load_workbook(source, read_only=True, data_only=True)
+    except Exception as exc:
+        raise NativeConvertError(f"Could not open {source.name}: {exc}") from exc
+    try:
+        sheet = workbook.active
+        rows: list[list[str]] = []
+        for row in sheet.iter_rows(values_only=True):
+            if len(rows) >= _SHEET_MAX_ROWS:
+                raise NativeConvertError(
+                    f"{source.name} has more than {_SHEET_MAX_ROWS} rows "
+                    "(native XLSX→PDF cap; use Office to PDF for large sheets)"
+                )
+            cells = [("" if cell is None else str(cell)) for cell in row]
+            if len(cells) > _SHEET_MAX_COLS:
+                raise NativeConvertError(
+                    f"{source.name} has more than {_SHEET_MAX_COLS} columns "
+                    "(native XLSX→PDF cap; use Office to PDF for wide sheets)"
+                )
+            # Drop trailing all-empty rows later; keep sparse interior cells.
+            rows.append(cells)
+        while rows and all(not cell for cell in rows[-1]):
+            rows.pop()
+        if not rows:
+            raise NativeConvertError(f"{source.name} has no cells")
+        return rows
+    finally:
+        workbook.close()
+
+
+def _rows_to_html_table(rows: list[list[str]], *, title: str) -> str:
+    width = max((len(row) for row in rows), default=0)
+    body_rows: list[str] = []
+    for row in rows:
+        padded = row + [""] * (width - len(row))
+        cells = "".join(f"<td>{html.escape(cell)}</td>" for cell in padded)
+        body_rows.append(f"<tr>{cells}</tr>")
+    table = (
+        f"<h1>{html.escape(title)}</h1>"
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        f"{''.join(body_rows)}</table>"
+    )
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+        f"<body>{table}</body></html>"
+    )
 
 
 def _controlled_html_document(raw: str) -> str:

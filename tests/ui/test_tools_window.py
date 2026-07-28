@@ -384,6 +384,10 @@ def test_coming_soon_toggle_hidden_when_none(qtbot):
     # Phase 29 OCR / tables are live.
     assert "ocr_pdf" in visible_ids
     assert "extract_tables" in visible_ids
+    # Phase 32 Word / spreadsheet conversions.
+    assert "pdf_to_word" in visible_ids
+    assert "pdf_to_csv" in visible_ids
+    assert "pdf_to_excel" in visible_ids
 
     assert not window._upcoming_btn.isVisible()
     window.close()

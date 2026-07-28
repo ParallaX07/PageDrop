@@ -157,7 +157,7 @@ def test_tools_hub_launches_shell_for_migrated_ids(qtbot, monkeypatch):
     tools.close()
 
 
-def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch):
+def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch, qtbot):
     """`run_tool_job()` must prompt for password before confirming overwrite."""
     events: list[str] = []
 
@@ -171,6 +171,7 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch):
 
         def __init__(self) -> None:
             self._token: CancelToken | None = None
+            self._running = False
 
         def job_runner(self) -> FakeRunner:
             return FakeRunner()
@@ -180,8 +181,12 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch):
 
         def begin_job(self, _message: str = "Working…") -> CancelToken:
             events.append("begin_job")
+            self._running = True
             self._token = CancelToken()
             return self._token
+
+        def is_job_running(self) -> bool:
+            return self._running
 
         def end_job(
             self,
@@ -192,6 +197,7 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch):
             result_path: str | None = None,
             error: str | None = None,
         ) -> None:
+            self._running = False
             events.append(f"end_job:{status or error}")
 
     # Simulate "output already exists" to force overwrite confirmation.
@@ -241,6 +247,9 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch):
     assert "password_prompt" in events
     assert "confirm_overwrite" in events
     assert events.index("password_prompt") < events.index("confirm_overwrite")
+    qtbot.waitUntil(lambda: any(e.startswith("end_job:") for e in events), timeout=5000)
+    assert "runner.run" in events
+    assert any(e.startswith("end_job:Saved") for e in events)
 
 
 def test_migrated_organize_tool_uses_modeless_shell(qtbot, monkeypatch):

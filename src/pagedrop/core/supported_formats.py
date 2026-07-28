@@ -47,6 +47,13 @@ IMPORT_TO_PDF_FORMATS: tuple[FormatSpec, ...] = (
     FormatSpec("text", frozenset({".txt"}), "Text"),
     FormatSpec("markdown", frozenset({".md", ".markdown"}), "Markdown"),
     FormatSpec("html", frozenset({".html", ".htm"}), "HTML"),
+    FormatSpec("csv", frozenset({".csv"}), "CSV"),
+    FormatSpec(
+        "xlsx",
+        frozenset({".xlsx"}),
+        "Excel XLSX",
+        capability_id=OPENPYXL,
+    ),
 )
 
 # PDF → other (Tools Export from PDF).

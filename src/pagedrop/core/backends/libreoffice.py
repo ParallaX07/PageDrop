@@ -1,4 +1,4 @@
-"""LibreOffice (soffice) → PDF adapter.
+"""LibreOffice (soffice) conversion adapter.
 
 Invokes a separately installed ``soffice`` in headless mode with a **temporary
 user profile** so the user's interactive LibreOffice session is undisturbed.
@@ -43,7 +43,7 @@ WINGET_INSTALL_COMMAND = " ".join(WINGET_INSTALL_ARGV)
 
 
 class LibreOfficeConversionError(JobError):
-    """soffice failed, timed out, or produced no PDF."""
+    """soffice failed, timed out, or produced no output."""
 
     def __init__(self, message: str, code: str = "libreoffice_error") -> None:
         self.code = code
@@ -61,18 +61,30 @@ def convert_via_libreoffice(
     input_path: str | Path,
     output_path: str | Path,
     *,
+    convert_to: str = "pdf",
+    infilter: str | None = None,
     soffice_path: str | None = None,
     timeout_sec: float = DEFAULT_TIMEOUT_SEC,
     cancel: CancelToken | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> Path:
-    """Convert *input_path* to PDF at *output_path* via headless LibreOffice.
+    """Convert *input_path* to *convert_to* format at *output_path* via headless LO.
+
+    *infilter* is passed as ``--infilter=…`` when set (e.g. ``writer_pdf_import``
+    so PDF opens in Writer and can export DOCX).
 
     Raises:
         BackendUnavailableError: soffice not found
         JobCancelledError: cancel token fired
         LibreOfficeConversionError: conversion failed or timed out
     """
+    target = convert_to.strip().lower()
+    if not target:
+        raise LibreOfficeConversionError(
+            "LibreOffice convert-to target is empty", code="bad_target"
+        )
+    suffix = f".{target.split(':', 1)[0]}"
+
     binary = soffice_path or find_soffice()
     if not binary or not Path(binary).is_file():
         status = probe(LIBREOFFICE)
@@ -88,7 +100,7 @@ def convert_via_libreoffice(
         raise LibreOfficeConversionError(f"Input not found: {src}", code="input_missing")
     if src == dst:
         raise LibreOfficeConversionError(
-            "Output path must not overwrite the source Office file",
+            "Output path must not overwrite the source file",
             code="source_overwrite",
         )
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +112,14 @@ def convert_via_libreoffice(
     outdir = Path(tempfile.mkdtemp(prefix="pagedrop_lo_out_"))
     owned_pid: int | None = None
     try:
-        argv = build_convert_argv(binary, src, outdir, profile_dir)
+        argv = build_convert_argv(
+            binary,
+            src,
+            outdir,
+            profile_dir,
+            convert_to=target,
+            infilter=infilter,
+        )
         proc = popen_owned(argv, stdin=None)
         owned_pid = proc.pid
         deadline = time.monotonic() + max(0.1, float(timeout_sec))
@@ -127,11 +146,12 @@ def convert_via_libreoffice(
                 code="soffice_failed",
             )
 
-        produced = _expected_pdf(outdir, src)
+        produced = _expected_output(outdir, src, suffix=suffix)
         if produced is None or not produced.is_file():
             detail = (stderr or stdout or "").strip()
             raise LibreOfficeConversionError(
-                f"LibreOffice produced no PDF{': ' + detail if detail else ''}",
+                f"LibreOffice produced no {suffix.lstrip('.').upper()}"
+                f"{': ' + detail if detail else ''}",
                 code="empty_output",
             )
         if dst.exists():
@@ -154,21 +174,32 @@ def build_convert_argv(
     input_path: Path,
     outdir: Path,
     profile_dir: Path,
+    *,
+    convert_to: str = "pdf",
+    infilter: str | None = None,
 ) -> list[str]:
-    """Build ``soffice --headless --convert-to pdf …`` with a temp user profile."""
-    return [
+    """Build ``soffice --headless --convert-to …`` with a temp user profile."""
+    argv = [
         str(soffice),
         "--headless",
         "--nologo",
         "--nofirststartwizard",
         "--norestore",
         f"-env:UserInstallation={_user_installation_uri(profile_dir)}",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        str(outdir.resolve()),
-        str(input_path.resolve()),
     ]
+    # PDF defaults to Draw; Writer import is required for DOCX (and similar) export.
+    if infilter:
+        argv.append(f"--infilter={infilter}")
+    argv.extend(
+        [
+            "--convert-to",
+            convert_to,
+            "--outdir",
+            str(outdir.resolve()),
+            str(input_path.resolve()),
+        ]
+    )
+    return argv
 
 
 def _user_installation_uri(profile_dir: Path) -> str:
@@ -178,15 +209,20 @@ def _user_installation_uri(profile_dir: Path) -> str:
     return resolved.as_uri()
 
 
-def _expected_pdf(outdir: Path, src: Path) -> Path | None:
-    """LibreOffice writes ``<stem>.pdf`` into *outdir* (same stem as the source)."""
-    candidate = outdir / f"{src.stem}.pdf"
+def _expected_output(outdir: Path, src: Path, *, suffix: str) -> Path | None:
+    """LibreOffice writes ``<stem>.<ext>`` into *outdir* (same stem as the source)."""
+    candidate = outdir / f"{src.stem}{suffix}"
     if candidate.is_file():
         return candidate
-    pdfs = sorted(outdir.glob("*.pdf"))
-    if len(pdfs) == 1:
-        return pdfs[0]
+    matches = sorted(outdir.glob(f"*{suffix}"))
+    if len(matches) == 1:
+        return matches[0]
     return None
+
+
+def _expected_pdf(outdir: Path, src: Path) -> Path | None:
+    """Compatibility alias — prefer :func:`_expected_output`."""
+    return _expected_output(outdir, src, suffix=".pdf")
 
 
 def _wait_reap(proc: object, timeout: float = 5.0) -> None:

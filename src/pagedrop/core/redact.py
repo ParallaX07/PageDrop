@@ -236,7 +236,7 @@ def inspect_redaction_result(
                 k
                 for k in STANDARD_METADATA_KEYS
                 if (meta.get(k) or "").strip()
-                and k not in ("format",)  # ponytail: MuPDF may keep format label
+                and k not in ("format",)  # MuPDF may keep format label
             ]
             # Producer/creator often rewritten by save — only flag user fields.
             user_keys = ("title", "author", "subject", "keywords")

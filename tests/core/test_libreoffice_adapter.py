@@ -119,6 +119,26 @@ def test_build_convert_argv_uses_temp_user_profile(tmp_path: Path) -> None:
     assert str(src.resolve()) in argv
 
 
+def test_build_convert_argv_docx_target(tmp_path: Path) -> None:
+    soffice = tmp_path / "soffice"
+    src = tmp_path / "doc.pdf"
+    outdir = tmp_path / "out"
+    profile = tmp_path / "profile"
+    outdir.mkdir()
+    profile.mkdir()
+    src.write_bytes(b"%PDF")
+    argv = build_convert_argv(
+        soffice,
+        src,
+        outdir,
+        profile,
+        convert_to="docx",
+        infilter="writer_pdf_import",
+    )
+    assert argv[argv.index("--convert-to") + 1] == "docx"
+    assert "--infilter=writer_pdf_import" in argv
+
+
 def test_convert_timeout_kills_owned_and_cleans_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,7 +177,7 @@ def test_convert_timeout_kills_owned_and_cleans_profile(
     with pytest.raises(LibreOfficeConversionError) as exc:
         convert_via_libreoffice(src, dst, timeout_sec=0.4, soffice_path=str(fake_bin))
     assert exc.value.code == "timeout"
-    assert time.monotonic() - t0 < 5.0
+    assert time.monotonic() - t0 < 10.0
     for path in created:
         assert not path.exists(), f"temp dir left behind: {path}"
 

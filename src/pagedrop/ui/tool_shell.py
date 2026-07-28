@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -62,6 +62,76 @@ _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 
 # Organize tools migrated onto this shell in Phase 22b (remaining finish in Phase 24).
 SHELL_ORGANIZE_IDS: frozenset[str] = frozenset({"split", "reverse"})
+
+# Dedicated pool (not thumbnail/render pools) — job runner still holds FITZ_LOCK.
+_TOOL_JOB_POOL: QThreadPool | None = None
+# Keep Signals alive until queued finished slots run (autoDelete QRunnable).
+_TOOL_JOB_SIGNAL_REFS: list[QObject] = []
+
+
+def _tool_job_pool() -> QThreadPool:
+    global _TOOL_JOB_POOL
+    if _TOOL_JOB_POOL is None:
+        _TOOL_JOB_POOL = QThreadPool()
+        _TOOL_JOB_POOL.setMaxThreadCount(1)
+        _TOOL_JOB_POOL.setObjectName("PageDropToolJobPool")
+    return _TOOL_JOB_POOL
+
+
+class _ToolJobWorker(QRunnable):
+    """Run ``SerializedJobRunner.run`` off the UI thread (LibreOffice / long jobs)."""
+
+    class Signals(QObject):
+        progress = pyqtSignal(float, str)
+        succeeded = pyqtSignal(str)
+        cancelled = pyqtSignal()
+        failed = pyqtSignal(str, str)  # error dialog text, toast
+
+    def __init__(
+        self,
+        runner: SerializedJobRunner,
+        spec: JobSpec,
+        *,
+        credentials: object,
+        cancel: object,
+        secrets: dict[str, str] | None,
+    ) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._runner = runner
+        self._spec = spec
+        self._credentials = credentials
+        self._cancel = cancel
+        self._secrets = secrets
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            result = self._runner.run(
+                self._spec,
+                credentials=self._credentials,  # type: ignore[arg-type]
+                progress=lambda f, m: self.signals.progress.emit(f, m),
+                cancel=self._cancel,  # type: ignore[arg-type]
+                secrets=self._secrets,
+            )
+        except JobCancelledError:
+            self.signals.cancelled.emit()
+        except SourceOverwriteError as exc:
+            self.signals.failed.emit(
+                f"Output must not overwrite a source file:\n{exc}",
+                "Cannot overwrite source",
+            )
+        except OutputExistsError as exc:
+            self.signals.failed.emit(
+                f"Output already exists:\n{exc}",
+                "Output exists",
+            )
+        except (JobError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
+            self.signals.failed.emit(str(exc), "Job failed")
+        except Exception as exc:
+            self.signals.failed.emit(f"Unexpected error:\n{exc}", "Job failed")
+        else:
+            self.signals.succeeded.emit(str(result))
 
 
 class FileDropZone(QFrame):
@@ -258,6 +328,9 @@ def run_tool_job(
 ) -> None:
     """Password preflight → overwrite confirm → job runner (shared with Tools hub).
 
+    Dialogs run on the UI thread; ``runner.run`` runs on a dedicated pool so
+    LibreOffice / long handlers do not freeze the event loop.
+
     *host* must provide ``begin_job``, ``end_job``, ``job_runner``, ``set_job_progress``,
     and ``WINDOW_TITLE`` (same shape as ``ToolsWindow`` / ``ToolShellWindow``).
 
@@ -287,19 +360,6 @@ def run_tool_job(
         if existing and not confirm_overwrite(host, existing, window_title=title):
             end(status="Cancelled", toast="Cancelled", toast_kind="info")
             return
-        result = runner.run(
-            JobSpec.create(
-                job_type,
-                inputs=inputs,
-                output=output,
-                options=options or {},
-                overwrite=True,
-            ),
-            credentials=credentials,
-            progress=set_progress,
-            cancel=token,
-            secrets=secrets,
-        )
     except JobCancelledError:
         end(status="Cancelled", toast="Job cancelled", toast_kind="info")
         return
@@ -328,13 +388,66 @@ def run_tool_job(
         )
         return
 
-    name = Path(result).name
-    end(
-        status=f"Saved {name}",
-        toast=success_toast or f"Saved {name}",
-        toast_kind="success",
-        result_path=str(result),
+    spec = JobSpec.create(
+        job_type,
+        inputs=inputs,
+        output=output,
+        options=options or {},
+        overwrite=True,
     )
+    worker = _ToolJobWorker(
+        runner,
+        spec,
+        credentials=credentials,
+        cancel=token,
+        secrets=secrets,
+    )
+    signals = worker.signals
+    _TOOL_JOB_SIGNAL_REFS.append(signals)
+
+    def _still_running() -> bool:
+        check = getattr(host, "is_job_running", None)
+        return True if not callable(check) else bool(check())
+
+    def _release_signals() -> None:
+        try:
+            _TOOL_JOB_SIGNAL_REFS.remove(signals)
+        except ValueError:
+            pass
+
+    def on_progress(fraction: float, message: str) -> None:
+        if _still_running():
+            set_progress(fraction, message)
+
+    def on_succeeded(result_path: str) -> None:
+        _release_signals()
+        if not _still_running():
+            return
+        name = Path(result_path).name
+        end(
+            status=f"Saved {name}",
+            toast=success_toast or f"Saved {name}",
+            toast_kind="success",
+            result_path=result_path,
+        )
+
+    def on_cancelled() -> None:
+        _release_signals()
+        if not _still_running():
+            return
+        end(status="Cancelled", toast="Job cancelled", toast_kind="info")
+
+    def on_failed(error: str, toast: str) -> None:
+        _release_signals()
+        if not _still_running():
+            return
+        end(error=error, toast=toast, toast_kind="error")
+
+    signals.progress.connect(on_progress)
+    signals.succeeded.connect(on_succeeded)
+    signals.cancelled.connect(on_cancelled)
+    signals.failed.connect(on_failed)
+    _tool_job_pool().start(worker)
 
 
 class ToolShellWindow(QWidget):

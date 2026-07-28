@@ -866,6 +866,7 @@ def ensure_organize_runner(temp_manager: TempManager | None = None) -> Serialize
     from pagedrop.core.ocr_jobs import register_ocr_handlers
     from pagedrop.core.office_conversion_jobs import register_office_conversion_handlers
     from pagedrop.core.optimize_secure_jobs import register_optimize_secure_handlers
+    from pagedrop.core.pdf_to_docx_jobs import register_pdf_to_docx_handlers
 
     runner = SerializedJobRunner(temp_manager)
     register_organize_handlers(runner)
@@ -874,6 +875,7 @@ def ensure_organize_runner(temp_manager: TempManager | None = None) -> Serialize
     register_optimize_secure_handlers(runner)
     register_modify_handlers(runner)
     register_ocr_handlers(runner)
+    register_pdf_to_docx_handlers(runner)
     return runner
 
 

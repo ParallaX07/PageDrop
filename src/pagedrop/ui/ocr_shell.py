@@ -40,7 +40,9 @@ from pagedrop.utils.page_jump import parse_page_ranges
 if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
 
-SHELL_OCR_IDS: frozenset[str] = frozenset({"ocr_pdf", "extract_tables"})
+SHELL_OCR_IDS: frozenset[str] = frozenset(
+    {"ocr_pdf", "extract_tables", "pdf_to_csv", "pdf_to_excel"}
+)
 
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 
@@ -49,6 +51,11 @@ _TABLE_FORMATS: tuple[tuple[str, str, str], ...] = (
     ("JSON", "tables_json", ".json"),
     ("Excel (XLSX)", "xlsx", ".xlsx"),
 )
+
+_INITIAL_TABLE_FORMAT: dict[str, str] = {
+    "pdf_to_csv": "csv",
+    "pdf_to_excel": "xlsx",
+}
 
 
 def _pick_save_path(
@@ -262,7 +269,10 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
 
 
 def _configure_extract_tables(
-    shell: ToolShellWindow, *, range_prefill: str = ""
+    shell: ToolShellWindow,
+    *,
+    range_prefill: str = "",
+    initial_format_id: str | None = None,
 ) -> None:
     options = QWidget()
     form = QFormLayout(options)
@@ -277,12 +287,17 @@ def _configure_extract_tables(
     form.addRow(hint)
 
     fmt = QComboBox()
-    for label, format_id, _suffix in _TABLE_FORMATS:
+    selected_index = 0
+    for index, (label, format_id, _suffix) in enumerate(_TABLE_FORMATS):
         if format_id == "xlsx" and not probe(OPENPYXL).available:
             fmt.addItem(f"{label} (openpyxl missing)", format_id)
         else:
             fmt.addItem(label, format_id)
+        if initial_format_id and format_id == initial_format_id:
+            selected_index = index
+    fmt.setCurrentIndex(selected_index)
     form.addRow("Format", fmt)
+    shell._table_format_combo = fmt  # type: ignore[attr-defined]
 
     ranges = QLineEdit(range_prefill)
     ranges.setPlaceholderText("All pages")
@@ -359,6 +374,8 @@ def _configure_extract_tables(
 _CONFIGURERS = {
     "ocr_pdf": _configure_ocr,
     "extract_tables": _configure_extract_tables,
+    "pdf_to_csv": _configure_extract_tables,
+    "pdf_to_excel": _configure_extract_tables,
 }
 
 
@@ -376,6 +393,7 @@ def open_ocr_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
     shell = store.get(tool_id)
     ctx = editor_pdf_context(tools.editor)
     range_prefill = ctx.range_prefill if ctx is not None else ""
+    initial_format = _INITIAL_TABLE_FORMAT.get(tool_id)
 
     if shell is None:
         shell = ToolShellWindow(
@@ -389,13 +407,26 @@ def open_ocr_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
             browse_title=f"Choose PDF — {entry.title}",
             empty_prompt="Drop PDF here, or click to browse",
         )
-        _CONFIGURERS[tool_id](shell, range_prefill=range_prefill)
+        if tool_id == "ocr_pdf":
+            _CONFIGURERS[tool_id](shell, range_prefill=range_prefill)
+        else:
+            _CONFIGURERS[tool_id](
+                shell,
+                range_prefill=range_prefill,
+                initial_format_id=initial_format,
+            )
         store[tool_id] = shell
     else:
         shell.set_editor(tools.editor)
         ranges = getattr(shell, "_ocr_ranges", None)
         if ranges is not None and range_prefill and not ranges.text().strip():
             ranges.setText(range_prefill)
+        combo = getattr(shell, "_table_format_combo", None)
+        if combo is not None and initial_format:
+            for i in range(combo.count()):
+                if combo.itemData(i) == initial_format:
+                    combo.setCurrentIndex(i)
+                    break
 
     if ctx is not None and Path(ctx.path).is_file():
         shell.drop_zone.set_paths([ctx.path])

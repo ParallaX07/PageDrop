@@ -71,6 +71,8 @@ def test_import_export_registries_cover_phase25_formats():
         "text",
         "markdown",
         "html",
+        "csv",
+        "xlsx",
     } <= import_ids
 
     export_ids = {spec.id for spec in EXPORT_FROM_PDF_FORMATS}
@@ -198,6 +200,74 @@ def test_markdown_and_html_via_story(tmp_path):
         assert "PageDrop" in doc[0].get_text()
     finally:
         doc.close()
+
+
+def test_csv_to_pdf_contains_known_cells(tmp_path):
+    csv_path = tmp_path / "sheet.csv"
+    csv_path.write_text("Name,Score\nAda,99\n", encoding="utf-8")
+    before = _file_hash(csv_path)
+    out = tmp_path / "sheet.pdf"
+    nc.import_to_pdf(csv_path, out)
+    doc = fitz.open(out)
+    try:
+        text = doc[0].get_text()
+        assert "Ada" in text
+        assert "99" in text
+        assert doc.page_count >= 1
+    finally:
+        doc.close()
+    assert _file_hash(csv_path) == before
+
+
+def test_xlsx_to_pdf_requires_openpyxl_when_absent(tmp_path, monkeypatch):
+    clear_cache()
+    xlsx = tmp_path / "book.xlsx"
+    xlsx.write_bytes(b"PK\x03\x04not-real")
+    out = tmp_path / "book.pdf"
+
+    from pagedrop.core.capabilities import AbsenceReason, CapabilityStatus
+
+    monkeypatch.setattr(
+        "pagedrop.core.native_conversions.probe",
+        lambda cid, refresh=False: CapabilityStatus(
+            id=cid,
+            available=False,
+            reason=AbsenceReason.CODEC_MISSING,
+            detail="missing",
+        ),
+    )
+    with pytest.raises(BackendUnavailableError) as exc:
+        nc.import_to_pdf(xlsx, out)
+    assert exc.value.capability_id == OPENPYXL
+
+
+def test_xlsx_to_pdf_contains_known_cells(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    clear_cache()
+    xlsx = tmp_path / "book.xlsx"
+    out = tmp_path / "book.pdf"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Item", "Qty"])
+    ws.append(["Widget", 3])
+    wb.save(xlsx)
+    before = _file_hash(xlsx)
+    nc.import_to_pdf(xlsx, out)
+    doc = fitz.open(out)
+    try:
+        text = doc[0].get_text()
+        assert "Widget" in text
+    finally:
+        doc.close()
+    assert _file_hash(xlsx) == before
+
+
+def test_csv_to_pdf_rejects_too_many_columns(tmp_path):
+    wide = ",".join(f"c{i}" for i in range(nc._SHEET_MAX_COLS + 1))
+    csv_path = tmp_path / "wide.csv"
+    csv_path.write_text(wide + "\n", encoding="utf-8")
+    with pytest.raises(nc.NativeConvertError, match="columns"):
+        nc.import_to_pdf(csv_path, tmp_path / "wide.pdf")
 
 
 def test_cbz_round_trip_export_import(tmp_path):

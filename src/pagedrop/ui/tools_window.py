@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.capabilities import (
+    LIBREOFFICE,
+    OPENPYXL,
     TESSDATA,
     AbsenceReason,
     CapabilityStatus,
@@ -205,9 +207,19 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
     ToolEntry(
         "convert_to_pdf",
         "Convert to PDF",
-        "SVG, XPS, ebooks, text, HTML, and more → PDF",
+        "SVG, XPS, ebooks, text, HTML, CSV, Excel, and more → PDF",
         "Convert",
-        keywords=("import", "svg", "epub", "markdown", "html", "cbz"),
+        keywords=(
+            "import",
+            "svg",
+            "epub",
+            "markdown",
+            "html",
+            "cbz",
+            "csv",
+            "xlsx",
+            "excel",
+        ),
         action="convert_to_pdf",
     ),
     ToolEntry(
@@ -223,8 +235,26 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Office to PDF",
         "Word, Excel, PowerPoint → PDF via Office or LibreOffice",
         "Convert",
-        keywords=("word", "excel", "powerpoint", "docx", "xlsx", "pptx", "libreoffice"),
+        keywords=(
+            "word",
+            "excel",
+            "powerpoint",
+            "docx",
+            "xlsx",
+            "csv",
+            "pptx",
+            "libreoffice",
+        ),
         action="office_to_pdf",
+    ),
+    ToolEntry(
+        "pdf_to_word",
+        "PDF to Word",
+        "Convert PDF to DOCX via LibreOffice (layout may differ)",
+        "Convert",
+        keywords=("word", "docx", "libreoffice", "export"),
+        capability_id=LIBREOFFICE,
+        action="pdf_to_word",
     ),
     ToolEntry(
         "ocr_pdf",
@@ -242,6 +272,23 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("tables", "csv", "json", "xlsx", "excel", "spreadsheet"),
         action="extract_tables",
+    ),
+    ToolEntry(
+        "pdf_to_csv",
+        "PDF to CSV",
+        "Extract tables from a PDF to CSV",
+        "Convert",
+        keywords=("tables", "csv", "spreadsheet", "export"),
+        action="pdf_to_csv",
+    ),
+    ToolEntry(
+        "pdf_to_excel",
+        "PDF to Excel",
+        "Extract tables from a PDF to Excel (XLSX)",
+        "Convert",
+        keywords=("tables", "xlsx", "excel", "spreadsheet", "export"),
+        capability_id=OPENPYXL,
+        action="pdf_to_excel",
     ),
     ToolEntry(
         "crop",
@@ -958,6 +1005,11 @@ class ToolsWindow(QWidget):
 
             open_office_convert_shell(self)
             return
+        if entry.action == "pdf_to_word":
+            from pagedrop.ui.pdf_to_word_shell import open_pdf_to_word_shell
+
+            open_pdf_to_word_shell(self)
+            return
         if entry.action == "optimize_secure":
             from pagedrop.ui.optimize_secure_shell import open_optimize_secure_shell
 
@@ -968,7 +1020,7 @@ class ToolsWindow(QWidget):
 
             open_modify_shell(self, entry.id)
             return
-        if entry.action in {"ocr", "extract_tables"}:
+        if entry.action in {"ocr", "extract_tables", "pdf_to_csv", "pdf_to_excel"}:
             from pagedrop.ui.ocr_shell import open_ocr_shell
 
             open_ocr_shell(self, entry.id)
