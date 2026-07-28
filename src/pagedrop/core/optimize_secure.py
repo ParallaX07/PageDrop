@@ -59,7 +59,8 @@ from typing import Literal
 import fitz
 
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS, _open
+from pagedrop.core.pdf_loader import open_pdf
+from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS
 
 SaveProfileName = Literal["fast", "lossless", "max"]
 LossyProfileName = Literal["screen", "ebook", "print"]
@@ -260,7 +261,7 @@ def compress_pdf(
     then a lossless GC save. Quality may drop — never claimed identical.
     """
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         if isinstance(profile, LossyProfile) or (
             isinstance(profile, str) and is_lossy_profile_name(profile)
@@ -287,7 +288,7 @@ def repair_pdf(
     the rewrite. Clean files typically yield ``was_repaired=False``.
     """
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         was_repaired = bool(getattr(doc, "is_repaired", False))
         repair_fn = getattr(doc, "repair", None)
@@ -328,7 +329,7 @@ def encrypt_pdf(
     if encryption == fitz.PDF_ENCRYPT_NONE:
         raise ValueError("encryption must not be PDF_ENCRYPT_NONE; use decrypt_pdf")
 
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         doc.save(
             output_path,
@@ -354,7 +355,7 @@ def decrypt_pdf(
     reject_source_overwrite(output_path, source_pdf)
     if not password:
         raise ValueError("password must be non-empty")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         doc.save(
             output_path,
@@ -383,7 +384,7 @@ def sanitize_pdf(
     field set (``STANDARD_METADATA_KEYS`` + optional XMP delete).
     """
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         if strip_metadata:
             meta = dict(doc.metadata or {})

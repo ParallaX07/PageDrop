@@ -20,7 +20,8 @@ import fitz
 
 from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS, _open
+from pagedrop.core.pdf_loader import open_pdf
+from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS
 
 if TYPE_CHECKING:
     from pagedrop.core.markup import MarkupEntry
@@ -226,7 +227,7 @@ def inspect_redaction_result(
 ) -> RedactionVerifyReport:
     """In-process inspection used by the fresh-process verifier."""
     report = RedactionVerifyReport()
-    doc = _open(str(path), password=password)
+    doc = open_pdf(str(path), password=password)
     try:
         secrets = [_normalize_secret(s) for s in absent_text if _normalize_secret(s)]
         path_obj = Path(path)
@@ -370,7 +371,7 @@ def redact_pdf(
         raise RedactionError("No redaction regions to apply")
 
     effective_scope = scope or RedactionScope()
-    doc = _open(str(source), password=password)
+    doc = open_pdf(str(source), password=password)
     secrets: list[str] = []
     try:
         secrets = _secrets_under_regions(doc, regions)

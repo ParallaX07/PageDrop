@@ -15,6 +15,7 @@ import fitz
 
 from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
+from pagedrop.core.pdf_loader import open_pdf
 
 AnnotKind = Literal[
     "highlight",
@@ -75,17 +76,6 @@ class AnnotationOp:
     border: bool = False
     # Absolute path for kind == "image" (copied into the output PDF on Save As).
     image_path: str = ""
-
-
-def _open(path: str, password: str | None = None) -> fitz.Document:
-    if not Path(path).is_file():
-        raise FileNotFoundError(path)
-    doc = fitz.open(path)
-    if doc.needs_pass:
-        if password is None or doc.authenticate(password) == 0:
-            doc.close()
-            raise PermissionError(f"Password required or incorrect: {path}")
-    return doc
 
 
 def _save(doc: fitz.Document, output_path: str) -> None:
@@ -185,7 +175,7 @@ def add_annotations(
     reject_source_overwrite(output_path, source_pdf)
     if not ops:
         raise AnnotationError("No annotation operations to apply")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         apply_annotation_ops(doc, ops)
         _save(doc, output_path)
@@ -199,7 +189,7 @@ def list_annotation_summaries(
     password: str | None = None,
 ) -> list[tuple[int, str, str]]:
     """Return ``(page_index, type_name, content)`` for each annotation."""
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         rows: list[tuple[int, str, str]] = []
         for i, page in enumerate(doc):

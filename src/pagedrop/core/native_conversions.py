@@ -28,7 +28,7 @@ from pagedrop.core.capabilities import (
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_tools import _open as _open_pdf
+from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.supported_formats import (
     export_format,
     format_capability_available,
@@ -493,7 +493,7 @@ def _export_raster(
     cancel: CancelToken | None = None,
 ) -> list[Path]:
     suffix = ".png" if format_id == "png" else ".jpg"
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         out_dir, stem = _output_dir_and_stem(output, multi=True)
@@ -554,7 +554,7 @@ def _export_webp(
     cancel: CancelToken | None = None,
 ) -> list[Path]:
     del jpeg_quality, format_id
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         out_dir, stem = _output_dir_and_stem(output, multi=True)
@@ -588,7 +588,7 @@ def _export_svg(
     cancel: CancelToken | None = None,
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         out_dir, stem = _output_dir_and_stem(output, multi=True)
@@ -628,7 +628,7 @@ def _export_text(
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         chunks: list[str] = []
@@ -655,7 +655,7 @@ def _export_json(
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         pages_payload: list[dict[str, object]] = []
@@ -688,7 +688,7 @@ def _export_xml(
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         root = ET.Element("document", source=source.name)
@@ -718,7 +718,7 @@ def _export_cbz(
 ) -> list[Path]:
     del jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         zoom = dpi / 72.0
@@ -762,7 +762,7 @@ def _export_tables_csv(
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         rows = _extract_table_rows(doc, indices, cancel=cancel)
@@ -789,7 +789,7 @@ def _export_tables_json(
 ) -> list[Path]:
     del dpi, jpeg_quality, format_id
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         tables: list[dict[str, object]] = []
@@ -841,7 +841,7 @@ def _export_tables_xlsx(
         )
 
     path = _single_file_output(source, output, overwrite=overwrite)
-    doc = _open_pdf(str(source), password)
+    doc = open_pdf(str(source), password)
     try:
         indices = _page_indices(doc, pages)
         rows = _extract_table_rows(doc, indices, cancel=cancel)

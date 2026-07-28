@@ -10,14 +10,7 @@ import fitz
 
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_loader import (
-    PdfCorruptError,
-    PdfEmptyError,
-    PdfLoadError,
-    PdfNotFoundError,
-    PdfPasswordError,
-    PdfPasswordRequiredError,
-)
+from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_service import attachments_for_path, extract_attachment
 
 
@@ -42,38 +35,6 @@ STANDARD_METADATA_KEYS: tuple[str, ...] = (
 COMPARE_MAX_RENDER_WIDTH_PX = 2048
 # Stride (px) for in-page sampling — fixed 3×3 cell probes miss thin text lines.
 COMPARE_SAMPLE_STRIDE_PX = 4
-
-
-def _open(path: str, password: str | None = None) -> fitz.Document:
-    pdf_path = Path(path)
-    try:
-        if not pdf_path.is_file():
-            raise PdfNotFoundError(f"PDF not found: {path}")
-    except OSError as exc:
-        raise PdfLoadError(f"Could not access PDF: {path}") from exc
-
-    try:
-        doc = fitz.open(path)
-    except fitz.EmptyFileError as exc:
-        raise PdfCorruptError(f"PDF file is empty: {path}") from exc
-    except fitz.FileDataError as exc:
-        raise PdfCorruptError(f"PDF file is corrupt or invalid: {path}") from exc
-    except fitz.FileNotFoundError as exc:
-        raise PdfNotFoundError(f"PDF not found: {path}") from exc
-
-    try:
-        if doc.needs_pass:
-            if password is None:
-                raise PdfPasswordRequiredError(f"PDF is password-protected: {path}")
-            if doc.authenticate(password) == 0:
-                raise PdfPasswordError(f"Incorrect password for PDF: {path}")
-
-        if len(doc) == 0:
-            raise PdfEmptyError(f"PDF has no pages: {path}")
-        return doc
-    except Exception:
-        doc.close()
-        raise
 
 
 def predicted_range_output_paths(
@@ -114,7 +75,7 @@ def extract_ranges_to_folder(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out_paths: list[Path] = []
     try:
         for start, end in ranges:
@@ -159,8 +120,8 @@ def alternate_pdfs(
     """
     reject_source_overwrite(output_path, pdf_a, pdf_b)
 
-    a = _open(pdf_a, password=password_a)
-    b = _open(pdf_b, password=password_b)
+    a = open_pdf(pdf_a, password=password_a)
+    b = open_pdf(pdf_b, password=password_b)
     out = fitz.open()
     try:
         i = 0
@@ -206,7 +167,7 @@ def reverse_pdf_pages(
     """
     reject_source_overwrite(output_path, source_pdf)
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         for pno in reversed(range(len(src))):
@@ -256,7 +217,7 @@ def normalize_pdf_page_size(
     if target_width_pt <= 0 or target_height_pt <= 0:
         raise ValueError("target_* must be positive")
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         if isinstance(margins_pt, tuple):
@@ -300,7 +261,7 @@ def n_up_pdf(
     if rows <= 0 or cols <= 0:
         raise ValueError("rows/cols must be positive")
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -358,7 +319,7 @@ def booklet_pdf(
     Full duplex fold imposition rules can be added later if needed.
     """
     reject_source_overwrite(output_path, source_pdf)
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -409,7 +370,7 @@ def posterize_pdf(
     if rows <= 0 or cols <= 0:
         raise ValueError("rows/cols must be positive")
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -458,7 +419,7 @@ def divide_pdf_pages(
     if direction not in {"vertical", "horizontal"}:
         raise ValueError("direction must be 'vertical' or 'horizontal'")
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         first_rect = _page_rect_for_source(src, 0)
@@ -537,7 +498,7 @@ def combine_pages_to_single_long(
     if axis != "vertical":
         raise ValueError("axis must be 'vertical'")
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out = fitz.open()
     try:
         # Standardize to first page width; scale other pages proportionally.
@@ -596,7 +557,7 @@ def attachment_add(
 ) -> None:
     """Add (or replace) an embedded file."""
     reject_source_overwrite(output_path, source_pdf)
-    src = _open(source_pdf)
+    src = open_pdf(source_pdf)
     try:
         names = set(src.embfile_names())
         if name in names and not overwrite:
@@ -624,7 +585,7 @@ def attachment_remove(
 ) -> None:
     """Remove an embedded file by name."""
     reject_source_overwrite(output_path, source_pdf)
-    src = _open(source_pdf)
+    src = open_pdf(source_pdf)
     try:
         names = set(src.embfile_names())
         if name not in names:
@@ -662,7 +623,7 @@ def attachment_extract_all_zip(
     reject_source_overwrite(out_zip, source_pdf)
     out_zip.parent.mkdir(parents=True, exist_ok=True)
 
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     try:
         names = list(src.embfile_names())
         if not names:
@@ -692,7 +653,7 @@ def attachment_extract_all_zip(
 
 def metadata_get(path: str, *, password: str | None = None) -> dict[str, Any]:
     """Return PDF /Info metadata (standard fields)."""
-    doc = _open(path, password=password)
+    doc = open_pdf(path, password=password)
     try:
         # PyMuPDF typing for `metadata` is imprecise; treat as unstructured dict.
         return cast(dict[str, Any], doc.metadata or {})
@@ -710,7 +671,7 @@ def metadata_set(
     """Edit standard metadata fields and write a new file."""
     reject_source_overwrite(output_path, source_pdf)
 
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         meta = cast(dict[str, Any], doc.metadata or {})
         for key, value in updates.items():
@@ -738,7 +699,7 @@ def metadata_strip(
     """
     reject_source_overwrite(output_path, source_pdf)
 
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         meta = cast(dict[str, Any], doc.metadata or {})
         for key in STANDARD_METADATA_KEYS:
@@ -756,7 +717,7 @@ def metadata_strip(
 
 def xmp_get(path: str, *, password: str | None = None) -> str:
     """Return document-level XML metadata (XMP) as a string."""
-    doc = _open(path, password=password)
+    doc = open_pdf(path, password=password)
     try:
         return str(doc.get_xml_metadata() or "")
     finally:
@@ -765,7 +726,7 @@ def xmp_get(path: str, *, password: str | None = None) -> str:
 
 def page_labels_get(path: str, *, password: str | None = None) -> list[dict]:
     """Return PDF page label definitions."""
-    doc = _open(path, password=password)
+    doc = open_pdf(path, password=password)
     try:
         return list(doc.get_page_labels())
     finally:
@@ -781,7 +742,7 @@ def page_labels_set(
 ) -> None:
     """Set page label definitions and write a new file."""
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         doc.set_page_labels(labels)
         doc.save(output_path)
@@ -946,8 +907,8 @@ def compare_pdf_text_diff(
     Page indices are aligned 0..min(n_a, n_b)-1. Extra trailing pages are reported
     as wholesale deleted (A only) or added (B only) changes.
     """
-    a = _open(pdf_a, password=password_a)
-    b = _open(pdf_b, password=password_b)
+    a = open_pdf(pdf_a, password=password_a)
+    b = open_pdf(pdf_b, password=password_b)
     try:
         changes: list[CompareChange] = []
         shared = min(len(a), len(b))
@@ -1019,8 +980,8 @@ def compare_pdfs_heatmap(
     """
     out_path = Path(output_heatmap_pdf)
     reject_source_overwrite(out_path, pdf_a, pdf_b)
-    a = _open(pdf_a, password=password_a)
-    b = _open(pdf_b, password=password_b)
+    a = open_pdf(pdf_a, password=password_a)
+    b = open_pdf(pdf_b, password=password_b)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out = fitz.open()
     try:

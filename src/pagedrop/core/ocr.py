@@ -22,7 +22,7 @@ from pagedrop.core.capabilities import (
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_tools import _open
+from pagedrop.core.pdf_loader import open_pdf
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -100,7 +100,7 @@ def ocr_pdf(
         if progress is not None:
             progress(frac, message)
 
-    doc = _open(str(source_path), password)
+    doc = open_pdf(str(source_path), password)
     out: fitz.Document | None = None
     try:
         indices = _page_indices(doc, pages)

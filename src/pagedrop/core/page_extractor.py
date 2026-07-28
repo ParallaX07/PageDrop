@@ -6,39 +6,8 @@ from pathlib import Path
 import fitz
 
 from pagedrop.core.pdf_editor import PageRef
-from pagedrop.core.pdf_loader import (
-    PdfCorruptError,
-    PdfEmptyError,
-    PdfNotFoundError,
-    PdfPasswordError,
-    PdfPasswordRequiredError,
-)
+from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_writer import append_page_refs
-
-
-def _open_pdf(path: str, password: str | None = None) -> fitz.Document:
-    if not Path(path).is_file():
-        raise PdfNotFoundError(f"PDF not found: {path}")
-    try:
-        doc = fitz.open(path)
-    except fitz.EmptyFileError as exc:
-        raise PdfCorruptError(f"PDF file is empty: {path}") from exc
-    except fitz.FileDataError as exc:
-        raise PdfCorruptError(f"PDF file is corrupt or invalid: {path}") from exc
-    except fitz.FileNotFoundError as exc:
-        raise PdfNotFoundError(f"PDF not found: {path}") from exc
-    try:
-        if doc.needs_pass:
-            if password is None:
-                raise PdfPasswordRequiredError(f"PDF is password-protected: {path}")
-            if doc.authenticate(password) == 0:
-                raise PdfPasswordError(f"Incorrect password for PDF: {path}")
-        if doc.page_count == 0:
-            raise PdfEmptyError(f"PDF has no pages: {path}")
-        return doc
-    except Exception:
-        doc.close()
-        raise
 
 
 def extract_page_refs_to_pdf(
@@ -107,7 +76,7 @@ def extract_pages_to_files(
     *,
     password: str | None = None,
 ) -> list[Path]:
-    src = _open_pdf(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     out_paths: list[Path] = []
     try:
         for idx in sorted(page_indices):

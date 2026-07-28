@@ -11,6 +11,7 @@ from pagedrop.core.pdf_loader import (
     PdfLoader,
     PdfPasswordError,
     PdfPasswordRequiredError,
+    open_pdf,
 )
 from tests.core.test_jobs import _encrypted_pdf
 
@@ -69,3 +70,32 @@ def test_password_required_and_incorrect(tmp_path):
         assert loader.page_count == 1
     finally:
         loader.close()
+
+
+def test_open_pdf_ok_and_closes_on_password_required(one_page_pdf, tmp_path):
+    doc = open_pdf(str(one_page_pdf))
+    try:
+        assert len(doc) == 1
+    finally:
+        doc.close()
+
+    locked = tmp_path / "locked.pdf"
+    _encrypted_pdf(locked, password="secret")
+    with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
+        open_pdf(str(locked))
+
+
+def test_open_pdf_bad_password_and_corrupt(tmp_path, corrupt_pdf):
+    locked = tmp_path / "locked.pdf"
+    _encrypted_pdf(locked, password="secret")
+    with pytest.raises(PdfPasswordError, match="Incorrect password"):
+        open_pdf(str(locked), password="wrong")
+
+    with pytest.raises(PdfCorruptError, match="corrupt|invalid"):
+        open_pdf(str(corrupt_pdf))
+
+    doc = open_pdf(str(locked), password="secret")
+    try:
+        assert len(doc) == 1
+    finally:
+        doc.close()

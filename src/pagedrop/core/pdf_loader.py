@@ -29,45 +29,55 @@ class PdfPasswordError(PdfLoadError):
     """Raised when the supplied password is incorrect."""
 
 
-class PdfLoader:
-    def __init__(self, path: str, password: str | None = None) -> None:
-        self.path = path
-        try:
-            if not Path(path).is_file():
-                raise PdfNotFoundError(f"PDF not found: {path}")
-        except OSError as exc:
-            # Removable / network volumes: is_file() itself can raise.
-            raise PdfLoadError(
-                f"Could not access PDF (drive disconnected or I/O error): {path}"
-            ) from exc
+def open_pdf(path: str, password: str | None = None) -> fitz.Document:
+    """Open a PDF with typed load errors. Caller owns ``close()``.
 
-        try:
-            self.doc = fitz.open(path)
-        except OSError as exc:
-            raise PdfLoadError(
-                f"Could not access PDF (drive disconnected or I/O error): {path}"
-            ) from exc
-        except fitz.EmptyFileError as exc:
-            raise PdfCorruptError(f"PDF file is empty: {path}") from exc
-        except fitz.FileDataError as exc:
-            raise PdfCorruptError(f"PDF file is corrupt or invalid: {path}") from exc
-        except fitz.FileNotFoundError as exc:
-            raise PdfNotFoundError(f"PDF not found: {path}") from exc
+    Shared by tools, writer, extractor, forms, annotations, and pdf_service —
+    password / empty / corrupt / missing paths all close the handle on failure.
+    """
+    try:
+        if not Path(path).is_file():
+            raise PdfNotFoundError(f"PDF not found: {path}")
+    except OSError as exc:
+        # Removable / network volumes: is_file() itself can raise.
+        raise PdfLoadError(
+            f"Could not access PDF (drive disconnected or I/O error): {path}"
+        ) from exc
 
-        if self.doc.needs_pass:
+    try:
+        doc = fitz.open(path)
+    except OSError as exc:
+        raise PdfLoadError(
+            f"Could not access PDF (drive disconnected or I/O error): {path}"
+        ) from exc
+    except fitz.EmptyFileError as exc:
+        raise PdfCorruptError(f"PDF file is empty: {path}") from exc
+    except fitz.FileDataError as exc:
+        raise PdfCorruptError(f"PDF file is corrupt or invalid: {path}") from exc
+    except fitz.FileNotFoundError as exc:
+        raise PdfNotFoundError(f"PDF not found: {path}") from exc
+
+    try:
+        if doc.needs_pass:
             if password is None:
-                self.doc.close()
                 raise PdfPasswordRequiredError(
                     f"PDF is password-protected: {path}"
                 )
-            if self.doc.authenticate(password) == 0:
-                self.doc.close()
+            if doc.authenticate(password) == 0:
                 raise PdfPasswordError(f"Incorrect password for PDF: {path}")
 
-        if len(self.doc) == 0:
-            self.doc.close()
+        if len(doc) == 0:
             raise PdfEmptyError(f"PDF has no pages: {path}")
+        return doc
+    except Exception:
+        doc.close()
+        raise
 
+
+class PdfLoader:
+    def __init__(self, path: str, password: str | None = None) -> None:
+        self.path = path
+        self.doc = open_pdf(path, password)
         self._size_cache: dict[tuple[int, int], tuple[int, int]] = {}
         self._pt_size_cache: dict[int, tuple[float, float]] = {}
 

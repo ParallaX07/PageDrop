@@ -20,7 +20,7 @@ from typing import TypeVar
 import fitz
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import render_page_png
+from pagedrop.core.pdf_loader import open_pdf, render_page_png
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 
 FITZ_LOCK = threading.RLock()
@@ -156,12 +156,7 @@ def _purge_idle_locked(now: float) -> None:
 def _open(path: str, password: str | None = None) -> fitz.Document:
     """Open a fresh document. Caller owns close / cache insertion."""
     ensure_no_fitz_document(path, what="pdf_service path")
-    doc = fitz.open(path)
-    if doc.needs_pass:
-        if password is None or doc.authenticate(password) == 0:
-            doc.close()
-            raise PermissionError(f"Password required or incorrect: {path}")
-    return doc
+    return open_pdf(path, password)
 
 
 def _cache_get(path: str, password: str | None = None) -> fitz.Document:

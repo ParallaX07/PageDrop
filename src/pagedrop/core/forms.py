@@ -12,6 +12,7 @@ import fitz
 
 from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
+from pagedrop.core.pdf_loader import open_pdf
 
 FieldType = Literal["text", "checkbox", "combobox", "listbox", "radiobutton", "other"]
 
@@ -59,17 +60,6 @@ class FormFillOp:
     values: Mapping[str, str]
 
 
-def _open(path: str, password: str | None = None) -> fitz.Document:
-    if not Path(path).is_file():
-        raise FileNotFoundError(path)
-    doc = fitz.open(path)
-    if doc.needs_pass:
-        if password is None or doc.authenticate(password) == 0:
-            doc.close()
-            raise PermissionError(f"Password required or incorrect: {path}")
-    return doc
-
-
 def _save(doc: fitz.Document, output_path: str) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     doc.save(output_path, garbage=3, deflate=True)
@@ -113,7 +103,7 @@ def list_form_fields(
     password: str | None = None,
 ) -> list[FormFieldInfo]:
     """List AcroForm widgets. Raises ``XfaUnsupportedError`` for XFA docs."""
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         ensure_no_xfa(doc, path=source_pdf)
         fields: list[FormFieldInfo] = []
@@ -145,7 +135,7 @@ def fill_form_fields(
     reject_source_overwrite(output_path, source_pdf)
     if not values:
         raise FormError("No form field values to apply")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         ensure_no_xfa(doc, path=source_pdf)
         updated = apply_form_fill(doc, values)
@@ -191,7 +181,7 @@ def create_form_fields(
     reject_source_overwrite(output_path, source_pdf)
     if not fields:
         raise FormError("No form fields to create")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         ensure_no_xfa(doc, path=source_pdf)
         apply_form_creates(doc, fields)
@@ -230,7 +220,7 @@ def flatten_forms(
 ) -> None:
     """Bake form appearances into page content (widgets removed as interactive)."""
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         ensure_no_xfa(doc, path=source_pdf)
         apply_form_flatten(doc)

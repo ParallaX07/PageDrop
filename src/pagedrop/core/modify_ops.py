@@ -17,7 +17,7 @@ from typing import Literal, Sequence
 import fitz
 
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_tools import _open
+from pagedrop.core.pdf_loader import open_pdf
 
 CropMode = Literal["cropbox", "rebuild"]
 WatermarkKind = Literal["text", "image"]
@@ -99,7 +99,7 @@ def crop_pdf(
     reject_source_overwrite(output_path, source_pdf)
     if min(left, right, top, bottom) < 0:
         raise ValueError("Crop margins must be non-negative")
-    src = _open(source_pdf, password=password)
+    src = open_pdf(source_pdf, password=password)
     try:
         if mode == "cropbox":
             for page in src:
@@ -238,7 +238,7 @@ def add_text_watermark(
 
     font = fitz.Font("helv")
     unit_w = max(font.text_length(text, fontsize=1), 1e-6)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         targets = _normalize_page_indices(doc.page_count, pages)
         for i in targets:
@@ -310,7 +310,7 @@ def add_image_watermark(
         scale = max(0.05, min(1.0, scale))
     wm = _pixmap_with_opacity(str(img), opacity)
     aspect = wm.height / max(wm.width, 1)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         targets = _normalize_page_indices(doc.page_count, pages)
         for i in targets:
@@ -362,7 +362,7 @@ def add_header_footer(
     reject_source_overwrite(output_path, source_pdf)
     if not header and not footer:
         raise ValueError("Provide header and/or footer text")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         n = doc.page_count
         for i, page in enumerate(doc):
@@ -404,7 +404,7 @@ def add_page_numbers(
     reject_source_overwrite(output_path, source_pdf)
     if start < 0:
         raise ValueError("start must be >= 0")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         n = doc.page_count
         for i, page in enumerate(doc):
@@ -443,7 +443,7 @@ def add_bates_numbers(
         raise ValueError("digits must be between 1 and 12")
     if start < 0:
         raise ValueError("start must be >= 0")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         n = start
         for page in doc:
@@ -499,7 +499,7 @@ def add_bates_across_files(
 
 
 def get_bookmarks(source_pdf: str, *, password: str | None = None) -> list[BookmarkEntry]:
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         toc = doc.get_toc(simple=True) or []
         return [BookmarkEntry(level=int(row[0]), title=str(row[1]), page=int(row[2])) for row in toc]
@@ -523,7 +523,7 @@ def set_bookmarks(
         else:
             level, title, page = item[0], item[1], item[2]
             toc.append([int(level), str(title), int(page)])
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         doc.set_toc(toc)
         _save(doc, output_path)
@@ -539,7 +539,7 @@ def bookmarks_one_per_page(
     password: str | None = None,
 ) -> None:
     """Replace outline with one level-1 bookmark per page."""
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         entries = [
             BookmarkEntry(1, title_template.replace("{page}", str(i + 1)), i + 1)
@@ -561,7 +561,7 @@ def generate_toc_page(
     Bookmark page numbers are shifted by +1 after insertion so links stay valid.
     """
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         toc = doc.get_toc(simple=True) or []
         if not toc:
@@ -611,7 +611,7 @@ def remove_or_flatten_annotations(
 ) -> None:
     """Remove annotations, or bake (flatten) annots / form appearances into content."""
     reject_source_overwrite(output_path, source_pdf)
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         if action == "flatten":
             doc.bake(annots=True, widgets=include_widgets)
@@ -657,7 +657,7 @@ def detect_blank_pages(
     """Return pages that look blank (no text/images + low ink coverage)."""
     if not 0.0 <= ink_threshold <= 1.0:
         raise ValueError("ink_threshold must be between 0 and 1")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         blanks: list[int] = []
         for i, page in enumerate(doc):
@@ -686,7 +686,7 @@ def remove_blank_pages(
     report = detect_blank_pages(source_pdf, ink_threshold=ink_threshold, password=password)
     if report.blank_count == 0:
         # Still rewrite so callers get a distinct output path.
-        doc = _open(source_pdf, password=password)
+        doc = open_pdf(source_pdf, password=password)
         try:
             _save(doc, output_path)
         finally:
@@ -695,7 +695,7 @@ def remove_blank_pages(
     if report.blank_count >= report.page_count:
         raise ValueError("All pages look blank — refusing to write an empty PDF")
 
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         # Delete from the end so indices stay valid.
         for idx in sorted(report.blank_indices, reverse=True):
@@ -724,7 +724,7 @@ def apply_color_effect(
     reject_source_overwrite(output_path, source_pdf)
     if dpi < 36 or dpi > 600:
         raise ValueError("dpi must be between 36 and 600")
-    doc = _open(source_pdf, password=password)
+    doc = open_pdf(source_pdf, password=password)
     try:
         if effect == "greyscale":
             for page in doc:
