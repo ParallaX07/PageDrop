@@ -93,6 +93,41 @@ def test_watermark_diagonal_percent_page_range_flatten(tmp_path: Path) -> None:
         doc.close()
 
 
+def test_watermark_free_placement_center_fractions(tmp_path: Path) -> None:
+    src = _make_pdf(tmp_path / "src.pdf", text="body", width=400, height=400)
+    source_hash = _file_hash(src)
+    out = tmp_path / "free.pdf"
+    ops.add_text_watermark(
+        str(src),
+        str(out),
+        text="HERE",
+        fontsize=24,
+        rotate=0,
+        diagonal_percent=None,
+        center_x=0.2,
+        center_y=0.8,
+        opacity=1.0,
+    )
+    assert _file_hash(src) == source_hash
+    doc = fitz.open(str(out))
+    try:
+        assert "HERE" in doc[0].get_text()
+        # TextWriter morph keeps glyphs near the free-placement anchor.
+        blocks = doc[0].get_text("blocks")
+        wm = [b for b in blocks if "HERE" in str(b[4])]
+        assert wm
+        x0, y0, x1, y1 = wm[0][:4]
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        assert abs(cx - 80) < 40  # 0.2 * 400
+        assert abs(cy - 320) < 50  # 0.8 * 400
+    finally:
+        doc.close()
+
+    cx, cy = ops.position_center_fractions(400, 400, "center")
+    assert abs(cx - 0.5) < 1e-6
+    assert abs(cy - 0.5) < 1e-6
+
+
 def test_page_numbers_present(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", pages=2)
     source_hash = _file_hash(src)

@@ -35,10 +35,14 @@ def handle_watermark(ctx: JobContext) -> Path:
     page_list = [int(p) for p in pages] if pages is not None else None
     diag = ctx.spec.options.get("diagonal_percent")
     diagonal_percent = float(diag) if diag is not None else None
+    cx = ctx.spec.options.get("center_x")
+    cy = ctx.spec.options.get("center_y")
     common = {
         "opacity": float(ctx.spec.options.get("opacity", 0.35)),
         "rotate": float(ctx.spec.options.get("rotate", 45)),
         "position": str(ctx.spec.options.get("position", "center")),
+        "center_x": float(cx) if cx is not None else None,
+        "center_y": float(cy) if cy is not None else None,
         "diagonal_percent": diagonal_percent,
         "pages": page_list,
         "flatten": bool(ctx.spec.options.get("flatten", False)),

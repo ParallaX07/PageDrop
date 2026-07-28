@@ -494,6 +494,15 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._desc_label.setWordWrap(True)
         root.addWidget(self._desc_label)
 
+        # Optional chrome above the drop zone (e.g. Change File after pick).
+        self._chrome_host = QWidget()
+        self._chrome_host.setObjectName("ToolShellChrome")
+        self._chrome_layout = QVBoxLayout(self._chrome_host)
+        self._chrome_layout.setContentsMargins(0, 0, 0, 0)
+        self._chrome_layout.setSpacing(0)
+        self._chrome_host.hide()
+        root.addWidget(self._chrome_host)
+
         self._drop_zone = FileDropZone(
             self,
             accept=accept,
@@ -572,6 +581,22 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         )
         self._options_layout.addWidget(widget)
         self._options_layout.addStretch(1)
+
+    def set_chrome_widget(self, widget: QWidget | None) -> None:
+        """Optional header above the drop zone (Change File, file meta, …)."""
+        while self._chrome_layout.count():
+            item = self._chrome_layout.takeAt(0)
+            child = item.widget()
+            if child is not None:
+                child.deleteLater()
+        if widget is None:
+            self._chrome_host.hide()
+            return
+        self._chrome_layout.addWidget(widget)
+        self._chrome_host.show()
+
+    def set_drop_zone_visible(self, visible: bool) -> None:
+        self._drop_zone.setVisible(visible)
 
     def set_run_handler(self, handler: Callable[[], None]) -> None:
         self._run_handler = handler

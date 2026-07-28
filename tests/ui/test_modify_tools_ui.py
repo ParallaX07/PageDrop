@@ -44,17 +44,22 @@ def test_modify_tiles_open_shells(qtbot, isolated_settings):
 
 
 def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_settings):
-    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QScrollArea, QToolButton
+    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QLabel, QPushButton, QToolButton
+
+    from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
     shell = open_modify_shell(tools, "watermark")
     assert shell is not None
     qtbot.addWidget(shell)
-    # Options live in a scroll area so dense forms don't crush when window is small.
-    assert isinstance(shell._options_scroll, QScrollArea)
     host = shell._options_host
 
+    assert host.findChild(WatermarkPreviewCanvas, "WatermarkPreviewCanvas") is not None
+    assert any(
+        isinstance(lab, QLabel) and "Drag watermark" in lab.text()
+        for lab in host.findChildren(QLabel)
+    )
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)
     assert any(s.suffix() == "°" for s in spins)
@@ -65,10 +70,125 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
         isinstance(c, QCheckBox) and "Flatten" in c.text()
         for c in host.findChildren(QCheckBox)
     )
-    # Unrelated image/font-size rows stay hidden in the default text+diagonal mode.
-    shell.resize(560, 480)
+    # Text | Image kind toggle present.
+    from PyQt6.QtWidgets import QComboBox
+
+    kinds = [
+        c
+        for c in host.findChildren(QComboBox)
+        if c.count() >= 2 and c.itemData(0) == "text" and c.itemData(1) == "image"
+    ]
+    assert kinds
+    shell.resize(900, 640)
     qtbot.wait(20)
-    assert shell._options_scroll.viewport().height() > 0
+    tools.close()
+
+
+def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolated_settings):
+    from PyQt6.QtWidgets import QLabel, QPushButton
+
+    from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
+
+    pdf = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=280)
+        doc.new_page(width=200, height=280)
+        doc.save(str(pdf))
+    finally:
+        doc.close()
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "watermark")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.resize(960, 700)
+    shell.show()
+
+    assert shell.drop_zone.isVisible()
+    shell.drop_zone.set_paths([str(pdf)])
+
+    qtbot.waitUntil(lambda: not shell.drop_zone.isVisible(), timeout=3000)
+    chrome = shell._chrome_host
+    assert chrome.isVisible()
+    change = chrome.findChild(QPushButton)
+    assert change is not None and change.text() == "Change File"
+    assert any("src.pdf" in lab.text() for lab in chrome.findChildren(QLabel))
+
+    canvas = shell._options_host.findChild(WatermarkPreviewCanvas)
+    assert canvas is not None
+    qtbot.waitUntil(lambda: not canvas._page_pix.isNull(), timeout=5000)
+    assert canvas.page_count == 2
+
+    # Sidebar text change updates overlay state.
+    from PyQt6.QtWidgets import QLineEdit
+
+    text_edit = next(
+        e for e in shell._options_host.findChildren(QLineEdit) if e.text() == "CONFIDENTIAL"
+    )
+    text_edit.setText("DRAFT")
+    assert canvas.state.text == "DRAFT"
+
+    # Kind toggle to Image shows image path row still wired.
+    from PyQt6.QtWidgets import QComboBox
+
+    kind = next(
+        c
+        for c in shell._options_host.findChildren(QComboBox)
+        if c.itemData(0) == "text" and c.itemData(1) == "image"
+    )
+    kind.setCurrentIndex(1)
+    assert canvas.state.kind == "image"
+
+    tools.close()
+
+
+def test_watermark_overlay_move_and_angle_sync_sidebar(qtbot, tmp_path, isolated_settings):
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtWidgets import QDoubleSpinBox
+
+    from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
+
+    pdf = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=400, height=400)
+        doc.save(str(pdf))
+    finally:
+        doc.close()
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "watermark")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.resize(960, 700)
+    shell.show()
+    shell.drop_zone.set_paths([str(pdf)])
+
+    canvas = shell._options_host.findChild(WatermarkPreviewCanvas)
+    assert canvas is not None
+    qtbot.waitUntil(lambda: not canvas._page_pix.isNull(), timeout=5000)
+
+    angle_spin = next(
+        s for s in shell._options_host.findChildren(QDoubleSpinBox) if s.suffix() == "°"
+    )
+    assert angle_spin.value() == -45
+
+    # Programmatic overlay angle → sidebar.
+    canvas.angle_changed.emit(30.0)
+    assert angle_spin.value() == 30
+
+    # Drag move from page center toward top-left.
+    wr = canvas._box_widget_rect()
+    start = wr.center().toPoint()
+    qtbot.mousePress(canvas, Qt.MouseButton.LeftButton, pos=start)
+    qtbot.mouseMove(canvas, pos=start + QPoint(-40, -40))
+    qtbot.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=start + QPoint(-40, -40))
+    assert canvas.state.center_x < 0.5
+    assert canvas.state.center_y < 0.5
+
     tools.close()
 
 

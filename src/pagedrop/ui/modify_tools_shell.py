@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -21,8 +22,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -179,7 +183,64 @@ def _set_form_row_visible(form: QFormLayout, field: QWidget, visible: bool) -> N
 
 
 def _configure_watermark(shell: ToolShellWindow) -> None:
+    from pagedrop.core.modify_ops import position_center_fractions
+    from pagedrop.ui.watermark_preview import WatermarkOverlayState, WatermarkPreviewCanvas
+
+    # —— Chrome: Change File + meta (shown after pick) ——
+    chrome = QWidget()
+    chrome_row = QHBoxLayout(chrome)
+    chrome_row.setContentsMargins(0, 0, 0, 0)
+    chrome_row.setSpacing(8)
+    change_btn = QPushButton("Change File")
+    change_btn.setObjectName("ToolbarSecondary")
+    change_btn.clicked.connect(shell.drop_zone.open_picker)
+    file_meta = QLabel()
+    file_meta.setObjectName("ToolsHint")
+    file_meta.setWordWrap(True)
+    chrome_row.addWidget(change_btn)
+    chrome_row.addWidget(file_meta, stretch=1)
+    shell.set_chrome_widget(chrome)
+    shell._chrome_host.hide()  # type: ignore[attr-defined]
+
+    # —— Split body: preview | options ——
+    body = QWidget()
+    body.setObjectName("WatermarkToolBody")
+    body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    body_row = QHBoxLayout(body)
+    body_row.setContentsMargins(0, 0, 0, 0)
+    body_row.setSpacing(12)
+
+    preview_col = QWidget()
+    preview_col.setObjectName("WatermarkPreviewColumn")
+    preview_lay = QVBoxLayout(preview_col)
+    preview_lay.setContentsMargins(0, 0, 0, 0)
+    preview_lay.setSpacing(6)
+
+    nav_row = QHBoxLayout()
+    prev_btn = QPushButton("←")
+    prev_btn.setObjectName("ToolbarSecondary")
+    prev_btn.setFixedWidth(36)
+    next_btn = QPushButton("→")
+    next_btn.setObjectName("ToolbarSecondary")
+    next_btn.setFixedWidth(36)
+    page_label = QLabel("Page —")
+    page_label.setObjectName("ToolsHint")
+    nav_row.addWidget(prev_btn)
+    nav_row.addWidget(next_btn)
+    nav_row.addWidget(page_label, stretch=1)
+    preview_lay.addLayout(nav_row)
+
+    canvas = WatermarkPreviewCanvas()
+    preview_lay.addWidget(canvas, stretch=1)
+    drag_hint = QLabel("Drag watermark to position")
+    drag_hint.setObjectName("ToolsHint")
+    drag_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    preview_lay.addWidget(drag_hint)
+    body_row.addWidget(preview_col, stretch=3)
+
     options = QWidget()
+    options.setObjectName("WatermarkOptions")
+    options.setMinimumWidth(260)
     form = QFormLayout(options)
     form.setContentsMargins(0, 0, 0, 0)
     form.setVerticalSpacing(8)
@@ -190,7 +251,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     kind.addItem("Image", "image")
 
     page_range = QLineEdit("all")
-    page_range.setPlaceholderText('all or e.g. 1-3,5,7-9')
+    page_range.setPlaceholderText("all or e.g. 1-3,5,7-9")
     page_hint = QLabel('Use "all" or specify pages, e.g. 1-3, 5, 7-9')
     page_hint.setObjectName("ToolsHint")
     page_hint.setWordWrap(True)
@@ -225,6 +286,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             color_rgb[1] = chosen.greenF()
             color_rgb[2] = chosen.blueF()
             _set_color_btn(color_rgb)
+            _push_overlay_from_sidebar()
 
     color_btn.clicked.connect(pick_color)
     _set_color_btn(color_rgb)
@@ -244,6 +306,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         if path:
             remember_directory(path)
             image.setText(path)
+            _push_overlay_from_sidebar()
 
     browse.clicked.connect(pick_image)
     image_row.addWidget(browse)
@@ -304,8 +367,10 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         pos_grid.addWidget(btn, idx // 3, idx % 3)
 
         def _on_pos(checked: bool, value: str = data) -> None:
-            if checked:
-                position_value["v"] = value
+            if not checked:
+                return
+            position_value["v"] = value
+            _apply_snap(value)
 
         btn.toggled.connect(_on_pos)
 
@@ -329,10 +394,38 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     form.addRow("Image scale", image_scale)
     form.addRow("Opacity", opacity)
     form.addRow("Angle", angle)
-    form.addRow("Position", pos_host)
+    form.addRow("Snap", pos_host)
     form.addRow("", flatten)
     form.addRow(flatten_hint)
-    shell.set_options_widget(options)
+
+    options_scroll = QScrollArea()
+    options_scroll.setObjectName("WatermarkOptionsScroll")
+    options_scroll.setWidgetResizable(True)
+    options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+    options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    options_scroll.setWidget(options)
+    body_row.addWidget(options_scroll, stretch=2)
+
+    while shell._options_layout.count():
+        item = shell._options_layout.takeAt(0)
+        child = item.widget()
+        if child is not None:
+            child.deleteLater()
+    shell._options_layout.addWidget(body, stretch=1)
+
+    _syncing = {"v": False}
+    _page_count = {"n": 0}
+
+    def _apply_snap(value: str) -> None:
+        if canvas.page_count <= 0 or canvas._page_pix.isNull():  # noqa: SLF001
+            return
+        pw, ph = canvas.page_size
+        cx, cy = position_center_fractions(pw, ph, value)  # type: ignore[arg-type]
+        _syncing["v"] = True
+        try:
+            canvas.update_state(center_x=cx, center_y=cy)
+        finally:
+            _syncing["v"] = False
 
     def sync_kind_visibility() -> None:
         is_text = kind.currentData() == "text"
@@ -344,24 +437,153 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         _set_form_row_visible(form, fontsize, is_text and absolute)
         _set_form_row_visible(form, image_scale, (not is_text) and absolute)
 
-    kind.currentIndexChanged.connect(sync_kind_visibility)
-    size_mode.currentIndexChanged.connect(sync_kind_visibility)
+    def _sidebar_state() -> WatermarkOverlayState:
+        return WatermarkOverlayState(
+            kind=str(kind.currentData()),
+            text=text.text(),
+            image_path=image.text().strip(),
+            color=(color_rgb[0], color_rgb[1], color_rgb[2]),
+            opacity=opacity.value(),
+            angle=angle.value(),
+            center_x=canvas.state.center_x,
+            center_y=canvas.state.center_y,
+            size_mode=str(size_mode.currentData()),
+            diagonal_percent=diagonal_pct.value(),
+            fontsize=fontsize.value(),
+            image_scale=image_scale.value(),
+        )
+
+    def _push_overlay_from_sidebar() -> None:
+        if _syncing["v"]:
+            return
+        _syncing["v"] = True
+        try:
+            canvas.set_state(_sidebar_state())
+        finally:
+            _syncing["v"] = False
+
+    def _pull_size_from_canvas() -> None:
+        if _syncing["v"]:
+            return
+        st = canvas.state
+        _syncing["v"] = True
+        try:
+            diagonal_pct.setValue(st.diagonal_percent)
+            fontsize.setValue(st.fontsize)
+            image_scale.setValue(st.image_scale)
+        finally:
+            _syncing["v"] = False
+
+    def _pull_angle_from_canvas(value: float) -> None:
+        if _syncing["v"]:
+            return
+        _syncing["v"] = True
+        try:
+            angle.setValue(round(value))
+        finally:
+            _syncing["v"] = False
+
+    def _on_placement(_cx: float, _cy: float) -> None:
+        # Free drag clears exclusive snap highlight without changing center again.
+        if _syncing["v"]:
+            return
+        checked = pos_group.checkedButton()
+        if checked is not None:
+            pos_group.setExclusive(False)
+            checked.setChecked(False)
+            pos_group.setExclusive(True)
+
+    def _update_page_label() -> None:
+        n = _page_count["n"]
+        if n <= 0:
+            page_label.setText("Page —")
+            prev_btn.setEnabled(False)
+            next_btn.setEnabled(False)
+            return
+        i = canvas.page_index + 1
+        page_label.setText(f"Page {i} of {n}")
+        prev_btn.setEnabled(i > 1)
+        next_btn.setEnabled(i < n)
+
+    def _on_files_changed() -> None:
+        paths = shell.drop_zone.paths()
+        if not paths:
+            shell._chrome_host.hide()  # type: ignore[attr-defined]
+            shell.set_drop_zone_visible(True)
+            canvas.clear_source()
+            _page_count["n"] = 0
+            file_meta.setText("")
+            _update_page_label()
+            return
+        source = paths[0]
+        try:
+            loader = PdfLoader(source)
+            try:
+                count = loader.page_count
+            finally:
+                loader.close()
+        except Exception as exc:
+            QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
+            shell.drop_zone.clear()
+            return
+        _page_count["n"] = count
+        name = Path(source).name
+        file_meta.setText(f"{name}  ·  {count} page{'s' if count != 1 else ''}")
+        shell._chrome_host.show()  # type: ignore[attr-defined]
+        shell.set_drop_zone_visible(False)
+        canvas.set_source(source, page_count=count, page_index=0)
+        _push_overlay_from_sidebar()
+        _update_page_label()
+
+    def _on_geometry_ready(_w: float, _h: float) -> None:
+        checked = pos_group.checkedButton()
+        if checked is not None:
+            _apply_snap(position_value["v"])
+
+    kind.currentIndexChanged.connect(lambda *_: (sync_kind_visibility(), _push_overlay_from_sidebar()))
+    size_mode.currentIndexChanged.connect(
+        lambda *_: (sync_kind_visibility(), _push_overlay_from_sidebar())
+    )
+    text.textChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    image.textChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    fontsize.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    diagonal_pct.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    image_scale.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    opacity.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
+    angle.valueChanged.connect(lambda *_: _push_overlay_from_sidebar())
+
+    canvas.placement_changed.connect(_on_placement)
+    canvas.angle_changed.connect(_pull_angle_from_canvas)
+    canvas.size_changed.connect(_pull_size_from_canvas)
+    canvas.page_changed.connect(lambda *_: _update_page_label())
+    canvas.geometry_ready.connect(_on_geometry_ready)
+    canvas.render_error.connect(
+        lambda msg: QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Preview failed:\n{msg}")
+    )
+
+    prev_btn.clicked.connect(lambda: canvas.set_page(canvas.page_index - 1))
+    next_btn.clicked.connect(lambda: canvas.set_page(canvas.page_index + 1))
+
     sync_kind_visibility()
+    shell.drop_zone.files_changed.connect(_on_files_changed)
+    _on_files_changed()
 
     def on_run() -> None:
         paths = shell.drop_zone.paths()
         if not paths:
             return
         source = paths[0]
-        try:
-            loader = PdfLoader(source)
+        page_count = _page_count["n"]
+        if page_count <= 0:
             try:
-                page_count = loader.page_count
-            finally:
-                loader.close()
-        except Exception as exc:
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
-            return
+                loader = PdfLoader(source)
+                try:
+                    page_count = loader.page_count
+                finally:
+                    loader.close()
+            except Exception as exc:
+                QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
+                return
 
         raw_range = page_range.text().strip().casefold()
         pages: list[int] | None
@@ -387,6 +609,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         if not output:
             return
 
+        st = canvas.state
         k = kind.currentData()
         use_diag = size_mode.currentData() == "diagonal"
         opts: dict = {
@@ -394,6 +617,8 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             "opacity": opacity.value(),
             "rotate": angle.value(),
             "position": position_value["v"],
+            "center_x": st.center_x,
+            "center_y": st.center_y,
             "flatten": flatten.isChecked(),
             "pages": pages,
             "diagonal_percent": diagonal_pct.value() if use_diag else None,

@@ -179,6 +179,36 @@ def _position_anchor(rect: fitz.Rect, position: MarkPosition, *, inset: float = 
     return fitz.Point(x, y)
 
 
+def position_center_fractions(
+    page_width: float,
+    page_height: float,
+    position: MarkPosition,
+    *,
+    inset: float = 48.0,
+) -> tuple[float, float]:
+    """Page-relative (0–1) center for a 3×3 snap preset. Used by preview + apply."""
+    rect = fitz.Rect(0, 0, page_width, page_height)
+    anchor = _position_anchor(rect, position, inset=inset)
+    w = max(page_width, 1e-6)
+    h = max(page_height, 1e-6)
+    return (anchor.x - rect.x0) / w, (anchor.y - rect.y0) / h
+
+
+def _resolve_anchor(
+    rect: fitz.Rect,
+    position: MarkPosition,
+    *,
+    center_x: float | None = None,
+    center_y: float | None = None,
+) -> fitz.Point:
+    """Prefer free placement (*center_x*/*center_y* in 0–1 page fractions); else 9-grid."""
+    if center_x is not None and center_y is not None:
+        cx = max(0.0, min(1.0, float(center_x)))
+        cy = max(0.0, min(1.0, float(center_y)))
+        return fitz.Point(rect.x0 + rect.width * cx, rect.y0 + rect.height * cy)
+    return _position_anchor(rect, position)
+
+
 def _normalize_page_indices(
     page_count: int,
     pages: Sequence[int] | None,
@@ -216,6 +246,8 @@ def add_text_watermark(
     rotate: float = 45.0,
     color: tuple[float, float, float] = (0.55, 0.55, 0.55),
     position: MarkPosition = "center",
+    center_x: float | None = None,
+    center_y: float | None = None,
     diagonal_percent: float | None = None,
     pages: Sequence[int] | None = None,
     flatten: bool = False,
@@ -226,6 +258,9 @@ def add_text_watermark(
 
     Size: if *diagonal_percent* is set (1–100), text width targets that fraction of
     the page diagonal; otherwise *fontsize* is used directly.
+
+    Placement: *center_x*/*center_y* (0–1 page fractions) override *position* when both
+    are set. *position* remains the 3×3 snap preset source for those fractions.
     """
     reject_source_overwrite(output_path, source_pdf)
     if not text.strip():
@@ -250,7 +285,7 @@ def add_text_watermark(
             else:
                 fs = float(fontsize)
             text_w = font.text_length(text, fontsize=fs)
-            anchor = _position_anchor(r, position)
+            anchor = _resolve_anchor(r, position, center_x=center_x, center_y=center_y)
             pos = fitz.Point(anchor.x - text_w / 2, anchor.y)
             morph = (anchor, fitz.Matrix(1, 1).prerotate(rotate))
             tw = fitz.TextWriter(page.rect, color=color, opacity=opacity)
@@ -287,6 +322,8 @@ def add_image_watermark(
     diagonal_percent: float | None = None,
     rotate: float = 0.0,
     position: MarkPosition = "center",
+    center_x: float | None = None,
+    center_y: float | None = None,
     pages: Sequence[int] | None = None,
     flatten: bool = False,
     flatten_dpi: int = 150,
@@ -296,6 +333,8 @@ def add_image_watermark(
 
     Size: *diagonal_percent* (preferred) sets image width to that fraction of the
     page diagonal; otherwise *scale* is a fraction of page width/height.
+
+    Placement: *center_x*/*center_y* (0–1) override *position* when both are set.
     """
     reject_source_overwrite(output_path, source_pdf)
     img = Path(image_path)
@@ -321,7 +360,7 @@ def add_image_watermark(
                 h = w * aspect
             else:
                 w, h = r.width * float(scale), r.height * float(scale)
-            anchor = _position_anchor(r, position)
+            anchor = _resolve_anchor(r, position, center_x=center_x, center_y=center_y)
             box = fitz.Rect(
                 anchor.x - w / 2,
                 anchor.y - h / 2,
