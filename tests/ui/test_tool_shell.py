@@ -192,6 +192,15 @@ def test_drop_zone_default_prompts(qtbot):
     assert multi._prompt.text() == EMPTY_PROMPT_PDFS
 
 
+def test_run_button_tooltip_matches_description(qtbot):
+    """O12: Run tip is sentence-case like Merge/Create primary actions."""
+    tip = "Split by ranges into new files"
+    shell = ToolShellWindow(title="Split / extract", description=tip)
+    qtbot.addWidget(shell)
+    assert shell._run_btn.toolTip() == tip
+    assert shell._run_btn.statusTip() == tip
+
+
 def test_migrated_tool_runs_job_and_shows_result_actions(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):

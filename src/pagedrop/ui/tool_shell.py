@@ -542,6 +542,9 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._run_btn.setObjectName("ToolbarPrimary")
         self._run_btn.setDefault(True)
         self._run_btn.setEnabled(False)
+        # Match Merge/Create primary-action tips: short sentence-case what Run does.
+        self._run_btn.setToolTip(description)
+        self._run_btn.setStatusTip(description)
         self._run_btn.clicked.connect(self._on_run)
         toolbar.addWidget(self._run_btn)
 
