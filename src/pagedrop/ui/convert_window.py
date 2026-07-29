@@ -38,6 +38,7 @@ from pagedrop.core.supported_formats import (
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
 from pagedrop.ui.dialogs import confirm_overwrite, prompt_discard_file_list
+from pagedrop.ui.job_chrome import explain_busy_running
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
@@ -487,6 +488,9 @@ class ConvertWindow(QWidget):
         self._result_bar.preview_requested.connect(self._on_preview_result)
         self._result_bar.open_in_editor_requested.connect(self._on_open_result)
         self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
+        # ponytail: whole-file convert has no CancelToken — Cancel stays hidden;
+        # Escape/close explain "still running…". Upgrade: cancel in images_to_* helpers.
+        self._busy_overlay.escape_blocked.connect(self._explain_busy)
 
     def _selected_indices(self) -> list[int]:
         return self._file_grid.selected_indices()
@@ -814,6 +818,13 @@ class ConvertWindow(QWidget):
         worker.signals.failed.connect(self._on_convert_failed)
         self._convert_pool.start(worker)
 
+    def _explain_busy(self) -> None:
+        explain_busy_running(
+            status_bar=self.statusBar(),
+            toast=self._toast,
+            label="Create PDF",
+        )
+
     def _finish_convert(self) -> None:
         self._converting = False
         self._busy_overlay.hide_overlay()
@@ -847,6 +858,7 @@ class ConvertWindow(QWidget):
         self._finish_convert()
         self._result_bar.clear()
         self.statusBar().showMessage("Create PDF failed")
+        self._toast.show_toast("Create PDF failed", kind="error")
         QMessageBox.critical(self, self.WINDOW_TITLE, message)
 
     def _on_preview_result(self, path: str) -> None:
@@ -903,6 +915,7 @@ class ConvertWindow(QWidget):
 
     def request_close(self) -> bool:
         if self._converting:
+            self._explain_busy()
             return False
 
         if self._model.file_count() > 0:

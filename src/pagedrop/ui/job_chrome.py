@@ -28,6 +28,18 @@ def _progress_message(message: str) -> str:
     return f"{message.rstrip('.')}…"
 
 
+def explain_busy_running(
+    *,
+    status_bar,
+    toast: ToastOverlay,
+    label: str,
+) -> None:
+    """Status + toast when close/Escape is blocked without a cancel token (O12)."""
+    message = f"{label} still running…"
+    status_bar.showMessage(message)
+    toast.show_toast(message, kind="info")
+
+
 class JobChromeMixin:
     """BusyOverlay + toast + ResultActionsBar lifecycle for tool hosts.
 

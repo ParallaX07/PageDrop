@@ -230,23 +230,30 @@ def test_busy_overlay_escape_cancels_when_cancellable(qtbot):
     window.close()
 
 
-def test_busy_overlay_escape_ignored_without_cancel(qtbot):
+def test_busy_overlay_escape_blocked_without_cancel(qtbot):
     from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QWidget
 
     from pagedrop.ui.busy_overlay import BusyOverlay
 
-    host = ToolsWindow()
+    host = QWidget()
     qtbot.addWidget(host)
+    host.resize(320, 240)
+    host.show()
     overlay = BusyOverlay(host)
-    qtbot.addWidget(overlay)
     overlay.set_cancellable(False)
     cancelled = []
+    blocked = []
     overlay.cancelled.connect(lambda: cancelled.append(True))
+    overlay.escape_blocked.connect(lambda: blocked.append(True))
     overlay.show_message("Loading…")
-    assert overlay.hasFocus() or not overlay._cancel_btn.isVisible()
+    qtbot.waitUntil(lambda: overlay.isVisible(), timeout=2000)
+    overlay.setFocus()
+    qtbot.waitUntil(lambda: overlay.hasFocus(), timeout=2000)
 
     qtbot.keyClick(overlay, Qt.Key.Key_Escape)
     assert cancelled == []
+    assert blocked == [True]
     overlay.hide_overlay()
 
 

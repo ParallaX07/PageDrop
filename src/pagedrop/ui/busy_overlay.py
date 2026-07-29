@@ -22,6 +22,8 @@ class BusyOverlay(QWidget):
     """Semi-transparent overlay that blocks interaction while work is in progress."""
 
     cancelled = pyqtSignal()
+    # Escape while busy but Cancel is hidden — hosts toast/status "still running…".
+    escape_blocked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,8 +84,11 @@ class BusyOverlay(QWidget):
         )
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Escape and self._escape_cancels():
-            self.cancelled.emit()
+        if event.key() == Qt.Key.Key_Escape and self.isVisible():
+            if self._escape_cancels():
+                self.cancelled.emit()
+            else:
+                self.escape_blocked.emit()
             event.accept()
             return
         super().keyPressEvent(event)

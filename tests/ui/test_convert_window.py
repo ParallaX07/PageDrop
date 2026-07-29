@@ -235,3 +235,46 @@ def test_toolbar_actions_have_status_tips(qtbot):
         assert action.statusTip(), f"missing status tip on {action.text()!r}"
         assert action.toolTip() == action.statusTip()
     assert window._add_action.text() == "Add images…"
+
+
+def test_request_close_while_converting_explains_busy(qtbot, monkeypatch):
+    window = _convert_window(qtbot)
+    window._converting = True
+    toasts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+
+    assert window.request_close() is False
+    assert "still running" in window.statusBar().currentMessage()
+    assert toasts and toasts[-1] == ("Create PDF still running…", "info")
+
+
+def test_convert_failed_matches_end_job_feedback(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    window = _convert_window(qtbot)
+    window._converting = True
+    window._busy_overlay.show_message("Creating PDF…")
+    toasts: list[tuple[str, str]] = []
+    dialogs: list[object] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda *args, **kwargs: dialogs.append(args) or QMessageBox.StandardButton.Ok,
+    )
+
+    window._on_convert_failed("convert boom")
+
+    assert not window._converting
+    assert not window._busy_overlay.isVisible()
+    assert window.statusBar().currentMessage() == "Create PDF failed"
+    assert toasts and toasts[-1] == ("Create PDF failed", "error")
+    assert dialogs and "convert boom" in str(dialogs[-1])

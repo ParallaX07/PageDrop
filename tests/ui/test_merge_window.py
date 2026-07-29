@@ -256,3 +256,44 @@ def test_merge_encrypted_prompts_password_leaves_sources_unchanged(
         assert not doc.needs_pass
     finally:
         doc.close()
+
+
+def test_request_close_while_merging_explains_busy(qtbot, monkeypatch):
+    window = _merge_window(qtbot)
+    window._merging = True
+    toasts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+
+    assert window.request_close() is False
+    assert "still running" in window.statusBar().currentMessage()
+    assert toasts and toasts[-1] == ("Merge still running…", "info")
+
+
+def test_merge_failed_matches_end_job_feedback(qtbot, monkeypatch):
+    window = _merge_window(qtbot)
+    window._merging = True
+    window._busy_overlay.show_message("Merging PDFs…")
+    toasts: list[tuple[str, str]] = []
+    dialogs: list[object] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda *args, **kwargs: dialogs.append(args) or QMessageBox.StandardButton.Ok,
+    )
+
+    window._on_merge_failed("merge boom")
+
+    assert not window._merging
+    assert not window._busy_overlay.isVisible()
+    assert window.statusBar().currentMessage() == "Merge failed"
+    assert toasts and toasts[-1] == ("Merge failed", "error")
+    assert dialogs and "merge boom" in str(dialogs[-1])

@@ -51,6 +51,7 @@ from pagedrop.core.pdf_tools import (
 )
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import confirm_overwrite
+from pagedrop.ui.job_chrome import explain_busy_running
 from pagedrop.ui.organize_tools import ensure_organize_runner
 from pagedrop.ui.tool_page import StatusFooter, present_tool_page
 from pagedrop.ui.result_actions import (
@@ -232,6 +233,7 @@ class CompareWindow(QWidget):
         self._zoom = 1.0  # relative to fit-width baseline
         self._syncing_scroll = False
         self._selected_change: CompareChange | None = None
+        self._comparing = False
 
         self._build_ui()
         self._connect()
@@ -247,7 +249,17 @@ class CompareWindow(QWidget):
         self._editor = editor
 
     def request_close(self) -> bool:
+        if self._comparing:
+            self._explain_busy()
+            return False
         return True
+
+    def _explain_busy(self) -> None:
+        explain_busy_running(
+            status_bar=self.statusBar(),
+            toast=self._toast,
+            label="Compare",
+        )
 
     def prefill_a(self, path: str) -> None:
         if path:
@@ -361,6 +373,11 @@ class CompareWindow(QWidget):
         self._result_bar.preview_requested.connect(self._preview_export)
         self._result_bar.show_in_folder_requested.connect(self._show_folder)
         self._result_bar.open_in_editor_requested.connect(self._on_open_result)
+        # ponytail: sync compare_pdf_text_diff freezes the GUI (processEvents only).
+        # Cancel stays hidden; Escape/close explain "still running…". Ceiling: UI
+        # unresponsive until the page loop finishes. Upgrade: enqueue via job
+        # runner + cancel.check() in compare_pdf_text_diff (O13).
+        self._busy.escape_blocked.connect(self._explain_busy)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -416,19 +433,23 @@ class CompareWindow(QWidget):
             return
 
         self.statusBar().showMessage("Comparing…")
+        self._comparing = True
         self._busy.show_message("Comparing…")
         QApplication.processEvents()
         try:
             report = pdf_tools.compare_pdf_text_diff(path_a, path_b)
         except PdfLoadError as exc:
             self.statusBar().showMessage("Compare failed")
+            self._toast.show_toast("Compare failed", kind="error")
             QMessageBox.critical(self, self.WINDOW_TITLE, str(exc))
             return
         except Exception as exc:
             self.statusBar().showMessage("Compare failed")
+            self._toast.show_toast("Compare failed", kind="error")
             QMessageBox.critical(self, self.WINDOW_TITLE, f"Could not compare PDFs:\n{exc}")
             return
         finally:
+            self._comparing = False
             self._busy.hide_overlay()
 
         self._path_a = path_a

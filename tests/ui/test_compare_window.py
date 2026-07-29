@@ -198,3 +198,19 @@ def test_launch_compare_passes_editor(qtbot):
     assert window._editor is editor
     window.close()
     tools.close()
+
+
+def test_request_close_while_comparing_explains_busy(qtbot, monkeypatch):
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._comparing = True
+    toasts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+
+    assert window.request_close() is False
+    assert "still running" in window.statusBar().currentMessage()
+    assert toasts and toasts[-1] == ("Compare still running…", "info")
