@@ -75,7 +75,7 @@ def _configure_pdf_to_word(shell: ToolShellWindow) -> None:
     btn_row = QHBoxLayout()
     configure_btn = QPushButton("Configure…")
     configure_btn.setObjectName("ToolbarSecondary")
-    configure_btn.setToolTip("LibreOffice path and Recheck")
+    configure_btn.setToolTip("LibreOffice path and recheck")
     recheck_btn = QPushButton("Recheck")
     recheck_btn.setObjectName("ToolbarSecondary")
     btn_row.addWidget(configure_btn)

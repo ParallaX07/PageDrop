@@ -174,7 +174,7 @@ class PdfTab(QWidget):
     @property
     def tab_title(self) -> str:
         if self._edit_model is None:
-            return self._custom_tab_title or "New Tab"
+            return self._custom_tab_title or "New tab"
         if self._edit_model.save_path is not None:
             filename = Path(self._edit_model.save_path).name
             return f"{filename}*" if self._dirty else filename

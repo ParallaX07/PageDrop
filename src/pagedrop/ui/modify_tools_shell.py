@@ -201,7 +201,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     chrome_row = QHBoxLayout(chrome)
     chrome_row.setContentsMargins(0, 0, 0, 0)
     chrome_row.setSpacing(8)
-    change_btn = QPushButton("Change File")
+    change_btn = QPushButton("Change file")
     change_btn.setObjectName("ToolbarSecondary")
     change_btn.clicked.connect(shell.drop_zone.open_picker)
     file_meta = QLabel()

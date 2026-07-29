@@ -121,7 +121,7 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
     btn_row = QHBoxLayout()
     configure_btn = QPushButton("Configure…")
     configure_btn.setObjectName("ToolbarSecondary")
-    configure_btn.setToolTip("Tessdata path, download eng, and Recheck")
+    configure_btn.setToolTip("Tessdata path, download eng, and recheck")
     recheck_btn = QPushButton("Recheck")
     recheck_btn.setObjectName("ToolbarSecondary")
     btn_row.addWidget(configure_btn)

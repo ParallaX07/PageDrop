@@ -121,7 +121,7 @@ def prompt_unsaved_changes(parent: QWidget, display_title: str) -> str:
     message.setText(f'"{title}" has unsaved changes.')
     message.setInformativeText("Save your changes before closing?")
     save_button = message.addButton(
-        "Save As",
+        "Save as",
         QMessageBox.ButtonRole.AcceptRole,
     )
     discard_button = message.addButton(

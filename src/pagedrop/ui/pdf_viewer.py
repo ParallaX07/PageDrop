@@ -2333,7 +2333,7 @@ class PdfViewerWidget(QWidget):
             self,
             "Save redacted PDF",
             suggested,
-            "PDF Files (*.pdf);;All Files (*)",
+            "PDF files (*.pdf);;All files (*)",
         )
         if not path:
             return

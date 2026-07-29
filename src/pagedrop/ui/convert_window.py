@@ -761,7 +761,7 @@ class ConvertWindow(QWidget):
                 self,
                 "Save PDF",
                 self._default_output_path(),
-                "PDF Files (*.pdf);;All Files (*)",
+                "PDF files (*.pdf);;All files (*)",
             )
             if not path:
                 return
@@ -774,7 +774,7 @@ class ConvertWindow(QWidget):
 
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Choose Output Folder",
+            "Choose output folder",
             last_directory(),
         )
         if not folder:

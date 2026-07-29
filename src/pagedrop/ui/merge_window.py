@@ -53,10 +53,6 @@ from pagedrop.ui.theme import (
 from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.ui.zoom_controls import ZoomControls
 
-_PREVIEW_FOOTER_HINT = (
-    "← → change page · Ctrl+scroll zoom · Esc back to grid"
-)
-
 # Show a progress dialog once folder validation exceeds this many candidates.
 _FOLDER_PROGRESS_THRESHOLD = 8
 
@@ -163,7 +159,6 @@ class MergeWindow(QWidget):
         self._file_grid = MergeFileGrid()
         self._file_grid.set_password_lookup(self._credentials.get)
         self._preview_widget = PagePreviewWidget()
-        self._preview_widget.set_footer_hint(_PREVIEW_FOOTER_HINT)
 
         self._stack.addWidget(self._file_grid)
         self._stack.addWidget(self._preview_widget)
@@ -481,7 +476,7 @@ class MergeWindow(QWidget):
             self,
             "Add PDFs",
             start_dir,
-            "PDF Files (*.pdf);;All Files (*)",
+            "PDF files (*.pdf);;All files (*)",
         )
         if not paths:
             return
@@ -655,7 +650,7 @@ class MergeWindow(QWidget):
             self,
             "Merge PDFs",
             self._default_merge_path(),
-            "PDF Files (*.pdf);;All Files (*)",
+            "PDF files (*.pdf);;All files (*)",
         )
         if not path:
             return

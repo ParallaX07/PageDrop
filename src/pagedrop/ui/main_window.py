@@ -385,6 +385,7 @@ class MainWindow(QMainWindow):
             tip="Rotate selected pages clockwise",
             enabled=False,
         )
+        self._rotate_cw_action.setAccessibleName("Rotate clockwise")
         self._rotate_ccw_action = actions.register(
             "rotate_ccw",
             "Rotate CCW",
@@ -392,6 +393,7 @@ class MainWindow(QMainWindow):
             tip="Rotate selected pages counter-clockwise",
             enabled=False,
         )
+        self._rotate_ccw_action.setAccessibleName("Rotate counter-clockwise")
 
         actions.register(
             "next_tab",
@@ -1353,7 +1355,7 @@ class MainWindow(QMainWindow):
             current = min(tab.thumbnail_grid.selection_manager.selection) + 1
         page, ok = QInputDialog.getInt(
             self,
-            "Go to Page",
+            "Go to page",
             f"Page number (1–{count}):",
             current,
             1,
@@ -1381,7 +1383,7 @@ class MainWindow(QMainWindow):
             return
         text, ok = QInputDialog.getText(
             self,
-            "Jump to Pages",
+            "Jump to pages",
             f"Page or range (e.g. 12 or 1-5), 1–{count}:",
         )
         if not ok:
@@ -1787,7 +1789,7 @@ class MainWindow(QMainWindow):
             self,
             "Open PDF",
             start_dir,
-            "PDF Files (*.pdf);;All Files (*)",
+            "PDF files (*.pdf);;All files (*)",
         )
         if not paths:
             return
@@ -2089,9 +2091,9 @@ class MainWindow(QMainWindow):
 
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save As",
+            "Save as",
             self._default_save_as_path(target),
-            "PDF Files (*.pdf);;All Files (*)",
+            "PDF files (*.pdf);;All files (*)",
         )
         if not path:
             return False
@@ -2102,7 +2104,7 @@ class MainWindow(QMainWindow):
         if self._same_path(path, model.original_path):
             QMessageBox.warning(
                 self,
-                "Save As",
+                "Save as",
                 "Cannot save over the original file.\n"
                 "Choose a different path.",
             )
@@ -2118,21 +2120,21 @@ class MainWindow(QMainWindow):
         except (PdfPasswordRequiredError, PdfPasswordError) as exc:
             QMessageBox.critical(
                 self,
-                "Save As",
+                "Save as",
                 f"Could not save PDF:\n{exc}",
             )
             return False
         except OSError as exc:
             QMessageBox.critical(
                 self,
-                "Save As",
+                "Save as",
                 f"Could not write PDF:\n{exc}",
             )
             return False
         except Exception as exc:
             QMessageBox.critical(
                 self,
-                "Save As",
+                "Save as",
                 f"Could not save PDF:\n{exc}",
             )
             return False
@@ -2164,7 +2166,7 @@ class MainWindow(QMainWindow):
             return
 
         current = tab.tab_title.rstrip("*")
-        if current == "New Tab":
+        if current == "New tab":
             current = ""
 
         name, ok = QInputDialog.getText(

@@ -46,7 +46,7 @@ from pagedrop.ui.settings import (
     remember_directory,
 )
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow
+from pagedrop.ui.tool_shell import EMPTY_PROMPT_OFFICE, ToolShellWindow
 
 if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
@@ -109,7 +109,7 @@ def _configure_office_convert(shell: ToolShellWindow) -> None:
     btn_row = QHBoxLayout()
     configure_btn = QPushButton("Configure…")
     configure_btn.setObjectName("ToolbarSecondary")
-    configure_btn.setToolTip("Preferred backend, LibreOffice path, and Recheck")
+    configure_btn.setToolTip("Preferred backend, LibreOffice path, and recheck")
     recheck_btn = QPushButton("Recheck")
     recheck_btn.setObjectName("ToolbarSecondary")
     btn_row.addWidget(configure_btn)
@@ -352,7 +352,7 @@ def open_office_convert_shell(tools: ToolsWindow) -> ToolShellWindow | None:
             accept=is_office_path,
             dialog_filter=office_dialog_filter(),
             browse_title=f"Choose document — {entry.title}",
-            empty_prompt="Drop Office document here, or click to browse",
+            empty_prompt=EMPTY_PROMPT_OFFICE,
         )
         _configure_office_convert(shell)
         store[SHELL_OFFICE_ID] = shell

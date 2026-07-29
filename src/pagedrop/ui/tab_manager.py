@@ -137,7 +137,7 @@ class DetachableTabBar(QTabBar):
         rename_action = None
         move_action = None
         if tab is not None and tab.can_rename_tab:
-            rename_action = menu.addAction("Rename Tab…")
+            rename_action = menu.addAction("Rename tab…")
             menu.addSeparator()
         if tab is not None:
             move_action = menu.addAction("Move to new window")

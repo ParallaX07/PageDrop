@@ -47,6 +47,7 @@ _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 EMPTY_PROMPT_PDF = "Drop PDF here, or click to browse"
 EMPTY_PROMPT_PDFS = "Drop PDFs here, or click to browse"
 EMPTY_PROMPT_DOCUMENTS = "Drop documents here, or click to browse"
+EMPTY_PROMPT_OFFICE = "Drop Office document here, or click to browse"
 
 # Dedicated pool (not thumbnail/render pools). Fitz jobs take FITZ_LOCK;
 # Office / LibreOffice handlers register holds_fitz=False.
