@@ -309,12 +309,16 @@ def test_thumbnail_worker_releases_lock_between_pages(
     page_n = {"n": 0}
     mid = threading.Event()
     real_png = pdf_service.render_page_png
+    thumb_tid = {"id": None}
 
     def slow_png(*args: object, **kwargs: object) -> bytes:
         page_n["n"] += 1
         if page_n["n"] == 3:
             mid.set()
-        time.sleep(0.025)
+        # Only stall the thumb batch — viewer path must stay fast so waits
+        # measure lock contention, not the injected sleep itself.
+        if threading.get_ident() == thumb_tid["id"]:
+            time.sleep(0.025)
         return real_png(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(pdf_service, "render_page_png", slow_png)
@@ -334,6 +338,7 @@ def test_thumbnail_worker_releases_lock_between_pages(
         width_px=64,
         is_cancelled=lambda _g: False,
     )
+    thumb_tid["id"] = threading.get_ident()  # worker.run() on this thread
     vt = threading.Thread(target=viewer)
     vt.start()
     worker.run()

@@ -124,9 +124,11 @@ class ThumbnailWorker(QRunnable):
         # ponytail: per-page FITZ_LOCK via render_ref_png (not whole-batch hold).
         # Baseline 2026-07-30: whole-batch blocked viewer ~17–46ms mid-window
         # (24–60 image pages / zoom2); per-page keeps batch wall similar and
-        # drops mid-batch viewer wait to ~4–12ms. Ceiling: pool maxThreadCount=1
-        # — do not raise to "fix" thumbs (MuPDF races). Upgrade: O10 process
-        # service if measured overlap still stalls interactive work.
+        # drops mid-batch viewer wait to ~4–12ms. After each page, sleep(0.001)
+        # so lock waiters can acquire (sleep(0) still let this thread reacquire).
+        # Ceiling: pool maxThreadCount=1 — do not raise to "fix" thumbs
+        # (MuPDF races). Upgrade: O10 process service if measured overlap still
+        # stalls interactive work.
         try:
             for logical_index, ref in self._pages:
                 if self._is_cancelled(self._generation):
@@ -141,6 +143,9 @@ class ThumbnailWorker(QRunnable):
                 self.signals.page_ready.emit(
                     self._generation, logical_index, png
                 )
+                # Yield so FITZ_LOCK waiters (viewer) can acquire between pages —
+                # sleep(0) is not enough: this thread can reacquire before waiters run.
+                time.sleep(0.001)
             if not self._is_cancelled(self._generation):
                 self.signals.finished.emit(self._generation)
         except Exception as exc:
