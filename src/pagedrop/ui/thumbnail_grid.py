@@ -121,10 +121,12 @@ class ThumbnailWorker(QRunnable):
 
     def run(self) -> None:
         # See core.thread_policy: path-only via pdf_service; never PdfTab._loader_cache.
-        # Per-page FITZ_LOCK (render_ref_png) — baseline 2026-07-30: whole-batch
-        # hold blocked viewer ~17–46ms mid-window (24–60 image pages / zoom2);
-        # per-page keeps batch wall similar and drops mid-batch viewer wait to
-        # ~4–12ms. Pool stays maxThreadCount=1 (do not raise to "fix" thumbs).
+        # ponytail: per-page FITZ_LOCK via render_ref_png (not whole-batch hold).
+        # Baseline 2026-07-30: whole-batch blocked viewer ~17–46ms mid-window
+        # (24–60 image pages / zoom2); per-page keeps batch wall similar and
+        # drops mid-batch viewer wait to ~4–12ms. Ceiling: pool maxThreadCount=1
+        # — do not raise to "fix" thumbs (MuPDF races). Upgrade: O10 process
+        # service if measured overlap still stalls interactive work.
         try:
             for logical_index, ref in self._pages:
                 if self._is_cancelled(self._generation):

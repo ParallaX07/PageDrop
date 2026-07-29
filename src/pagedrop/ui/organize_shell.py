@@ -229,7 +229,7 @@ def _configure_n_up(shell: ToolShellWindow) -> None:
     options = QWidget()
     form = QFormLayout(options)
     form.setContentsMargins(0, 0, 0, 0)
-    # UI caps N-up at 8×8 (common impose); core n_up_pdf has no hard
+    # ponytail: UI caps N-up at 8×8 (common impose); core n_up_pdf has no hard
     # cap — raise the spin range only with a measured need for denser sheets.
     rows = QSpinBox()
     rows.setRange(1, 8)

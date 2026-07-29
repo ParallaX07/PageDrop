@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-# 512 MiB session quota for drag_* + job_* dirs; raise only with a
+# ponytail: 512 MiB session quota for drag_* + job_* dirs; raise only with a
 # measured complaint. Upgrade: running byte counter if rglob-on-enforce profiles hot.
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024  # 512 MiB
 

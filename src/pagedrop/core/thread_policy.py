@@ -24,7 +24,7 @@ overlap is covered by sharing ``pdf_service.FITZ_LOCK`` (or public
 ``pdf_service`` helpers that take it). Do not raise pool size to “fix”
 thumbs — more threads worsen MuPDF races.
 
-``FITZ_LOCK`` is the intentional global ceiling for in-process fitz;
+ponytail: ``FITZ_LOCK`` is the intentional global ceiling for in-process fitz;
 upgrade path is a dedicated PDF service process (optimize O10), not more pools.
 
 Current state
