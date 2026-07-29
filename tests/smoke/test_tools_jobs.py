@@ -120,7 +120,11 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
         tools.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
         assert not out_cancel.exists()
         assert _file_hash(src) == source_hash
-        leftovers = [p for p in temp.get_dir().rglob("*") if p.is_file()]
+        leftovers = [
+            p
+            for p in temp.get_dir().rglob("*")
+            if p.is_file() and p.name != ".pagedrop_owner"
+        ]
         assert leftovers == []
         assert not tools.is_job_running()
         assert tools.statusBar().currentMessage() == "Cancelled"

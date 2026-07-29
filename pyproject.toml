@@ -32,6 +32,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
     "pytest-timeout>=2.3.1",
+    "pytest-xdist>=3.6.0",
     "pyinstaller>=6.0",
 ]
 # Optional local install: `uv sync --group office` (no-op deps on non-Windows).
@@ -45,7 +46,7 @@ pythonpath = ["."]
 qt_api = "pyqt6"
 timeout = 60
 timeout_method = "thread"
-addopts = ["--strict-markers"]
+addopts = ["--strict-markers", "-n", "auto"]
 markers = [
     "office_com: real Microsoft Office COM conversion (set PAGEDROP_OFFICE_COM=1)",
     "libreoffice: real LibreOffice conversion (set PAGEDROP_LO_PATH or install soffice)",

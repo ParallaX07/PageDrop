@@ -36,7 +36,9 @@ def test_confirm_delete_pages_skips_small_selection(isolated_settings):
     assert confirm_delete_pages(None, 1) is True
 
 
-def test_confirm_delete_pages_respects_preference(isolated_settings, monkeypatch):
+def test_confirm_delete_pages_respects_preference(
+    isolated_settings, monkeypatch, qtbot
+):
     set_confirm_before_deleting_multiple_pages(False)
     called = []
 
@@ -50,7 +52,9 @@ def test_confirm_delete_pages_respects_preference(isolated_settings, monkeypatch
     assert not called
 
 
-def test_confirm_delete_pages_prompts_when_enabled(isolated_settings, monkeypatch):
+def test_confirm_delete_pages_prompts_when_enabled(
+    isolated_settings, monkeypatch, qtbot
+):
     answers = []
 
     def fake_exec(self):

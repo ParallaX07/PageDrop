@@ -71,7 +71,7 @@ def ensure_fixtures(directory: Path) -> None:
     }
     for name, generator in generators.items():
         target = directory / f"{name}.pdf"
-        if name in ("empty", "corrupt", "garbage") or not target.exists():
+        if not target.exists():
             generator(target)
 
 

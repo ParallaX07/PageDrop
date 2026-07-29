@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -9,6 +10,8 @@ from pathlib import Path
 # measured complaint. Upgrade: running byte counter if rglob-on-enforce profiles hot.
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024  # 512 MiB
 
+_OWNER_FILE = ".pagedrop_owner"
+
 # Live session roots in this process — multi-window must not scrub each other.
 _live_dirs: set[Path] = set()
 
@@ -16,9 +19,41 @@ _live_dirs: set[Path] = set()
 _live_backend_dirs: set[Path] = set()
 
 
+def _write_owner_pid(path: Path) -> None:
+    """Record the owning process so other PageDrop processes skip this tree."""
+    try:
+        (path / _OWNER_FILE).write_text(str(os.getpid()), encoding="ascii")
+    except OSError:
+        pass
+
+
+def _owner_process_alive(path: Path) -> bool:
+    """True if ``.pagedrop_owner`` names a still-running process."""
+    owner_file = path / _OWNER_FILE
+    try:
+        raw = owner_file.read_text(encoding="ascii").strip()
+        pid = int(raw)
+    except (OSError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Exists but we cannot signal it — treat as live.
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def claim_backend_temp(path: Path) -> Path:
     """Mark a backend mkdtemp tree live so orphan scrub will not delete it."""
-    _live_backend_dirs.add(path.resolve())
+    resolved = path.resolve()
+    _write_owner_pid(resolved)
+    _live_backend_dirs.add(resolved)
     return path
 
 
@@ -33,6 +68,7 @@ class TempManager:
         # Shared so drag_* / job_* eviction order is creation order, not mtime ties.
         self._subdir_counter = 0
         self._max_bytes = max_bytes
+        _write_owner_pid(self._dir)
         _live_dirs.add(self._dir.resolve())
         self._scrub_orphan_pagedrop_dirs()
         atexit.register(self.cleanup)
@@ -117,7 +153,11 @@ class TempManager:
 
     @staticmethod
     def _scrub_orphan_pagedrop_dirs() -> None:
-        """Remove crashed-run ``pagedrop_*`` session and backend dirs; never live ones."""
+        """Remove crashed-run ``pagedrop_*`` session and backend dirs; never live ones.
+
+        Skips trees owned by a still-running process (other PageDrop instances /
+        pytest-xdist workers) via ``.pagedrop_owner``.
+        """
         temp_root = Path(tempfile.gettempdir())
         try:
             entries = list(temp_root.iterdir())
@@ -129,6 +169,8 @@ class TempManager:
                     continue
                 resolved = entry.resolve()
                 if resolved in _live_dirs or resolved in _live_backend_dirs:
+                    continue
+                if _owner_process_alive(resolved):
                     continue
                 shutil.rmtree(entry, ignore_errors=True)
             except OSError:

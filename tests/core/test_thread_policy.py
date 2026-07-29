@@ -88,7 +88,7 @@ def _write_png(path: Path) -> None:
 
 
 def test_ui_pool_fitz_opens_hold_fitz_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot
 ) -> None:
     """Every UI-pool fitz.open must run while FITZ_LOCK is owned.
 
@@ -168,7 +168,7 @@ def test_unlocked_fitz_open_fails_lock_probe(
 
 
 def test_save_as_extract_compare_inspect_hold_fitz_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot
 ) -> None:
     """GUI-thread write/extract/compare text-diff/inspect must own FITZ_LOCK."""
     from pagedrop.core.image_to_pdf import inspect_image

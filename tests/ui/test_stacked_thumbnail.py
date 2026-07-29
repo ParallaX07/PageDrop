@@ -12,14 +12,16 @@ from pagedrop.ui.stacked_thumbnail import (
 from tests.fixtures.generate_fixtures import generate_n_page
 
 
-def test_build_stacked_pixmap_single_page(one_page_pdf):
+def test_build_stacked_pixmap_single_page(one_page_pdf, qtbot):
     pixmap = render_stacked_pdf_thumbnail(str(one_page_pdf), 1)
     assert not pixmap.isNull()
     assert pixmap.width() > 0
     assert pixmap.height() > 0
 
 
-def test_render_stacked_pdf_thumbnail_uses_page_count(one_page_pdf, five_page_pdf):
+def test_render_stacked_pdf_thumbnail_uses_page_count(
+    one_page_pdf, five_page_pdf, qtbot
+):
     target = 160
     one = render_stacked_pdf_thumbnail(str(one_page_pdf), 1, width_px=target)
     five = render_stacked_pdf_thumbnail(str(five_page_pdf), 5, width_px=target)
@@ -38,7 +40,7 @@ def test_stack_thumbnail_layout_fits_target_width():
     assert page_width + stack_offset * (layers - 1) == 160
 
 
-def test_render_stacked_pdf_thumbnail_caps_at_three_pages(tmp_path):
+def test_render_stacked_pdf_thumbnail_caps_at_three_pages(tmp_path, qtbot):
     pdf = tmp_path / "many.pdf"
     generate_n_page(pdf, 10)
     pixmap = render_stacked_pdf_thumbnail(str(pdf), 10)
@@ -49,11 +51,11 @@ def test_render_stacked_pdf_thumbnail_caps_at_three_pages(tmp_path):
     assert pixmap.height() == three.height()
 
 
-def test_build_stacked_pixmap_empty():
+def test_build_stacked_pixmap_empty(qtbot):
     assert build_stacked_pixmap([]).isNull()
 
 
-def test_build_stacked_pixmap_puts_first_page_on_top(tmp_path):
+def test_build_stacked_pixmap_puts_first_page_on_top(tmp_path, qtbot):
     import fitz
 
     pdf = tmp_path / "colored.pdf"

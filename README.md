@@ -54,7 +54,7 @@ macOS and Linux binaries aren't published yet. Run from source (below) or build 
 2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or select a page or range like `1-5` with **Ctrl+F**.
 3. **Drag to a folder**: drag selected thumbnails into Explorer, Finder, or any file manager. Each page becomes its own PDF, like `report_page_0003.pdf`.
 4. **Edit across PDFs**: reorder, delete, duplicate (`Ctrl+D`), or rotate pages. Drop another PDF onto the grid to insert its pages. Drag pages between windows, and hold Shift while dropping to move instead of copy. Undo with `Ctrl+Z`. Then File → Save As.
-5. **Merge or convert**: Merge PDFs combines whole files. Create PDF turns images into a PDF.
+5. **Merge, Create PDF, or Tools**: Merge PDFs and Create PDF open as editor tabs (same strip as your PDFs). **Tools** (`Ctrl+Shift+O`) is the searchable hub for organize, convert, modify, optimize, and secure jobs.
 
 The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette.
 
@@ -84,32 +84,43 @@ The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, 
 
 - Open PDFs in new windows, tear tabs off the tab bar, or use File → New Window
 - Drag pages between windows to copy by default, or hold Shift while dropping to move pages from one document to another (a short Undo toast appears after a move)
-- Merge PDFs and Create PDF windows can stay open alongside editor windows
+- Each window has its own tab strip, so Merge, Create PDF, and Tools can stay open beside editor tabs
 
 ### Merge PDFs
 
-A separate window, under Merge PDFs in the menu bar, for combining whole PDF files:
+An editor tab (menu bar **Merge PDFs**, or the Tools hub tile) for combining whole PDF files:
 
 - Add, remove, and reorder files, with drag-and-drop supported
 - Add folder recursively adds PDFs from a directory
 - Double-click or press Enter on a file to preview all its pages
-- Merge saves one combined PDF and leaves source files unchanged
+- Merge writes one combined PDF and leaves source files unchanged; success offers Preview / Open in editor / Show in folder without auto-opening the result
 
 ### Create PDF
 
-A separate window, under Create PDF in the menu bar, for turning images into PDFs:
+An editor tab (menu bar **Create PDF**, or the Tools hub tile) for turning images into PDFs:
 
 - Supports PNG, JPEG, BMP, GIF, TIFF, WebP, and other raster formats PyMuPDF can open
 - Add images via dialog or drag-and-drop (PDFs get rejected here; use Merge PDFs for those)
 - Export as one combined PDF with one page per image, or as separate PDFs with one file per image
 - Reorder images before exporting, and double-click or press Enter for a full-size preview with Ctrl+scroll zoom
+- Same result actions as Merge — no auto-open into a PDF tab
+
+### Tools hub
+
+A searchable catalogue tab (**Tools**, `Ctrl+Shift+O`) for batch and multi-step jobs. Tiles open modeless tool pages in the same tab strip (drop zone → options → Run → cancelable progress → toast + Preview / Open / Show in folder).
+
+- **Organize** — split/extract, alternate, reverse, N-up, booklet, posterize, divide, combine, normalize size, attachments, metadata, page labels, ZIP, compare
+- **Convert** — Create PDF, Convert to PDF, Export from PDF, Office to PDF, PDF to Word, OCR, extract tables / PDF to CSV / Excel (optional backends show clearly when missing)
+- **Modify** — crop, watermark, header & footer, page numbers, Bates, bookmarks/TOC, annotations, blank pages, color effects
+- **Optimize / Secure** — compress, repair, encrypt, decrypt, sanitize
+- Coming-soon tiles stay hidden until you enable **Show upcoming**; optional engines (Office COM, LibreOffice, tessdata, openpyxl) are capability-detected so core editing still works without them
 
 ### Preferences and accessibility
 
 - View → Toggle Light Theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
-- Edit toggles let you confirm before deleting multiple pages, confirm before closing dirty tabs, and remember window size and position
-- High-contrast and reduce-motion preferences are respected where the platform exposes them
-- Keyboard-first use across the main, Merge, and Create toolbars and grids; Help → Keyboard Shortcuts (`Ctrl+/`) covers everything
+- Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, and **Reduce motion** (platform reduce-motion is still honored when available)
+- High-contrast preferences are respected where the platform exposes them
+- Keyboard-first use across the main, Merge, Create, and Tools/shell toolbars and grids; Help → Keyboard Shortcuts (`Ctrl+/`) covers everything
 
 ## Keyboard shortcuts
 
@@ -163,8 +174,8 @@ You don't need to activate a virtualenv manually. `uv` handles the environment f
 ```
 src/pagedrop/
 ├── main.py              # entry point
-├── ui/                  # PyQt6 windows, tabs, grids, merge/convert windows
-├── core/                # PDF loading, editing model, merge/convert writers
+├── ui/                  # PyQt6 windows, tabs, grids, Merge/Create/Tools pages
+├── core/                # PDF loading, editing model, merge/convert/tools writers
 └── utils/               # temp file lifecycle
 tests/                   # unit, UI, and smoke tests
 ```

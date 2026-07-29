@@ -139,7 +139,9 @@ def test_cancel_removes_partial_and_orphans(tmp_path: Path) -> None:
         assert not out.exists()
         assert _file_hash(src) == source_hash
         leftovers = list(temp.get_dir().rglob("*"))
-        assert not any(p.is_file() for p in leftovers)
+        assert not any(
+            p.is_file() and p.name != ".pagedrop_owner" for p in leftovers
+        )
     finally:
         temp.cleanup()
 
@@ -490,7 +492,9 @@ def test_external_wait_cancel_cleans_staged_output(tmp_path: Path) -> None:
         assert staged_seen
         assert not staged_seen[0].exists()
         leftovers = list(temp.get_dir().rglob("*"))
-        assert not any(p.is_file() for p in leftovers)
+        assert not any(
+            p.is_file() and p.name != ".pagedrop_owner" for p in leftovers
+        )
         assert not err
     finally:
         allow_finish.set()

@@ -157,6 +157,7 @@ def test_enforce_max_size_evicts_oldest_across_drag_and_job():
 
 
 def test_init_scrubs_orphan_pagedrop_dirs():
+    """Dirs with no owner file (pre-pid leftovers) are still scrubbed."""
     orphan = Path(tempfile.mkdtemp(prefix="pagedrop_"))
     marker = orphan / "leftover.bin"
     marker.write_bytes(b"orphan")
@@ -166,8 +167,50 @@ def test_init_scrubs_orphan_pagedrop_dirs():
     try:
         assert not orphan.exists()
         assert tm.get_dir().exists()
+        assert (tm.get_dir() / ".pagedrop_owner").is_file()
     finally:
         tm.cleanup()
+
+
+def test_init_scrubs_dead_owner_pid():
+    """Dirs whose owner pid is dead are scrubbed even with an owner file."""
+    # Capture a pid from a process that has already exited.
+    result = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=True,
+    )
+    dead_pid = int(result.stdout.strip())
+
+    orphan = Path(tempfile.mkdtemp(prefix="pagedrop_"))
+    (orphan / ".pagedrop_owner").write_text(str(dead_pid), encoding="ascii")
+    (orphan / "leftover.bin").write_bytes(b"orphan")
+
+    tm = TempManager()
+    try:
+        assert not orphan.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_init_preserves_foreign_live_owner():
+    """Dirs owned by a still-running process (other workers / instances) survive."""
+    import os
+
+    foreign = Path(tempfile.mkdtemp(prefix="pagedrop_"))
+    (foreign / ".pagedrop_owner").write_text(str(os.getpid()), encoding="ascii")
+    (foreign / "keep.bin").write_bytes(b"live")
+    try:
+        tm = TempManager()
+        try:
+            assert foreign.exists()
+            assert (foreign / "keep.bin").exists()
+        finally:
+            tm.cleanup()
+    finally:
+        shutil.rmtree(foreign, ignore_errors=True)
 
 
 def test_init_preserves_live_sibling_temp_manager():
@@ -208,6 +251,8 @@ def test_init_preserves_claimed_backend_temps():
     office = claim_backend_temp(Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_")))
     lo = claim_backend_temp(Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_")))
     try:
+        assert (office / ".pagedrop_owner").is_file()
+        assert (lo / ".pagedrop_owner").is_file()
         tm = TempManager()
         try:
             assert office.exists()

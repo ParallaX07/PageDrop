@@ -107,16 +107,25 @@ def isolated_settings(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _limit_qtbot_default_timeout(qtbot):
+def _limit_qtbot_default_timeout(request):
+    """Cap qtbot waits when a test actually uses Qt — do not force QApplication."""
+    if "qtbot" not in request.fixturenames:
+        yield
+        return
+    qtbot = request.getfixturevalue("qtbot")
     qtbot._default_timeout = RENDER_TIMEOUT_MS
     yield
 
 
 @pytest.fixture(autouse=True)
-def _drain_render_workers_after_test(qtbot):
-    """Drain render pools before qtbot destroys widgets (depends on qtbot for order)."""
+def _drain_render_workers_after_test():
+    """Drain render pools after UI tests; skip when no QApplication exists."""
     yield
     from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
 
     from pagedrop.ui.convert_file_grid import ConvertFileGrid
     from pagedrop.ui.merge_file_grid import MergeFileGrid
