@@ -9,6 +9,7 @@ from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupEntry, apply_markup_entries
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import open_pdf
+from pagedrop.core.pdf_service import FITZ_LOCK
 
 
 def _cached_doc(
@@ -33,17 +34,18 @@ def merge_pdf_files(
     if not file_paths:
         raise ValueError("No PDF files to merge")
 
-    docs: dict[str, fitz.Document] = {}
-    out = fitz.open()
-    try:
-        for path in file_paths:
-            src = _cached_doc(path, docs, passwords)
-            out.insert_pdf(src)
-        out.save(output_path)
-    finally:
-        out.close()
-        for doc in docs.values():
-            doc.close()
+    with FITZ_LOCK:
+        docs: dict[str, fitz.Document] = {}
+        out = fitz.open()
+        try:
+            for path in file_paths:
+                src = _cached_doc(path, docs, passwords)
+                out.insert_pdf(src)
+            out.save(output_path)
+        finally:
+            out.close()
+            for doc in docs.values():
+                doc.close()
 
 
 def append_page_refs(
@@ -96,15 +98,17 @@ def write_pdf(
     assembled document before save — originals are never modified.
     *passwords* maps source paths (raw or resolved) to unlock secrets.
     Contiguous same-source ranges use one ``insert_pdf`` call.
+    Holds ``FITZ_LOCK`` for open/work/close (GUI Save As / redaction stage included).
     """
-    docs: dict[str, fitz.Document] = {}
-    out = fitz.open()
-    try:
-        append_page_refs(out, model.iter_pages(), docs, passwords)
-        if markup:
-            apply_markup_entries(out, markup)
-        out.save(output_path)
-    finally:
-        out.close()
-        for doc in docs.values():
-            doc.close()
+    with FITZ_LOCK:
+        docs: dict[str, fitz.Document] = {}
+        out = fitz.open()
+        try:
+            append_page_refs(out, model.iter_pages(), docs, passwords)
+            if markup:
+                apply_markup_entries(out, markup)
+            out.save(output_path)
+        finally:
+            out.close()
+            for doc in docs.values():
+                doc.close()

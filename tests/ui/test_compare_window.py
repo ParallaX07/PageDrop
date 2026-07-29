@@ -69,6 +69,44 @@ def test_compare_window_lists_deleted_text(qtbot, tmp_path: Path):
     window.close()
 
 
+def test_compare_render_failure_shows_status_and_toast(
+    qtbot, tmp_path: Path, monkeypatch
+):
+    """Pane render errors must surface status/toast — not silent blank panes."""
+    import pagedrop.ui.compare_window as compare_module
+    from pagedrop.core.pdf_tools import CompareReport
+
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    _write_line_pdf(a, "alpha")
+    _write_line_pdf(b, "beta")
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._path_a = str(a)
+    window._path_b = str(b)
+    window._report = CompareReport(changes=(), page_count_a=1, page_count_b=1)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("render boom")
+
+    monkeypatch.setattr(compare_module, "_render_page_pixmap", boom)
+    toasts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+
+    window._render_pages()
+
+    status = window.statusBar().currentMessage()
+    assert "Could not render page" in status
+    assert "render boom" in status
+    assert toasts and toasts[-1][1] == "error"
+    window.close()
+
+
 def test_compare_success_shows_diff_ratio(
     qtbot, tmp_path: Path, monkeypatch
 ):

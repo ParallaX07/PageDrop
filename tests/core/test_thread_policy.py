@@ -42,10 +42,14 @@ def test_worker_audit_covers_known_fitz_pools() -> None:
         "_ConvertThumbnailWorker",
         "_MergeWorker",
         "_ConvertWorker",
+        "WatermarkPageRenderWorker",
+        "CompareWindow",
     }
     for _name, note in WORKER_AUDIT:
         assert "FITZ_LOCK" in note or "pdf_service" in note
-        assert "max 1" in note
+        # Pool workers stay max 1; GUI-thread Compare sites are not pooled.
+        if "pool" in note.lower():
+            assert "max 1" in note
 
 
 def test_ensure_no_fitz_document_rejects_document() -> None:
@@ -161,6 +165,51 @@ def test_unlocked_fitz_open_fails_lock_probe(
     doc = fitz.open(str(pdf))
     doc.close()
     assert held_at_open == [False]
+
+
+def test_save_as_extract_compare_inspect_hold_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GUI-thread write/extract/compare text-diff/inspect must own FITZ_LOCK."""
+    from pagedrop.core.image_to_pdf import inspect_image
+    from pagedrop.core.page_extractor import extract_page_refs_to_files
+    from pagedrop.core.pdf_editor import PdfEditModel
+    from pagedrop.core.pdf_tools import compare_pdf_text_diff
+    from pagedrop.core.pdf_writer import write_pdf
+    from pagedrop.ui.compare_window import _render_page_pixmap
+
+    pdf = tmp_path / "doc.pdf"
+    png = tmp_path / "img.png"
+    out = tmp_path / "out.pdf"
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+    _write_pdf(pdf, pages=2)
+    _write_png(png)
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+
+    write_pdf(PdfEditModel(str(pdf), 2), str(out))
+    extract_page_refs_to_files(
+        [PageRef(str(pdf), 0)],
+        extract_dir,
+        "page",
+    )
+    compare_pdf_text_diff(str(pdf), str(pdf))
+    inspect_image(str(png))
+    pix, _rect = _render_page_pixmap(str(pdf), 0, 64)
+    assert not pix.isNull()
+
+    assert held_at_open, "expected at least one fitz.open"
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
 
 
 def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:

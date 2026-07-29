@@ -41,7 +41,9 @@ from pagedrop.core.jobs import (
     OutputExistsError,
     SourceOverwriteError,
 )
+from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoadError
+from pagedrop.core.pdf_service import page_geometry, render_ref_png
 from pagedrop.core.pdf_tools import (
     COMPARE_MAX_RENDER_WIDTH_PX,
     CompareChange,
@@ -79,20 +81,14 @@ def _pick_pdf(parent: QWidget, title: str, initial: str = "") -> str | None:
 
 
 def _render_page_pixmap(path: str, page_index: int, width_px: int) -> tuple[QPixmap, fitz.Rect]:
-    doc = fitz.open(path)
-    try:
-        if page_index < 0 or page_index >= len(doc):
-            raise PdfLoadError(f"Page out of range: {page_index}")
-        page = doc[page_index]
-        rect = page.rect
-        target = max(1, min(int(width_px), COMPARE_MAX_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX))
-        scale = target / float(rect.width)
-        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-        qpix = QPixmap()
-        qpix.loadFromData(pix.tobytes("png"))
-        return qpix, fitz.Rect(rect)
-    finally:
-        doc.close()
+    """Render one compare pane via ``pdf_service`` (holds ``FITZ_LOCK``)."""
+    target = max(1, min(int(width_px), COMPARE_MAX_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX))
+    geom = page_geometry(path, page_index)
+    png = render_ref_png(PageRef(path, page_index), target)
+    qpix = QPixmap()
+    if not qpix.loadFromData(png):
+        raise PdfLoadError(f"Could not decode page render for {Path(path).name}")
+    return qpix, fitz.Rect(0, 0, geom.width, geom.height)
 
 
 class _PathBrowseRow(QWidget):
@@ -554,14 +550,16 @@ class CompareWindow(QWidget):
 
         empty = QPixmap()
         empty_rect = fitz.Rect(0, 0, 200, 260)
+        errors: list[str] = []
 
         if self._page_index < self._report.page_count_a:
             try:
                 pix_a, rect_a = _render_page_pixmap(
                     self._path_a, self._page_index, width
                 )
-            except Exception:
+            except Exception as exc:
                 pix_a, rect_a = empty, empty_rect
+                errors.append(f"PDF A: {exc}")
             hl_a = self._highlights_for_page("a", self._page_index)
             self._pane_a.set_content(pix_a, rect_a, hl_a)
         else:
@@ -572,12 +570,18 @@ class CompareWindow(QWidget):
                 pix_b, rect_b = _render_page_pixmap(
                     self._path_b, self._page_index, width
                 )
-            except Exception:
+            except Exception as exc:
                 pix_b, rect_b = empty, empty_rect
+                errors.append(f"PDF B: {exc}")
             hl_b = self._highlights_for_page("b", self._page_index)
             self._pane_b.set_content(pix_b, rect_b, hl_b)
         else:
             self._pane_b.set_content(empty, empty_rect, [])
+
+        if errors:
+            detail = "; ".join(errors)
+            self.statusBar().showMessage(f"Could not render page — {detail}")
+            self._toast.show_toast("Could not render compare page", kind="error")
 
     def _export_heatmap(self) -> None:
         if not self._path_a or not self._path_b:

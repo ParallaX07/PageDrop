@@ -5,6 +5,7 @@ from pathlib import Path
 
 import fitz
 
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.supported_formats import is_supported_image
 from pagedrop.utils.list_utils import move_items
 
@@ -93,11 +94,15 @@ def _check_image_doc(doc: fitz.Document, filename: str) -> tuple[int, int]:
 
 
 def inspect_image(path: str) -> tuple[int, int]:
-    """Open *path* and return ``(width_px, height_px)``."""
+    """Open *path* and return ``(width_px, height_px)``.
+
+    Holds ``FITZ_LOCK`` so Create PDF GUI preflight serializes with other fitz work.
+    """
     filename = Path(path).name
     try:
-        with fitz.open(path) as doc:
-            return _check_image_doc(doc, filename)
+        with FITZ_LOCK:
+            with fitz.open(path) as doc:
+                return _check_image_doc(doc, filename)
     except ImageConvertError:
         raise
     except Exception as exc:

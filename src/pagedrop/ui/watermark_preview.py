@@ -58,7 +58,7 @@ class WatermarkOverlayState:
     image_scale: float = 0.5
 
 
-class _PageRenderWorker(QRunnable):
+class WatermarkPageRenderWorker(QRunnable):
     class Signals(QObject):
         finished = pyqtSignal(int, bytes, float, float)  # gen, png, page_w, page_h
         error = pyqtSignal(int, str)
@@ -334,7 +334,7 @@ class WatermarkPreviewCanvas(QWidget):
         gen = self._generation
         width_px = self._target_render_width()
         self._render_width_px = width_px
-        worker = _PageRenderWorker(
+        worker = WatermarkPageRenderWorker(
             self._path,
             self._page_index,
             width_px,

@@ -11,7 +11,7 @@ import fitz
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
-from pagedrop.core.pdf_service import attachments_for_path, extract_attachment
+from pagedrop.core.pdf_service import FITZ_LOCK, attachments_for_path, extract_attachment
 
 
 def _check_cancel(cancel: CancelToken | None) -> None:
@@ -908,55 +908,71 @@ def compare_pdf_text_diff(
 
     Page indices are aligned 0..min(n_a, n_b)-1. Extra trailing pages are reported
     as wholesale deleted (A only) or added (B only) changes.
+    Holds ``FITZ_LOCK`` for open/work/close (Compare GUI text-diff path).
     """
-    a = open_pdf(pdf_a, password=password_a)
-    b = open_pdf(pdf_b, password=password_b)
-    try:
-        changes: list[CompareChange] = []
-        shared = min(len(a), len(b))
-        for pno in range(shared):
-            changes.extend(
-                _page_word_diff(
-                    _word_items(a[pno]),
-                    _word_items(b[pno]),
-                    page_a=pno,
-                    page_b=pno,
+    with FITZ_LOCK:
+        a = open_pdf(pdf_a, password=password_a)
+        b = open_pdf(pdf_b, password=password_b)
+        try:
+            changes: list[CompareChange] = []
+            shared = min(len(a), len(b))
+            for pno in range(shared):
+                changes.extend(
+                    _page_word_diff(
+                        _word_items(a[pno]),
+                        _word_items(b[pno]),
+                        page_a=pno,
+                        page_b=pno,
+                    )
                 )
-            )
-        for pno in range(shared, len(a)):
-            words = _word_items(a[pno])
-            text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
-            changes.append(
-                CompareChange(
-                    kind="deleted",
-                    page_a=pno,
-                    page_b=None,
-                    text=text,
-                    rects_a=_merge_word_rects([w[1] for w in words])
-                    or ((0.0, 0.0, float(a[pno].rect.width), float(a[pno].rect.height)),),
+            for pno in range(shared, len(a)):
+                words = _word_items(a[pno])
+                text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
+                changes.append(
+                    CompareChange(
+                        kind="deleted",
+                        page_a=pno,
+                        page_b=None,
+                        text=text,
+                        rects_a=_merge_word_rects([w[1] for w in words])
+                        or (
+                            (
+                                0.0,
+                                0.0,
+                                float(a[pno].rect.width),
+                                float(a[pno].rect.height),
+                            ),
+                        ),
+                    )
                 )
-            )
-        for pno in range(shared, len(b)):
-            words = _word_items(b[pno])
-            text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
-            changes.append(
-                CompareChange(
-                    kind="added",
-                    page_a=None,
-                    page_b=pno,
-                    text=text,
-                    rects_b=_merge_word_rects([w[1] for w in words])
-                    or ((0.0, 0.0, float(b[pno].rect.width), float(b[pno].rect.height)),),
+            for pno in range(shared, len(b)):
+                words = _word_items(b[pno])
+                text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
+                changes.append(
+                    CompareChange(
+                        kind="added",
+                        page_a=None,
+                        page_b=pno,
+                        text=text,
+                        rects_b=_merge_word_rects([w[1] for w in words])
+                        or (
+                            (
+                                0.0,
+                                0.0,
+                                float(b[pno].rect.width),
+                                float(b[pno].rect.height),
+                            ),
+                        ),
+                    )
                 )
+            return CompareReport(
+                changes=tuple(changes),
+                page_count_a=len(a),
+                page_count_b=len(b),
             )
-        return CompareReport(
-            changes=tuple(changes),
-            page_count_a=len(a),
-            page_count_b=len(b),
-        )
-    finally:
-        a.close()
-        b.close()
+        finally:
+            a.close()
+            b.close()
 
 
 def compare_pdfs_heatmap(

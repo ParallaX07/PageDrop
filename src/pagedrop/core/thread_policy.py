@@ -74,6 +74,14 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "_ConvertWorker",
         "ui/convert_window.py — image_to_pdf under FITZ_LOCK; pool max 1",
     ),
+    (
+        "WatermarkPageRenderWorker",
+        "ui/watermark_preview.py — via pdf_service under FITZ_LOCK; pool max 1",
+    ),
+    (
+        "CompareWindow",
+        "ui/compare_window.py — pdf_service pane render + locked compare_pdf_text_diff; GUI thread",
+    ),
 )
 
 
