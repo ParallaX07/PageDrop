@@ -126,6 +126,7 @@ def handle_sanitize(ctx: JobContext) -> Path:
         strip_xmp=bool(ctx.spec.options.get("strip_xmp", True)),
         strip_annotations=bool(ctx.spec.options.get("strip_annotations", False)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 

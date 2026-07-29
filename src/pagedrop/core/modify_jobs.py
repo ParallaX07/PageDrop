@@ -24,6 +24,7 @@ def handle_crop(ctx: JobContext) -> Path:
         bottom=float(ctx.spec.options.get("bottom", 0)),
         mode=str(ctx.spec.options.get("mode", "cropbox")),  # type: ignore[arg-type]
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -47,6 +48,7 @@ def handle_watermark(ctx: JobContext) -> Path:
         "pages": page_list,
         "flatten": bool(ctx.spec.options.get("flatten", False)),
         "password": _password(ctx),
+        "cancel": ctx.cancel,
     }
     if kind == "image":
         ops.add_image_watermark(
@@ -81,6 +83,7 @@ def handle_header_footer(ctx: JobContext) -> Path:
         footer=str(ctx.spec.options.get("footer", "")),
         fontsize=float(ctx.spec.options.get("fontsize", 10)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -95,6 +98,7 @@ def handle_page_numbers(ctx: JobContext) -> Path:
         start=int(ctx.spec.options.get("start", 1)),
         fontsize=float(ctx.spec.options.get("fontsize", 10)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -119,6 +123,7 @@ def handle_bates(ctx: JobContext) -> Path:
             position=position,  # type: ignore[arg-type]
             fontsize=fontsize,
             password=_password(ctx),
+            cancel=ctx.cancel,
         )
         return ctx.staged_output
 
@@ -134,6 +139,7 @@ def handle_bates(ctx: JobContext) -> Path:
         position=position,  # type: ignore[arg-type]
         fontsize=fontsize,
         passwords=passwords,
+        cancel=ctx.cancel,
     )
     ctx.cancel.check()
     if not written:
@@ -199,6 +205,7 @@ def handle_annotations(ctx: JobContext) -> Path:
         action=str(ctx.spec.options.get("action", "remove")),  # type: ignore[arg-type]
         include_widgets=bool(ctx.spec.options.get("include_widgets", True)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -210,6 +217,7 @@ def handle_blank_pages(ctx: JobContext) -> Path:
         str(ctx.staged_output),
         ink_threshold=float(ctx.spec.options.get("ink_threshold", 0.01)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 
@@ -225,6 +233,7 @@ def handle_color_effects(ctx: JobContext) -> Path:
         background_rgb=(float(bg[0]), float(bg[1]), float(bg[2])),
         dpi=int(ctx.spec.options.get("dpi", 150)),
         password=_password(ctx),
+        cancel=ctx.cancel,
     )
     return ctx.staged_output
 

@@ -243,6 +243,61 @@ def test_sanitize_metadata_and_optional_annotations(tmp_path: Path) -> None:
     assert _file_hash(src) == source_hash
 
 
+def test_sanitize_cancel_mid_annot_loop_cleans_staged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel while stripping annotations must not promote and must scrub staging."""
+    from pagedrop.core.jobs import CancelToken, JobCancelledError
+
+    src = tmp_path / "multi.pdf"
+    doc = fitz.open()
+    try:
+        for i in range(5):
+            page = doc.new_page(width=200, height=200)
+            page.insert_text((40, 80), f"page {i}", fontsize=14)
+            page.add_highlight_annot(fitz.Rect(30, 60, 120, 90))
+        doc.save(str(src))
+    finally:
+        doc.close()
+    src_hash = _file_hash(src)
+    out = tmp_path / "sanitized.pdf"
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = ops._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", counting_check)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_optimize_secure_handlers(runner)
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(
+                    "sanitize",
+                    inputs=[str(src)],
+                    output=out,
+                    options={
+                        "strip_metadata": True,
+                        "strip_xmp": True,
+                        "strip_annotations": True,
+                    },
+                ),
+                cancel=token,
+            )
+        assert not out.exists()
+        assert not any(temp._dir.glob("job_*"))
+        assert _file_hash(src) == src_hash
+    finally:
+        temp.cleanup()
+
+
 def test_fix_page_size_covered_by_phase24(tmp_path: Path) -> None:
     """Phase 27 reuses Phase 24 normalize — not a second implementation."""
     src = _make_pdf(tmp_path / "src.pdf")

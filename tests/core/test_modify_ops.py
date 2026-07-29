@@ -363,3 +363,45 @@ def test_remove_annotations_and_color_effects(tmp_path: Path) -> None:
     ops.apply_color_effect(str(src), str(grey), effect="greyscale")
     assert Path(grey).is_file()
     assert ops.RASTER_EFFECT_WARNING
+
+
+def test_watermark_cancel_mid_loop_cleans_staged(tmp_path: Path, monkeypatch) -> None:
+    """Cancel during watermark page loop must not promote and must scrub staging."""
+    from pagedrop.core.jobs import CancelToken, JobCancelledError, JobSpec, SerializedJobRunner
+    from pagedrop.core.modify_jobs import register_modify_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    src = _make_pdf(tmp_path / "src.pdf", text="body", pages=6)
+    src_hash = _file_hash(src)
+    out = tmp_path / "wm.pdf"
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = ops._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", counting_check)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_modify_handlers(runner)
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(
+                    "watermark",
+                    inputs=[str(src)],
+                    output=out,
+                    options={"kind": "text", "text": "MARK", "fontsize": 48},
+                ),
+                cancel=token,
+            )
+        assert not out.exists()
+        assert not any(temp._dir.glob("job_*"))
+        assert _file_hash(src) == src_hash
+    finally:
+        temp.cleanup()

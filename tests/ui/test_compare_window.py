@@ -51,6 +51,8 @@ def test_compare_window_lists_deleted_text(qtbot, tmp_path: Path):
     window._row_a.set_text(str(a))
     window._row_b.set_text(str(b))
     window._run_compare()
+    qtbot.waitUntil(lambda: window._report is not None, timeout=5000)
+    qtbot.waitUntil(lambda: not window._comparing, timeout=5000)
 
     assert window._report is not None
     assert window._report.deleted_count == 1

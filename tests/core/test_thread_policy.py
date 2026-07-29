@@ -214,6 +214,7 @@ def test_save_as_extract_compare_inspect_hold_fitz_lock(
 
 def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     """Do not raise pool size to paper over MuPDF contention."""
+    from pagedrop.ui.compare_window import _compare_text_pool
     from pagedrop.ui.convert_window import ConvertWindow
     from pagedrop.ui.merge_window import MergeWindow
     from pagedrop.ui.page_preview import PagePreviewWidget
@@ -239,3 +240,4 @@ def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     assert grid._render_pool.maxThreadCount() == 1
     assert preview._render_pool.maxThreadCount() == 1
     assert viewer._pool.maxThreadCount() == 1
+    assert _compare_text_pool().maxThreadCount() == 1

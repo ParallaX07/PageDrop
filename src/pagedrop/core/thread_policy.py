@@ -79,8 +79,12 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "ui/watermark_preview.py — via pdf_service under FITZ_LOCK; pool max 1",
     ),
     (
+        "_CompareTextWorker",
+        "ui/compare_window.py — compare_pdf_text_diff under FITZ_LOCK; pool max 1",
+    ),
+    (
         "CompareWindow",
-        "ui/compare_window.py — pdf_service pane render + locked compare_pdf_text_diff; GUI thread",
+        "ui/compare_window.py — pdf_service pane render on GUI; text-diff via _CompareTextWorker",
     ),
 )
 

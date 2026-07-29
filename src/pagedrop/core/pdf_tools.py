@@ -903,6 +903,7 @@ def compare_pdf_text_diff(
     *,
     password_a: str | None = None,
     password_b: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> CompareReport:
     """Word-level text diff with geometry for side-by-side highlight overlays.
 
@@ -917,6 +918,7 @@ def compare_pdf_text_diff(
             changes: list[CompareChange] = []
             shared = min(len(a), len(b))
             for pno in range(shared):
+                _check_cancel(cancel)
                 changes.extend(
                     _page_word_diff(
                         _word_items(a[pno]),
@@ -926,6 +928,7 @@ def compare_pdf_text_diff(
                     )
                 )
             for pno in range(shared, len(a)):
+                _check_cancel(cancel)
                 words = _word_items(a[pno])
                 text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
                 changes.append(
@@ -946,6 +949,7 @@ def compare_pdf_text_diff(
                     )
                 )
             for pno in range(shared, len(b)):
+                _check_cancel(cancel)
                 words = _word_items(b[pno])
                 text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
                 changes.append(

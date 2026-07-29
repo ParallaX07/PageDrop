@@ -971,3 +971,27 @@ def test_compare_heatmap_cancel_mid_page(tmp_path, monkeypatch):
         )
     assert not heatmap.exists()
 
+
+def test_compare_text_diff_cancel_mid_page(tmp_path, monkeypatch):
+    """Cancel between text-diff pages must raise and leave sources unchanged."""
+    a = _make_text_pdf(tmp_path / "a.pdf", page_texts=["A1", "A2", "A3", "A4"])
+    b = _make_text_pdf(tmp_path / "b.pdf", page_texts=["B1", "B2", "B3", "B4"])
+    hash_a = _file_hash(a)
+    hash_b = _file_hash(b)
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = pdf_tools._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 2:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(pdf_tools, "_check_cancel", counting_check)
+    with pytest.raises(JobCancelledError):
+        pdf_tools.compare_pdf_text_diff(str(a), str(b), cancel=token)
+    assert checks["n"] >= 2
+    assert _file_hash(a) == hash_a
+    assert _file_hash(b) == hash_b
+

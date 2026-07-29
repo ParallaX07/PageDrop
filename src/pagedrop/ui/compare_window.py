@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import Qt, QRectF, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QRectF, QRunnable, QThreadPool, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QPainter,
@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import (
+    CancelToken,
     JobCancelledError,
     JobError,
     JobSpec,
@@ -73,6 +74,55 @@ from pagedrop.ui.theme import (
 _DELETED = token_qcolor(CLOSE_TAB, 90)
 _ADDED = token_qcolor(STATUS_SUCCESS, 90)
 _MODIFIED = token_qcolor(STATUS_WARNING, 90)
+
+# Keep worker signal objects alive until the slot runs (QRunnable auto-deletes).
+_COMPARE_TEXT_SIGNAL_REFS: list[QObject] = []
+_COMPARE_TEXT_POOL: QThreadPool | None = None
+
+
+def _compare_text_pool() -> QThreadPool:
+    global _COMPARE_TEXT_POOL
+    if _COMPARE_TEXT_POOL is None:
+        _COMPARE_TEXT_POOL = QThreadPool()
+        _COMPARE_TEXT_POOL.setMaxThreadCount(1)
+        _COMPARE_TEXT_POOL.setObjectName("PageDropCompareTextPool")
+    return _COMPARE_TEXT_POOL
+
+
+class _CompareTextWorker(QRunnable):
+    """Run ``compare_pdf_text_diff`` off the UI thread with cooperative cancel."""
+
+    class Signals(QObject):
+        succeeded = pyqtSignal(object)
+        cancelled = pyqtSignal()
+        failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        path_a: str,
+        path_b: str,
+        cancel: CancelToken,
+    ) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._path_a = path_a
+        self._path_b = path_b
+        self._cancel = cancel
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            report = pdf_tools.compare_pdf_text_diff(
+                self._path_a,
+                self._path_b,
+                cancel=self._cancel,
+            )
+        except JobCancelledError:
+            self.signals.cancelled.emit()
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))
+        else:
+            self.signals.succeeded.emit(report)
 
 
 def _pick_pdf(parent: QWidget, title: str, initial: str = "") -> str | None:
@@ -234,6 +284,7 @@ class CompareWindow(QWidget):
         self._syncing_scroll = False
         self._selected_change: CompareChange | None = None
         self._comparing = False
+        self._cancel_token: CancelToken | None = None
 
         self._build_ui()
         self._connect()
@@ -373,10 +424,7 @@ class CompareWindow(QWidget):
         self._result_bar.preview_requested.connect(self._preview_export)
         self._result_bar.show_in_folder_requested.connect(self._show_folder)
         self._result_bar.open_in_editor_requested.connect(self._on_open_result)
-        # ponytail: sync compare_pdf_text_diff freezes the GUI (processEvents only).
-        # Cancel stays hidden; Escape/close explain "still running…". Ceiling: UI
-        # unresponsive until the page loop finishes. Upgrade: enqueue via job
-        # runner + cancel.check() in compare_pdf_text_diff (O13).
+        self._busy.cancelled.connect(self._cancel_compare)
         self._busy.escape_blocked.connect(self._explain_busy)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -419,6 +467,10 @@ class CompareWindow(QWidget):
         finally:
             self._syncing_scroll = False
 
+    def _cancel_compare(self) -> None:
+        if self._cancel_token is not None:
+            self._cancel_token.cancel()
+
     def _run_compare(self) -> None:
         path_a = self._row_a.text()
         path_b = self._row_b.text()
@@ -431,27 +483,65 @@ class CompareWindow(QWidget):
         if Path(path_a).resolve() == Path(path_b).resolve():
             QMessageBox.warning(self, self.WINDOW_TITLE, "Choose two different PDF files.")
             return
+        if self._comparing:
+            self._explain_busy()
+            return
 
-        self.statusBar().showMessage("Comparing…")
+        token = CancelToken()
+        self._cancel_token = token
         self._comparing = True
+        self._compare_btn.setEnabled(False)
+        self.statusBar().showMessage("Comparing…")
+        self._busy.set_cancellable(True)
         self._busy.show_message("Comparing…")
-        QApplication.processEvents()
-        try:
-            report = pdf_tools.compare_pdf_text_diff(path_a, path_b)
-        except PdfLoadError as exc:
-            self.statusBar().showMessage("Compare failed")
-            self._toast.show_toast("Compare failed", kind="error")
-            QMessageBox.critical(self, self.WINDOW_TITLE, str(exc))
-            return
-        except Exception as exc:
-            self.statusBar().showMessage("Compare failed")
-            self._toast.show_toast("Compare failed", kind="error")
-            QMessageBox.critical(self, self.WINDOW_TITLE, f"Could not compare PDFs:\n{exc}")
-            return
-        finally:
-            self._comparing = False
-            self._busy.hide_overlay()
 
+        worker = _CompareTextWorker(path_a, path_b, token)
+        signals = worker.signals
+        _COMPARE_TEXT_SIGNAL_REFS.append(signals)
+
+        def _drop_ref() -> None:
+            try:
+                _COMPARE_TEXT_SIGNAL_REFS.remove(signals)
+            except ValueError:
+                pass
+
+        def _on_ok(report: object) -> None:
+            _drop_ref()
+            self._finish_compare_busy()
+            if not isinstance(report, CompareReport):
+                self.statusBar().showMessage("Compare failed")
+                self._toast.show_toast("Compare failed", kind="error")
+                return
+            self._apply_compare_report(path_a, path_b, report)
+
+        def _on_cancelled() -> None:
+            _drop_ref()
+            self._finish_compare_busy()
+            self.statusBar().showMessage("Cancelled")
+            self._toast.show_toast("Compare cancelled", kind="info")
+
+        def _on_failed(message: str) -> None:
+            _drop_ref()
+            self._finish_compare_busy()
+            self.statusBar().showMessage("Compare failed")
+            self._toast.show_toast("Compare failed", kind="error")
+            QMessageBox.critical(self, self.WINDOW_TITLE, message)
+
+        signals.succeeded.connect(_on_ok)
+        signals.cancelled.connect(_on_cancelled)
+        signals.failed.connect(_on_failed)
+        _compare_text_pool().start(worker)
+
+    def _finish_compare_busy(self) -> None:
+        self._comparing = False
+        self._cancel_token = None
+        self._busy.set_cancellable(False)
+        self._busy.hide_overlay()
+        self._compare_btn.setEnabled(True)
+
+    def _apply_compare_report(
+        self, path_a: str, path_b: str, report: CompareReport
+    ) -> None:
         self._path_a = path_a
         self._path_b = path_b
         self._report = report

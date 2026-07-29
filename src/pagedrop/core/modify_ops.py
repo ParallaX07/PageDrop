@@ -16,6 +16,7 @@ from typing import Literal, Sequence
 
 import fitz
 
+from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
 
@@ -38,6 +39,11 @@ AnnotationAction = Literal["remove", "flatten"]
 # Near-white threshold for blank-page ink heuristic (0–255 greyscale).
 _BLANK_WHITE = 250
 _BLANK_MATRIX = fitz.Matrix(0.25, 0.25)
+
+
+def _check_cancel(cancel: CancelToken | None) -> None:
+    if cancel is not None:
+        cancel.check()
 
 
 @dataclass(frozen=True)
@@ -94,6 +100,7 @@ def crop_pdf(
     bottom: float = 0.0,
     mode: CropMode = "cropbox",
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Crop every page by margins (points). ``cropbox`` sets CropBox; ``rebuild`` hard-clips."""
     reject_source_overwrite(output_path, source_pdf)
@@ -103,6 +110,7 @@ def crop_pdf(
     try:
         if mode == "cropbox":
             for page in src:
+                _check_cancel(cancel)
                 page.set_cropbox(_margins_rect(page, left=left, right=right, top=top, bottom=bottom))
             _save(src, output_path)
             return
@@ -113,6 +121,7 @@ def crop_pdf(
         out = fitz.open()
         try:
             for page in src:
+                _check_cancel(cancel)
                 clip = _margins_rect(page, left=left, right=right, top=top, bottom=bottom)
                 new_page = out.new_page(width=clip.width, height=clip.height)
                 new_page.show_pdf_page(new_page.rect, src, page.number, clip=clip)
@@ -252,10 +261,17 @@ def _normalize_page_indices(
     return indices
 
 
-def _flatten_pages(doc: fitz.Document, page_indices: Sequence[int], *, dpi: int = 150) -> None:
+def _flatten_pages(
+    doc: fitz.Document,
+    page_indices: Sequence[int],
+    *,
+    dpi: int = 150,
+    cancel: CancelToken | None = None,
+) -> None:
     """Rasterize selected pages so watermark (and page) text is no longer selectable."""
     mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
     for i in page_indices:
+        _check_cancel(cancel)
         page = doc[i]
         pix = page.get_pixmap(matrix=mat, alpha=False)
         # Full-page redaction clears content streams; then draw the pixmap back.
@@ -281,6 +297,7 @@ def add_text_watermark(
     flatten: bool = False,
     flatten_dpi: int = 150,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Overlay *text* on selected pages.
 
@@ -304,6 +321,7 @@ def add_text_watermark(
     try:
         targets = _normalize_page_indices(doc.page_count, pages)
         for i in targets:
+            _check_cancel(cancel)
             page = doc[i]
             r = page.rect
             text_w, _text_h, fs = watermark_text_box(
@@ -322,7 +340,7 @@ def add_text_watermark(
             tw.append(pos, text, fontsize=fs, font=font)
             tw.write_text(page, morph=morph, overlay=True)
         if flatten:
-            _flatten_pages(doc, targets, dpi=flatten_dpi)
+            _flatten_pages(doc, targets, dpi=flatten_dpi, cancel=cancel)
         _save(doc, output_path)
     finally:
         doc.close()
@@ -358,6 +376,7 @@ def add_image_watermark(
     flatten: bool = False,
     flatten_dpi: int = 150,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Place *image_path* on selected pages.
 
@@ -383,6 +402,7 @@ def add_image_watermark(
     try:
         targets = _normalize_page_indices(doc.page_count, pages)
         for i in targets:
+            _check_cancel(cancel)
             page = doc[i]
             r = page.rect
             if diagonal_percent is not None:
@@ -404,7 +424,7 @@ def add_image_watermark(
                 rotate=int(round(rotate)) % 360,
             )
         if flatten:
-            _flatten_pages(doc, targets, dpi=flatten_dpi)
+            _flatten_pages(doc, targets, dpi=flatten_dpi, cancel=cancel)
         _save(doc, output_path)
     finally:
         doc.close()
@@ -426,6 +446,7 @@ def add_header_footer(
     footer: str = "",
     fontsize: float = 10.0,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Add header and/or footer text. Tokens: ``{page}``, ``{total}``, ``{n}``."""
     reject_source_overwrite(output_path, source_pdf)
@@ -435,6 +456,7 @@ def add_header_footer(
     try:
         n = doc.page_count
         for i, page in enumerate(doc):
+            _check_cancel(cancel)
             page_no = i + 1
             if header:
                 box = _text_box_for_position(page, "top-center", width=page.rect.width - 48, height=28)
@@ -468,6 +490,7 @@ def add_page_numbers(
     start: int = 1,
     fontsize: float = 10.0,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Stamp page numbers. *start* is the number shown on the first page."""
     reject_source_overwrite(output_path, source_pdf)
@@ -477,6 +500,7 @@ def add_page_numbers(
     try:
         n = doc.page_count
         for i, page in enumerate(doc):
+            _check_cancel(cancel)
             shown = start + i
             text = _format_page_token(template, shown, n)
             box = _text_box_for_position(page, position, width=160, height=24)
@@ -505,6 +529,7 @@ def add_bates_numbers(
     position: MarkPosition = "bottom-right",
     fontsize: float = 9.0,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> int:
     """Stamp Bates numbers; return the next number after the last page."""
     reject_source_overwrite(output_path, source_pdf)
@@ -516,6 +541,7 @@ def add_bates_numbers(
     try:
         n = start
         for page in doc:
+            _check_cancel(cancel)
             text = format_bates(prefix, n, digits)
             box = _text_box_for_position(page, position, width=180, height=22)
             align = fitz.TEXT_ALIGN_RIGHT if position.endswith("right") else fitz.TEXT_ALIGN_LEFT
@@ -540,6 +566,7 @@ def add_bates_across_files(
     fontsize: float = 9.0,
     suffix: str = "_bates",
     passwords: dict[str, str] | None = None,
+    cancel: CancelToken | None = None,
 ) -> list[Path]:
     """Bates-stamp each PDF in order; numbering continues across files."""
     if not sources:
@@ -550,6 +577,7 @@ def add_bates_across_files(
     next_num = start
     written: list[Path] = []
     for source in sources:
+        _check_cancel(cancel)
         src_path = Path(source)
         dest = out_dir / f"{src_path.stem}{suffix}{src_path.suffix}"
         reject_source_overwrite(dest, source)
@@ -562,6 +590,7 @@ def add_bates_across_files(
             position=position,
             fontsize=fontsize,
             password=passwords.get(source),
+            cancel=cancel,
         )
         written.append(dest)
     return written
@@ -677,15 +706,18 @@ def remove_or_flatten_annotations(
     action: AnnotationAction = "remove",
     include_widgets: bool = True,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Remove annotations, or bake (flatten) annots / form appearances into content."""
     reject_source_overwrite(output_path, source_pdf)
     doc = open_pdf(source_pdf, password=password)
     try:
         if action == "flatten":
+            _check_cancel(cancel)
             doc.bake(annots=True, widgets=include_widgets)
         elif action == "remove":
             for page in doc:
+                _check_cancel(cancel)
                 for annot in list(page.annots() or []):
                     page.delete_annot(annot)
                 if include_widgets:
@@ -722,6 +754,7 @@ def detect_blank_pages(
     *,
     ink_threshold: float = 0.01,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> BlankPageReport:
     """Return pages that look blank (no text/images + low ink coverage)."""
     if not 0.0 <= ink_threshold <= 1.0:
@@ -730,6 +763,7 @@ def detect_blank_pages(
     try:
         blanks: list[int] = []
         for i, page in enumerate(doc):
+            _check_cancel(cancel)
             if page_looks_blank(page, ink_threshold=ink_threshold):
                 blanks.append(i)
         return BlankPageReport(
@@ -740,19 +774,26 @@ def detect_blank_pages(
     finally:
         doc.close()
 
+
 def remove_blank_pages(
     source_pdf: str,
     output_path: str,
     *,
     ink_threshold: float = 0.01,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> BlankPageReport:
     """Write a copy with heuristically blank pages removed.
 
     Callers must confirm with the user before invoking — this never prompts.
     """
     reject_source_overwrite(output_path, source_pdf)
-    report = detect_blank_pages(source_pdf, ink_threshold=ink_threshold, password=password)
+    report = detect_blank_pages(
+        source_pdf,
+        ink_threshold=ink_threshold,
+        password=password,
+        cancel=cancel,
+    )
     if report.blank_count == 0:
         # Still rewrite so callers get a distinct output path.
         doc = open_pdf(source_pdf, password=password)
@@ -768,6 +809,7 @@ def remove_blank_pages(
     try:
         # Delete from the end so indices stay valid.
         for idx in sorted(report.blank_indices, reverse=True):
+            _check_cancel(cancel)
             doc.delete_page(idx)
         _save(doc, output_path)
         return report
@@ -783,6 +825,7 @@ def apply_color_effect(
     background_rgb: tuple[float, float, float] = (0.95, 0.95, 0.9),
     dpi: int = 150,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Apply greyscale (vector-safe), invert (rasterizes), or background tint.
 
@@ -797,6 +840,7 @@ def apply_color_effect(
     try:
         if effect == "greyscale":
             for page in doc:
+                _check_cancel(cancel)
                 page.recolor(1)
             _save(doc, output_path)
             return
@@ -804,6 +848,7 @@ def apply_color_effect(
         if effect == "background":
             r, g, b = background_rgb
             for page in doc:
+                _check_cancel(cancel)
                 shape = page.new_shape()
                 shape.draw_rect(page.rect)
                 shape.finish(color=None, fill=(r, g, b), fill_opacity=1.0)
@@ -819,6 +864,7 @@ def apply_color_effect(
         try:
             mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
             for page in doc:
+                _check_cancel(cancel)
                 pix = page.get_pixmap(matrix=mat, alpha=False)
                 pix.invert_irect(pix.irect)
                 new_page = out.new_page(width=page.rect.width, height=page.rect.height)

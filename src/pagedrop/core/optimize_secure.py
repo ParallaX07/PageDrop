@@ -58,6 +58,7 @@ from typing import Literal
 
 import fitz
 
+from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS
@@ -77,6 +78,11 @@ _ALL_PERMISSIONS = (
     | fitz.PDF_PERM_ASSEMBLE
     | fitz.PDF_PERM_PRINT_HQ
 )
+
+
+def _check_cancel(cancel: CancelToken | None) -> None:
+    if cancel is not None:
+        cancel.check()
 
 
 @dataclass(frozen=True)
@@ -376,6 +382,7 @@ def sanitize_pdf(
     strip_xmp: bool = True,
     strip_annotations: bool = False,
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Scrub metadata (and optionally annotations) into a new file.
 
@@ -386,6 +393,7 @@ def sanitize_pdf(
     reject_source_overwrite(output_path, source_pdf)
     doc = open_pdf(source_pdf, password=password)
     try:
+        _check_cancel(cancel)
         if strip_metadata:
             meta = dict(doc.metadata or {})
             for key in STANDARD_METADATA_KEYS:
@@ -396,6 +404,7 @@ def sanitize_pdf(
             doc.del_xml_metadata()
         if strip_annotations:
             for page in doc:
+                _check_cancel(cancel)
                 for annot in list(page.annots() or []):
                     page.delete_annot(annot)
         _save_with_profile(doc, output_path, SAVE_PROFILES["lossless"])
