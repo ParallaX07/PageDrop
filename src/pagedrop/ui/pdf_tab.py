@@ -386,6 +386,18 @@ class PdfTab(QWidget):
         self._sync_dirty_from_model()
         return True
 
+    def move_selected_pages_to(self, dest: int) -> bool:
+        """Move selection so the block starts at *dest* (0-based); no-op if unchanged."""
+        if self._edit_model is None or self.is_preview_visible():
+            return False
+        if not self._thumbnail_grid.can_move_selection_to():
+            return False
+        self.close_preview()
+        if not self._thumbnail_grid.move_selection_to(dest):
+            return False
+        self._sync_dirty_from_model()
+        return True
+
     def duplicate_selected_pages(self) -> int:
         """Duplicate the current selection after the last selected page."""
         if self._edit_model is None or self.is_preview_visible():

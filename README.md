@@ -72,7 +72,7 @@ The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, 
 ### Multi-tab editor
 
 - Browser-style tabs keep multiple PDFs open at once, each in its own workspace
-- Reorder pages by dragging them or using Move up / Move down
+- Reorder pages by dragging them or using Move up / Move down / Move to… (Ctrl+Shift+M)
 - Delete, duplicate, and rotate pages from the toolbar, context menu, or shortcuts
 - Undo and redo page edits with `Ctrl+Z` / `Ctrl+Shift+Z`; deleting many pages at once can prompt for confirmation (Edit menu)
 - Drop PDFs onto the grid, including a blank tab, to open or insert pages at the cursor
@@ -137,6 +137,7 @@ A searchable catalogue tab (**Tools**, `Ctrl+Shift+O`) for batch and multi-step 
 | Delete selected pages | Delete |
 | Duplicate selected pages | Ctrl+D |
 | Move pages up / down | Ctrl+↑ / Ctrl+↓ |
+| Move to page | Ctrl+Shift+M |
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 | Go to page | Ctrl+G |
 | Select page / range | Ctrl+F |

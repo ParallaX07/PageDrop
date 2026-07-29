@@ -99,6 +99,7 @@ _TOOLBAR_HINT_LABELS = {
     "Deselect all",
     "Move up",
     "Move down",
+    "Move to…",
     "Delete page(s)",
     "Duplicate",
     "Rotate CW",

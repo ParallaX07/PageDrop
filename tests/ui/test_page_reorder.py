@@ -93,6 +93,34 @@ def test_move_up_down_buttons(qtbot, five_page_pdf):
     window.close()
 
 
+def test_move_to_page_dialog(qtbot, five_page_pdf, monkeypatch):
+    from PyQt6.QtWidgets import QInputDialog
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.showMinimized()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+
+    tab = window._tab_manager.active_tab
+    assert tab is not None
+    grid = tab.thumbnail_grid
+
+    assert not window._move_to_action.isEnabled()
+    qtbot.mouseClick(grid._cards[4], Qt.MouseButton.LeftButton)
+    assert window._move_to_action.isEnabled()
+
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *a, **k: (2, True))
+    window._move_to_action.trigger()
+    qtbot.waitUntil(
+        lambda: _source_indices(tab) == [0, 4, 1, 2, 3],
+        timeout=5000,
+    )
+    assert grid.selection_manager.selection == {1}
+    assert tab.is_dirty
+    window.close()
+
+
 def test_labels_renumber_after_delete(qtbot, five_page_pdf):
     tab = _load_tab(qtbot, five_page_pdf)
     grid = tab.thumbnail_grid

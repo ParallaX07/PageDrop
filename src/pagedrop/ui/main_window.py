@@ -334,6 +334,14 @@ class MainWindow(QMainWindow):
             tip="Move selected pages down (Ctrl+↓)",
             enabled=False,
         )
+        self._move_to_action = actions.register(
+            "move_to",
+            "Move to…",
+            slot=self._move_selected_pages_to,
+            shortcut="Ctrl+Shift+M",
+            tip="Move selected pages to a page number (Ctrl+Shift+M)",
+            enabled=False,
+        )
         self._delete_pages_action = actions.register(
             "delete_pages",
             "Delete page(s)",
@@ -466,6 +474,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(a["deselect_all"])
         toolbar.addAction(a["move_up"])
         toolbar.addAction(a["move_down"])
+        toolbar.addAction(a["move_to"])
         toolbar.addAction(a["delete_pages"])
         toolbar.addAction(a["duplicate_pages"])
         toolbar.addAction(a["rotate_cw"])
@@ -939,6 +948,7 @@ class MainWindow(QMainWindow):
         self._rotate_ccw_action.setEnabled(False)
         self._move_up_action.setEnabled(False)
         self._move_down_action.setEnabled(False)
+        self._move_to_action.setEnabled(False)
         self._undo_action.setEnabled(False)
         self._redo_action.setEnabled(False)
         self._go_to_page_action.setEnabled(False)
@@ -999,6 +1009,9 @@ class MainWindow(QMainWindow):
         )
         self._move_down_action.setEnabled(
             enabled and grid is not None and grid.can_move_selection_down()
+        )
+        self._move_to_action.setEnabled(
+            enabled and grid is not None and grid.can_move_selection_to()
         )
 
     def _delete_selected_pages(self) -> None:
@@ -1087,6 +1100,38 @@ class MainWindow(QMainWindow):
         count = len(tab.thumbnail_grid.selection_manager.selection)
         noun = "page" if count == 1 else "pages"
         self._transient_status(f"Moved {count} {noun} down")
+
+    def _move_selected_pages_to(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.edit_model is None or tab.is_preview_visible():
+            return
+        if not tab.thumbnail_grid.can_move_selection_to():
+            return
+        ordered = sorted(tab.thumbnail_grid.selection_manager.selection)
+        count = tab.edit_model.logical_count()
+        k = len(ordered)
+        max_page = max(1, count - k + 1)
+        default = min(ordered[0] + 1, max_page)
+        page, ok = QInputDialog.getInt(
+            self,
+            "Move to page",
+            f"Move selection to page (1–{max_page}):",
+            default,
+            1,
+            max_page,
+        )
+        if not ok:
+            return
+        dest = page - 1
+        if not tab.move_selected_pages_to(dest):
+            self._transient_status(f"Already at page {page}")
+            return
+        self._tab_manager.update_tab_title(tab)
+        self._update_move_pages_actions()
+        self._update_undo_redo_actions()
+        noun = "page" if k == 1 else "pages"
+        landed = min(tab.thumbnail_grid.selection_manager.selection) + 1
+        self._transient_status(f"Moved {k} {noun} to page {landed}")
 
     def _undo(self) -> None:
         tab = self._active_tab()

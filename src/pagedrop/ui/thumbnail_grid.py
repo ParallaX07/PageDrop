@@ -70,7 +70,7 @@ from pagedrop.ui.theme import (
     PAGE_NUMBER_OVERLAY_MIN_WIDTH,
     ZOOM_WHEEL_STEP,
 )
-from pagedrop.utils.list_utils import move_items
+from pagedrop.utils.list_utils import move_items, to_index_for_start
 from pagedrop.utils.temp_manager import TempManager
 
 ZOOM_RENDER_DEBOUNCE_MS = 400
@@ -891,6 +891,8 @@ class ThumbnailGrid(QScrollArea):
         move_up_action.setEnabled(has_pdf and self.can_move_selection_up())
         move_down_action = menu.addAction("Move down")
         move_down_action.setEnabled(has_pdf and self.can_move_selection_down())
+        move_to_action = menu.addAction("Move to…")
+        move_to_action.setEnabled(has_pdf and self.can_move_selection_to())
 
         menu.addSeparator()
 
@@ -924,6 +926,11 @@ class ThumbnailGrid(QScrollArea):
             self.move_selection_up()
         elif chosen is move_down_action:
             self.move_selection_down()
+        elif chosen is move_to_action:
+            window = self.window()
+            move_to = getattr(window, "_move_selected_pages_to", None)
+            if callable(move_to):
+                move_to()
         elif chosen is duplicate_action:
             tab = self._parent_tab()
             if tab is not None:
@@ -967,6 +974,11 @@ class ThumbnailGrid(QScrollArea):
         ordered = sorted(self.selection_manager.selection)
         return bool(ordered) and ordered[-1] < self._model.logical_count() - 1
 
+    def can_move_selection_to(self) -> bool:
+        if self._model is None:
+            return False
+        return bool(self.selection_manager.selection)
+
     def move_selection_up(self) -> bool:
         """Move selected pages up one position, preserving relative order."""
         if self._model is None or self._get_loader is None:
@@ -990,6 +1002,19 @@ class ThumbnailGrid(QScrollArea):
         self._model.move_down(ordered)
         self._restore_after_reorder({index + 1 for index in ordered})
         return True
+
+    def move_selection_to(self, dest: int) -> bool:
+        """Move selected pages so the block starts at *dest* (0-based)."""
+        if self._model is None or self._get_loader is None:
+            return False
+        ordered = sorted(self.selection_manager.selection)
+        if not ordered:
+            return False
+        count = self._model.logical_count()
+        max_start = max(0, count - len(ordered))
+        dest = max(0, min(int(dest), max_start))
+        to_index = to_index_for_start(ordered, dest)
+        return self.reorder_pages_by_drop(ordered, to_index)
 
     def duplicate_selected_pages(self) -> int:
         """Insert copies of the selection after the last selected page."""

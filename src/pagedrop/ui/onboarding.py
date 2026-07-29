@@ -44,6 +44,7 @@ SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Duplicate selected", "Ctrl+D"),
             ("Move selected up", "Ctrl+↑"),
             ("Move selected down", "Ctrl+↓"),
+            ("Move to page", "Ctrl+Shift+M"),
             ("Undo", "Ctrl+Z"),
             ("Redo", "Ctrl+Shift+Z"),
         ),

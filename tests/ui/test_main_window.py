@@ -48,6 +48,7 @@ def test_high_traffic_actions_use_sentence_case(main_window):
     assert a["keyboard_shortcuts"].text().replace("&", "") == "Keyboard shortcuts"
     assert a["tips"].text().replace("&", "") == "Show tips"
     assert a["move_up"].text() == "Move up"
+    assert a["move_to"].text() == "Move to…"
     assert a["select_all"].text() == "Select all"
     assert main_window._open_recent_menu.title().replace("&", "") == "Open recent"
 

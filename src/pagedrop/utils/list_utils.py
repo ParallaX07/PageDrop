@@ -28,3 +28,9 @@ def move_items(
 
     remaining[adjusted:adjusted] = moving
     return remaining, adjusted
+
+
+def to_index_for_start(indices: Sequence[int], dest: int) -> int:
+    """Return a ``move_items`` *to_index* so the block starts at *dest* finally."""
+    ordered = sorted(set(indices))
+    return dest + sum(1 for i in ordered if i < dest)
