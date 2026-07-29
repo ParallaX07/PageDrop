@@ -241,8 +241,12 @@ def inspect_redaction_result(
                     break
                 try:
                     hits = page.search_for(secret)
-                except Exception:
-                    hits = []
+                except Exception as exc:
+                    # Fail closed: search errors are not "no hits".
+                    report.failures.append(
+                        f"search_for failed for {secret!r}: {type(exc).__name__}"
+                    )
+                    break
                 if hits:
                     report.failures.append(f"search_for still hits {secret!r}")
                     break

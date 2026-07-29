@@ -164,6 +164,46 @@ def test_selection_copy_clipboard(main_window, viewer_text_pdf, qtbot):
     assert "Alpha" in clipboard.text() or "unique" in clipboard.text()
 
 
+def test_copy_surfaces_text_load_failure(main_window, viewer_text_pdf, qtbot):
+    main_window._load_pdf(str(viewer_text_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    tab = _active_tab(main_window)
+
+    main_window._open_preview()
+    _wait_viewer_tiles(qtbot, tab)
+    viewer = tab.viewer_widget
+
+    qtbot.waitUntil(
+        lambda: any(
+            t._pixmap is not None and not t._pixmap.isNull()
+            for t in viewer._tiles.values()
+        ),
+        timeout=RENDER_TIMEOUT_MS,
+    )
+    tile = viewer._tiles[viewer.current_page]
+    qtbot.waitUntil(
+        lambda: tile._text_provider is not None or tile._text_dict is not None,
+        timeout=5000,
+    )
+
+    def _boom() -> dict:
+        raise RuntimeError("text broken")
+
+    tile._text_dict = None
+    tile._text_provider = _boom
+    tile._text_failed = False
+    tile._sel_start = tile.rect().topLeft().toPointF()
+    tile._sel_end = tile.rect().bottomRight().toPointF()
+    tile._selected_text = tile._text_in_selection()
+    assert tile.text_load_failed()
+    assert tile.selected_text() == ""
+
+    messages: list[str] = []
+    viewer.status_message.connect(messages.append)
+    assert viewer.copy_selection() is False
+    assert any("Could not read page text" in m for m in messages)
+
+
 def test_internal_link_jumps(main_window, linked_pdf, qtbot):
     main_window._load_pdf(str(linked_pdf))
     wait_for_pdf_loaded(qtbot, main_window)

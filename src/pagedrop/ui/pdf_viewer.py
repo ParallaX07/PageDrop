@@ -598,6 +598,7 @@ class _PageTile(QWidget):
         self._active_hit: tuple[float, float, float, float] | None = None
         self._text_dict: dict | None = None
         self._text_provider: Callable[[], dict | None] | None = None
+        self._text_failed = False
         self._tool = AnnotTool.SELECT
         self._overlay_entries: list[MarkupEntry] = []
         self._markup_color = _DEFAULT_MARKUP_COLOR
@@ -665,6 +666,7 @@ class _PageTile(QWidget):
         self._widgets = widgets or []
         self._text_dict = text_dict
         self._text_provider = text_provider
+        self._text_failed = False
         self.update()
 
     def set_pixmap(self, pixmap: QPixmap | None) -> None:
@@ -683,6 +685,9 @@ class _PageTile(QWidget):
 
     def selected_text(self) -> str:
         return self._selected_text
+
+    def text_load_failed(self) -> bool:
+        return self._text_failed
 
     def clear_selection(self) -> None:
         self._selecting = False
@@ -1330,6 +1335,9 @@ class _PageTile(QWidget):
         try:
             self._text_dict = self._text_provider()
         except Exception:
+            # Remember failure so copy / text-markup can status instead of
+            # looking like an empty selection.
+            self._text_failed = True
             self._text_dict = None
         self._text_provider = None
         return self._text_dict
@@ -1941,11 +1949,16 @@ class PdfViewerWidget(QWidget):
 
     def copy_selection(self) -> bool:
         text = ""
+        text_failed = False
         for tile in self._tiles.values():
             if tile.selected_text():
                 text = tile.selected_text()
                 break
+            if tile.text_load_failed():
+                text_failed = True
         if not text:
+            if text_failed:
+                self.status_message.emit("Could not read page text")
             return False
         QGuiApplication.clipboard().setText(text)
         self.status_message.emit("Copied")
@@ -2248,7 +2261,10 @@ class PdfViewerWidget(QWidget):
             tile.clear_selection()
             applied = True
         if not applied:
-            self.status_message.emit("No text under selection")
+            if any(tile.text_load_failed() for tile in self._tiles.values()):
+                self.status_message.emit("Could not read page text")
+            else:
+                self.status_message.emit("No text under selection")
             return
         self.refresh_markup_overlays()
         self.markup_changed.emit()
@@ -2437,7 +2453,11 @@ class PdfViewerWidget(QWidget):
         if tool in _TEXT_MARKUP_TOOLS:
             rects = payload.get("rects") or ()
             if not rects:
-                self.status_message.emit("No text under selection")
+                tile = self._tiles.get(logical)
+                if tile is not None and tile.text_load_failed():
+                    self.status_message.emit("Could not read page text")
+                else:
+                    self.status_message.emit("No text under selection")
                 return
             created = AnnotationOp(
                 kind=tool.value,  # type: ignore[arg-type]
@@ -3097,12 +3117,9 @@ class PdfViewerWidget(QWidget):
             def _text_provider(
                 r: PageRef = ref,
             ) -> dict | None:
-                try:
-                    return page_text_dict(
-                        r, password=self._password_for(r.source_path)
-                    )
-                except Exception:
-                    return None
+                return page_text_dict(
+                    r, password=self._password_for(r.source_path)
+                )
 
             tile = self._tiles.get(logical)
             if tile is not None:

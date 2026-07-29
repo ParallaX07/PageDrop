@@ -420,3 +420,18 @@ def test_cosmetic_black_box_fails_verify(tmp_path: Path) -> None:
         doc.close()
     report = verify_redacted_pdf_fresh_process(cosmetic, absent_text=[SECRET])
     assert not report.ok
+
+
+def test_inspect_search_for_failure_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Secret absent from extractable text so the verify arm reaches search_for.
+    src = _text_pdf(tmp_path / "clean.pdf", text="Hello world")
+
+    def _boom(self: fitz.Page, *_a: object, **_k: object) -> list:
+        raise RuntimeError("search broken")
+
+    monkeypatch.setattr(fitz.Page, "search_for", _boom)
+    report = inspect_redaction_result(str(src), absent_text=[SECRET])
+    assert not report.ok
+    assert any("search_for failed" in f for f in report.failures)

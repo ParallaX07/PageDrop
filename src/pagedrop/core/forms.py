@@ -66,22 +66,27 @@ def _save(doc: fitz.Document, output_path: str) -> None:
 
 
 def document_has_xfa(doc: fitz.Document) -> bool:
-    """True when the catalog AcroForm dictionary references ``/XFA``."""
+    """True when the catalog AcroForm dictionary references ``/XFA``.
+
+    Xref read failures raise ``FormError`` — never fail-open as "no XFA", or
+    ``ensure_no_xfa`` would skip the guard on a corrupt catalog.
+    """
     try:
         catalog = doc.xref_object(doc.pdf_catalog())
-    except Exception:
-        return False
+    except Exception as exc:
+        raise FormError("Could not inspect PDF form catalog") from exc
     match = _ACROFORM_REF.search(catalog)
     if not match:
         return "/XFA" in catalog
     try:
         form_obj = doc.xref_object(int(match.group(1)))
-    except Exception:
-        return False
+    except Exception as exc:
+        raise FormError("Could not inspect AcroForm dictionary") from exc
     return "/XFA" in form_obj
 
 
 def ensure_no_xfa(doc: fitz.Document, *, path: str = "") -> None:
+    """Reject XFA docs. Propagates ``FormError`` when the form catalog is unreadable."""
     if document_has_xfa(doc):
         raise XfaUnsupportedError(path)
 

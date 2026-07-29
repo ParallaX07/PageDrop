@@ -91,3 +91,44 @@ def test_xfa_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             ensure_no_xfa(opened, path=str(src))
     finally:
         opened.close()
+
+
+def test_xfa_catalog_xref_failure_does_not_skip_ensure_no_xfa(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src = _make_pdf(tmp_path / "src.pdf")
+    opened = fitz.open(str(src))
+    try:
+
+        def _boom(_xref: int) -> str:
+            raise RuntimeError("xref broken")
+
+        monkeypatch.setattr(opened, "xref_object", _boom)
+        with pytest.raises(FormError, match="form catalog"):
+            document_has_xfa(opened)
+        with pytest.raises(FormError, match="form catalog"):
+            ensure_no_xfa(opened, path=str(src))
+    finally:
+        opened.close()
+
+
+def test_acroform_xref_failure_does_not_skip_ensure_no_xfa(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src = _make_pdf(tmp_path / "src.pdf")
+    opened = fitz.open(str(src))
+    try:
+        calls = {"n": 0}
+
+        def _flaky(_xref: int) -> str:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Force the indirect AcroForm branch (MuPDF often inlines it).
+                return "<< /Type /Catalog /AcroForm 9 0 R >>"
+            raise RuntimeError("form xref broken")
+
+        monkeypatch.setattr(opened, "xref_object", _flaky)
+        with pytest.raises(FormError, match="AcroForm"):
+            ensure_no_xfa(opened, path=str(src))
+    finally:
+        opened.close()
