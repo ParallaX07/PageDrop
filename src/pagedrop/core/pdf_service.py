@@ -15,7 +15,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
@@ -25,6 +25,23 @@ import fitz
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import open_pdf, render_page_png
 from pagedrop.core.thread_policy import ensure_no_fitz_document
+
+
+def _password_for(
+    passwords: Mapping[str, str] | None, path: str
+) -> str | None:
+    # Inline lookup — do not import jobs here (runner imports FITZ_LOCK).
+    # Same resolve rules as RuntimeCredentials.lookup.
+    if not passwords:
+        return None
+    found = passwords.get(path)
+    if found is not None:
+        return found
+    try:
+        key = str(Path(path).resolve())
+    except OSError:
+        key = str(Path(path))
+    return passwords.get(key)
 
 FITZ_LOCK = threading.RLock()
 
@@ -201,13 +218,15 @@ def render_ref_png(
     ref: PageRef,
     width_px: int,
     *,
-    password: str | None = None,
+    passwords: Mapping[str, str] | None = None,
     ocg_on: frozenset[int] | None = None,
 ) -> bytes:
     """Render one ``PageRef`` to PNG under the fitz lock."""
 
     def _body() -> bytes:
-        doc = _cache_get(ref.source_path, password)
+        doc = _cache_get(
+            ref.source_path, _password_for(passwords, ref.source_path)
+        )
         if ocg_on is not None:
             _apply_ocg_visibility(doc, ocg_on)
         return render_page_png(
@@ -237,7 +256,7 @@ def search_model(
     model: PdfEditModel,
     query: str,
     *,
-    password: str | None = None,
+    passwords: Mapping[str, str] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> list[SearchHit]:
     """Document-wide search over logical page order."""
@@ -249,7 +268,9 @@ def search_model(
         for logical, ref in enumerate(model.iter_pages()):
             if is_cancelled is not None and is_cancelled():
                 return hits
-            doc = _cache_get(ref.source_path, password)
+            doc = _cache_get(
+                ref.source_path, _password_for(passwords, ref.source_path)
+            )
             page = doc[ref.source_index]
             for rect in page.search_for(query):
                 hits.append(
@@ -313,12 +334,14 @@ def page_links(
 def outline_for_paths(
     paths: Sequence[str],
     *,
+    passwords: Mapping[str, str] | None = None,
     password: str | None = None,
 ) -> list[OutlineItem]:
     def _body() -> list[OutlineItem]:
         items: list[OutlineItem] = []
         for path in paths:
-            doc = _cache_get(path, password)
+            pw = _password_for(passwords, path) if passwords is not None else password
+            doc = _cache_get(path, pw)
             for entry in doc.get_toc(simple=False):
                 level = int(entry[0])
                 title = str(entry[1])

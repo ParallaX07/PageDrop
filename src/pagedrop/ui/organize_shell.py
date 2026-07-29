@@ -20,7 +20,9 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core import pdf_tools
+from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
 from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.ui.dialogs import prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
@@ -671,7 +673,21 @@ def _configure_attachments(shell: ToolShellWindow) -> None:
 
         if current == "extract":
             try:
-                attachments = pdf_tools.attachments_list(source)
+                creds = preflight_pdf_inputs(
+                    [source],
+                    prompt=lambda name, incorrect: prompt_pdf_password(
+                        shell, name, incorrect=incorrect
+                    ),
+                )
+            except JobCancelledError:
+                return
+            except Exception as exc:
+                QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
+                return
+            try:
+                attachments = pdf_tools.attachments_list(
+                    source, password=creds.get(source)
+                )
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
                 return

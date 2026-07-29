@@ -326,6 +326,64 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
     assert "note.txt" not in names2
 
 
+def test_attachment_add_remove_encrypted_with_password(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_loader import PdfPasswordRequiredError
+    from tests.core.test_jobs import _encrypted_pdf
+
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = _file_hash(enc)
+
+    out_added = tmp_path / "with_attach.pdf"
+    with pytest.raises(PdfPasswordRequiredError):
+        pdf_tools.attachment_add(
+            str(enc),
+            str(out_added),
+            name="note.txt",
+            data=b"hello",
+        )
+    pdf_tools.attachment_add(
+        str(enc),
+        str(out_added),
+        name="note.txt",
+        data=b"hello",
+        password="secret",
+    )
+    assert _file_hash(enc) == source_hash
+    assert "note.txt" in [
+        a.name
+        for a in pdf_tools.attachments_list(str(out_added))
+    ]
+
+    locked_added = tmp_path / "locked_added.pdf"
+    doc = fitz.open(str(out_added))
+    try:
+        doc.save(
+            str(locked_added),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="secret",
+            owner_pw="owner",
+        )
+    finally:
+        doc.close()
+    locked_hash = _file_hash(locked_added)
+    out_removed = tmp_path / "removed.pdf"
+    with pytest.raises(PdfPasswordRequiredError):
+        pdf_tools.attachment_remove(
+            str(locked_added), str(out_removed), name="note.txt"
+        )
+    pdf_tools.attachment_remove(
+        str(locked_added),
+        str(out_removed),
+        name="note.txt",
+        password="secret",
+    )
+    assert _file_hash(locked_added) == locked_hash
+    assert "note.txt" not in [
+        a.name for a in pdf_tools.attachments_list(str(out_removed))
+    ]
+
+
 def test_attachment_extract_all_zip(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     doc = fitz.open()

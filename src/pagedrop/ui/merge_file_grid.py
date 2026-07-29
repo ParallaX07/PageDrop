@@ -30,6 +30,8 @@ class _MergeThumbnailWorker(QRunnable):
         width_px: int,
         generation: int,
         is_cancelled: Callable[[int], bool],
+        *,
+        password: str | None = None,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
@@ -38,6 +40,7 @@ class _MergeThumbnailWorker(QRunnable):
         self._width_px = width_px
         self._generation = generation
         self._is_cancelled = is_cancelled
+        self._password = password
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -54,6 +57,7 @@ class _MergeThumbnailWorker(QRunnable):
                 self._page_count,
                 width_px=page_width,
                 should_cancel=lambda: self._is_cancelled(self._generation),
+                password=self._password,
             )
         except Exception as exc:
             if not self._is_cancelled(self._generation):
@@ -69,6 +73,7 @@ class MergeFileGrid(BaseFileGrid):
 
     def __init__(self, parent=None) -> None:
         self._page_counts: dict[str, int] = {}
+        self._password_for: Callable[[str], str | None] | None = None
         super().__init__(
             object_name="MergeFileGrid",
             container_object_name="MergeFileGridContainer",
@@ -81,6 +86,11 @@ class MergeFileGrid(BaseFileGrid):
             empty_hint="Use Add PDFs or drop files here",
             parent=parent,
         )
+
+    def set_password_lookup(
+        self, lookup: Callable[[str], str | None] | None
+    ) -> None:
+        self._password_for = lookup
 
     def set_files(
         self,
@@ -129,10 +139,14 @@ class MergeFileGrid(BaseFileGrid):
                         target,
                         page_count,
                     )
+                    password = (
+                        self._password_for(path) if self._password_for else None
+                    )
                     page_pngs = render_stacked_page_pngs(
                         path,
                         page_count,
                         width_px=page_width,
+                        password=password,
                     )
                 except Exception as exc:
                     self._on_thumbnail_failed(path, generation, str(exc))
@@ -141,12 +155,14 @@ class MergeFileGrid(BaseFileGrid):
             return
 
         for path, page_count in paths_to_render:
+            password = self._password_for(path) if self._password_for else None
             worker = _MergeThumbnailWorker(
                 path,
                 page_count,
                 target,
                 generation,
                 self._is_cancelled,
+                password=password,
             )
             worker.signals.ready.connect(self._on_thumbnail_ready)
             worker.signals.error.connect(self._on_thumbnail_failed)

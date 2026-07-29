@@ -177,3 +177,25 @@ def test_invalidate_doc_cache_forces_reopen(
     assert doc_cache_size() == 0
     render_ref_png(ref, 32)
     assert open_calls["n"] == 2
+
+
+def test_render_and_search_encrypted_with_passwords(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_loader import PdfPasswordRequiredError
+    from tests.core.test_jobs import _encrypted_pdf
+
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    ref = PageRef(str(enc), 0)
+    model = PdfEditModel(str(enc), 1)
+    passwords = {str(enc): "secret"}
+
+    with pytest.raises(PdfPasswordRequiredError):
+        render_ref_png(ref, 64)
+    png = render_ref_png(ref, 64, passwords=passwords)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+    with pytest.raises(PdfPasswordRequiredError):
+        search_model(model, "Secret")
+    # Encrypted fixture text may be empty; search must open successfully.
+    hits = search_model(model, "no-such-token", passwords=passwords)
+    assert hits == []

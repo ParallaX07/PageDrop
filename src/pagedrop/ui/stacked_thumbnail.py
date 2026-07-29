@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import fitz
 from collections.abc import Callable
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 
-from pagedrop.core.pdf_loader import render_page_png
+from pagedrop.core.pdf_loader import open_pdf, render_page_png
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.ui.theme import BORDER_HOVER
 
@@ -132,6 +132,7 @@ def render_stacked_page_pngs(
     *,
     width_px: int = DEFAULT_PAGE_WIDTH_PX,
     should_cancel: Callable[[], bool] | None = None,
+    password: str | None = None,
 ) -> list[bytes]:
     """Render the first 1–3 pages of a PDF to PNG bytes.
 
@@ -143,7 +144,7 @@ def render_stacked_page_pngs(
         return []
 
     with FITZ_LOCK:
-        doc = fitz.open(path)
+        doc = open_pdf(path, password=password)
         try:
             pngs: list[bytes] = []
             for page_index in range(pages_to_render):
@@ -161,6 +162,7 @@ def render_stacked_pdf_thumbnail(
     *,
     width_px: int = DEFAULT_PAGE_WIDTH_PX,
     stack_offset: int | None = None,
+    password: str | None = None,
 ) -> QPixmap:
     """Render the first 1–3 pages of a PDF as a stacked thumbnail."""
     _layers, auto_offset, page_render_width = stack_thumbnail_layout(width_px, page_count)
@@ -170,6 +172,7 @@ def render_stacked_pdf_thumbnail(
         path,
         page_count,
         width_px=page_render_width,
+        password=password,
     )
     if not page_pngs:
         return QPixmap()

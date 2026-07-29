@@ -242,7 +242,10 @@ class PdfTab(QWidget):
             return
         # Re-bind so rotate/reorder while in grid refreshes sizes + cache keys.
         self._preview_widget.set_model(
-            self._edit_model, self.get_loader, markup=self._markup
+            self._edit_model,
+            self.get_loader,
+            markup=self._markup,
+            credentials=self._credentials,
         )
         self._preview_widget.reset_zoom_to_fit()
         self._preview_widget.show_page(page_index)

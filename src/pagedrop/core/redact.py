@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -471,6 +471,7 @@ def redact_edit_model(
     regions: Sequence[RedactionRegion],
     *,
     markup: Sequence[MarkupEntry] | None = None,
+    passwords: Mapping[str, str] | None = None,
     scope: RedactionScope | None = None,
     extra_absent: Sequence[str] = (),
     verify: bool = True,
@@ -495,7 +496,7 @@ def redact_edit_model(
     _delete_quiet(staged)
     try:
         # Assemble pages + ordinary markup without redaction (skipped by apply).
-        write_pdf(model, str(staged), markup=markup)
+        write_pdf(model, str(staged), markup=markup, passwords=passwords)
         return redact_pdf(
             staged,
             output,

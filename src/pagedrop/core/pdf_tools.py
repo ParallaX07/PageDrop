@@ -554,10 +554,11 @@ def attachment_add(
     ufilename: str | None = None,
     desc: str | None = None,
     overwrite: bool = False,
+    password: str | None = None,
 ) -> None:
     """Add (or replace) an embedded file."""
     reject_source_overwrite(output_path, source_pdf)
-    src = open_pdf(source_pdf)
+    src = open_pdf(source_pdf, password=password)
     try:
         names = set(src.embfile_names())
         if name in names and not overwrite:
@@ -582,10 +583,11 @@ def attachment_remove(
     *,
     name: str,
     missing_ok: bool = False,
+    password: str | None = None,
 ) -> None:
     """Remove an embedded file by name."""
     reject_source_overwrite(output_path, source_pdf)
-    src = open_pdf(source_pdf)
+    src = open_pdf(source_pdf, password=password)
     try:
         names = set(src.embfile_names())
         if name not in names:

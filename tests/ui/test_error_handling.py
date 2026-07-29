@@ -78,6 +78,12 @@ def test_open_password_pdf_prompts_retries_then_opens(
         lambda: len(main_window._thumbnail_grid._cards) == 1,
         timeout=15000,
     )
+    qtbot.waitUntil(
+        lambda: all(
+            not card._is_skeleton for card in main_window._thumbnail_grid._cards
+        ),
+        timeout=15000,
+    )
 
 
 def test_open_password_pdf_cancel_leaves_blank(main_window, tmp_path, monkeypatch):

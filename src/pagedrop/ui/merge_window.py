@@ -16,13 +16,20 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.core.pdf_loader import PdfEmptyError, PdfLoadError, PdfLoader
+from pagedrop.core.jobs.credentials import RuntimeCredentials
+from pagedrop.core.pdf_loader import (
+    PdfEmptyError,
+    PdfLoadError,
+    PdfLoader,
+    PdfPasswordError,
+    PdfPasswordRequiredError,
+)
 from pagedrop.core.pdf_merge import PdfMergeModel
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
-from pagedrop.ui.dialogs import prompt_discard_file_list
+from pagedrop.ui.dialogs import prompt_discard_file_list, prompt_pdf_password
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
@@ -60,18 +67,29 @@ class _MergeWorker(QRunnable):
         succeeded = pyqtSignal(str)
         failed = pyqtSignal(str)
 
-    def __init__(self, file_paths: list[str], output_path: str) -> None:
+    def __init__(
+        self,
+        file_paths: list[str],
+        output_path: str,
+        *,
+        passwords: dict[str, str] | None = None,
+    ) -> None:
         super().__init__()
         self.signals = self.Signals()
         self._file_paths = file_paths
         self._output_path = output_path
+        self._passwords = passwords
         self.setAutoDelete(True)
 
     def run(self) -> None:
         # Paths only; FITZ_LOCK around fitz merge; pool max 1.
         try:
             with FITZ_LOCK:
-                merge_pdf_files(self._file_paths, self._output_path)
+                merge_pdf_files(
+                    self._file_paths,
+                    self._output_path,
+                    passwords=self._passwords,
+                )
         except PdfLoadError as exc:
             self.signals.failed.emit(f"Could not read a source PDF:\n{exc}")
         except OSError as exc:
@@ -97,6 +115,7 @@ class MergeWindow(QWidget):
         self._editor = editor
         self._model = PdfMergeModel()
         self._page_counts: dict[str, int] = {}
+        self._credentials = RuntimeCredentials()
         self._preview_loader: PdfLoader | None = None
         self._merging = False
         self._merge_pool = QThreadPool(self)
@@ -141,6 +160,7 @@ class MergeWindow(QWidget):
         self._stack.setObjectName("MergeContentStack")
 
         self._file_grid = MergeFileGrid()
+        self._file_grid.set_password_lookup(self._credentials.get)
         self._preview_widget = PagePreviewWidget()
         self._preview_widget.set_footer_hint(_PREVIEW_FOOTER_HINT)
 
@@ -300,8 +320,9 @@ class MergeWindow(QWidget):
             self._preview_loader = None
 
         filename = Path(path).name
+        password = self._credentials.get(path)
         try:
-            loader = PdfLoader(path)
+            loader = PdfLoader(path, password=password)
         except PdfEmptyError:
             QMessageBox.warning(
                 self,
@@ -319,7 +340,7 @@ class MergeWindow(QWidget):
 
         self._preview_loader = loader
         self._preview_widget.reset_zoom_to_fit()
-        self._preview_widget.set_loader(loader)
+        self._preview_widget.set_loader(loader, password=password)
         self._preview_widget.show_page(0)
         self._stack.setCurrentWidget(self._preview_widget)
         self._update_actions()
@@ -389,26 +410,41 @@ class MergeWindow(QWidget):
 
     def _validate_pdf(self, path: str) -> int | None:
         filename = Path(path).name
-        try:
-            return self._page_count(path)
-        except PdfEmptyError:
-            QMessageBox.warning(
-                self,
-                "Add PDFs",
-                f"{filename} has no pages.",
-            )
-            return None
-        except PdfLoadError as exc:
-            QMessageBox.critical(
-                self,
-                "Add PDFs",
-                f"Could not open {filename}:\n{exc}",
-            )
-            return None
+        password = self._credentials.get(path)
+        while True:
+            try:
+                page_count = self._page_count(path, password=password)
+            except PdfPasswordRequiredError:
+                password = prompt_pdf_password(self, filename)
+                if password is None:
+                    return None
+                continue
+            except PdfPasswordError:
+                password = prompt_pdf_password(self, filename, incorrect=True)
+                if password is None:
+                    return None
+                continue
+            except PdfEmptyError:
+                QMessageBox.warning(
+                    self,
+                    "Add PDFs",
+                    f"{filename} has no pages.",
+                )
+                return None
+            except PdfLoadError as exc:
+                QMessageBox.critical(
+                    self,
+                    "Add PDFs",
+                    f"Could not open {filename}:\n{exc}",
+                )
+                return None
+            if password is not None:
+                self._credentials.set(path, password)
+            return page_count
 
     @staticmethod
-    def _page_count(path: str) -> int:
-        loader = PdfLoader(path)
+    def _page_count(path: str, *, password: str | None = None) -> int:
+        loader = PdfLoader(path, password=password)
         try:
             return loader.page_count
         finally:
@@ -421,6 +457,9 @@ class MergeWindow(QWidget):
             if page_count is None:
                 continue
             resolved = str(Path(path).resolve())
+            password = self._credentials.get(path)
+            if password is not None:
+                self._credentials.set(resolved, password)
             self._page_counts[resolved] = page_count
             accepted.append(resolved)
 
@@ -535,16 +574,39 @@ class MergeWindow(QWidget):
                     cancelled = True
                     break
 
-            try:
-                page_count = self._page_count(path)
-            except PdfEmptyError:
-                skipped.append((path, "no pages"))
-                continue
-            except PdfLoadError as exc:
-                skipped.append((path, str(exc)))
+            password = self._credentials.get(path)
+            while True:
+                try:
+                    page_count = self._page_count(path, password=password)
+                    break
+                except PdfPasswordRequiredError:
+                    password = prompt_pdf_password(self, Path(path).name)
+                    if password is None:
+                        skipped.append((path, "password cancelled"))
+                        page_count = None
+                        break
+                except PdfPasswordError:
+                    password = prompt_pdf_password(
+                        self, Path(path).name, incorrect=True
+                    )
+                    if password is None:
+                        skipped.append((path, "password cancelled"))
+                        page_count = None
+                        break
+                except PdfEmptyError:
+                    skipped.append((path, "no pages"))
+                    page_count = None
+                    break
+                except PdfLoadError as exc:
+                    skipped.append((path, str(exc)))
+                    page_count = None
+                    break
+            if page_count is None:
                 continue
 
             resolved = str(Path(path).resolve())
+            if password is not None:
+                self._credentials.set(resolved, password)
             self._page_counts[resolved] = page_count
             accepted.append(resolved)
 
@@ -606,7 +668,11 @@ class MergeWindow(QWidget):
         self.statusBar().showMessage("Merging PDFs…")
         self._update_actions()
 
-        worker = _MergeWorker(file_paths, output_path)
+        worker = _MergeWorker(
+            file_paths,
+            output_path,
+            passwords=self._credentials.snapshot() or None,
+        )
         worker.signals.succeeded.connect(self._on_merge_succeeded)
         worker.signals.failed.connect(self._on_merge_failed)
         self._merge_pool.start(worker)
@@ -680,6 +746,7 @@ class MergeWindow(QWidget):
     def _clear_file_list(self) -> None:
         self._model.clear()
         self._page_counts.clear()
+        self._credentials.clear()
         if self._is_preview_visible():
             self._close_preview()
         self._refresh_grid()

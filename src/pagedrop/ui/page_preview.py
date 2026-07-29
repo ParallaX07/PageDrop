@@ -42,6 +42,7 @@ class PreviewRenderWorker(QRunnable):
         is_cancelled: Callable[[int], bool],
         *,
         rotation: int = 0,
+        passwords: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         ensure_no_fitz_document(source_path, what="PreviewRenderWorker")
@@ -53,6 +54,7 @@ class PreviewRenderWorker(QRunnable):
         self._generation = generation
         self._is_cancelled = is_cancelled
         self._rotation = rotation
+        self._passwords = passwords
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -67,6 +69,7 @@ class PreviewRenderWorker(QRunnable):
                     rotation=self._rotation,
                 ),
                 self._width_px,
+                passwords=self._passwords,
             )
             if self._is_cancelled(self._generation):
                 return
@@ -116,6 +119,7 @@ class PagePreviewWidget(QWidget):
         super().__init__(parent)
         self._model: PdfEditModel | None = None
         self._get_loader: Callable[[str], PdfLoader] | None = None
+        self._passwords: dict[str, str] | None = None
         self._current_page = 0
         self._render_width_px = 1200
         self._manual_zoom = False
@@ -180,29 +184,41 @@ class PagePreviewWidget(QWidget):
         self,
         model: PdfEditModel | None,
         get_loader: Callable[[str], PdfLoader] | None,
+        *,
+        passwords: dict[str, str] | None = None,
     ) -> None:
         self._cancel_render()
         self._model = model
         self._get_loader = get_loader
+        self._passwords = passwords
         if model is None:
             self._current_page = 0
             self._manual_zoom = False
             self._image_label.clear()
 
-    def set_loader(self, loader: PdfLoader | None) -> None:
+    def set_loader(
+        self,
+        loader: PdfLoader | None,
+        *,
+        password: str | None = None,
+    ) -> None:
         """Convenience wrapper for tests — builds a single-source model."""
         if loader is None:
             self.set_model(None, None)
             return
         model = PdfEditModel(loader.path, loader.page_count)
         cache: dict[str, PdfLoader] = {loader.path: loader}
+        passwords = {loader.path: password} if password is not None else None
 
         def get_loader(path: str) -> PdfLoader:
             if path not in cache:
-                cache[path] = PdfLoader(path)
+                cache[path] = PdfLoader(
+                    path,
+                    password=passwords.get(path) if passwords else None,
+                )
             return cache[path]
 
-        self.set_model(model, get_loader)
+        self.set_model(model, get_loader, passwords=passwords)
 
     def reset_zoom_to_fit(self) -> None:
         self._manual_zoom = False
@@ -313,6 +329,7 @@ class PagePreviewWidget(QWidget):
             generation,
             self._is_cancelled,
             rotation=ref.rotation,
+            passwords=self._passwords,
         )
         worker.signals.finished.connect(self._on_render_finished)
         worker.signals.error.connect(self._on_render_error)

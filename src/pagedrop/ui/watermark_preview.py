@@ -24,6 +24,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
+from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.modify_ops import watermark_text_box
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
@@ -69,6 +70,8 @@ class _PageRenderWorker(QRunnable):
         width_px: int,
         generation: int,
         is_cancelled: Callable[[int], bool],
+        *,
+        passwords: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         ensure_no_fitz_document(path, what="WatermarkPageRenderWorker")
@@ -78,16 +81,21 @@ class _PageRenderWorker(QRunnable):
         self._width_px = width_px
         self._generation = generation
         self._is_cancelled = is_cancelled
+        self._passwords = passwords
         self.setAutoDelete(True)
 
     def run(self) -> None:
         try:
             if self._is_cancelled(self._generation):
                 return
-            geom = page_geometry(self._path, self._page_index)
+            password = RuntimeCredentials.lookup(self._passwords, self._path)
+            geom = page_geometry(
+                self._path, self._page_index, password=password
+            )
             png = render_ref_png(
                 PageRef(self._path, self._page_index),
                 self._width_px,
+                passwords=self._passwords,
             )
             if self._is_cancelled(self._generation):
                 return
@@ -175,6 +183,7 @@ class WatermarkPreviewCanvas(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         self._path: str | None = None
+        self._passwords: dict[str, str] | None = None
         self._page_index = 0
         self._page_count = 0
         self._page_w = 1.0
@@ -266,6 +275,7 @@ class WatermarkPreviewCanvas(QWidget):
     def clear_source(self) -> None:
         self._cancel_render()
         self._path = None
+        self._passwords = None
         self._page_index = 0
         self._page_count = 0
         self._page_pix = QPixmap()
@@ -276,8 +286,16 @@ class WatermarkPreviewCanvas(QWidget):
         self.zoom_changed.emit(self._zoom)
         self.update()
 
-    def set_source(self, path: str, *, page_count: int, page_index: int = 0) -> None:
+    def set_source(
+        self,
+        path: str,
+        *,
+        page_count: int,
+        page_index: int = 0,
+        password: str | None = None,
+    ) -> None:
         self._path = path
+        self._passwords = {path: password} if password is not None else None
         self._page_count = max(1, page_count)
         self._page_index = max(0, min(page_index, self._page_count - 1))
         self._placeholder.hide()
@@ -322,6 +340,7 @@ class WatermarkPreviewCanvas(QWidget):
             width_px,
             gen,
             self._is_cancelled,
+            passwords=self._passwords,
         )
         worker.signals.finished.connect(self._on_render_finished)
         worker.signals.error.connect(self._on_render_error)

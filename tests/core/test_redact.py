@@ -369,6 +369,45 @@ def test_redact_edit_model_with_markup_session(tmp_path: Path) -> None:
     assert inspect_redaction_result(out, absent_text=[SECRET]).ok
 
 
+def test_redact_edit_model_encrypted_with_passwords(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_loader import PdfPasswordRequiredError
+
+    plain = _text_pdf(tmp_path / "plain.pdf")
+    enc = tmp_path / "locked.pdf"
+    doc = fitz.open(str(plain))
+    try:
+        doc.save(
+            str(enc),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="secret",
+            owner_pw="owner",
+        )
+    finally:
+        doc.close()
+    before = _file_hash(enc)
+    model = PdfEditModel(str(enc), 1)
+    rect = _secret_rect(plain)  # same page geometry as encrypted source
+    out = tmp_path / "redacted.pdf"
+
+    with pytest.raises(PdfPasswordRequiredError):
+        redact_edit_model(
+            model,
+            out,
+            [RedactionRegion(0, rect)],
+            verify=False,
+        )
+
+    redact_edit_model(
+        model,
+        out,
+        [RedactionRegion(0, rect)],
+        passwords={str(enc): "secret"},
+        verify=True,
+    )
+    assert _file_hash(enc) == before
+    assert inspect_redaction_result(out, absent_text=[SECRET]).ok
+
+
 def test_cosmetic_black_box_fails_verify(tmp_path: Path) -> None:
     src = _text_pdf(tmp_path / "src.pdf")
     cosmetic = tmp_path / "cosmetic.pdf"

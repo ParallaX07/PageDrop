@@ -38,9 +38,13 @@ from pagedrop.core.modify_ops import (
     detect_blank_pages,
     get_bookmarks,
 )
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_loader import (
+    PdfLoader,
+    PdfPasswordError,
+    PdfPasswordRequiredError,
+)
 from pagedrop.core.supported_formats import is_pdf_path
-from pagedrop.ui.dialogs import confirm_remove_blank_pages
+from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
@@ -643,22 +647,40 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             _update_page_label()
             return
         source = paths[0]
-        try:
-            loader = PdfLoader(source)
+        filename = Path(source).name
+        password: str | None = None
+        while True:
             try:
-                count = loader.page_count
-            finally:
-                loader.close()
-        except Exception as exc:
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
-            shell.drop_zone.clear()
-            return
+                loader = PdfLoader(source, password=password)
+                try:
+                    count = loader.page_count
+                finally:
+                    loader.close()
+                break
+            except PdfPasswordRequiredError:
+                password = prompt_pdf_password(shell, filename)
+                if password is None:
+                    shell.drop_zone.clear()
+                    return
+            except PdfPasswordError:
+                password = prompt_pdf_password(shell, filename, incorrect=True)
+                if password is None:
+                    shell.drop_zone.clear()
+                    return
+            except Exception as exc:
+                QMessageBox.warning(
+                    shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
+                )
+                shell.drop_zone.clear()
+                return
         _page_count["n"] = count
         name = Path(source).name
         file_meta.setText(f"{name}  ·  {count} page{'s' if count != 1 else ''}")
         shell._chrome_host.show()  # type: ignore[attr-defined]
         shell.set_drop_zone_visible(False)
-        canvas.set_source(source, page_count=count, page_index=0)
+        canvas.set_source(
+            source, page_count=count, page_index=0, password=password
+        )
         _push_overlay_from_sidebar()
         _update_page_label()
 

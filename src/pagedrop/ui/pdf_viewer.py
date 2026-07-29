@@ -81,6 +81,7 @@ from pagedrop.core.annotations import (
     STAMP_APPROVED,
 )
 from pagedrop.core.forms import FormCreateOp
+from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.redact import (
@@ -428,6 +429,8 @@ class _ViewerRenderWorker(QRunnable):
         generation: int,
         is_cancelled: Callable[[int], bool],
         ocg_on: frozenset[int] | None,
+        *,
+        passwords: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         ensure_no_fitz_document(ref.source_path, what="ViewerRenderWorker")
@@ -438,6 +441,7 @@ class _ViewerRenderWorker(QRunnable):
         self._generation = generation
         self._is_cancelled = is_cancelled
         self._ocg_on = ocg_on
+        self._passwords = passwords
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -447,6 +451,7 @@ class _ViewerRenderWorker(QRunnable):
             png = render_ref_png(
                 self._ref,
                 self._width_px,
+                passwords=self._passwords,
                 ocg_on=self._ocg_on,
             )
             if self._is_cancelled(self._generation):
@@ -475,6 +480,8 @@ class _ViewerSearchWorker(QRunnable):
         query: str,
         generation: int,
         is_cancelled: Callable[[int], bool],
+        *,
+        passwords: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
@@ -482,6 +489,7 @@ class _ViewerSearchWorker(QRunnable):
         self._query = query
         self._generation = generation
         self._is_cancelled = is_cancelled
+        self._passwords = passwords
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -489,6 +497,7 @@ class _ViewerSearchWorker(QRunnable):
             hits = search_model(
                 self._model,
                 self._query,
+                passwords=self._passwords,
                 is_cancelled=lambda: self._is_cancelled(self._generation),
             )
             if self._is_cancelled(self._generation):
@@ -1511,6 +1520,7 @@ class PdfViewerWidget(QWidget):
 
         self._model: PdfEditModel | None = None
         self._get_loader: Callable[[str], PdfLoader] | None = None
+        self._credentials: RuntimeCredentials | None = None
         self._markup: MarkupSession | None = None
         self._tool = AnnotTool.SELECT
         self._markup_color = _DEFAULT_MARKUP_COLOR
@@ -1624,10 +1634,12 @@ class PdfViewerWidget(QWidget):
         get_loader: Callable[[str], PdfLoader] | None,
         *,
         markup: MarkupSession | None = None,
+        credentials: RuntimeCredentials | None = None,
     ) -> None:
         self._cancel_all()
         self._model = model
         self._get_loader = get_loader
+        self._credentials = credentials
         self._markup = markup
         self._tool = AnnotTool.SELECT
         self._sync_annot_tool_ui()
@@ -1658,6 +1670,17 @@ class PdfViewerWidget(QWidget):
         self._rebuild_canvas()
         self._update_render_width()
         self._schedule_render()
+
+    def _passwords(self) -> dict[str, str] | None:
+        if self._credentials is None:
+            return None
+        snap = self._credentials.snapshot()
+        return snap or None
+
+    def _password_for(self, path: str | None) -> str | None:
+        if path is None or self._credentials is None:
+            return None
+        return self._credentials.get(path)
 
     @property
     def markup_session(self) -> MarkupSession | None:
@@ -1888,7 +1911,13 @@ class PdfViewerWidget(QWidget):
             return
         self._overlay.show_message("Searching…")
         self.busy_changed.emit(True, "Searching…")
-        worker = _ViewerSearchWorker(self._model, query, gen, self._search_cancelled)
+        worker = _ViewerSearchWorker(
+            self._model,
+            query,
+            gen,
+            self._search_cancelled,
+            passwords=self._passwords(),
+        )
         worker.signals.finished.connect(self._on_search_finished)
         worker.signals.error.connect(self._on_search_error)
         self._pool.start(worker)
@@ -1949,7 +1978,9 @@ class PdfViewerWidget(QWidget):
                 # Banded: render at a bounded width, scale to page rect.
                 width_px = min(1200, MAX_RENDER_WIDTH_PX)
                 ocg = self._ocg_on.get(ref.source_path)
-                png = render_ref_png(ref, width_px, ocg_on=ocg)
+                png = render_ref_png(
+                    ref, width_px, passwords=self._passwords(), ocg_on=ocg
+                )
                 pix = QPixmap()
                 pix.loadFromData(png, "PNG")
                 page_rect = printer.pageRect(QPrinter.Unit.DevicePixel).toRect()
@@ -2304,6 +2335,7 @@ class PdfViewerWidget(QWidget):
                 path,
                 regions,
                 markup=self._markup.non_redaction_ops(),
+                passwords=self._passwords(),
                 scope=scope,
                 verify=True,
             )
@@ -2613,7 +2645,11 @@ class PdfViewerWidget(QWidget):
                         )
                     )
                 else:
-                    geom = page_geometry(ref.source_path, ref.source_index)
+                    geom = page_geometry(
+                        ref.source_path,
+                        ref.source_index,
+                        password=self._password_for(ref.source_path),
+                    )
                     sizes.append((geom.width, geom.height))
             except Exception:
                 sizes.append((612.0, 792.0))
@@ -2633,7 +2669,9 @@ class PdfViewerWidget(QWidget):
         self._layers.clear()
         self._ocg_source = self._model.original_path
         try:
-            layer_infos = layers_for_path(self._ocg_source)
+            layer_infos = layers_for_path(
+                self._ocg_source, password=self._password_for(self._ocg_source)
+            )
         except Exception:
             layer_infos = []
         visible = {layer.number for layer in layer_infos if layer.visible}
@@ -2656,7 +2694,10 @@ class PdfViewerWidget(QWidget):
 
         self._attachments.clear()
         try:
-            atts = attachments_for_path(self._model.original_path)
+            atts = attachments_for_path(
+                self._model.original_path,
+                password=self._password_for(self._model.original_path),
+            )
         except Exception:
             atts = []
         for att in atts:
@@ -2670,7 +2711,7 @@ class PdfViewerWidget(QWidget):
         paths = sorted(self._model.source_paths())
         self._outline.clear()
         try:
-            items = outline_for_paths(paths)
+            items = outline_for_paths(paths, passwords=self._passwords())
         except Exception:
             items = []
         parents: dict[int, QTreeWidgetItem] = {}
@@ -3006,7 +3047,13 @@ class PdfViewerWidget(QWidget):
                 continue
             started = True
             worker = _ViewerRenderWorker(
-                ref, logical, physical_w, gen, self._is_cancelled, ocg
+                ref,
+                logical,
+                physical_w,
+                gen,
+                self._is_cancelled,
+                ocg,
+                passwords=self._passwords(),
             )
             worker.signals.finished.connect(self._on_render_finished)
             worker.signals.error.connect(self._on_render_error)
@@ -3033,11 +3080,17 @@ class PdfViewerWidget(QWidget):
                 else (612.0, 792.0)
             )
             try:
-                links = page_links(ref)
+                links = page_links(
+                    ref, password=self._password_for(ref.source_path)
+                )
             except Exception:
                 links = []
             try:
-                widgets = page_widgets(ref.source_path, ref.source_index)
+                widgets = page_widgets(
+                    ref.source_path,
+                    ref.source_index,
+                    password=self._password_for(ref.source_path),
+                )
             except Exception:
                 widgets = []
 
@@ -3045,7 +3098,9 @@ class PdfViewerWidget(QWidget):
                 r: PageRef = ref,
             ) -> dict | None:
                 try:
-                    return page_text_dict(r)
+                    return page_text_dict(
+                        r, password=self._password_for(r.source_path)
+                    )
                 except Exception:
                     return None
 
@@ -3213,7 +3268,12 @@ class PdfViewerWidget(QWidget):
         if not folder:
             return
         try:
-            out = extract_attachment(att.source_path, att.name, folder)
+            out = extract_attachment(
+                att.source_path,
+                att.name,
+                folder,
+                password=self._password_for(att.source_path),
+            )
         except Exception as exc:
             QMessageBox.warning(self, "Extract failed", str(exc))
             return

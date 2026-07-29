@@ -50,8 +50,9 @@ from pagedrop.core.drag_mime import (
     decode_page_refs,
 )
 from pagedrop.core.page_extractor import extract_page_refs_to_files
+from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, render_page_png
+from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, open_pdf, render_page_png
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.core.supported_formats import pdf_paths_from_mime
@@ -109,6 +110,8 @@ class ThumbnailWorker(QRunnable):
         generation: int,
         width_px: int,
         is_cancelled: Callable[[int], bool],
+        *,
+        passwords: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
@@ -116,6 +119,7 @@ class ThumbnailWorker(QRunnable):
         self._generation = generation
         self._width_px = width_px
         self._is_cancelled = is_cancelled
+        self._passwords = passwords
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -130,7 +134,12 @@ class ThumbnailWorker(QRunnable):
                         if self._is_cancelled(self._generation):
                             return
                         if ref.source_path not in docs:
-                            docs[ref.source_path] = fitz.open(ref.source_path)
+                            docs[ref.source_path] = open_pdf(
+                                ref.source_path,
+                                password=RuntimeCredentials.lookup(
+                                    self._passwords, ref.source_path
+                                ),
+                            )
                         doc = docs[ref.source_path]
                         png = render_page_png(
                             doc,
@@ -571,6 +580,7 @@ class ThumbnailGrid(QScrollArea):
             generation,
             render_width,
             self._is_cancelled,
+            passwords=self._source_passwords(),
         )
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)

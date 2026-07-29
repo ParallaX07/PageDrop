@@ -187,6 +187,7 @@ def handle_attachment_add(ctx: JobContext) -> Path:
         name=str(ctx.spec.options["name"]),
         data=data,
         overwrite=bool(ctx.spec.options.get("replace", False)),
+        password=_password(ctx),
     )
     return ctx.staged_output
 
@@ -197,6 +198,7 @@ def handle_attachment_remove(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         name=str(ctx.spec.options["name"]),
+        password=_password(ctx),
     )
     return ctx.staged_output
 

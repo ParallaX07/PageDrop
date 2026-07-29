@@ -181,6 +181,43 @@ def test_write_encrypted_wrong_password_fails_clearly(tmp_path):
     assert not output.exists()
 
 
+def test_merge_encrypted_with_passwords_leaves_sources_unchanged(tmp_path):
+    enc_a = tmp_path / "a.pdf"
+    enc_b = tmp_path / "b.pdf"
+    _encrypted_pdf(enc_a, password="alpha")
+    _encrypted_pdf(enc_b, password="beta")
+    hash_a = _file_hash(enc_a)
+    hash_b = _file_hash(enc_b)
+
+    output = tmp_path / "merged.pdf"
+    merge_pdf_files(
+        [str(enc_a), str(enc_b)],
+        str(output),
+        passwords={str(enc_a): "alpha", str(enc_b): "beta"},
+    )
+
+    assert output.is_file()
+    assert _file_hash(enc_a) == hash_a
+    assert _file_hash(enc_b) == hash_b
+    doc = fitz.open(str(output))
+    try:
+        assert doc.page_count == 2
+        assert not doc.needs_pass
+    finally:
+        doc.close()
+
+
+def test_merge_encrypted_without_password_fails_clearly(tmp_path):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = _file_hash(enc)
+    output = tmp_path / "out.pdf"
+    with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
+        merge_pdf_files([str(enc)], str(output))
+    assert _file_hash(enc) == source_hash
+    assert not output.exists()
+
+
 def test_write_batches_contiguous_same_source(tmp_path, monkeypatch):
     source = tmp_path / "hundred.pdf"
     widths = list(range(100, 200))
