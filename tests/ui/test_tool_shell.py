@@ -472,11 +472,14 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
         ),
         timeout=5000,
     )
+    assert shell._busy_overlay.isVisible()
     shell._busy_overlay._cancel_btn.click()
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
 
     assert not out.exists()
+    assert not shell._busy_overlay.isVisible()
     assert not shell._result_bar.isVisible()
+    assert shell.statusBar().currentMessage() == "Cancelled"
     assert _file_hash(src) == source_hash
     assert checks["n"] >= 1
 

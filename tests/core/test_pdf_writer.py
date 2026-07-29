@@ -234,10 +234,13 @@ def test_write_batches_contiguous_same_source(tmp_path, monkeypatch):
     monkeypatch.setattr(fitz.Document, "insert_pdf", _spy)
 
     output = tmp_path / "out.pdf"
+    source_hash = _file_hash(source)
     write_pdf(model, str(output))
 
     assert insert_calls == [(0, 99)]
     assert [_page_width(output, i) for i in range(100)] == [float(w) for w in widths]
+    assert _file_hash(source) == source_hash
+    assert output.resolve() != source.resolve()
 
 
 def test_write_batches_break_on_source_gap_and_rotation(tmp_path, monkeypatch):

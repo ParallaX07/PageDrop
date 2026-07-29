@@ -2920,6 +2920,15 @@ class PdfViewerWidget(QWidget):
             tile.set_selected_op(self._selected_overlay)
         self._tiles[logical] = tile
         self._pending_meta.add(logical)
+        # Scroll/virtualize recreates tiles; restore search chrome here so
+        # highlights are not lost until the next _apply_hits_to_tiles.
+        hits = [h.rect for h in self._hits if h.logical_page == logical]
+        active = None
+        if 0 <= self._hit_index < len(self._hits):
+            current = self._hits[self._hit_index]
+            if current.logical_page == logical:
+                active = current.rect
+        tile.set_hits(hits, active=active)
         return tile
 
     def _display_size_for(self, logical: int) -> tuple[int, int]:

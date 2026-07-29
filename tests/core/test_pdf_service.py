@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import fitz
@@ -22,6 +23,19 @@ from pagedrop.core.pdf_service import (
     search_model,
 )
 from pagedrop.core.thread_policy import is_fitz_document
+
+
+def test_public_api_annotations_exclude_fitz_document() -> None:
+    """O3 residual: public helpers must not advertise a live Document return."""
+    for name, obj in inspect.getmembers(pdf_service, inspect.isfunction):
+        if name.startswith("_") or obj.__module__ != pdf_service.__name__:
+            continue
+        hints = getattr(obj, "__annotations__", {})
+        ret = hints.get("return")
+        if ret is None:
+            continue
+        text = ret if isinstance(ret, str) else getattr(ret, "__name__", str(ret))
+        assert "Document" not in text, f"{name} return annotation leaks Document: {text}"
 
 
 @pytest.fixture(autouse=True)

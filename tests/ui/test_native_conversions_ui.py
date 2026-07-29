@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import fitz
 import pytest
 from PyQt6.QtWidgets import QMessageBox
 
+import pagedrop.core.native_conversions as nc
 from pagedrop.core.capabilities import OPENPYXL, clear_cache
 from pagedrop.ui.native_convert_shell import (
     SHELL_CONVERT_IDS,
@@ -196,3 +198,70 @@ def test_convert_shell_batch_via_job_runner(
     assert (out_dir / "a.pdf").is_file()
     assert (out_dir / "b.pdf").is_file()
     assert shell._result_bar.isVisible()
+
+
+def test_export_shell_cancel_mid_run_clears_busy_chrome(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    """O4 residual: Cancel mid multi-page export hides BusyOverlay and stays idle."""
+    src = tmp_path / "doc.pdf"
+    out_dir = tmp_path / "pngs"
+    out_dir.mkdir()
+    _write_pdf(src, pages=12, text="export")
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+
+    shell = open_conversion_shell(tools, "export_from_pdf")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(src)])
+
+    combo = shell._format_combo
+    for i in range(combo.count()):
+        if combo.itemData(i) == "png":
+            combo.setCurrentIndex(i)
+            break
+    else:
+        pytest.fail("png export format missing")
+
+    monkeypatch.setattr(
+        "pagedrop.ui.native_convert_shell._pick_folder",
+        lambda parent, title: str(out_dir),
+    )
+
+    real_check = nc._check_cancel
+    checks = {"n": 0}
+
+    def wait_for_ui_cancel(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            deadline = time.time() + 5.0
+            while not cancel.is_cancelled() and time.time() < deadline:
+                time.sleep(0.01)
+        real_check(cancel)
+
+    monkeypatch.setattr(nc, "_check_cancel", wait_for_ui_cancel)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: (
+            shell.is_job_running()
+            and checks["n"] >= 1
+            and shell._busy_overlay.isVisible()
+            and shell._busy_overlay._cancel_btn.isVisible()
+        ),
+        timeout=5000,
+    )
+    shell._busy_overlay._cancel_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert not shell._busy_overlay.isVisible()
+    assert not shell._result_bar.isVisible()
+    assert not any(out_dir.glob("*.png"))
+    assert shell.statusBar().currentMessage() == "Cancelled"
+    assert checks["n"] >= 1
+
+    shell.close()
+    tools.close()
