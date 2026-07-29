@@ -192,6 +192,39 @@ def test_drop_zone_default_prompts(qtbot):
     assert multi._prompt.text() == EMPTY_PROMPT_PDFS
 
 
+def test_drop_zone_prompt_uses_full_width(qtbot):
+    """Layout AlignCenter used to shrink the prompt and wrap/clip it."""
+    zone = FileDropZone(multi=True)
+    qtbot.addWidget(zone)
+    zone.resize(800, 120)
+    zone.show()
+    qtbot.waitExposed(zone)
+    zone._fit_wrapped_labels()
+    zone.resize(800, zone.minimumHeight())
+
+    prompt = zone._prompt
+    margins = zone.layout().contentsMargins()
+    assert prompt.width() >= zone.width() - margins.left() - margins.right() - 2
+    assert prompt.height() >= prompt.heightForWidth(prompt.width())
+
+
+def test_drop_zone_narrow_wrap_not_clipped(qtbot):
+    """When width forces a wrap, zone minimum height must cover the lines."""
+    zone = FileDropZone(multi=True)
+    qtbot.addWidget(zone)
+    zone.resize(160, 96)
+    zone.show()
+    qtbot.waitExposed(zone)
+    zone._fit_wrapped_labels()
+    zone.resize(160, zone.minimumHeight())
+
+    prompt = zone._prompt
+    needed = prompt.heightForWidth(prompt.width())
+    assert needed > prompt.fontMetrics().lineSpacing()  # wrapped
+    assert prompt.height() >= needed
+    assert zone.minimumHeight() >= zone.layout().sizeHint().height()
+
+
 def test_run_button_tooltip_matches_description(qtbot):
     """O12: Run tip is sentence-case like Merge/Create primary actions."""
     tip = "Split by ranges into new files"

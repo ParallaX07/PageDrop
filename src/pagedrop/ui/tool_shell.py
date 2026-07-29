@@ -157,18 +157,27 @@ class FileDropZone(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 20, 16, 16)
         layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Do not setAlignment(AlignCenter) on the layout — that shrinks Preferred
+        # children to sizeHint width, wraps the prompt, then clips it.
+
+        # Expanding so wrap width follows the zone; height synced in resizeEvent
+        # (QLabel sizeHint is often one line until width is known).
+        label_policy = QSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
 
         self._prompt = QLabel(empty_prompt)
         self._prompt.setObjectName("ToolShellDropPrompt")
         self._prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._prompt.setWordWrap(True)
+        self._prompt.setSizePolicy(label_policy)
         layout.addWidget(self._prompt)
 
         self._files_label = QLabel()
         self._files_label.setObjectName("ToolShellDropFiles")
         self._files_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._files_label.setWordWrap(True)
+        self._files_label.setSizePolicy(label_policy)
         self._files_label.hide()
         layout.addWidget(self._files_label)
 
@@ -176,6 +185,7 @@ class FileDropZone(QFrame):
         self._privacy.setObjectName("ToolShellDropPrivacy")
         self._privacy.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._privacy.setWordWrap(True)
+        self._privacy.setSizePolicy(label_policy)
         layout.addWidget(self._privacy)
 
         clear_row = QHBoxLayout()
@@ -187,9 +197,9 @@ class FileDropZone(QFrame):
         clear_row.addWidget(self._clear_btn)
         layout.addLayout(clear_row)
 
+        # Grow with wrapped copy — Fixed+maxHeight(160) clipped two-line prompts.
         self.setMinimumHeight(96)
-        self.setMaximumHeight(160)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
     def paths(self) -> list[str]:
         return list(self._paths)
@@ -233,12 +243,35 @@ class FileDropZone(QFrame):
             self._prompt.setText(self._empty_prompt)
             self._files_label.hide()
             self._clear_btn.setVisible(False)
-            return
-        names = ", ".join(Path(p).name for p in self._paths)
-        self._prompt.setText("Click to replace, or drop another file")
-        self._files_label.setText(names)
-        self._files_label.show()
-        self._clear_btn.setVisible(True)
+        else:
+            names = ", ".join(Path(p).name for p in self._paths)
+            self._prompt.setText("Click to replace, or drop another file")
+            self._files_label.setText(names)
+            self._files_label.show()
+            self._clear_btn.setVisible(True)
+        self._fit_wrapped_labels()
+
+    def _fit_wrapped_labels(self) -> None:
+        """Allocate height for word-wrapped labels once the zone width is known."""
+        margins = self.layout().contentsMargins() if self.layout() else None
+        side = (margins.left() + margins.right()) if margins else 32
+        inner = max(1, self.width() - side)
+        for label in (self._prompt, self._files_label, self._privacy):
+            if label.isHidden():
+                label.setMinimumHeight(0)
+                continue
+            label.setMinimumHeight(0)
+            h = label.heightForWidth(inner)
+            if h > 0:
+                label.setMinimumHeight(h)
+        # Parent layouts honor Minimum; keep the floor at the empty-state default.
+        hint = self.layout().sizeHint().height() if self.layout() else 96
+        self.setMinimumHeight(max(96, hint))
+        self.updateGeometry()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_wrapped_labels()
 
     def _paths_from_mime(self, mime) -> list[str]:
         return local_paths_from_mime(mime, accept=self._accept)
