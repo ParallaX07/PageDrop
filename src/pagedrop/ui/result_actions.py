@@ -63,13 +63,16 @@ class ResultActionsBar(QWidget):
         resolved = str(Path(path))
         self._path = resolved
         name = Path(resolved).name
-        self._label.setText(message or f"Saved {name}")
+        status = message or f"Saved {name}"
+        self._label.setText(status)
+        self.setAccessibleName(status)
         self._preview_btn.setEnabled(is_pdf_path(resolved))
         self._open_btn.setEnabled(is_pdf_path(resolved))
         self.show()
 
     def clear(self) -> None:
         self._path = None
+        self.setAccessibleName("")
         self.hide()
 
     def _emit_preview(self) -> None:

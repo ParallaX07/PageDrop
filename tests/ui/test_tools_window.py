@@ -365,10 +365,53 @@ def test_result_actions_bar_emits_explicit_only(qtbot, tmp_path):
     assert not bar.isVisible()
     bar.show_for(path)
     assert bar.isVisible()
+    assert bar.accessibleName() == f"Saved {path.name}"
+    bar.show_for(path, message="Merged 3 files")
+    assert bar.accessibleName() == "Merged 3 files"
+    bar.clear()
+    assert bar.accessibleName() == ""
+    bar.show_for(path)
     bar._preview_btn.click()
     bar._open_btn.click()
     bar._folder_btn.click()
     assert [kind for kind, _ in received] == ["preview", "open", "folder"]
+
+
+def test_tool_tile_accessible_name_and_blocked_description(monkeypatch, qtbot):
+    """O14: ToolTile announces title; blocked tiles include absence text."""
+    from pagedrop.core.capabilities import TESSDATA, clear_cache
+    from pagedrop.ui.tools_window import ToolTile
+
+    clear_cache()
+
+    def _fake_probe(capability_id: str, refresh: bool = False) -> CapabilityStatus:
+        del refresh
+        if capability_id == TESSDATA:
+            return CapabilityStatus(
+                id=TESSDATA,
+                available=False,
+                reason=AbsenceReason.DATA_MISSING,
+                detail="missing in test",
+            )
+        return CapabilityStatus(id=capability_id, available=True)
+
+    monkeypatch.setattr("pagedrop.ui.tools_window.probe", _fake_probe)
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+    by_id = {t.entry.id: t for t in window._tiles}
+
+    merge = by_id["merge"]
+    assert isinstance(merge, ToolTile)
+    assert merge.accessibleName() == merge.entry.title
+    assert merge.accessibleDescription() == merge.entry.description
+
+    ocr = by_id["ocr_pdf"]
+    assert ocr.is_blocked()
+    assert ocr.accessibleName() == ocr.entry.title
+    assert "Data missing" in ocr.accessibleDescription()
+    assert ocr.entry.description in ocr.accessibleDescription()
+    window.close()
 
 
 def test_missing_capability_dialog_reason_copy(monkeypatch, qtbot):

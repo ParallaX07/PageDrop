@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
+from PyQt6.QtWidgets import QToolBar
 
 from pagedrop.ui.compare_window import CompareWindow
 from pagedrop.ui.organize_tools import launch_organize_tool
@@ -30,6 +31,10 @@ def test_tools_tile_opens_compare_window(qtbot):
     window = getattr(tools, "_compare_window", None)
     assert isinstance(window, CompareWindow)
     qtbot.waitUntil(lambda: window.isVisible(), timeout=3000)
+    # O14: Compare toolbar matches other toolbars for arrow-key nav.
+    toolbars = window.findChildren(QToolBar)
+    assert toolbars
+    assert hasattr(toolbars[0], "_pagedrop_arrow_nav")
     window.close()
     tools.close()
 

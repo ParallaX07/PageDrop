@@ -489,6 +489,8 @@ class ToolTile(QFrame):
         self.setProperty("blocked", blocked)
         self.setProperty("comingSoon", self.entry.coming_soon and not blocked)
         self.setProperty("compact", self._compact)
+        self.setAccessibleName(self.entry.title)
+        self.setAccessibleDescription(self._subtitle_text())
         style = self.style()
         style.unpolish(self)
         style.polish(self)

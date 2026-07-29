@@ -53,6 +53,7 @@ from pagedrop.core.pdf_tools import (
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import confirm_overwrite
 from pagedrop.ui.job_chrome import explain_busy_running
+from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import ensure_organize_runner
 from pagedrop.ui.tool_page import StatusFooter, present_tool_page
 from pagedrop.ui.result_actions import (
@@ -363,6 +364,7 @@ class CompareWindow(QWidget):
         toolbar.addSeparator()
         self._export_act = toolbar.addAction("Export…")
         self._export_act.setEnabled(False)
+        enable_toolbar_keyboard_navigation(toolbar)
 
         body = QSplitter(Qt.Orientation.Horizontal)
         pages = QSplitter(Qt.Orientation.Horizontal)
