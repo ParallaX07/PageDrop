@@ -15,7 +15,8 @@ from pagedrop.core.jobs import (
     JobSpec,
     SerializedJobRunner,
 )
-from pagedrop.core.organize_jobs import register_organize_handlers
+from pagedrop.core.organize_jobs import MAX_ATTACHMENT_BYTES, register_organize_handlers
+from pagedrop.core.jobs.errors import JobError
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -324,6 +325,49 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
 
     names2 = [a.name for a in pdf_tools.attachments_list(str(out_removed))]
     assert "note.txt" not in names2
+
+
+def test_attachment_add_rejects_oversized_file(tmp_path: Path) -> None:
+    """O13: attachment_add must not unbounded-read a huge file into RAM."""
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = _file_hash(src)
+
+    huge = tmp_path / "huge.bin"
+    # Sparse-ish: write just past the guard without allocating a full 64 MiB buffer
+    # in the test process beyond the one write.
+    with huge.open("wb") as fh:
+        fh.seek(MAX_ATTACHMENT_BYTES)
+        fh.write(b"x")
+
+    out = tmp_path / "with_attach.pdf"
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(JobError, match="too large"):
+            runner.run(
+                JobSpec.create(
+                    "attachment_add",
+                    inputs=[str(src)],
+                    output=out,
+                    options={
+                        "name": "huge.bin",
+                        "file_path": str(huge),
+                        "replace": False,
+                    },
+                ),
+            )
+        assert not out.exists()
+        assert not any(temp._dir.glob("job_*"))
+        assert _file_hash(src) == source_hash
+    finally:
+        temp.cleanup()
 
 
 def test_attachment_add_remove_encrypted_with_password(tmp_path: Path) -> None:

@@ -5,8 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from pagedrop.core import pdf_tools
-from pagedrop.core.jobs.errors import OutputExistsError
+from pagedrop.core.jobs.errors import JobError, OutputExistsError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
+
+# ponytail: full-file read into RAM for embfile_add; 64 MiB is enough for
+# typical embeds. Raise only with a measured large-attachment need (or stream
+# if PyMuPDF gains a path-based embfile API).
+MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024
 
 
 def _password(ctx: JobContext, path: str | None = None) -> str | None:
@@ -180,7 +185,18 @@ def handle_page_labels(ctx: JobContext) -> Path:
 
 def handle_attachment_add(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Adding attachment…")
-    data = Path(str(ctx.spec.options["file_path"])).read_bytes()
+    file_path = Path(str(ctx.spec.options["file_path"]))
+    try:
+        size = file_path.stat().st_size
+    except OSError as exc:
+        raise JobError(f"Cannot read attachment: {exc}") from exc
+    if size > MAX_ATTACHMENT_BYTES:
+        limit_mib = MAX_ATTACHMENT_BYTES // (1024 * 1024)
+        raise JobError(
+            f"Attachment is too large ({size / (1024 * 1024):.1f} MiB). "
+            f"Maximum is {limit_mib} MiB."
+        )
+    data = file_path.read_bytes()
     pdf_tools.attachment_add(
         ctx.spec.inputs[0],
         str(ctx.staged_output),

@@ -24,6 +24,7 @@ from pagedrop.core.jobs.errors import (
     JobCancelledError,
     JobError,
 )
+from pagedrop.utils.temp_manager import claim_backend_temp, release_backend_temp
 
 # Default wall-clock budget for one conversion (large decks / slow disks).
 DEFAULT_TIMEOUT_SEC = 300.0
@@ -108,8 +109,10 @@ def convert_via_libreoffice(
     if on_progress is not None:
         on_progress("Converting with LibreOffice…")
 
-    profile_dir = Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_"))
-    outdir = Path(tempfile.mkdtemp(prefix="pagedrop_lo_out_"))
+    profile_dir = claim_backend_temp(
+        Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_"))
+    )
+    outdir = claim_backend_temp(Path(tempfile.mkdtemp(prefix="pagedrop_lo_out_")))
     owned_pid: int | None = None
     try:
         argv = build_convert_argv(
@@ -165,6 +168,8 @@ def convert_via_libreoffice(
             kill_process_tree(owned_pid)
         raise
     finally:
+        release_backend_temp(profile_dir)
+        release_backend_temp(outdir)
         shutil.rmtree(profile_dir, ignore_errors=True)
         shutil.rmtree(outdir, ignore_errors=True)
 

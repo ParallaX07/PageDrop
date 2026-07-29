@@ -1,4 +1,4 @@
-"""Phase 7 / O4 unit tests — TempManager."""
+"""Phase 7 / O4 / O13 unit tests — TempManager."""
 
 from __future__ import annotations
 
@@ -185,9 +185,28 @@ def test_init_preserves_live_sibling_temp_manager():
         first.cleanup()
 
 
-def test_init_preserves_backend_temp_prefixes():
+def test_init_scrubs_orphan_backend_temp_prefixes():
+    """Crash leftovers under pagedrop_office_* / pagedrop_lo_* are scrubbed on init."""
     office = Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_"))
     lo = Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_"))
+    (office / "leftover.bin").write_bytes(b"orphan")
+    (lo / "leftover.bin").write_bytes(b"orphan")
+    assert office.exists() and lo.exists()
+
+    tm = TempManager()
+    try:
+        assert not office.exists()
+        assert not lo.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_init_preserves_claimed_backend_temps():
+    """Live LO/Office trees claimed via claim_backend_temp survive scrub."""
+    from pagedrop.utils.temp_manager import claim_backend_temp, release_backend_temp
+
+    office = claim_backend_temp(Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_")))
+    lo = claim_backend_temp(Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_")))
     try:
         tm = TempManager()
         try:
@@ -196,5 +215,7 @@ def test_init_preserves_backend_temp_prefixes():
         finally:
             tm.cleanup()
     finally:
+        release_backend_temp(office)
+        release_backend_temp(lo)
         for path in (office, lo):
             shutil.rmtree(path, ignore_errors=True)

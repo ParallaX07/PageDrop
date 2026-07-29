@@ -36,6 +36,7 @@ from pagedrop.helpers.office_com_worker import (
     WORD_EXTENSIONS,
     office_app_for_path,
 )
+from pagedrop.utils.temp_manager import claim_backend_temp, release_backend_temp
 
 OfficeBackend = Literal["auto", "com", "libreoffice"]
 ResolvedBackend = Literal["com", "libreoffice"]
@@ -328,7 +329,9 @@ def convert_office_to_pdf(
         else float(office_com.DEFAULT_TIMEOUT_SEC)
     )
 
-    stage_dir = Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_"))
+    stage_dir = claim_backend_temp(
+        Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_"))
+    )
     staged = stage_dir / "staged.pdf"
     try:
         try:
@@ -366,6 +369,7 @@ def convert_office_to_pdf(
             staged.unlink(missing_ok=True)
         return OfficeConvertResult(path=dst, backend=resolved, page_count=pages)
     finally:
+        release_backend_temp(stage_dir)
         shutil.rmtree(stage_dir, ignore_errors=True)
 
 
@@ -416,7 +420,10 @@ def _self_check() -> None:
     assert report.com.id == OFFICE_COM
     assert report.libreoffice.id == LIBREOFFICE
     assert ".docx" in OFFICE_EXTENSIONS
-    bad = Path(tempfile.mkdtemp(prefix="pagedrop_office_check_")) / "x.bin"
+    bad_dir = claim_backend_temp(
+        Path(tempfile.mkdtemp(prefix="pagedrop_office_check_"))
+    )
+    bad = bad_dir / "x.bin"
     bad.write_bytes(b"not-a-pdf")
     try:
         try:
@@ -425,7 +432,8 @@ def _self_check() -> None:
         except OfficeConversionError as exc:
             assert exc.code == "invalid_pdf"
     finally:
-        shutil.rmtree(bad.parent, ignore_errors=True)
+        release_backend_temp(bad_dir)
+        shutil.rmtree(bad_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -12,8 +12,19 @@ DEFAULT_MAX_BYTES = 512 * 1024 * 1024  # 512 MiB
 # Live session roots in this process — multi-window must not scrub each other.
 _live_dirs: set[Path] = set()
 
-# Backend mkdtemp prefixes under gettempdir(); not TempManager session roots.
-_BACKEND_TEMP_PREFIXES = ("pagedrop_office_", "pagedrop_lo_")
+# Backend mkdtemp trees (LO/Office) claimed while a conversion holds them.
+_live_backend_dirs: set[Path] = set()
+
+
+def claim_backend_temp(path: Path) -> Path:
+    """Mark a backend mkdtemp tree live so orphan scrub will not delete it."""
+    _live_backend_dirs.add(path.resolve())
+    return path
+
+
+def release_backend_temp(path: Path) -> None:
+    """Drop the live claim after the backend finishes (success or fail)."""
+    _live_backend_dirs.discard(path.resolve())
 
 
 class TempManager:
@@ -86,6 +97,10 @@ class TempManager:
         return (counter, name)
 
     def _enforce_max_size(self) -> None:
+        # ponytail: one concurrent create_* per manager under the usual
+        # SerializedJobRunner / one-active-job path. Eviction deletes the oldest
+        # drag_*/job_* with no pin — a second create while an older dir is still
+        # in use could remove it. Pin/unpin only if that race is measured.
         while self._dir_size() > self._max_bytes:
             candidates = sorted(
                 (
@@ -102,7 +117,7 @@ class TempManager:
 
     @staticmethod
     def _scrub_orphan_pagedrop_dirs() -> None:
-        """Remove crashed-run ``pagedrop_*`` session dirs; never live or backend temps."""
+        """Remove crashed-run ``pagedrop_*`` session and backend dirs; never live ones."""
         temp_root = Path(tempfile.gettempdir())
         try:
             entries = list(temp_root.iterdir())
@@ -112,9 +127,8 @@ class TempManager:
             try:
                 if not entry.is_dir() or not entry.name.startswith("pagedrop_"):
                     continue
-                if entry.name.startswith(_BACKEND_TEMP_PREFIXES):
-                    continue
-                if entry.resolve() in _live_dirs:
+                resolved = entry.resolve()
+                if resolved in _live_dirs or resolved in _live_backend_dirs:
                     continue
                 shutil.rmtree(entry, ignore_errors=True)
             except OSError:

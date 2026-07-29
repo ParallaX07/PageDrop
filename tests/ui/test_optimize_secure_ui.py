@@ -233,3 +233,79 @@ def test_encrypt_job_uses_secrets_not_options(
         locked.close()
     shell.close()
     tools.close()
+
+
+def test_sanitize_cancel_mid_run_clears_busy_chrome(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    """O13: Cancel mid sanitize annot loop → no promote, BusyOverlay clears."""
+    import hashlib
+    import time
+
+    from pagedrop.core import optimize_secure as ops
+    from PyQt6.QtWidgets import QCheckBox
+
+    src = tmp_path / "multi.pdf"
+    doc = fitz.open()
+    try:
+        for i in range(8):
+            page = doc.new_page(width=200, height=200)
+            page.insert_text((40, 80), f"page {i}", fontsize=14)
+            page.add_highlight_annot(fitz.Rect(30, 60, 120, 90))
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+    out = tmp_path / "sanitized.pdf"
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+    shell = open_optimize_secure_shell(tools, "sanitize")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(src)])
+
+    # Enable annotation strip so the page annot loop runs cancel checks.
+    for box in shell._options_host.findChildren(QCheckBox):
+        if "annotation" in box.text().casefold():
+            box.setChecked(True)
+
+    monkeypatch.setattr(
+        "pagedrop.ui.optimize_secure_shell._pick_save_path",
+        lambda parent, title, suggested: str(out),
+    )
+
+    real_check = ops._check_cancel
+    checks = {"n": 0}
+
+    def wait_for_ui_cancel(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            deadline = time.time() + 5.0
+            while not cancel.is_cancelled() and time.time() < deadline:
+                time.sleep(0.01)
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", wait_for_ui_cancel)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: (
+            shell.is_job_running()
+            and checks["n"] >= 1
+            and shell._busy_overlay._cancel_btn.isVisible()
+        ),
+        timeout=5000,
+    )
+    assert shell._busy_overlay.isVisible()
+    shell._busy_overlay._cancel_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert not out.exists()
+    assert not shell._busy_overlay.isVisible()
+    assert shell.statusBar().currentMessage() == "Cancelled"
+    assert hashlib.sha256(src.read_bytes()).hexdigest() == source_hash
+
+    shell.close()
+    tools.close()
