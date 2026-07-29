@@ -1,4 +1,4 @@
-"""Preferences dialog — accessibility, Office backends, LibreOffice path, OCR tessdata."""
+"""Preferences dialog — safety, accessibility, Office backends, OCR tessdata."""
 
 from __future__ import annotations
 
@@ -24,19 +24,25 @@ from pagedrop.core.tessdata_pack import download_eng_fast, user_tessdata_dir
 from pagedrop.ui.settings import (
     apply_office_settings_to_capabilities,
     apply_tessdata_settings_to_capabilities,
+    confirm_before_closing_dirty_tabs,
+    confirm_before_deleting_multiple_pages,
     office_preferred_backend,
     office_soffice_path,
     reduce_motion,
+    remember_window_geometry,
+    set_confirm_before_closing_dirty_tabs,
+    set_confirm_before_deleting_multiple_pages,
     set_office_preferred_backend,
     set_office_soffice_path,
     set_reduce_motion,
+    set_remember_window_geometry,
     set_tessdata_path,
     tessdata_path,
 )
 
 
 class PreferencesDialog(QDialog):
-    """Modeless-friendly modal prefs: accessibility + Office/OCR + Recheck."""
+    """Modal prefs: safety, accessibility, Office/OCR + Recheck."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +52,38 @@ class PreferencesDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.setSpacing(12)
+
+        safety_heading = QLabel("Safety")
+        safety_heading.setObjectName("PreferencesSection")
+        root.addWidget(safety_heading)
+
+        self._confirm_delete = QCheckBox("Confirm before deleting multiple pages")
+        self._confirm_delete.setObjectName("PreferencesConfirmDelete")
+        self._confirm_delete.setToolTip(
+            "Ask before deleting more than a few pages at once."
+        )
+        self._confirm_delete.setChecked(confirm_before_deleting_multiple_pages())
+        root.addWidget(self._confirm_delete)
+
+        self._confirm_close_dirty = QCheckBox("Confirm before closing dirty tabs")
+        self._confirm_close_dirty.setObjectName("PreferencesConfirmCloseDirty")
+        self._confirm_close_dirty.setToolTip(
+            "Ask before closing tabs with unsaved edits."
+        )
+        self._confirm_close_dirty.setChecked(confirm_before_closing_dirty_tabs())
+        root.addWidget(self._confirm_close_dirty)
+
+        window_heading = QLabel("Window")
+        window_heading.setObjectName("PreferencesSection")
+        root.addWidget(window_heading)
+
+        self._remember_geometry = QCheckBox("Remember window size and position")
+        self._remember_geometry.setObjectName("PreferencesRememberGeometry")
+        self._remember_geometry.setToolTip(
+            "Restore the primary editor size and position on launch."
+        )
+        self._remember_geometry.setChecked(remember_window_geometry())
+        root.addWidget(self._remember_geometry)
 
         a11y_heading = QLabel("Accessibility")
         a11y_heading.setObjectName("PreferencesSection")
@@ -243,6 +281,9 @@ class PreferencesDialog(QDialog):
         self._ocr_status.setText(self._tess_line(probe(TESSDATA)))
 
     def _on_accept(self) -> None:
+        set_confirm_before_deleting_multiple_pages(self._confirm_delete.isChecked())
+        set_confirm_before_closing_dirty_tabs(self._confirm_close_dirty.isChecked())
+        set_remember_window_geometry(self._remember_geometry.isChecked())
         set_reduce_motion(self._reduce_motion.isChecked())
         set_office_preferred_backend(str(self._backend.currentData()))
         set_office_soffice_path(self._soffice.text().strip() or None)

@@ -10,11 +10,22 @@ from pagedrop.ui.command_palette import (
     collect_actions,
     fuzzy_match,
 )
+from pagedrop.ui.preferences_dialog import PreferencesDialog
+from pagedrop.ui import settings as settings_mod
 from pagedrop.ui.settings import (
+    KEY_CONFIRM_CLOSE_DIRTY,
+    KEY_CONFIRM_DELETE_MULTIPLE,
+    KEY_REMEMBER_GEOMETRY,
     chrome_visible,
+    confirm_before_closing_dirty_tabs,
+    confirm_before_deleting_multiple_pages,
     light_theme,
+    remember_window_geometry,
     set_chrome_visible,
+    set_confirm_before_closing_dirty_tabs,
+    set_confirm_before_deleting_multiple_pages,
     set_light_theme,
+    set_remember_window_geometry,
     set_thumbnail_quality,
     set_thumbnail_zoom,
     thumbnail_quality,
@@ -85,6 +96,44 @@ def test_command_palette_collects_menu_actions(main_window):
     assert "Open PDF" in labels
     assert "Toggle light theme" in labels
     assert "Command palette…" in labels
+    assert "Preferences…" in labels
+    # Safety / geometry toggles live in Preferences only (no Edit-menu duplicates).
+    assert "Confirm before deleting multiple pages" not in labels
+    assert "Confirm before closing dirty tabs" not in labels
+    assert "Remember window size and position" not in labels
+
+
+def test_preferences_safety_geometry_persist_same_keys(qtbot, isolated_settings):
+    """UI move keeps QSettings keys; existing values load into Preferences."""
+    set_confirm_before_deleting_multiple_pages(False)
+    set_confirm_before_closing_dirty_tabs(False)
+    set_remember_window_geometry(False)
+
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    assert dialog._confirm_delete.isChecked() is False
+    assert dialog._confirm_close_dirty.isChecked() is False
+    assert dialog._remember_geometry.isChecked() is False
+
+    dialog._confirm_delete.setChecked(True)
+    dialog._confirm_close_dirty.setChecked(True)
+    dialog._remember_geometry.setChecked(True)
+    dialog._on_accept()
+
+    assert confirm_before_deleting_multiple_pages() is True
+    assert confirm_before_closing_dirty_tabs() is True
+    assert remember_window_geometry() is True
+
+    store = settings_mod._settings()
+    assert store.value(KEY_CONFIRM_DELETE_MULTIPLE, type=bool) is True
+    assert store.value(KEY_CONFIRM_CLOSE_DIRTY, type=bool) is True
+    assert store.value(KEY_REMEMBER_GEOMETRY, type=bool) is True
+
+    dialog2 = PreferencesDialog()
+    qtbot.addWidget(dialog2)
+    assert dialog2._confirm_delete.isChecked() is True
+    assert dialog2._confirm_close_dirty.isChecked() is True
+    assert dialog2._remember_geometry.isChecked() is True
 
 
 def test_view_menu_theme_and_quality(isolated_settings, main_window, qtbot):

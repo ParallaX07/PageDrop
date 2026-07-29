@@ -49,7 +49,6 @@ from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
-    confirm_before_deleting_multiple_pages,
     has_seen_tips,
     last_directory,
     light_theme,
@@ -57,13 +56,9 @@ from pagedrop.ui.settings import (
     recent_files,
     remember_directory,
     remember_recent_file,
-    remember_window_geometry,
     save_window_geometry,
     set_chrome_visible,
-    set_confirm_before_closing_dirty_tabs,
-    set_confirm_before_deleting_multiple_pages,
     set_light_theme,
-    set_remember_window_geometry,
     set_thumbnail_quality,
     set_thumbnail_zoom,
     thumbnail_quality,
@@ -218,28 +213,6 @@ class MainWindow(QMainWindow):
             shortcuts=["Ctrl+Shift+Z", QKeySequence.StandardKey.Redo],
             enabled=False,
         )
-        self._confirm_delete_action = actions.register(
-            "confirm_delete",
-            "Confirm before &deleting multiple pages",
-            slot=set_confirm_before_deleting_multiple_pages,
-            checkable=True,
-            checked=confirm_before_deleting_multiple_pages(),
-        )
-        self._confirm_close_dirty_action = actions.register(
-            "confirm_close_dirty",
-            "Confirm before closing dirty &tabs",
-            slot=set_confirm_before_closing_dirty_tabs,
-            checkable=True,
-            checked=confirm_before_closing_dirty_tabs(),
-        )
-        self._remember_geometry_action = actions.register(
-            "remember_geometry",
-            "Remember window &size and position",
-            slot=set_remember_window_geometry,
-            checkable=True,
-            checked=remember_window_geometry(),
-        )
-
         self._light_theme_action = actions.register(
             "light_theme",
             "Toggle &light theme",
@@ -455,10 +428,6 @@ class MainWindow(QMainWindow):
         edit_menu = menubar.addMenu("&Edit")
         edit_menu.addAction(a["undo"])
         edit_menu.addAction(a["redo"])
-        edit_menu.addSeparator()
-        edit_menu.addAction(a["confirm_delete"])
-        edit_menu.addAction(a["confirm_close_dirty"])
-        edit_menu.addAction(a["remember_geometry"])
         edit_menu.addSeparator()
         edit_menu.addAction(a["preferences"])
 
