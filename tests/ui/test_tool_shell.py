@@ -237,6 +237,46 @@ def test_migrated_tool_runs_job_and_shows_result_actions(
     tools.close()
 
 
+def test_split_multi_file_success_copy_mentions_showing_first(
+    qtbot, tmp_path, isolated_settings
+):
+    """O12: Split N>1 names file count and that result actions bind to the first."""
+    src = tmp_path / "doc.pdf"
+    out_dir = tmp_path / "parts"
+    _write_pdf(src, pages=3)
+    out_dir.mkdir()
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+
+    shell = open_organize_shell(tools, "split")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(src)])
+    shell._ranges_edit.setText("1,2,3")  # type: ignore[attr-defined]
+    shell._folder_edit.setText(str(out_dir))  # type: ignore[attr-defined]
+
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
+
+    written = sorted(out_dir.glob("*.pdf"))
+    assert len(written) == 3
+    first = pdf_tools.predicted_range_output_paths(
+        [(0, 0), (1, 1), (2, 2)], out_dir, base_name=src.stem
+    )[0]
+    status = shell.statusBar().currentMessage()
+    toast = shell._toast._message.text()
+    bar = shell._result_bar._label.text()
+    assert status == "Saved 3 files — showing first"
+    assert status == toast == bar
+    assert shell._result_bar._path == str(first)
+    assert shell.editor is None
+
+    shell.close()
+    tools.close()
+
+
 def test_tools_hub_launches_shell_for_migrated_ids(qtbot, monkeypatch):
     tools = ToolsWindow()
     qtbot.addWidget(tools)

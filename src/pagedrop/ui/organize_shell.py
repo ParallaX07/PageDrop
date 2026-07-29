@@ -202,6 +202,11 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
         predicted = pdf_tools.predicted_range_output_paths(
             parsed, out_folder, base_name=base_name
         )
+        n = len(predicted)
+        # ResultActionsBar binds to predicted[0]; say so when N>1 (O12).
+        success = (
+            f"Saved {n} files — showing first" if n > 1 else None
+        )
         run_tool_job(
             shell,
             job_type="split",
@@ -214,7 +219,7 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
             },
             existing_paths=[p for p in predicted if p.exists()],
             progress_message="Splitting PDF…",
-            success_toast=f"Wrote {len(predicted)} file(s)",
+            success_toast=success,
         )
 
     shell.set_run_handler(on_run)

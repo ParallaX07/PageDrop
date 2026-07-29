@@ -412,9 +412,10 @@ def run_tool_job(
         if not _still_running():
             return
         name = Path(result_path).name
+        message = success_toast or f"Saved {name}"
         end(
-            status=f"Saved {name}",
-            toast=success_toast or f"Saved {name}",
+            status=message,
+            toast=message,
             toast_kind="success",
             result_path=result_path,
         )

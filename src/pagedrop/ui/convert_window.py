@@ -849,6 +849,9 @@ class ConvertWindow(QWidget):
             remember_directory(written[0])
         file_noun = "file" if len(written) == 1 else "files"
         status = f"Created {len(written)} PDF {file_noun} from {count} {noun}"
+        # ResultActionsBar still binds to the first path only (O12 — no multi-file API).
+        if len(written) > 1:
+            status = f"{status} — showing first"
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         if written:

@@ -115,6 +115,44 @@ def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):
     assert window._toast.isVisible()
     assert window._toast._message.accessibleName()
     assert "Created 1 PDF file" in window._toast._message.text()
+    assert "showing first" not in window._toast._message.text()
+
+
+def test_separate_mode_multi_file_copy_mentions_showing_first(
+    qtbot, tmp_path, monkeypatch
+):
+    """O12: N>1 separate outputs name count and that actions bind to the first."""
+    alpha = tmp_path / "alpha.png"
+    bravo = tmp_path / "bravo.png"
+    _write_test_image(alpha, 100, 100)
+    _write_test_image(bravo, 120, 120)
+    out_dir = tmp_path / "output"
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(out_dir),
+    )
+
+    window = _convert_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    window._add_paths([str(alpha), str(bravo)])
+    window._separate_mode_action.setChecked(True)
+    window._create_pdfs()
+
+    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+
+    assert (out_dir / "alpha.pdf").is_file()
+    assert (out_dir / "bravo.pdf").is_file()
+    status = window.statusBar().currentMessage()
+    toast = window._toast._message.text()
+    bar = window._result_bar._label.text()
+    assert "Created 2 PDF files" in status
+    assert "showing first" in status
+    assert status == toast == bar
+    assert window._result_bar._path == str(out_dir / "alpha.pdf")
+    assert window.editor is None
 
 
 def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monkeypatch):

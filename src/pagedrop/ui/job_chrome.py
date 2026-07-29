@@ -138,7 +138,8 @@ class JobChromeMixin:
         if toast:
             self._toast.show_toast(toast, kind=toast_kind)
         if result_path:
-            self._result_bar.show_for(result_path)
+            # Same copy as status when provided (multi-output honesty, O12).
+            self._result_bar.show_for(result_path, message=status)
 
     def cancel_active_job(self) -> None:
         if self._cancel_token is not None:
