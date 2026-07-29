@@ -385,7 +385,6 @@ class MainWindow(QMainWindow):
             tip="Rotate selected pages clockwise",
             enabled=False,
         )
-        self._rotate_cw_action.setAccessibleName("Rotate clockwise")
         self._rotate_ccw_action = actions.register(
             "rotate_ccw",
             "Rotate CCW",
@@ -393,7 +392,6 @@ class MainWindow(QMainWindow):
             tip="Rotate selected pages counter-clockwise",
             enabled=False,
         )
-        self._rotate_ccw_action.setAccessibleName("Rotate counter-clockwise")
 
         actions.register(
             "next_tab",
@@ -503,6 +501,14 @@ class MainWindow(QMainWindow):
         toolbar.addAction(a["duplicate_pages"])
         toolbar.addAction(a["rotate_cw"])
         toolbar.addAction(a["rotate_ccw"])
+        # QAction has no setAccessibleName — expand CW/CCW on the toolbar buttons.
+        for action, name in (
+            (a["rotate_cw"], "Rotate clockwise"),
+            (a["rotate_ccw"], "Rotate counter-clockwise"),
+        ):
+            btn = toolbar.widgetForAction(action)
+            if btn is not None:
+                btn.setAccessibleName(name)
         toolbar.addSeparator()
 
         self._filename_label = QLabel("No file open")

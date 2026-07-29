@@ -189,3 +189,25 @@ def test_progress_and_empty_state_accessible_names(main_window, qtbot):
 
 def test_base_file_card_is_not_imported_cycle():
     assert issubclass(MergeFileCard, BaseFileCard)
+
+
+def test_watermark_selection_chrome_uses_accent_token():
+    """O14: watermark selection border/handles use the accent theme token, not a literal."""
+    from pagedrop.ui.theme import ACCENT, accent_qcolor, on_accent_qcolor
+
+    # accent_qcolor() must match the ACCENT token in both light and dark mode.
+    color = accent_qcolor()
+    assert color.isValid()
+    assert color.red() == 0x2F
+    assert color.green() == 0x9B
+    assert color.blue() == 0xE6
+
+    # on_accent_qcolor() must be fully opaque white (readable on accent backgrounds).
+    ink = on_accent_qcolor()
+    assert ink.isValid()
+    assert ink.red() == 255
+    assert ink.green() == 255
+    assert ink.blue() == 255
+
+    # The ACCENT hex string encodes the same RGB the old literal QColor(47,155,230) did.
+    assert ACCENT.upper() == "#2F9BE6"

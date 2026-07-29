@@ -25,7 +25,7 @@ from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.base_file_card import BaseFileCard
-from pagedrop.ui.theme import CARD_PADDING, accent_qcolor
+from pagedrop.ui.theme import CARD_PADDING, accent_qcolor, on_accent_qcolor
 from pagedrop.utils.temp_manager import TempManager
 
 # Portrait placeholder while the real thumbnail is rendering.
@@ -425,7 +425,7 @@ class PageCard(BaseFileCard):
         painter.setBrush(accent_qcolor())
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
-        painter.setPen(QColor(255, 255, 255))
+        painter.setPen(on_accent_qcolor())
         painter.drawText(
             badge_x,
             badge_y,

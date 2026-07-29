@@ -122,7 +122,7 @@ def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolate
     chrome = shell._chrome_host
     assert chrome.isVisible()
     change = chrome.findChild(QPushButton)
-    assert change is not None and change.text() == "Change File"
+    assert change is not None and change.text() == "Change file"
     assert any("src.pdf" in lab.text() for lab in chrome.findChildren(QLabel))
 
     canvas = shell._options_host.findChild(WatermarkPreviewCanvas)

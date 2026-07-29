@@ -25,6 +25,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
+from pagedrop.ui.theme import accent_qcolor
 from pagedrop.core.modify_ops import watermark_text_box
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
@@ -527,10 +528,10 @@ class WatermarkPreviewCanvas(QWidget):
         # Rotate stem + handle.
         top = QPointF(0.0, -wh / 2)
         rh = QPointF(0.0, -wh / 2 - _ROTATE_OFFSET)
-        painter.setPen(QPen(QColor(47, 155, 230), 1, Qt.PenStyle.DashLine))
+        painter.setPen(QPen(accent_qcolor(), 1, Qt.PenStyle.DashLine))
         painter.drawLine(top, rh)
         painter.setBrush(QColor(255, 255, 255))
-        painter.setPen(QPen(QColor(47, 155, 230), 1))
+        painter.setPen(QPen(accent_qcolor(), 1))
         painter.drawEllipse(rh, _HANDLE_PX / 2, _HANDLE_PX / 2)
         painter.restore()
 
@@ -682,7 +683,7 @@ def _hit_resize_handle(wr: QRectF, pos: QPointF, handle_px: float = _HANDLE_PX) 
 
 def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor(47, 155, 230), 1, Qt.PenStyle.DashLine))
+    painter.setPen(QPen(accent_qcolor(), 1, Qt.PenStyle.DashLine))
     painter.drawRect(wr)
     hs = _HANDLE_PX
     mid_x = wr.center().x()
@@ -698,6 +699,6 @@ def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
         (wr.left(), mid_y),
     )
     painter.setBrush(QColor(255, 255, 255))
-    painter.setPen(QPen(QColor(47, 155, 230), 1))
+    painter.setPen(QPen(accent_qcolor(), 1))
     for px, py in points:
         painter.drawRect(QRectF(px - hs / 2, py - hs / 2, hs, hs))

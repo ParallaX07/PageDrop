@@ -1532,6 +1532,13 @@ def accent_qcolor(*, alpha: int = 255) -> "QColor":
     return token_qcolor(ACCENT, alpha)
 
 
+def on_accent_qcolor() -> "QColor":
+    """Ink color for text/icons drawn on top of the accent background."""
+    from PyQt6.QtGui import QColor
+
+    return QColor(255, 255, 255)
+
+
 def shadow_qcolor(*, alpha: int = 55) -> "QColor":
     """Tinted drop-shadow color."""
     from PyQt6.QtGui import QColor

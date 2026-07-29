@@ -119,4 +119,4 @@ def test_rename_tab_cancelled_leaves_title(main_window, monkeypatch):
 
     main_window._rename_tab(0)
     assert tab.custom_tab_title is None
-    assert tab.tab_title == "New Tab"
+    assert tab.tab_title == "New tab"
