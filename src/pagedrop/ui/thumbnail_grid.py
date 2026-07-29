@@ -40,8 +40,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-import fitz
-
 from pagedrop.assets import empty_state_logo_pixmap
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -50,10 +48,9 @@ from pagedrop.core.drag_mime import (
     decode_page_refs,
 )
 from pagedrop.core.page_extractor import extract_page_refs_to_files
-from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader, open_pdf, render_page_png
-from pagedrop.core.pdf_service import FITZ_LOCK
+from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader
+from pagedrop.core.pdf_service import render_ref_png
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.accessibility import prefers_reduce_motion
@@ -123,40 +120,27 @@ class ThumbnailWorker(QRunnable):
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        # See core.thread_policy: open by path only; never PdfTab._loader_cache.
-        # Hold FITZ_LOCK for the whole open/render/close so live docs never
-        # overlap other pools (pool max 1 alone is not enough across windows).
+        # See core.thread_policy: path-only via pdf_service; never PdfTab._loader_cache.
+        # Per-page FITZ_LOCK (render_ref_png) — baseline 2026-07-30: whole-batch
+        # hold blocked viewer ~17–46ms mid-window (24–60 image pages / zoom2);
+        # per-page keeps batch wall similar and drops mid-batch viewer wait to
+        # ~4–12ms. Pool stays maxThreadCount=1 (do not raise to "fix" thumbs).
         try:
-            with FITZ_LOCK:
-                docs: dict[str, fitz.Document] = {}
-                try:
-                    for logical_index, ref in self._pages:
-                        if self._is_cancelled(self._generation):
-                            return
-                        if ref.source_path not in docs:
-                            docs[ref.source_path] = open_pdf(
-                                ref.source_path,
-                                password=RuntimeCredentials.lookup(
-                                    self._passwords, ref.source_path
-                                ),
-                            )
-                        doc = docs[ref.source_path]
-                        png = render_page_png(
-                            doc,
-                            ref.source_index,
-                            width_px=self._width_px,
-                            rotation=ref.rotation,
-                        )
-                        if self._is_cancelled(self._generation):
-                            return
-                        self.signals.page_ready.emit(
-                            self._generation, logical_index, png
-                        )
-                    if not self._is_cancelled(self._generation):
-                        self.signals.finished.emit(self._generation)
-                finally:
-                    for doc in docs.values():
-                        doc.close()
+            for logical_index, ref in self._pages:
+                if self._is_cancelled(self._generation):
+                    return
+                png = render_ref_png(
+                    ref,
+                    self._width_px,
+                    passwords=self._passwords,
+                )
+                if self._is_cancelled(self._generation):
+                    return
+                self.signals.page_ready.emit(
+                    self._generation, logical_index, png
+                )
+            if not self._is_cancelled(self._generation):
+                self.signals.finished.emit(self._generation)
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))

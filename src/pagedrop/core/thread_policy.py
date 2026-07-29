@@ -48,7 +48,7 @@ from typing import Any
 WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     (
         "ThumbnailWorker",
-        "ui/thumbnail_grid.py — editor page thumbs under FITZ_LOCK; pool max 1",
+        "ui/thumbnail_grid.py — per-page via pdf_service.render_ref_png; pool max 1",
     ),
     (
         "PreviewRenderWorker",

@@ -112,7 +112,7 @@ def test_ui_pool_fitz_opens_hold_fitz_lock(
 
     monkeypatch.setattr(fitz, "open", tracking_open)
 
-    # ThumbnailWorker — direct fitz.open under FITZ_LOCK
+    # ThumbnailWorker — per-page via pdf_service.render_ref_png → FITZ_LOCK
     thumb = ThumbnailWorker(
         [(0, PageRef(str(pdf), 0)), (1, PageRef(str(pdf), 1))],
         generation=1,
@@ -241,3 +241,61 @@ def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     assert preview._render_pool.maxThreadCount() == 1
     assert viewer._pool.maxThreadCount() == 1
     assert _compare_text_pool().maxThreadCount() == 1
+
+
+def test_thumbnail_worker_releases_lock_between_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O15: per-page lock so a viewer render can interleave mid thumb batch.
+
+    Whole-batch hold made mid-window viewer waits track remaining pages; with
+    per-page ``render_ref_png``, wait stays near one page render.
+    """
+    import threading
+    import time
+
+    from pagedrop.core import pdf_service
+    from pagedrop.core.pdf_service import render_ref_png
+
+    pdf = tmp_path / "batch.pdf"
+    _write_pdf(pdf, pages=12)
+
+    page_n = {"n": 0}
+    mid = threading.Event()
+    real_png = pdf_service.render_page_png
+
+    def slow_png(*args: object, **kwargs: object) -> bytes:
+        page_n["n"] += 1
+        if page_n["n"] == 3:
+            mid.set()
+        time.sleep(0.025)
+        return real_png(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pdf_service, "render_page_png", slow_png)
+
+    waits: list[float] = []
+
+    def viewer() -> None:
+        assert mid.wait(timeout=10), "thumb batch never reached mid page"
+        t0 = time.perf_counter()
+        assert render_ref_png(PageRef(str(pdf), 0), 64)
+        waits.append(time.perf_counter() - t0)
+
+    pages = [(i, PageRef(str(pdf), i)) for i in range(12)]
+    worker = ThumbnailWorker(
+        pages,
+        generation=1,
+        width_px=64,
+        is_cancelled=lambda _g: False,
+    )
+    vt = threading.Thread(target=viewer)
+    vt.start()
+    worker.run()
+    vt.join(timeout=30)
+
+    assert waits, "viewer thread did not complete"
+    # Remaining whole-batch would be ~9×25ms ≈ 225ms; per-page stays ~one page.
+    assert waits[0] < 0.12, (
+        f"viewer blocked {waits[0]:.3f}s behind thumb batch "
+        "(expected per-page interleave)"
+    )
