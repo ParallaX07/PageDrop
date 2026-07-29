@@ -12,11 +12,6 @@ from pagedrop.core.native_conversions import (
     import_to_pdf,
 )
 
-
-def _password(ctx: JobContext, path: str | None = None) -> str | None:
-    return ctx.credentials.get(path or ctx.spec.inputs[0])
-
-
 def handle_import_to_pdf(ctx: JobContext) -> Path:
     """Convert one or more native-import documents to PDF."""
     inputs = list(ctx.spec.inputs)
@@ -51,7 +46,6 @@ def handle_import_to_pdf(ctx: JobContext) -> Path:
         first_staged.replace(ctx.staged_output)
     return ctx.staged_output
 
-
 def handle_export_from_pdf(ctx: JobContext) -> Path:
     """Export a PDF to a registered format (single- or multi-file)."""
     source = ctx.spec.inputs[0]
@@ -59,7 +53,7 @@ def handle_export_from_pdf(ctx: JobContext) -> Path:
     pages = ctx.spec.options.get("pages")
     dpi = float(ctx.spec.options.get("dpi", 144))
     jpeg_quality = int(ctx.spec.options.get("jpeg_quality", 90))
-    password = _password(ctx)
+    password = ctx.password()
     ctx.progress(0.2, f"Exporting {format_id.upper()}…")
 
     if format_id in MULTI_PAGE_EXPORT_IDS:
@@ -107,12 +101,10 @@ def handle_export_from_pdf(ctx: JobContext) -> Path:
     )
     return ctx.staged_output
 
-
 NATIVE_CONVERSION_HANDLERS: dict[str, object] = {
     "import_to_pdf": handle_import_to_pdf,
     "export_from_pdf": handle_export_from_pdf,
 }
-
 
 def register_native_conversion_handlers(runner: SerializedJobRunner) -> None:
     for job_type, handler in NATIVE_CONVERSION_HANDLERS.items():

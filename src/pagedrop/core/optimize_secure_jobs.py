@@ -9,11 +9,6 @@ import fitz
 from pagedrop.core import optimize_secure as ops
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 
-
-def _password(ctx: JobContext) -> str | None:
-    return ctx.credentials.get(ctx.spec.inputs[0])
-
-
 def handle_compress(ctx: JobContext) -> Path:
     profile_name = str(ctx.spec.options.get("profile") or "lossless")
     if ops.is_lossy_profile_name(profile_name):
@@ -48,24 +43,22 @@ def handle_compress(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         profile=profile,
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_repair(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Repairing PDF…")
     result = ops.repair_pdf(
         ctx.spec.inputs[0],
         str(ctx.staged_output),
-        password=_password(ctx),
+        password=ctx.password(),
     )
     if result.was_repaired:
         ctx.progress(0.8, "Repair applied; rewriting…")
     else:
         ctx.progress(0.8, "Rewriting clean copy…")
     return ctx.staged_output
-
 
 def handle_encrypt(ctx: JobContext) -> Path:
     user_pw = ctx.secrets.get("user_password") or ""
@@ -99,13 +92,12 @@ def handle_encrypt(ctx: JobContext) -> Path:
         owner_password=owner_pw,
         permissions=permissions,
         encryption=encryption,
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
 
-
 def handle_decrypt(ctx: JobContext) -> Path:
-    password = _password(ctx)
+    password = ctx.password()
     if not password:
         raise ValueError("Password required to decrypt this PDF")
     ctx.progress(0.3, "Decrypting PDF…")
@@ -116,7 +108,6 @@ def handle_decrypt(ctx: JobContext) -> Path:
     )
     return ctx.staged_output
 
-
 def handle_sanitize(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Sanitizing PDF…")
     ops.sanitize_pdf(
@@ -125,11 +116,10 @@ def handle_sanitize(ctx: JobContext) -> Path:
         strip_metadata=bool(ctx.spec.options.get("strip_metadata", True)),
         strip_xmp=bool(ctx.spec.options.get("strip_xmp", True)),
         strip_annotations=bool(ctx.spec.options.get("strip_annotations", False)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 OPTIMIZE_SECURE_HANDLERS: dict[str, object] = {
     "compress": handle_compress,
@@ -138,7 +128,6 @@ OPTIMIZE_SECURE_HANDLERS: dict[str, object] = {
     "decrypt": handle_decrypt,
     "sanitize": handle_sanitize,
 }
-
 
 def register_optimize_secure_handlers(runner: SerializedJobRunner) -> None:
     for job_type, handler in OPTIMIZE_SECURE_HANDLERS.items():

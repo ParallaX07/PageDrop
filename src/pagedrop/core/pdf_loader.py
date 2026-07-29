@@ -75,6 +75,11 @@ def open_pdf(path: str, password: str | None = None) -> fitz.Document:
 
 
 class PdfLoader:
+    # ponytail: tab-owned long-lived Document for editor geometry / sync UI.
+    # Distinct from pdf_service's short TTL path→doc cache (interactive render).
+    # Ceiling: two open docs per path while a tab is live. Upgrade: fold tab
+    # geometry reads into pdf_service under FITZ_LOCK when measured pain warrants
+    # (O10 process service / single-owner cache) — do not invent a third cache.
     def __init__(self, path: str, password: str | None = None) -> None:
         self.path = path
         self.doc = open_pdf(path, password)

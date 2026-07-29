@@ -123,7 +123,8 @@ def test_hub_launch_opens_shell_not_catalogue_job(qtbot):
     shell = store.get("booklet")
     assert isinstance(shell, ToolShellWindow)
     assert shell is open_organize_shell(window, "booklet")
-    assert not window.is_job_running()
+    assert not hasattr(window, "is_job_running")
+    assert not shell.is_job_running()
     assert shell._run_btn.isDefault()
     assert "booklet" in SHELL_ORGANIZE_IDS
 

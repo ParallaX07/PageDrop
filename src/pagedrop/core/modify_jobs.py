@@ -8,11 +8,6 @@ from pagedrop.core import modify_ops as ops
 from pagedrop.core.jobs.errors import OutputExistsError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 
-
-def _password(ctx: JobContext, path: str | None = None) -> str | None:
-    return ctx.credentials.get(path or ctx.spec.inputs[0])
-
-
 def handle_crop(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Cropping PDF…")
     ops.crop_pdf(
@@ -23,11 +18,10 @@ def handle_crop(ctx: JobContext) -> Path:
         top=float(ctx.spec.options.get("top", 0)),
         bottom=float(ctx.spec.options.get("bottom", 0)),
         mode=str(ctx.spec.options.get("mode", "cropbox")),  # type: ignore[arg-type]
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_watermark(ctx: JobContext) -> Path:
     kind = str(ctx.spec.options.get("kind", "text"))
@@ -47,7 +41,7 @@ def handle_watermark(ctx: JobContext) -> Path:
         "diagonal_percent": diagonal_percent,
         "pages": page_list,
         "flatten": bool(ctx.spec.options.get("flatten", False)),
-        "password": _password(ctx),
+        "password": ctx.password(),
         "cancel": ctx.cancel,
     }
     if kind == "image":
@@ -73,7 +67,6 @@ def handle_watermark(ctx: JobContext) -> Path:
         )
     return ctx.staged_output
 
-
 def handle_header_footer(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Adding header and footer…")
     ops.add_header_footer(
@@ -82,11 +75,10 @@ def handle_header_footer(ctx: JobContext) -> Path:
         header=str(ctx.spec.options.get("header", "")),
         footer=str(ctx.spec.options.get("footer", "")),
         fontsize=float(ctx.spec.options.get("fontsize", 10)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_page_numbers(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Adding page numbers…")
@@ -97,11 +89,10 @@ def handle_page_numbers(ctx: JobContext) -> Path:
         position=str(ctx.spec.options.get("position", "bottom-center")),  # type: ignore[arg-type]
         start=int(ctx.spec.options.get("start", 1)),
         fontsize=float(ctx.spec.options.get("fontsize", 10)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_bates(ctx: JobContext) -> Path:
     sources = list(ctx.spec.inputs)
@@ -122,14 +113,14 @@ def handle_bates(ctx: JobContext) -> Path:
             digits=digits,
             position=position,  # type: ignore[arg-type]
             fontsize=fontsize,
-            password=_password(ctx),
+            password=ctx.password(),
             cancel=ctx.cancel,
         )
         return ctx.staged_output
 
     out_dir = Path(str(opts["output_dir"]))
     ctx.progress(0.2, "Applying Bates numbers across files…")
-    passwords = {p: pw for p in sources if (pw := _password(ctx, p))}
+    passwords = {p: pw for p in sources if (pw := ctx.password(p))}
     written = ops.add_bates_across_files(
         sources,
         ctx.staging.job_dir,
@@ -157,7 +148,6 @@ def handle_bates(ctx: JobContext) -> Path:
         return renamed
     return written[0]
 
-
 def handle_bookmarks(ctx: JobContext) -> Path:
     action = str(ctx.spec.options.get("action", "set"))
     ctx.progress(0.3, "Updating bookmarks…")
@@ -166,14 +156,14 @@ def handle_bookmarks(ctx: JobContext) -> Path:
             ctx.spec.inputs[0],
             str(ctx.staged_output),
             title=str(ctx.spec.options.get("title", "Table of contents")),
-            password=_password(ctx),
+            password=ctx.password(),
         )
     elif action == "clear":
         ops.set_bookmarks(
             ctx.spec.inputs[0],
             str(ctx.staged_output),
             [],
-            password=_password(ctx),
+            password=ctx.password(),
         )
     elif action == "set":
         raw = ctx.spec.options.get("bookmarks") or []
@@ -184,18 +174,17 @@ def handle_bookmarks(ctx: JobContext) -> Path:
             ctx.spec.inputs[0],
             str(ctx.staged_output),
             entries,
-            password=_password(ctx),
+            password=ctx.password(),
         )
     elif action == "pages":
         ops.bookmarks_one_per_page(
             ctx.spec.inputs[0],
             str(ctx.staged_output),
-            password=_password(ctx),
+            password=ctx.password(),
         )
     else:
         raise ValueError(f"Unknown bookmarks action: {action!r}")
     return ctx.staged_output
-
 
 def handle_annotations(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Processing annotations…")
@@ -204,11 +193,10 @@ def handle_annotations(ctx: JobContext) -> Path:
         str(ctx.staged_output),
         action=str(ctx.spec.options.get("action", "remove")),  # type: ignore[arg-type]
         include_widgets=bool(ctx.spec.options.get("include_widgets", True)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_blank_pages(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Removing blank pages…")
@@ -216,11 +204,10 @@ def handle_blank_pages(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         ink_threshold=float(ctx.spec.options.get("ink_threshold", 0.01)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_color_effects(ctx: JobContext) -> Path:
     effect = str(ctx.spec.options.get("effect", "greyscale"))
@@ -232,11 +219,10 @@ def handle_color_effects(ctx: JobContext) -> Path:
         effect=effect,  # type: ignore[arg-type]
         background_rgb=(float(bg[0]), float(bg[1]), float(bg[2])),
         dpi=int(ctx.spec.options.get("dpi", 150)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 MODIFY_HANDLERS: dict[str, object] = {
     "crop": handle_crop,
@@ -249,7 +235,6 @@ MODIFY_HANDLERS: dict[str, object] = {
     "blank_pages": handle_blank_pages,
     "color_effects": handle_color_effects,
 }
-
 
 def register_modify_handlers(runner: SerializedJobRunner) -> None:
     for job_type, handler in MODIFY_HANDLERS.items():

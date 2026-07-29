@@ -22,3 +22,9 @@ class CancelToken:
     def check(self) -> None:
         if self._event.is_set():
             raise JobCancelledError("Job cancelled")
+
+
+def check_cancel(cancel: CancelToken | None) -> None:
+    """No-op when *cancel* is None; otherwise ``cancel.check()``."""
+    if cancel is not None:
+        cancel.check()

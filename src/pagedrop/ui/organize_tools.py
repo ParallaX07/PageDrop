@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtWidgets import QWidget
 
 from pagedrop.core.jobs import SerializedJobRunner
 from pagedrop.core.organize_jobs import register_organize_handlers
@@ -157,13 +157,6 @@ def launch_organize_tool(tools: ToolsWindow, tool_id: str) -> None:
         open_organize_shell(tools, tool_id)
         return
     if tool_id in ORGANIZE_DEDICATED_WINDOW_EXCEPTIONS:
-        if tools.is_job_running():
-            QMessageBox.information(
-                tools,
-                tools.WINDOW_TITLE,
-                "A job is already running. Wait for it to finish or cancel it.",
-            )
-            return
         ctx = editor_pdf_context(tools.editor)
         _launch_compare(tools, ctx)
         return

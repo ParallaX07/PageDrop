@@ -8,15 +8,10 @@ from typing import Any, Iterable, Literal, cast
 
 import fitz
 
-from pagedrop.core.jobs.cancel import CancelToken
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_service import FITZ_LOCK, attachments_for_path, extract_attachment
-
-
-def _check_cancel(cancel: CancelToken | None) -> None:
-    if cancel is not None:
-        cancel.check()
 
 
 STANDARD_METADATA_KEYS: tuple[str, ...] = (

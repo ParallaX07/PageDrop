@@ -6,7 +6,7 @@ Credentials are runtime-only; ``JobSpec`` is persistable without secrets.
 
 from __future__ import annotations
 
-from pagedrop.core.jobs.cancel import CancelToken
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.jobs.errors import (
     BackendUnavailableError,
@@ -40,6 +40,7 @@ __all__ = [
     "RuntimeCredentials",
     "SerializedJobRunner",
     "SourceOverwriteError",
+    "check_cancel",
     "ensure_output_destination",
     "paths_refer_to_same_file",
     "preflight_pdf_inputs",

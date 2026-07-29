@@ -56,6 +56,8 @@ class PdfTab(QWidget):
         # Main-thread only — never pass these docs into QRunnable workers
         # (see core.thread_policy). Workers open by path themselves.
         self._loader_cache: dict[str, PdfLoader] = {}
+        # ponytail: tab PdfLoader vs pdf_service interactive cache — dual owners
+        # by design (see PdfLoader / pdf_service). Not a third MuPDF doc cache.
         # Runtime-only unlock secrets for open sources (Save As / extract /
         # get_loader cache miss). Dropped on tab close — never QSettings.
         # passwords stay as str; Python can't scrub interned strings.

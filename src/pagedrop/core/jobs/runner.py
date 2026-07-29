@@ -45,6 +45,10 @@ class JobContext:
     # Transient secrets (encrypt passwords, etc.) — never on JobSpec / disk.
     secrets: dict[str, str]
 
+    def password(self, path: str | None = None) -> str | None:
+        """Credential for *path*, or the first job input if omitted."""
+        return self.credentials.get(path or self.spec.inputs[0])
+
 
 @dataclass(frozen=True)
 class _HandlerEntry:

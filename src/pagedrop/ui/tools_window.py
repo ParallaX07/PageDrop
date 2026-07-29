@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QResizeEvent
@@ -29,14 +27,11 @@ from pagedrop.core.capabilities import (
     CapabilityStatus,
     probe,
 )
+from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.dialogs import prompt_missing_capability
-from pagedrop.ui.job_chrome import JobChromeMixin
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import launch_organize_tool
 from pagedrop.ui.tool_page import StatusFooter
-
-if TYPE_CHECKING:
-    pass
 
 CATEGORIES: tuple[str, ...] = (
     "Organize",
@@ -555,8 +550,12 @@ class _TileArrowNavFilter(QObject):
         return True
 
 
-class ToolsWindow(JobChromeMixin, QWidget):
-    """Searchable Tools catalogue; job progress via BusyOverlay + status `…`."""
+class ToolsWindow(QWidget):
+    """Searchable Tools catalogue. Jobs run on tool shells, not here.
+
+    Toast stays for coming-soon / info; BusyOverlay + ResultActionsBar live on
+    ``ToolShellWindow`` (O7 / O15).
+    """
 
     WINDOW_TITLE = "Tools"
     PAGE_ID = "tools"
@@ -570,7 +569,6 @@ class ToolsWindow(JobChromeMixin, QWidget):
         self._editor = editor
         self._window_manager = window_manager  # kept for callers; unused for quit
         self.tool_page_id = self.PAGE_ID
-        self._init_job_chrome_state()
         self._tiles: list[ToolTile] = []
         self._category_sections: dict[str, QWidget] = {}
         self._category_headings: dict[str, QToolButton] = {}
@@ -580,6 +578,7 @@ class ToolsWindow(JobChromeMixin, QWidget):
         self._compact = False
         self._grid_columns = _GRID_COLUMNS
         self._status = StatusFooter(initial="Choose a tool")
+        self._toast = ToastOverlay(self)
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("ToolsWindow")
@@ -604,11 +603,8 @@ class ToolsWindow(JobChromeMixin, QWidget):
     def editor(self) -> QWidget | None:
         return self._editor
 
-    def show_result(self, path: str | Path) -> None:
-        self._result_bar.show_for(path)
-
-    def _set_job_controls_enabled(self, enabled: bool) -> None:
-        self._search.setEnabled(enabled)
+    def show_toast(self, message: str, *, kind: str = "info") -> None:
+        self._toast.show_toast(message, kind=kind)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -721,9 +717,6 @@ class ToolsWindow(JobChromeMixin, QWidget):
 
         self._catalogue_layout.addStretch(1)
 
-        self._make_job_chrome_widgets()
-        self._wire_result_actions()
-        root.addWidget(self._result_bar)
         root.addWidget(self._status)
 
     def grid_columns(self) -> int:
@@ -932,12 +925,3 @@ class ToolsWindow(JobChromeMixin, QWidget):
         if cols != self._grid_columns:
             self._grid_columns = cols
             self._apply_filter(self._search.text())
-        parent = self._busy_overlay.parentWidget()
-        if parent is not None:
-            self._busy_overlay.setGeometry(parent.rect())
-
-    def closeEvent(self, event) -> None:  # noqa: N802
-        if not self.request_close():
-            event.ignore()
-            return
-        super().closeEvent(event)

@@ -468,7 +468,7 @@ def test_each_migrated_organize_tool_runs_job_and_shows_result_actions(
     assert shell._result_bar.isVisible()
     assert shell._result_bar._path == str(out)
     assert shell._result_bar._folder_btn.text() == "Show in folder"
-    assert not tools.is_job_running()
+    assert not hasattr(tools, "is_job_running")
     assert _file_hash(src) == source_hash
     assert Path(out).resolve() != src.resolve()
 

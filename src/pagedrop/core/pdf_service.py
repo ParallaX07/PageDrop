@@ -5,9 +5,14 @@ Viewer, UI thumbnail/preview/merge/convert pools, and the job runner share
 only; helpers borrow documents from a short-lived path→doc cache inside the
 lock and return bytes / dataclasses only — never a live ``fitz.Document``.
 
-one global lock for all in-process fitz — a long fitz job stalls
+ponytail: one global lock for all in-process fitz — a long fitz job stalls
 unrelated thumbs/viewer until it releases. Upgrade path: dedicated PDF service
 process with the same call shapes (O10).
+
+ponytail: dual long-lived docs with tab ``PdfLoader`` are intentional — this
+cache is interactive render only (short TTL); the tab loader owns edit
+geometry. Do not add a third path→doc owner. Fold into one cache only when
+measured (same O10 upgrade).
 """
 
 from __future__ import annotations

@@ -16,6 +16,7 @@ from pagedrop.core.jobs import (
     SerializedJobRunner,
 )
 from pagedrop.ui.main_window import MainWindow
+from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
 from pagedrop.utils.temp_manager import TempManager
 
@@ -70,16 +71,16 @@ def test_smoke_tools_opens_and_editor_stays_usable(qtbot, isolated_settings):
 
 
 def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_settings):
-    """Enqueue a dummy job: success promotes; cancel leaves no orphans."""
+    """Enqueue a dummy job on a tool shell: success promotes; cancel leaves no orphans."""
     src = tmp_path / "in.pdf"
     out_ok = tmp_path / "out-ok.pdf"
     out_cancel = tmp_path / "out-cancel.pdf"
     _write_pdf(src)
     source_hash = _file_hash(src)
 
-    tools = ToolsWindow()
-    qtbot.addWidget(tools)
-    tools.showMinimized()
+    host = ToolShellWindow(title="Dummy", description="Smoke job host")
+    qtbot.addWidget(host)
+    host.showMinimized()
 
     temp = TempManager()
     try:
@@ -87,17 +88,17 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
         runner.register("dummy_copy", _copy_handler)
         runner.register("dummy_cancel", _cancelling_handler)
 
-        # Success — Tools progress UI + promote + no leftover job_* temps.
-        token = tools.begin_job("Running dummy job…")
-        assert tools.is_job_running()
-        assert tools.statusBar().currentMessage().endswith("…")
+        # Success — shell progress UI + promote + no leftover job_* temps.
+        token = host.begin_job("Running dummy job…")
+        assert host.is_job_running()
+        assert host.statusBar().currentMessage().endswith("…")
 
         result = runner.run(
             JobSpec.create("dummy_copy", inputs=[src], output=out_ok),
-            progress=tools.set_job_progress,
+            progress=host.set_job_progress,
             cancel=token,
         )
-        tools.end_job(
+        host.end_job(
             status=f"Saved {result.name}",
             toast=f"Saved {result.name}",
             toast_kind="success",
@@ -106,18 +107,18 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
         assert result == out_ok
         assert out_ok.is_file()
         assert _file_hash(src) == source_hash
-        assert not tools.is_job_running()
-        assert tools._result_bar.isVisible()
+        assert not host.is_job_running()
+        assert host._result_bar.isVisible()
         assert not any(temp.get_dir().glob("job_*"))
 
         # Cancel — partial staged output removed; destination never written.
-        token = tools.begin_job("Cancelling dummy job…")
+        token = host.begin_job("Cancelling dummy job…")
         with pytest.raises(JobCancelledError):
             runner.run(
                 JobSpec.create("dummy_cancel", inputs=[src], output=out_cancel),
                 cancel=token,
             )
-        tools.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+        host.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
         assert not out_cancel.exists()
         assert _file_hash(src) == source_hash
         leftovers = [
@@ -126,9 +127,9 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
             if p.is_file() and p.name != ".pagedrop_owner"
         ]
         assert leftovers == []
-        assert not tools.is_job_running()
-        assert tools.statusBar().currentMessage() == "Cancelled"
+        assert not host.is_job_running()
+        assert host.statusBar().currentMessage() == "Cancelled"
     finally:
         temp.cleanup()
-        tools.close()
-        qtbot.waitUntil(lambda: not tools.isVisible(), timeout=5000)
+        host.close()
+        qtbot.waitUntil(lambda: not host.isVisible(), timeout=5000)

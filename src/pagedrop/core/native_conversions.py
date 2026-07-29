@@ -25,7 +25,7 @@ from pagedrop.core.capabilities import (
     probe,
     soft_import,
 )
-from pagedrop.core.jobs.cancel import CancelToken
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
@@ -34,11 +34,6 @@ from pagedrop.core.supported_formats import (
     format_capability_available,
     import_format_for_path,
 )
-
-
-def _check_cancel(cancel: CancelToken | None) -> None:
-    if cancel is not None:
-        cancel.check()
 
 # Letter-ish page for Story layouts (PDF points).
 _STORY_MEDIABOX = fitz.Rect(0, 0, 612, 792)

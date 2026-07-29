@@ -29,16 +29,16 @@ from tests.core.test_jobs import _encrypted_pdf
 from tests.conftest import RENDER_TIMEOUT_MS
 
 
-def test_catalogue_and_shell_share_job_chrome():
-    """O6: one JobChromeMixin path for Tools hub + shell (not twin copies)."""
-    assert issubclass(ToolsWindow, JobChromeMixin)
+def test_shell_owns_job_chrome_not_catalogue():
+    """O15: JobChromeMixin lives on shells; catalogue keeps toast only."""
+    assert not issubclass(ToolsWindow, JobChromeMixin)
     assert issubclass(ToolShellWindow, JobChromeMixin)
-    assert ToolsWindow.begin_job is JobChromeMixin.begin_job
-    assert ToolsWindow.end_job is JobChromeMixin.end_job
     assert ToolShellWindow.begin_job is JobChromeMixin.begin_job
     assert ToolShellWindow.end_job is JobChromeMixin.end_job
-    assert ToolsWindow._on_preview_result is JobChromeMixin._on_preview_result
+    assert ToolShellWindow._on_preview_result is JobChromeMixin._on_preview_result
     assert ToolShellWindow._on_open_result is JobChromeMixin._on_open_result
+    assert hasattr(ToolsWindow, "show_toast")
+    assert not hasattr(ToolsWindow, "begin_job")
 
 
 def _wait_for_tab_loaded(qtbot, tab: PdfTab, *, timeout: int = RENDER_TIMEOUT_MS) -> None:
@@ -143,10 +143,15 @@ def test_search_matches_multiple_words(qtbot):
     window.close()
 
 
+def _job_chrome_host(qtbot) -> ToolShellWindow:
+    shell = ToolShellWindow(title="Test tool", description="Job chrome host")
+    qtbot.addWidget(shell)
+    shell.show()
+    return shell
+
+
 def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window.show()
+    window = _job_chrome_host(qtbot)
 
     shown: list[str] = []
 
@@ -174,13 +179,11 @@ def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
 
 
 def test_end_job_error_clears_result_bar(qtbot, tmp_path, monkeypatch):
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window.show()
+    window = _job_chrome_host(qtbot)
 
     out = tmp_path / "prev.pdf"
     out.write_bytes(b"%PDF-1.4")
-    window.show_result(out)
+    window._result_bar.show_for(out)
     assert window._result_bar.isVisible()
 
     monkeypatch.setattr(
@@ -194,9 +197,7 @@ def test_end_job_error_clears_result_bar(qtbot, tmp_path, monkeypatch):
 
 
 def test_busy_overlay_cancel_aborts_job(qtbot):
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window.show()
+    window = _job_chrome_host(qtbot)
 
     token = window.begin_job("Working…")
     assert window._busy_overlay._cancel_btn.isVisible()
@@ -213,9 +214,7 @@ def test_busy_overlay_cancel_aborts_job(qtbot):
 def test_busy_overlay_escape_cancels_when_cancellable(qtbot):
     from PyQt6.QtCore import Qt
 
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window.show()
+    window = _job_chrome_host(qtbot)
     qtbot.waitExposed(window, timeout=5000)
 
     token = window.begin_job("Working…")
@@ -265,9 +264,7 @@ def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
     _encrypted_pdf(enc, password="secret")
     source_bytes = enc.read_bytes()
 
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window.show()
+    window = _job_chrome_host(qtbot)
     cancel = window.begin_job("Unlocking…")
 
     prompts: list[bool] = []
@@ -301,9 +298,7 @@ def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
 
 
 def test_close_while_running_confirms_cancel(qtbot, monkeypatch):
-    window = ToolsWindow()
-    qtbot.addWidget(window)
-    window.show()
+    window = _job_chrome_host(qtbot)
     window.begin_job("Working…")
 
     monkeypatch.setattr(

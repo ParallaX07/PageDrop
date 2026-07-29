@@ -1,7 +1,8 @@
-"""Shared job chrome for Tools catalogue and tool shells (O6).
+"""Shared job chrome for tool shells (O6 / O15).
 
-Owns begin_job / end_job / progress / toast / result-action handlers so catalogue
-and shell surfaces stay distinct widgets but share one behavior path.
+Owns begin_job / end_job / progress / toast / result-action handlers.
+The Tools catalogue keeps toast only — BusyOverlay + ResultActionsBar live here
+on ``ToolShellWindow`` (and similar hosts).
 """
 
 from __future__ import annotations

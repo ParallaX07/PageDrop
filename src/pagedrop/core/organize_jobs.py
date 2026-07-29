@@ -13,11 +13,6 @@ from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 # if PyMuPDF gains a path-based embfile API).
 MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024
 
-
-def _password(ctx: JobContext, path: str | None = None) -> str | None:
-    return ctx.credentials.get(path or ctx.spec.inputs[0])
-
-
 def handle_split_ranges(ctx: JobContext) -> Path:
     ranges = [tuple(r) for r in ctx.spec.options["ranges"]]
     base_name = str(ctx.spec.options.get("base_name", "range"))
@@ -28,7 +23,7 @@ def handle_split_ranges(ctx: JobContext) -> Path:
         ranges,  # type: ignore[arg-type]
         ctx.staging.job_dir,
         base_name=base_name,
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     ctx.cancel.check()
@@ -42,7 +37,6 @@ def handle_split_ranges(ctx: JobContext) -> Path:
     # Runner promotes the first staged file to spec.output.
     return staged[0]
 
-
 def handle_reverse(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Reversing pages…")
     pdf_tools.reverse_pdf_pages(
@@ -50,11 +44,10 @@ def handle_reverse(ctx: JobContext) -> Path:
         str(ctx.staged_output),
         add_blank_page=bool(ctx.spec.options.get("add_blank_page", False)),
         blank_size_from=str(ctx.spec.options.get("blank_size_from", "last")),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_alternate(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Alternating pages…")
@@ -64,12 +57,11 @@ def handle_alternate(ctx: JobContext) -> Path:
         b,
         str(ctx.staged_output),
         start_with_a=bool(ctx.spec.options.get("start_with_a", True)),
-        password_a=_password(ctx, a),
-        password_b=_password(ctx, b),
+        password_a=ctx.password(a),
+        password_b=ctx.password(b),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_n_up(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Building N-up…")
@@ -79,11 +71,10 @@ def handle_n_up(ctx: JobContext) -> Path:
         rows=int(ctx.spec.options["rows"]),
         cols=int(ctx.spec.options["cols"]),
         margin_pt=float(ctx.spec.options.get("margin_pt", 0.0)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_booklet(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Building booklet…")
@@ -91,11 +82,10 @@ def handle_booklet(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         margin_pt=float(ctx.spec.options.get("margin_pt", 0.0)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_posterize(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Posterizing…")
@@ -104,11 +94,10 @@ def handle_posterize(ctx: JobContext) -> Path:
         str(ctx.staged_output),
         rows=int(ctx.spec.options["rows"]),
         cols=int(ctx.spec.options["cols"]),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_divide(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Dividing pages…")
@@ -116,22 +105,20 @@ def handle_divide(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         direction=str(ctx.spec.options["direction"]),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_combine_long(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Combining pages…")
     pdf_tools.combine_pages_to_single_long(
         ctx.spec.inputs[0],
         str(ctx.staged_output),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_normalize(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Normalizing page size…")
@@ -142,11 +129,10 @@ def handle_normalize(ctx: JobContext) -> Path:
         float(ctx.spec.options["height_pt"]),
         strategy=str(ctx.spec.options.get("strategy", "fit")),
         margins_pt=float(ctx.spec.options.get("margins_pt", 0.0)),
-        password=_password(ctx),
+        password=ctx.password(),
         cancel=ctx.cancel,
     )
     return ctx.staged_output
-
 
 def handle_metadata_strip(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Stripping metadata…")
@@ -154,10 +140,9 @@ def handle_metadata_strip(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         strip_xmp_v1=bool(ctx.spec.options.get("strip_xmp", True)),
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_metadata_set(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Updating metadata…")
@@ -166,10 +151,9 @@ def handle_metadata_set(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         updates=updates,
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_page_labels(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Setting page labels…")
@@ -178,10 +162,9 @@ def handle_page_labels(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         labels=labels,
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_attachment_add(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Adding attachment…")
@@ -203,10 +186,9 @@ def handle_attachment_add(ctx: JobContext) -> Path:
         name=str(ctx.spec.options["name"]),
         data=data,
         overwrite=bool(ctx.spec.options.get("replace", False)),
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_attachment_remove(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Removing attachment…")
@@ -214,26 +196,23 @@ def handle_attachment_remove(ctx: JobContext) -> Path:
         ctx.spec.inputs[0],
         str(ctx.staged_output),
         name=str(ctx.spec.options["name"]),
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_attachment_extract(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Extracting attachments…")
     pdf_tools.attachment_extract_all_zip(
         ctx.spec.inputs[0],
         ctx.staged_output,
-        password=_password(ctx),
+        password=ctx.password(),
     )
     return ctx.staged_output
-
 
 def handle_zip(ctx: JobContext) -> Path:
     ctx.progress(0.3, "Creating ZIP…")
     pdf_tools.zip_pdfs(ctx.spec.inputs, ctx.staged_output)
     return ctx.staged_output
-
 
 def handle_compare(ctx: JobContext) -> Path:
     ctx.progress(0.2, "Comparing pages…")
@@ -243,8 +222,8 @@ def handle_compare(ctx: JobContext) -> Path:
         b,
         ctx.staged_output,
         dpi=int(ctx.spec.options.get("dpi", 120)),
-        password_a=_password(ctx, a),
-        password_b=_password(ctx, b),
+        password_a=ctx.password(a),
+        password_b=ctx.password(b),
         cancel=ctx.cancel,
     )
     # Stash ratio for UI status via options mutation is forbidden; write a
@@ -254,7 +233,6 @@ def handle_compare(ctx: JobContext) -> Path:
     ratio_staged.write_text(f"{result.overall_diff_ratio:.4f}", encoding="utf-8")
     ctx.staging.promote(ratio_staged, ratio_dest)
     return ctx.staged_output
-
 
 ORGANIZE_HANDLERS: dict[str, object] = {
     "split": handle_split_ranges,
@@ -275,7 +253,6 @@ ORGANIZE_HANDLERS: dict[str, object] = {
     "zip": handle_zip,
     "compare": handle_compare,
 }
-
 
 def register_organize_handlers(runner: SerializedJobRunner) -> None:
     for job_type, handler in ORGANIZE_HANDLERS.items():
