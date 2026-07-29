@@ -179,6 +179,41 @@ def test_invalidate_doc_cache_forces_reopen(
     assert open_calls["n"] == 2
 
 
+def _ocg_pdf(path: Path) -> None:
+    doc = fitz.open()
+    try:
+        page = doc.new_page()
+        a = doc.add_ocg("Layer A", on=True)
+        b = doc.add_ocg("Layer B", on=True)
+        page.insert_text((72, 72), "AAAA", oc=a)
+        page.insert_text((72, 120), "BBBB", oc=b)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+
+def test_ocg_render_does_not_poison_doc_cache(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_service import layers_for_path
+
+    path = tmp_path / "layers.pdf"
+    _ocg_pdf(path)
+    ref = PageRef(str(path), 0)
+
+    before = [(layer.number, layer.visible) for layer in layers_for_path(str(path))]
+    assert before == [(0, True), (1, True)]
+
+    # Hide Layer A for one render — must not stick on the shared cached doc.
+    png_hidden = render_ref_png(ref, 128, ocg_on=frozenset({1}))
+    assert png_hidden[:8] == b"\x89PNG\r\n\x1a\n"
+
+    after = [(layer.number, layer.visible) for layer in layers_for_path(str(path))]
+    assert after == before
+
+    png_default = render_ref_png(ref, 128)
+    assert png_default != png_hidden
+    assert render_ref_png(ref, 128, ocg_on=frozenset({1})) == png_hidden
+
+
 def test_render_and_search_encrypted_with_passwords(tmp_path: Path) -> None:
     from pagedrop.core.pdf_loader import PdfPasswordRequiredError
     from tests.core.test_jobs import _encrypted_pdf

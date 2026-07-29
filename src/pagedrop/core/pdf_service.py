@@ -221,22 +221,51 @@ def render_ref_png(
     passwords: Mapping[str, str] | None = None,
     ocg_on: frozenset[int] | None = None,
 ) -> bytes:
-    """Render one ``PageRef`` to PNG under the fitz lock."""
+    """Render one ``PageRef`` to PNG under the fitz lock.
+
+    When ``ocg_on`` is set, layer visibility is applied only for this render
+    and restored afterward so the shared doc cache still matches disk.
+    """
 
     def _body() -> bytes:
         doc = _cache_get(
             ref.source_path, _password_for(passwords, ref.source_path)
         )
+        prior: list[tuple[int, bool]] | None = None
         if ocg_on is not None:
+            # No native OCG save/restore in PyMuPDF 1.27 — snapshot via
+            # layer_ui_configs + set_layer_ui_config (PDF_OC_ON/OFF).
+            prior = _snapshot_ocg_ui(doc)
             _apply_ocg_visibility(doc, ocg_on)
-        return render_page_png(
-            doc,
-            ref.source_index,
-            width_px=width_px,
-            rotation=ref.rotation,
-        )
+        try:
+            return render_page_png(
+                doc,
+                ref.source_index,
+                width_px=width_px,
+                rotation=ref.rotation,
+            )
+        finally:
+            if prior is not None:
+                _restore_ocg_ui(doc, prior)
 
     return call(_body)
+
+
+def _snapshot_ocg_ui(doc: fitz.Document) -> list[tuple[int, bool]]:
+    return [
+        (int(cfg["number"]), bool(cfg.get("on", True)))
+        for cfg in doc.layer_ui_configs()
+        if int(cfg.get("number", -1)) >= 0
+    ]
+
+
+def _restore_ocg_ui(
+    doc: fitz.Document, prior: list[tuple[int, bool]]
+) -> None:
+    for number, on in prior:
+        doc.set_layer_ui_config(
+            number, action=fitz.PDF_OC_ON if on else fitz.PDF_OC_OFF
+        )
 
 
 def _apply_ocg_visibility(doc: fitz.Document, visible_numbers: frozenset[int]) -> None:
@@ -248,8 +277,10 @@ def _apply_ocg_visibility(doc: fitz.Document, visible_numbers: frozenset[int]) -
         want_on = number in visible_numbers
         is_on = bool(cfg.get("on", True))
         if want_on != is_on:
-            # 1 = ON, 0 = OFF
-            doc.set_layer_ui_config(number, action=1 if want_on else 0)
+            doc.set_layer_ui_config(
+                number,
+                action=fitz.PDF_OC_ON if want_on else fitz.PDF_OC_OFF,
+            )
 
 
 def search_model(
