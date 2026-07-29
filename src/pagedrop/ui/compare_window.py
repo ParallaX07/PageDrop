@@ -53,7 +53,12 @@ from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import confirm_overwrite
 from pagedrop.ui.organize_tools import ensure_organize_runner
 from pagedrop.ui.tool_page import StatusFooter, present_tool_page
-from pagedrop.ui.result_actions import ResultActionsBar, preview_pdf, show_in_folder
+from pagedrop.ui.result_actions import (
+    ResultActionsBar,
+    open_in_editor,
+    preview_pdf,
+    show_in_folder,
+)
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     BG_CARD,
@@ -206,9 +211,15 @@ class CompareWindow(QWidget):
     WINDOW_TITLE = "Compare PDFs"
     PAGE_ID = "compare"
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        editor: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.tool_page_id = self.PAGE_ID
+        self._editor = editor
         self._status = StatusFooter(initial="Choose two PDFs and click Compare")
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("CompareWindow")
@@ -231,6 +242,9 @@ class CompareWindow(QWidget):
 
     def statusBar(self) -> StatusFooter:  # noqa: N802
         return self._status
+
+    def set_editor(self, editor: QWidget | None) -> None:
+        self._editor = editor
 
     def request_close(self) -> bool:
         return True
@@ -346,11 +360,7 @@ class CompareWindow(QWidget):
         )
         self._result_bar.preview_requested.connect(self._preview_export)
         self._result_bar.show_in_folder_requested.connect(self._show_folder)
-        self._result_bar.open_in_editor_requested.connect(
-            lambda _path: self._toast.show_toast(
-                "Open the exported PDF from the editor File → Open", kind="info"
-            )
-        )
+        self._result_bar.open_in_editor_requested.connect(self._on_open_result)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -652,6 +662,22 @@ class CompareWindow(QWidget):
 
     def _preview_export(self, path: str) -> None:
         preview_pdf(path, parent=self)
+
+    def _on_open_result(self, path: str) -> None:
+        editor = self._editor
+        if editor is None:
+            self._toast.show_toast("No editor window available", kind="error")
+            return
+        try:
+            open_in_editor(path, editor)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                self.WINDOW_TITLE,
+                f"Could not open in editor:\n{exc}",
+            )
+            return
+        self._toast.show_toast(f"Opened {Path(path).name}", kind="success")
 
     def _show_folder(self, path: str) -> None:
         if not show_in_folder(path):

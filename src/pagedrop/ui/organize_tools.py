@@ -121,7 +121,9 @@ def _launch_compare(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
     if window is None:
         window = getattr(tools, "_compare_window", None)
     if window is None:
-        window = CompareWindow()
+        window = CompareWindow(editor=editor)
+    else:
+        window.set_editor(editor)
     tools._compare_window = window  # type: ignore[attr-defined]
     if initial:
         window.prefill_a(initial)

@@ -116,6 +116,7 @@ def test_compare_success_shows_diff_ratio(
 
     out = tmp_path / "heat_compare.pdf"
     ratio_text = "0.1234"
+    opened: list[str] = []
 
     class FakeRunner:
         def run(self, spec: JobSpec, **_kwargs):
@@ -126,6 +127,10 @@ def test_compare_success_shows_diff_ratio(
             )
             return out_path
 
+    class FakeEditor:
+        def _open_single_pdf(self, path: str) -> None:
+            opened.append(path)
+
     monkeypatch.setattr(compare_module, "ensure_organize_runner", lambda: FakeRunner())
     monkeypatch.setattr(
         compare_module.QFileDialog,
@@ -133,8 +138,9 @@ def test_compare_success_shows_diff_ratio(
         lambda *args, **kwargs: (str(out), "PDF files (*.pdf)"),
     )
 
-    window = CompareWindow()
+    window = CompareWindow(editor=FakeEditor())
     qtbot.addWidget(window)
+    window.show()
     window._path_a = str(tmp_path / "a.pdf")
     window._path_b = str(tmp_path / "b.pdf")
     window._export_heatmap()
@@ -142,4 +148,53 @@ def test_compare_success_shows_diff_ratio(
     status = window.statusBar().currentMessage()
     assert "Overall diff" in status
     assert f"{float(ratio_text):.4f}" in status
+    assert window._result_bar.isVisible()
+    assert window._result_bar._path == str(out)
+    assert opened == []  # success must not auto-open
     window.close()
+
+
+def test_compare_open_in_editor_opens_exported_pdf(qtbot, tmp_path: Path, monkeypatch):
+    """Open in editor must load the exported heatmap via the wired editor."""
+    out = tmp_path / "heat_compare.pdf"
+    out.write_bytes(b"%PDF-1.4 fake")
+    opened: list[str] = []
+
+    class FakeEditor:
+        def _open_single_pdf(self, path: str) -> None:
+            opened.append(path)
+
+    window = CompareWindow(editor=FakeEditor())
+    qtbot.addWidget(window)
+    toasts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        window._toast,
+        "show_toast",
+        lambda msg, kind="info": toasts.append((msg, kind)),
+    )
+    window._result_bar.show_for(out, message=f"Saved {out.name}")
+    window._result_bar._open_btn.click()
+
+    assert opened == [str(out)]
+    assert toasts and toasts[-1] == (f"Opened {out.name}", "success")
+    window.close()
+
+
+def test_launch_compare_passes_editor(qtbot):
+    """Tools launch must hand the editor through to CompareWindow."""
+
+    class FakeEditor:
+        def _open_single_pdf(self, path: str) -> None:
+            pass
+
+    editor = FakeEditor()
+    tools = ToolsWindow(editor=editor)
+    qtbot.addWidget(tools)
+    tools.show()
+
+    launch_organize_tool(tools, "compare")
+    window = getattr(tools, "_compare_window", None)
+    assert isinstance(window, CompareWindow)
+    assert window._editor is editor
+    window.close()
+    tools.close()
