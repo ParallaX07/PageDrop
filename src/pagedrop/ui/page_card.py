@@ -444,10 +444,7 @@ class PageCard(BaseFileCard):
         current = self.parentWidget()
         while current is not None:
             if isinstance(current, ThumbnailGrid):
-                tab = current._parent_tab()
-                if tab is not None:
-                    return tab.credentials.snapshot()
-                return None
+                return current._source_passwords()
             current = current.parentWidget()
         return None
 

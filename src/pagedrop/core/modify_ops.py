@@ -16,7 +16,7 @@ from typing import Literal, Sequence
 
 import fitz
 
-from pagedrop.core.jobs.cancel import CancelToken
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
 
@@ -39,11 +39,6 @@ AnnotationAction = Literal["remove", "flatten"]
 # Near-white threshold for blank-page ink heuristic (0–255 greyscale).
 _BLANK_WHITE = 250
 _BLANK_MATRIX = fitz.Matrix(0.25, 0.25)
-
-
-def _check_cancel(cancel: CancelToken | None) -> None:
-    if cancel is not None:
-        cancel.check()
 
 
 @dataclass(frozen=True)

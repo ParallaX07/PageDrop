@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
+import fitz
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
+from PyQt6.QtWidgets import QInputDialog
 
 from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
 from pagedrop.core.pdf_editor import PdfEditModel
@@ -13,6 +16,8 @@ from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 from pagedrop.utils.temp_manager import TempManager
+from tests.conftest import wait_for_pdf_loaded
+from tests.core.test_jobs import _encrypted_pdf
 
 
 def _make_card(
@@ -151,3 +156,51 @@ def test_outbound_drag_reflects_edit_model_order(
     assert verified_sources == [3, 4]
 
     loader.close()
+
+
+def test_page_card_drag_encrypted(main_window, tmp_path, monkeypatch, qtbot):
+    """Unlock → drag-out uses grid credentials; source unchanged, output openable."""
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = hashlib.sha256(enc.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *args, **kwargs: ("secret", True),
+    )
+
+    main_window.showMinimized()
+    main_window._load_pdf(str(enc))
+    wait_for_pdf_loaded(qtbot, main_window)
+    grid = main_window._thumbnail_grid
+    card = grid._cards[0]
+
+    assert card._source_passwords() == grid._source_passwords()
+    assert card._source_passwords() is not None
+
+    extracted_ok = {"value": False}
+
+    def capture_mime(drag: QDrag) -> None:
+        mime = drag.mimeData()
+        assert mime is not None
+        urls = mime.urls()
+        assert len(urls) == 1
+        path = Path(urls[0].toLocalFile())
+        assert path.exists()
+        # Verify before _start_drag finally cleans drag temps.
+        out = fitz.open(str(path))
+        try:
+            assert out.page_count == 1
+            assert not out.needs_pass
+        finally:
+            out.close()
+        extracted_ok["value"] = True
+
+    _patch_drag_exec(monkeypatch, capture_mime)
+
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+    assert extracted_ok["value"]
+    assert hashlib.sha256(enc.read_bytes()).hexdigest() == source_hash
