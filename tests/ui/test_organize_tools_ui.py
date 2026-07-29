@@ -15,8 +15,15 @@ from pagedrop.ui.organize_tools import (
     ensure_organize_runner,
 )
 from pagedrop.ui.tools_window import TOOL_CATALOGUE, ToolsWindow
+from pagedrop.utils import temp_manager as temp_manager_mod
 from pagedrop.utils.temp_manager import TempManager
 from tests.conftest import RENDER_TIMEOUT_MS
+
+
+def _reset_organize_runner() -> None:
+    import pagedrop.ui.organize_tools as organize_tools
+
+    organize_tools._organize_runner = None
 
 
 def _file_hash(path: Path) -> str:
@@ -66,6 +73,7 @@ def test_reverse_job_via_tools_runner_never_overwrites_source(tmp_path: Path):
     source_hash = _file_hash(src)
 
     temp = TempManager()
+    _reset_organize_runner()
     try:
         runner = ensure_organize_runner(temp)
         with pytest.raises(SourceOverwriteError):
@@ -82,7 +90,28 @@ def test_reverse_job_via_tools_runner_never_overwrites_source(tmp_path: Path):
         finally:
             reversed_doc.close()
     finally:
+        _reset_organize_runner()
         temp.cleanup()
+
+
+def test_ensure_organize_runner_reuses_temp_manager() -> None:
+    """Compare-style bare ensure must not mkdtemp a new tree each call."""
+    _reset_organize_runner()
+    before = frozenset(temp_manager_mod._live_dirs)
+    try:
+        first = ensure_organize_runner()
+        second = ensure_organize_runner()
+        assert first is second
+        assert first.temp_manager is second.temp_manager
+        root = first.temp_manager.get_dir().resolve()
+        added = temp_manager_mod._live_dirs - before
+        assert added == {root}
+    finally:
+        runner = ensure_organize_runner()
+        root = runner.temp_manager.get_dir()
+        _reset_organize_runner()
+        runner.temp_manager.cleanup()
+        assert root.resolve() not in temp_manager_mod._live_dirs
 
 
 def test_tools_window_launches_organize_split(qtbot, monkeypatch):

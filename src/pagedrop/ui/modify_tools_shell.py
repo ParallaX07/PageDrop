@@ -38,11 +38,8 @@ from pagedrop.core.modify_ops import (
     detect_blank_pages,
     get_bookmarks,
 )
-from pagedrop.core.pdf_loader import (
-    PdfLoader,
-    PdfPasswordError,
-    PdfPasswordRequiredError,
-)
+from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
@@ -651,11 +648,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         password: str | None = None
         while True:
             try:
-                loader = PdfLoader(source, password=password)
-                try:
-                    count = loader.page_count
-                finally:
-                    loader.close()
+                count = pdf_page_count(source, password=password)
                 break
             except PdfPasswordRequiredError:
                 password = prompt_pdf_password(shell, filename)
@@ -731,11 +724,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         page_count = _page_count["n"]
         if page_count <= 0:
             try:
-                loader = PdfLoader(source)
-                try:
-                    page_count = loader.page_count
-                finally:
-                    loader.close()
+                page_count = pdf_page_count(source)
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
                 return

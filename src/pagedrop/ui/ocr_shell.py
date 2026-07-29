@@ -24,7 +24,7 @@ from pagedrop.core.capabilities import (
     clear_cache,
     probe,
 )
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.organize_tools import editor_pdf_context
@@ -222,11 +222,7 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
             return
 
         try:
-            loader = PdfLoader(source)
-            try:
-                page_count = loader.page_count
-            finally:
-                loader.close()
+            page_count = pdf_page_count(source)
         except Exception as exc:
             QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
             return
@@ -325,11 +321,7 @@ def _configure_extract_tables(
                 return
 
         try:
-            loader = PdfLoader(source)
-            try:
-                page_count = loader.page_count
-            finally:
-                loader.close()
+            page_count = pdf_page_count(source)
         except Exception as exc:
             QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
             return

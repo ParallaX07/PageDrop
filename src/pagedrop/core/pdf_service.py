@@ -210,6 +210,15 @@ def _cache_get(path: str, password: str | None = None) -> fitz.Document:
     return doc
 
 
+def page_count(path: str, *, password: str | None = None) -> int:
+    """Page count under ``FITZ_LOCK`` — GUI tool probes use this, not unlocked ``PdfLoader``."""
+
+    def _body() -> int:
+        return len(_cache_get(path, password))
+
+    return call(_body)
+
+
 def page_geometry(path: str, source_index: int, *, password: str | None = None) -> PageGeom:
     def _body() -> PageGeom:
         doc = _cache_get(path, password)

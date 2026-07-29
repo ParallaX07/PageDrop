@@ -20,9 +20,6 @@ from pagedrop.ui.result_actions import (
     preview_pdf,
     show_in_folder,
 )
-from pagedrop.utils.temp_manager import TempManager
-
-
 def _progress_message(message: str) -> str:
     if message.endswith("…"):
         return message
@@ -88,7 +85,7 @@ class JobChromeMixin:
         if self._job_runner is None:
             from pagedrop.ui.organize_tools import ensure_organize_runner
 
-            self._job_runner = ensure_organize_runner(TempManager())
+            self._job_runner = ensure_organize_runner()
         return self._job_runner
 
     def is_job_running(self) -> bool:

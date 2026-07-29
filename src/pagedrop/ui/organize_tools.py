@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QWidget
 
 from pagedrop.core.jobs import SerializedJobRunner
 from pagedrop.core.organize_jobs import register_organize_handlers
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.utils.temp_manager import TempManager
 
@@ -64,15 +64,10 @@ def editor_pdf_context(editor: QWidget | None) -> EditorPdfContext | None:
     if not path or not Path(path).is_file():
         return None
 
-    page_count = 0
     try:
-        loader = PdfLoader(path)
-        try:
-            page_count = loader.page_count
-        finally:
-            loader.close()
+        count = pdf_page_count(path)
     except Exception:
-        page_count = model.logical_count()
+        count = model.logical_count()
 
     range_prefill = ""
     grid = getattr(tab, "thumbnail_grid", None)
@@ -96,7 +91,7 @@ def editor_pdf_context(editor: QWidget | None) -> EditorPdfContext | None:
 
     return EditorPdfContext(
         path=str(path),
-        page_count=page_count,
+        page_count=count,
         range_prefill=range_prefill,
     )
 
@@ -130,7 +125,20 @@ def _launch_compare(tools: ToolsWindow, ctx: EditorPdfContext | None) -> None:
     present_tool_page(editor, window, page_id=page_id)
 
 
+# Process-wide shared runner — Compare + JobChromeMixin must not mkdtemp per call.
+_organize_runner: SerializedJobRunner | None = None
+
+
 def ensure_organize_runner(temp_manager: TempManager | None = None) -> SerializedJobRunner:
+    """Return the process-wide organize/tool job runner (create once).
+
+    Optional *temp_manager* is used only on the first call; later callers reuse
+    the cached runner (and its ``TempManager``).
+    """
+    global _organize_runner
+    if _organize_runner is not None:
+        return _organize_runner
+
     from pagedrop.core.modify_jobs import register_modify_handlers
     from pagedrop.core.native_conversion_jobs import register_native_conversion_handlers
     from pagedrop.core.ocr_jobs import register_ocr_handlers
@@ -146,6 +154,7 @@ def ensure_organize_runner(temp_manager: TempManager | None = None) -> Serialize
     register_modify_handlers(runner)
     register_ocr_handlers(runner)
     register_pdf_to_docx_handlers(runner)
+    _organize_runner = runner
     return runner
 
 

@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.ui.dialogs import prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -180,11 +180,7 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
             QMessageBox.warning(shell, shell.WINDOW_TITLE, "Choose an output folder.")
             return
         try:
-            loader = PdfLoader(source)
-            try:
-                page_count = loader.page_count
-            finally:
-                loader.close()
+            page_count = pdf_page_count(source)
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"

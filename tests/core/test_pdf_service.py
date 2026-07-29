@@ -16,6 +16,7 @@ from pagedrop.core.pdf_service import (
     PageGeom,
     doc_cache_size,
     invalidate_doc_cache,
+    page_count,
     page_geometry,
     page_links,
     page_text_dict,
@@ -61,6 +62,24 @@ def test_job_runner_uses_shared_fitz_lock() -> None:
     assert pdf_service.FITZ_LOCK is FITZ_LOCK
     runner = SerializedJobRunner()
     assert runner is not None
+
+
+def test_page_count_under_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "pages.pdf"
+    _text_pdf(path, ["a", "b", "c"])
+
+    held: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+    assert page_count(str(path)) == 3
+    assert held and all(held)
 
 
 def test_office_handlers_register_without_fitz_lock() -> None:

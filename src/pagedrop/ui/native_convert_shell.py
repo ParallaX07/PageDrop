@@ -20,7 +20,7 @@ from pagedrop.core.native_conversions import (
     MULTI_PAGE_EXPORT_IDS,
     predicted_export_paths,
 )
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import (
     export_formats,
     import_to_pdf_dialog_filter,
@@ -205,11 +205,7 @@ def _configure_export_from_pdf(
             return
 
         try:
-            loader = PdfLoader(source)
-            try:
-                page_count = loader.page_count
-            finally:
-                loader.close()
+            page_count = pdf_page_count(source)
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"

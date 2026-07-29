@@ -19,7 +19,8 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core import optimize_secure as ops
-from pagedrop.core.pdf_loader import PdfLoader, PdfPasswordRequiredError
+from pagedrop.core.pdf_loader import PdfPasswordRequiredError
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import remember_directory
@@ -102,11 +103,10 @@ def _suggested_output(source: str, tool_id: str) -> str:
 
 def _pdf_needs_password(path: str) -> bool:
     try:
-        loader = PdfLoader(path)
+        pdf_page_count(path)
     except PdfPasswordRequiredError:
         return True
     else:
-        loader.close()
         return False
 
 

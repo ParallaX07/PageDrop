@@ -10,7 +10,7 @@ import pytest
 from pagedrop.core import thread_policy
 from pagedrop.core.image_to_pdf import images_to_single_pdf
 from pagedrop.core.pdf_editor import PageRef
-from pagedrop.core.pdf_service import FITZ_LOCK
+from pagedrop.core.pdf_service import FITZ_LOCK, page_count
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.core.thread_policy import (
     WORKER_AUDIT,
@@ -145,6 +145,52 @@ def test_ui_pool_fitz_opens_hold_fitz_lock(
         f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
     )
     assert out_merge.is_file() and out_convert.is_file()
+
+
+def test_tool_page_count_concurrent_with_thumb_holds_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GUI tool page_count while a thumb worker runs — every open owns FITZ_LOCK."""
+    import threading
+
+    from pagedrop.core.pdf_service import invalidate_doc_cache
+
+    pdf = tmp_path / "doc.pdf"
+    _write_pdf(pdf, pages=4)
+    invalidate_doc_cache()
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+
+    err: list[BaseException] = []
+
+    def run_thumbs() -> None:
+        try:
+            ThumbnailWorker(
+                [(i, PageRef(str(pdf), i)) for i in range(4)],
+                generation=1,
+                width_px=48,
+                is_cancelled=lambda _g: False,
+            ).run()
+        except BaseException as exc:  # pragma: no cover
+            err.append(exc)
+
+    t = threading.Thread(target=run_thumbs, daemon=True)
+    t.start()
+    assert page_count(str(pdf)) == 4
+    t.join(timeout=30)
+    assert not t.is_alive()
+    assert not err
+    assert held_at_open, "expected at least one fitz.open"
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
 
 
 def test_unlocked_fitz_open_fails_lock_probe(
