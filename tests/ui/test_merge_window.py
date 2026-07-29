@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
+import fitz
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.ui.merge_window import MergeWindow
+from tests.core.test_jobs import _encrypted_pdf
 from tests.fixtures.generate_fixtures import generate_n_page
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _merge_window(qtbot) -> MergeWindow:
@@ -188,3 +195,64 @@ def test_toolbar_actions_have_status_tips(qtbot):
         assert action.statusTip(), f"missing status tip on {action.text()!r}"
         assert action.toolTip() == action.statusTip()
     assert window._add_folder_action.text() == "Add folder…"
+
+
+def test_merge_encrypted_prompts_password_leaves_sources_unchanged(
+    qtbot, tmp_path, monkeypatch
+):
+    """Unlock encrypted inputs, merge, leave sources unchanged (O11)."""
+    enc_a = tmp_path / "locked_a.pdf"
+    enc_b = tmp_path / "locked_b.pdf"
+    _encrypted_pdf(enc_a, password="alpha")
+    _encrypted_pdf(enc_b, password="beta")
+    hash_a = _file_hash(enc_a)
+    hash_b = _file_hash(enc_b)
+    output = tmp_path / "merged.pdf"
+
+    secrets = {"locked_a.pdf": "alpha", "locked_b.pdf": "beta"}
+
+    def fake_prompt(_parent, filename: str, *, incorrect: bool = False) -> str:
+        assert not incorrect
+        return secrets[filename]
+
+    monkeypatch.setattr(
+        "pagedrop.ui.merge_window.prompt_pdf_password",
+        fake_prompt,
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+
+    window = _merge_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    window._add_paths([str(enc_a), str(enc_b)])
+
+    assert window._model.file_count() == 2
+    qtbot.waitUntil(
+        lambda: len(window._file_grid._cards) == 2,
+        timeout=15000,
+    )
+    # Merge cards have no skeleton flag — wait until stacked thumbs paint.
+    qtbot.waitUntil(
+        lambda: all(
+            card._source_pixmap is not None and not card._source_pixmap.isNull()
+            for card in window._file_grid._cards
+        ),
+        timeout=15000,
+    )
+
+    window._merge_pdfs()
+    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+
+    assert output.is_file()
+    assert _file_hash(enc_a) == hash_a
+    assert _file_hash(enc_b) == hash_b
+    doc = fitz.open(str(output))
+    try:
+        assert doc.page_count == 2
+        assert not doc.needs_pass
+    finally:
+        doc.close()

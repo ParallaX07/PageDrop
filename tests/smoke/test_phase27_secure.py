@@ -66,6 +66,13 @@ def test_smoke_encrypt_then_open_with_password_dialog(
         lambda: len(main_window._thumbnail_grid._cards) == 1,
         timeout=15_000,
     )
+    # Unlock must paint thumbs — not eternal skeletons (O11).
+    qtbot.waitUntil(
+        lambda: all(
+            not card._is_skeleton for card in main_window._thumbnail_grid._cards
+        ),
+        timeout=15_000,
+    )
     assert enc.name in main_window.windowTitle()
     assert _file_hash(src) == source_hash
     assert _file_hash(enc) == enc_hash
