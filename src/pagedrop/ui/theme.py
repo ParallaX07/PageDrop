@@ -1551,6 +1551,19 @@ def shadow_qcolor(*, alpha: int = 55) -> "QColor":
     return QColor(r, g, b, alpha)
 
 
+def border_hover_qcolor() -> "QColor":
+    """Theme-aware hover/stack border for programmatic paint (not QSS).
+
+    Do not use ``token_qcolor(BORDER_HOVER)`` — that hex is dark-only and
+    stays stale after a light/dark toggle.
+    """
+    from pagedrop.ui.settings import light_theme
+
+    if light_theme():
+        return token_qcolor("#9CA3AF")
+    return token_qcolor(BORDER_HOVER)
+
+
 def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
     """Red × icon for tab close buttons."""
     from PyQt6.QtCore import Qt

@@ -60,5 +60,8 @@ OCR_HANDLERS: dict[str, object] = {
 }
 
 def register_ocr_handlers(runner: SerializedJobRunner) -> None:
+    # ponytail: ocr_pdf keeps holds_fitz=True (default) — whole-job FITZ_LOCK
+    # stalls thumbs/viewer for long OCR runs. Upgrade: O10 process service
+    # (parked; do not drop the lock without that boundary).
     for job_type, handler in OCR_HANDLERS.items():
         runner.register(job_type, handler)  # type: ignore[arg-type]

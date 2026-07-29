@@ -60,7 +60,7 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     ),
     (
         "_MergeThumbnailWorker",
-        "ui/merge_file_grid.py — render_stacked_page_pngs under FITZ_LOCK; pool max 1",
+        "ui/merge_file_grid.py — per-page via render_stacked_page_pngs → pdf_service.render_ref_png; pool max 1",
     ),
     (
         "_ConvertThumbnailWorker",

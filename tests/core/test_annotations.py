@@ -195,6 +195,28 @@ def test_markup_session_remove_annotation() -> None:
     assert [e.annotation for e in session.ops()] == [b]
 
 
+def test_markup_session_undo_capped_at_max_undo() -> None:
+    """O16: MarkupSession shares PdfEditModel.MAX_UNDO depth."""
+    from pagedrop.core.pdf_editor import MAX_UNDO
+
+    session = MarkupSession()
+    for i in range(MAX_UNDO + 1):
+        session.push_annotation(
+            AnnotationOp(
+                kind="freetext",
+                page_index=0,
+                rects=((0, 0, 10, 10),),
+                text=str(i),
+            )
+        )
+    ops = session.ops()
+    assert len(ops) == MAX_UNDO
+    assert ops[0].annotation is not None
+    assert ops[0].annotation.text == "1"
+    assert ops[-1].annotation is not None
+    assert ops[-1].annotation.text == str(MAX_UNDO)
+
+
 def test_apply_box_transform_move_and_resize() -> None:
     moved = _apply_box_transform((10, 20, 50, 60), "move", 5, -3)
     assert moved == (15, 17, 55, 57)

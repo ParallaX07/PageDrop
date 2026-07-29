@@ -18,6 +18,7 @@ from pagedrop.core.forms import (
     apply_form_fill,
     apply_form_flatten,
 )
+from pagedrop.core.pdf_editor import MAX_UNDO
 from pagedrop.core.redact import RedactionRegion
 
 if TYPE_CHECKING:
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
 MarkupKind = Literal[
     "annotation", "form_fill", "form_create", "form_flatten", "redaction"
 ]
+
+# ponytail: undo depth shares PdfEditModel.MAX_UNDO (50). Each entry is a
+# pending markup op; raise only with measured memory pain (or coalescing).
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,8 @@ class MarkupSession:
     def _push(self, entry: MarkupEntry) -> None:
         self._ops.append(entry)
         self._redo.clear()
+        if len(self._ops) > MAX_UNDO:
+            del self._ops[0 : len(self._ops) - MAX_UNDO]
 
 
 def apply_markup_entries(doc: fitz.Document, entries: Sequence[MarkupEntry]) -> None:

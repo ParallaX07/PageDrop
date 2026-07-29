@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QPainter, QPen, QPixmap
 
-from pagedrop.core.pdf_loader import open_pdf, render_page_png
-from pagedrop.core.pdf_service import FITZ_LOCK
-from pagedrop.ui.theme import BORDER_HOVER
+from pagedrop.core.pdf_editor import PageRef
+from pagedrop.core.pdf_service import render_ref_png
+from pagedrop.ui.theme import border_hover_qcolor
 
 MAX_STACK_PAGES = 3
 DEFAULT_PAGE_WIDTH_PX = 40
@@ -45,7 +45,8 @@ def _stroke_page_border(
     *,
     pen_width: int,
 ) -> None:
-    pen = QPen(QColor(BORDER_HOVER))
+    # Live theme color — not the dark-only BORDER_HOVER hex token.
+    pen = QPen(border_hover_qcolor())
     pen.setWidth(pen_width)
     pen.setCosmetic(True)
     painter.setPen(pen)
@@ -136,24 +137,26 @@ def render_stacked_page_pngs(
 ) -> list[bytes]:
     """Render the first 1–3 pages of a PDF to PNG bytes.
 
-    Opens *path* locally under ``FITZ_LOCK`` (see core.thread_policy) — never
-    accepts a shared Document.
+    Per-page ``render_ref_png`` so the doc-cache LRU warms and the lock
+    releases between pages (matches O15 thumb baseline).
     """
     pages_to_render = min(max(page_count, 0), MAX_STACK_PAGES)
     if pages_to_render == 0:
         return []
 
-    with FITZ_LOCK:
-        doc = open_pdf(path, password=password)
-        try:
-            pngs: list[bytes] = []
-            for page_index in range(pages_to_render):
-                if should_cancel and should_cancel():
-                    return []
-                pngs.append(render_page_png(doc, page_index, width_px=width_px))
-            return pngs
-        finally:
-            doc.close()
+    passwords = {path: password} if password is not None else None
+    pngs: list[bytes] = []
+    for page_index in range(pages_to_render):
+        if should_cancel and should_cancel():
+            return []
+        pngs.append(
+            render_ref_png(
+                PageRef(path, page_index),
+                width_px,
+                passwords=passwords,
+            )
+        )
+    return pngs
 
 
 def render_stacked_pdf_thumbnail(
