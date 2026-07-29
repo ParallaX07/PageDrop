@@ -9,7 +9,16 @@ import fitz
 import pytest
 
 from pagedrop.core import modify_ops as ops
+from pagedrop.core.jobs.cancel import check_cancel
 from pagedrop.core.jobs.errors import SourceOverwriteError
+
+
+def test_check_cancel_alias_is_shared_helper() -> None:
+    """O16: modify_ops / optimize_secure import check_cancel (no local copies)."""
+    from pagedrop.core import optimize_secure as secure
+
+    assert ops._check_cancel is check_cancel
+    assert secure._check_cancel is check_cancel
 
 
 def _file_hash(path: Path) -> str:

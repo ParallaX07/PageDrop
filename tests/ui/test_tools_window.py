@@ -41,6 +41,19 @@ def test_shell_owns_job_chrome_not_catalogue():
     assert not hasattr(ToolsWindow, "begin_job")
 
 
+def test_merge_create_compare_share_result_action_handlers():
+    """O16: Merge/Create/Compare Preview/Open/Show reuse JobChromeMixin."""
+    from pagedrop.ui.compare_window import CompareWindow
+    from pagedrop.ui.convert_window import ConvertWindow
+    from pagedrop.ui.merge_window import MergeWindow
+
+    for cls in (MergeWindow, ConvertWindow, CompareWindow):
+        assert issubclass(cls, JobChromeMixin)
+        assert cls._on_preview_result is JobChromeMixin._on_preview_result
+        assert cls._on_open_result is JobChromeMixin._on_open_result
+        assert cls._on_show_folder is JobChromeMixin._on_show_folder
+
+
 def _wait_for_tab_loaded(qtbot, tab: PdfTab, *, timeout: int = RENDER_TIMEOUT_MS) -> None:
     qtbot.waitUntil(
         lambda: (

@@ -608,7 +608,8 @@ class _PageTile(QWidget):
         self._transform_start_pdf: tuple[float, float] | None = None
         self._transform_start_rect: tuple[float, float, float, float] | None = None
         self._live_rect: tuple[float, float, float, float] | None = None
-        # Stamp/image overlay cache; cleared on tile teardown and viewer clear_caches.
+        # ponytail: stamp/image overlay cache unbounded until clear_caches / tile
+        # teardown. Rare stamp-heavy sessions; upgrade: small path LRU if measured.
         self._image_pixmaps: dict[str, QPixmap] = {}
         self._selecting = False
         self._drawing = False

@@ -38,17 +38,12 @@ from pagedrop.core.supported_formats import (
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
 from pagedrop.ui.dialogs import confirm_overwrite, prompt_discard_file_list
-from pagedrop.ui.job_chrome import explain_busy_running
+from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
 )
-from pagedrop.ui.result_actions import (
-    ResultActionsBar,
-    open_in_editor,
-    preview_pdf,
-    show_in_folder,
-)
+from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -321,7 +316,7 @@ class _ConvertWorker(QRunnable):
             self.signals.failed.emit(f"Could not create PDF:\n{exc}")
 
 
-class ConvertWindow(QWidget):
+class ConvertWindow(JobChromeMixin, QWidget):
     WINDOW_TITLE = "Create PDF"
     PAGE_ID = "create_pdf"
 
@@ -485,9 +480,7 @@ class ConvertWindow(QWidget):
         self._preview_widget.closed.connect(self._close_preview)
         self._preview_widget.image_changed.connect(self._on_preview_image_changed)
         self._single_mode_action.toggled.connect(self._on_output_mode_changed)
-        self._result_bar.preview_requested.connect(self._on_preview_result)
-        self._result_bar.open_in_editor_requested.connect(self._on_open_result)
-        self._result_bar.show_in_folder_requested.connect(self._on_show_folder)
+        self._wire_result_actions()
         # ponytail: whole-file convert has no CancelToken — Cancel stays hidden;
         # Escape/close explain "still running…". Upgrade: cancel in images_to_* helpers.
         self._busy_overlay.escape_blocked.connect(self._explain_busy)
@@ -863,35 +856,6 @@ class ConvertWindow(QWidget):
         self.statusBar().showMessage("Create PDF failed")
         self._toast.show_toast("Create PDF failed", kind="error")
         QMessageBox.critical(self, self.WINDOW_TITLE, message)
-
-    def _on_preview_result(self, path: str) -> None:
-        preview_pdf(path, parent=self)
-
-    def _on_open_result(self, path: str) -> None:
-        editor = self._editor
-        if editor is None:
-            self._toast.show_toast("No editor window available", kind="error")
-            return
-        try:
-            open_in_editor(path, editor)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                self.WINDOW_TITLE,
-                f"Could not open in editor:\n{exc}",
-            )
-            return
-        self._toast.show_toast(f"Opened {Path(path).name}", kind="success")
-
-    def _on_show_folder(self, path: str) -> None:
-        if not show_in_folder(path):
-            QMessageBox.warning(
-                self,
-                self.WINDOW_TITLE,
-                "Could not open the folder for this file.",
-            )
-            return
-        self._toast.show_toast("Opened folder", kind="info")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

@@ -52,16 +52,11 @@ from pagedrop.core.pdf_tools import (
 )
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import confirm_overwrite
-from pagedrop.ui.job_chrome import explain_busy_running
+from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import ensure_organize_runner
 from pagedrop.ui.tool_page import StatusFooter, present_tool_page
-from pagedrop.ui.result_actions import (
-    ResultActionsBar,
-    open_in_editor,
-    preview_pdf,
-    show_in_folder,
-)
+from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     BG_CARD,
@@ -259,7 +254,7 @@ class _ComparePane(QWidget):
         self._canvas.set_content(pixmap, page_rect, highlights)
 
 
-class CompareWindow(QWidget):
+class CompareWindow(JobChromeMixin, QWidget):
     WINDOW_TITLE = "Compare PDFs"
     PAGE_ID = "compare"
 
@@ -423,9 +418,7 @@ class CompareWindow(QWidget):
         self._pane_b.scroll.horizontalScrollBar().valueChanged.connect(
             lambda v: self._mirror_hscroll(self._pane_b, self._pane_a, v)
         )
-        self._result_bar.preview_requested.connect(self._preview_export)
-        self._result_bar.show_in_folder_requested.connect(self._show_folder)
-        self._result_bar.open_in_editor_requested.connect(self._on_open_result)
+        self._wire_result_actions()
         self._busy.cancelled.connect(self._cancel_compare)
         self._busy.escape_blocked.connect(self._explain_busy)
 
@@ -772,30 +765,6 @@ class CompareWindow(QWidget):
             self.statusBar().showMessage(msg)
             self._toast.show_toast(msg, kind="success")
             self._result_bar.show_for(result, message=msg)
-
-    def _preview_export(self, path: str) -> None:
-        preview_pdf(path, parent=self)
-
-    def _on_open_result(self, path: str) -> None:
-        editor = self._editor
-        if editor is None:
-            self._toast.show_toast("No editor window available", kind="error")
-            return
-        try:
-            open_in_editor(path, editor)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                self.WINDOW_TITLE,
-                f"Could not open in editor:\n{exc}",
-            )
-            return
-        self._toast.show_toast(f"Opened {Path(path).name}", kind="success")
-
-    def _show_folder(self, path: str) -> None:
-        if not show_in_folder(path):
-            self._toast.show_toast("Could not open folder", kind="error")
-
 
 def _truncate(text: str, limit: int) -> str:
     text = " ".join(text.split())
