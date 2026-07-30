@@ -52,8 +52,8 @@ COMMENT_PIN_EDGE = "#B48C00"
 # Tinted shadow (cool blue, not pure black)
 SHADOW_RGB = (14, 22, 38)
 SHADOW_RGB_LIGHT = (30, 40, 60)
-# ponytail: light shadows stay soft; raise cap if cards need more depth in light
-SHADOW_ALPHA_CAP_LIGHT = 40
+# R5: light hover needs a bit more depth than the old 40 cap; raise again if washout
+SHADOW_ALPHA_CAP_LIGHT = 48
 
 RADIUS_CARD = 12
 RADIUS_CONTROL = 8
@@ -142,6 +142,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     border_default = border_hover if high_contrast else border_default_tok
     border_subtle = border_default_tok if high_contrast else border_subtle_tok
     focus_width = 3 if high_contrast else 2
+    # Selection reads thicker than keyboard focus (multi-select still obvious in HC)
+    selected_width = focus_width + 1
     return f"""
     * {{
         font-family: {FONT_UI};
@@ -734,7 +736,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         font-family: {FONT_MONO};
         font-size: 11px;
-        padding: 8px 0 0 0;
+        padding: {SPACE_2}px 0 0 0;
     }}
 
     QTabWidget#TabManager::pane {{
@@ -1465,7 +1467,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#MergeFileCard,
     QFrame#ConvertFileCard {{
         background-color: {bg_card};
-        border: 1px solid {border_default};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CARD}px;
     }}
     QFrame#PageCard:hover,
@@ -1477,12 +1479,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#PageCard[focused="true"],
     QFrame#MergeFileCard[focused="true"],
     QFrame#ConvertFileCard[focused="true"] {{
-        border: 2px solid {ACCENT};
+        border: {focus_width}px solid {ACCENT};
     }}
     QFrame#PageCard[selected="true"],
     QFrame#MergeFileCard[selected="true"],
     QFrame#ConvertFileCard[selected="true"] {{
-        border: 3px solid {ACCENT};
+        border: {selected_width}px solid {ACCENT};
     }}
     QFrame#PageCard[selected="true"]:hover,
     QFrame#MergeFileCard[selected="true"]:hover,
@@ -1491,7 +1493,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PageCardThumbnail {{
         background-color: {bg_thumb_empty};
-        border-radius: 6px;
+        border-radius: {RADIUS_BADGE}px;
     }}
     QLabel#PageCardLabel {{
         color: {text_secondary};
@@ -1507,8 +1509,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: rgba(19, 19, 22, 160);
         font-size: 11px;
         font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
+        padding: {SPACE_1}px {SPACE_2}px;
+        border-radius: {SPACE_1}px;
     }}
     QLabel#PageCardRotationOverlay {{
         color: {TEXT_ON_ACCENT};
@@ -1516,8 +1518,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-family: {FONT_MONO};
         font-size: 10px;
         font-weight: 600;
-        padding: 2px 5px;
-        border-radius: 4px;
+        padding: {SPACE_1}px {SPACE_1}px;
+        border-radius: {SPACE_1}px;
     }}
     QLabel#MergeFileCardThumbnail,
     QLabel#ConvertFileCardThumbnail {{

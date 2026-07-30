@@ -68,6 +68,7 @@ from pagedrop.ui.theme import (
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
     PAGE_NUMBER_OVERLAY_MIN_WIDTH,
+    SPACE_2,
     SPACE_3,
     SPACE_4,
     SPACE_6,
@@ -265,7 +266,7 @@ class ThumbnailGrid(QScrollArea):
         )
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setSpacing(6)
+        empty_layout.setSpacing(SPACE_2)
         empty_layout.setContentsMargins(SPACE_6, SPACE_7, SPACE_6, SPACE_7)
 
         self._empty_logo = QLabel()

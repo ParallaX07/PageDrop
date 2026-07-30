@@ -25,7 +25,7 @@ from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.base_file_card import BaseFileCard
-from pagedrop.ui.theme import CARD_PADDING, accent_qcolor, on_accent_qcolor
+from pagedrop.ui.theme import CARD_PADDING, RADIUS_BADGE, SPACE_1, SPACE_2, accent_qcolor, on_accent_qcolor
 from pagedrop.utils.temp_manager import TempManager
 
 # Portrait placeholder while the real thumbnail is rendering.
@@ -73,8 +73,8 @@ class PageCard(BaseFileCard):
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        layout.setSpacing(SPACE_1)
         layout.addWidget(self._thumbnail_label)
         layout.addWidget(self._page_label)
 
@@ -422,9 +422,12 @@ class PageCard(BaseFileCard):
         badge_x = canvas.width() - badge_w - 2
         badge_y = 2
 
+        # Hairline edge so the accent chip stays readable on stacked thumbs
         painter.setBrush(accent_qcolor())
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 6, 6)
+        painter.setPen(QColor(0, 0, 0, 90))
+        painter.drawRoundedRect(
+            badge_x, badge_y, badge_w, badge_h, RADIUS_BADGE, RADIUS_BADGE
+        )
         painter.setPen(on_accent_qcolor())
         painter.drawText(
             badge_x,

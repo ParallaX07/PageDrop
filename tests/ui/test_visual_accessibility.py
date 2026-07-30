@@ -57,7 +57,7 @@ def test_reduce_motion_setting_gates_shadow_hover(qtbot, isolated_settings):
     assert prefers_reduce_motion() is False
     card.enterEvent(QEnterEvent(pos, pos, pos))
     assert card._shadow is not None
-    assert card._shadow.blurRadius() > 14
+    assert card._shadow.blurRadius() >= 18
     card.leaveEvent(None)
     assert card._shadow is None
 
@@ -394,14 +394,128 @@ def test_r2_fonts_and_spacing_tokens():
 
 def test_r2_empty_state_shortcuts_unchanged(qtbot):
     """R2: empty-state kbd strings stay accurate; spacing reads from tokens."""
-    from pagedrop.ui.theme import SPACE_3, SPACE_4, SPACE_6, SPACE_7
+    from pagedrop.ui.theme import SPACE_2, SPACE_3, SPACE_4, SPACE_6, SPACE_7
 
     grid = ThumbnailGrid()
     qtbot.addWidget(grid)
     assert grid._layout.spacing() == SPACE_3
     assert grid._layout.contentsMargins().left() == SPACE_4
-    empty_margins = grid._empty_state.layout().contentsMargins()
+    empty_layout = grid._empty_state.layout()
+    assert empty_layout.spacing() == SPACE_2
+    empty_margins = empty_layout.contentsMargins()
     assert empty_margins.left() == SPACE_6
     assert empty_margins.top() == SPACE_7
     assert "Ctrl+O" in grid._empty_kbd.text()
     assert "Ctrl+A" in grid._empty_kbd.text()
+
+
+def test_r5_card_chrome_and_empty_tokens():
+    """R5: quieter rest border, HC-aware select/focus widths, empty QSS tokens."""
+    from pagedrop.ui.theme import (
+        ACCENT,
+        RADIUS_BADGE,
+        SHADOW_ALPHA_CAP_LIGHT,
+        SPACE_2,
+        app_stylesheet,
+    )
+
+    dark = app_stylesheet()
+    high = app_stylesheet(high_contrast=True)
+
+    page_block = dark.split("QFrame#PageCard,")[1].split("QFrame#PageCard:hover")[0]
+    assert "border: 1px solid" in page_block
+    assert f'QFrame#PageCard[focused="true"]' in dark
+    assert f"border: 2px solid {ACCENT}" in dark
+    assert f"border: 3px solid {ACCENT}" in dark
+    assert f"border: 3px solid {ACCENT}" in high  # focus in HC
+    assert f"border: 4px solid {ACCENT}" in high  # selected in HC
+    assert f"border-radius: {RADIUS_BADGE}px" in dark
+    assert f"padding: {SPACE_2}px 0 0 0" in dark
+    assert SHADOW_ALPHA_CAP_LIGHT == 48
+
+
+def test_r5_multi_select_drag_badge_visible(qtbot):
+    """R5: multi-page drag pixmap paints an accent count badge."""
+    from PyQt6.QtGui import QColor, QPixmap
+
+    from pagedrop.ui.page_card import PageCard
+    from pagedrop.ui.theme import ACCENT
+
+    card = PageCard(0)
+    qtbot.addWidget(card)
+    thumb = QPixmap(80, 100)
+    thumb.fill(QColor("#CCCCCC"))
+    card.set_thumbnail(thumb)
+
+    badge_pixmap = card._build_drag_pixmap(3)
+    assert badge_pixmap is not None
+    assert badge_pixmap.width() > thumb.width()
+
+    accent = QColor(ACCENT)
+    found_accent = False
+    # Sample the top-right badge region for accent fill pixels.
+    image = badge_pixmap.toImage()
+    for y in range(2, min(28, badge_pixmap.height())):
+        for x in range(max(0, badge_pixmap.width() - 40), badge_pixmap.width()):
+            c = QColor(image.pixel(x, y))
+            if (
+                abs(c.red() - accent.red()) < 8
+                and abs(c.green() - accent.green()) < 8
+                and abs(c.blue() - accent.blue()) < 8
+            ):
+                found_accent = True
+                break
+        if found_accent:
+            break
+    assert found_accent
+
+
+def test_r5_smoke_select_hover_focus_drag_badge(qtbot, isolated_settings):
+    """R5 smoke stand-in: select, multi-select chrome, hover shadow, focus, drag badge."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QColor, QEnterEvent, QPixmap
+
+    from pagedrop.ui.page_card import PageCard
+    from pagedrop.ui.settings import set_reduce_motion
+    from pagedrop.ui.theme import ACCENT, app_stylesheet
+
+    set_reduce_motion(False)
+    sheet = app_stylesheet()
+    assert "QFrame#PageCard:hover" in sheet
+    assert f'QFrame#PageCard[selected="true"]' in sheet
+    assert f'QFrame#PageCard[focused="true"]' in sheet
+
+    card = PageCard(0)
+    qtbot.addWidget(card)
+    thumb = QPixmap(80, 100)
+    thumb.fill(QColor("#DDDDDD"))
+    card.set_thumbnail(thumb)
+
+    # Select / focus rings stay property-driven (no inline stylesheet).
+    card.set_selected(True)
+    assert card.property("selected") is True
+    assert not card.styleSheet()
+    card.set_keyboard_focused(True)
+    assert card.property("focused") is True
+
+    # Hover installs cool drop shadow (reduce-motion off).
+    assert card._shadow is None
+    pos = QPointF(8, 8)
+    card.enterEvent(QEnterEvent(pos, pos, pos))
+    assert card._shadow is not None
+    assert card._shadow.blurRadius() >= 18
+    card.leaveEvent(None)
+    assert card._shadow is None
+
+    # Multi-select drag badge still paints accent ink.
+    badge = card._build_drag_pixmap(4)
+    assert badge is not None
+    accent = QColor(ACCENT)
+    image = badge.toImage()
+    assert any(
+        abs(QColor(image.pixel(x, y)).red() - accent.red()) < 8
+        and abs(QColor(image.pixel(x, y)).green() - accent.green()) < 8
+        and abs(QColor(image.pixel(x, y)).blue() - accent.blue()) < 8
+        for y in range(2, min(28, badge.height()))
+        for x in range(max(0, badge.width() - 40), badge.width())
+    )
