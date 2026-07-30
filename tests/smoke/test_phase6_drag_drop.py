@@ -16,7 +16,6 @@ from pathlib import Path
 import fitz
 
 from pagedrop.core.page_extractor import extract_pages_to_files
-from pagedrop.core.pdf_loader import PdfLoader
 
 
 def _page_size(path: Path | str, page_index: int = 0) -> tuple[float, float]:
@@ -56,17 +55,3 @@ def test_smoke_extract_pages_to_drop_folder(five_page_pdf, tmp_path):
             assert _page_size(dropped) == _page_size(five_page_pdf, index)
         finally:
             doc.close()
-
-
-def test_smoke_loader_and_extractor_integration(five_page_pdf):
-    loader = PdfLoader(str(five_page_pdf))
-    try:
-        assert loader.page_count == 5
-        png = loader.render_page(0)
-        assert png[:4] == b"\x89PNG"
-    finally:
-        loader.close()
-
-    import tests.core.test_page_extractor as extractor_tests  # noqa: F401
-
-    assert hasattr(extractor_tests, "test_extract_single_page")

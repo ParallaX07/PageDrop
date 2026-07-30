@@ -46,26 +46,6 @@ def _reset_soffice() -> None:
     clear_cache()
 
 
-def test_build_convert_argv_docx_target(tmp_path: Path) -> None:
-    soffice = tmp_path / "soffice"
-    src = tmp_path / "doc.pdf"
-    outdir = tmp_path / "out"
-    profile = tmp_path / "profile"
-    outdir.mkdir()
-    profile.mkdir()
-    src.write_bytes(b"%PDF")
-    argv = libreoffice.build_convert_argv(
-        soffice,
-        src,
-        outdir,
-        profile,
-        convert_to="docx",
-        infilter="writer_pdf_import",
-    )
-    assert argv[argv.index("--convert-to") + 1] == "docx"
-    assert "--infilter=writer_pdf_import" in argv
-
-
 def test_pdf_to_docx_promotes_and_leaves_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

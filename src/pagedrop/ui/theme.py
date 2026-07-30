@@ -633,7 +633,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
         font-weight: 500;
         padding: 0 4px;
-        max-width: {TOOLBAR_FILENAME_MAX_WIDTH}px;
     }}
 
     QLabel#ToolbarFilename[active="true"] {{

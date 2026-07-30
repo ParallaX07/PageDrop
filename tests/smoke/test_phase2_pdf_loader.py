@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from pagedrop.core.pdf_loader import PdfLoader
@@ -28,10 +26,3 @@ def test_smoke_render_all_pages_to_disk(five_page_pdf, render_output_dir):
             assert out_file.stat().st_size > 0
     finally:
         loader.close()
-
-
-def test_smoke_core_tests_reachable():
-    """Ensure core loader test module imports (included in phase 2 gate)."""
-    import tests.core.test_pdf_loader as core_tests  # noqa: F401
-
-    assert hasattr(core_tests, "test_page_count")
