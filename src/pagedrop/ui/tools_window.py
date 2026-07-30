@@ -104,7 +104,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         action="organize",
         icon="arrows-left-right",
         help_text=(
-            "Interleave pages from two PDFs into one new file — page 1 from A, "
+            "Interleave pages from two PDFs into one new file: page 1 from A, "
             "page 1 from B, page 2 from A, and so on. Handy for duplex scans "
             "that came out as separate front/back files, or for merging two "
             "related sequences. Output is a new PDF."
@@ -134,7 +134,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         icon="grid-four",
         help_text=(
             "N-up means putting several original pages onto each sheet of the "
-            "new PDF — for example 2-up (two pages side by side) or 4-up "
+            "new PDF, for example 2-up (two pages side by side) or 4-up "
             "(a 2×2 grid). Choose rows and columns; PageDrop scales pages to "
             "fit the cells. Use it to save paper when printing handouts, or to "
             "make a compact overview. Output is a new PDF."
@@ -180,7 +180,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         action="organize",
         icon="columns",
         help_text=(
-            "Cut every page in half — horizontally or vertically — so each "
+            "Cut every page in half (horizontally or vertically) so each "
             "half becomes its own page in a new PDF. Useful for scanned "
             "spreads, booklets that were scanned as one page, or two-up "
             "sheets you want to separate again."
@@ -196,7 +196,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         icon="arrows-in-line-vertical",
         help_text=(
             "Stack every page of the PDF into one continuous tall (or wide) "
-            "page — like a long screenshot strip. Handy for sharing a full "
+            "page, like a long screenshot strip. Handy for sharing a full "
             "document as a single scrollable page. Creates a new file."
         ),
     ),
@@ -257,7 +257,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "Page labels are how a PDF names pages in the viewer (i, ii, iii "
             "for a preface, then 1, 2, 3 for the body). Set styles and ranges "
             "so the sidebar and print dialogs show the labels you want. This "
-            "does not stamp numbers onto the page art — use Page numbers for "
+            "does not stamp numbers onto the page art; use Page numbers for "
             "that. Output is a new PDF."
         ),
     ),
@@ -312,7 +312,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         action="convert_to_pdf",
         icon="file-arrow-down",
         help_text=(
-            "Turn supported non-PDF files into a new PDF — SVG, XPS, ebooks, "
+            "Turn supported non-PDF files into a new PDF: SVG, XPS, ebooks, "
             "Markdown, HTML, text, CBZ, CSV, Excel, and similar. Drop one or "
             "more files and run. Layout fidelity depends on the format. The "
             "originals are left alone."
@@ -327,7 +327,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         action="export_from_pdf",
         icon="export",
         help_text=(
-            "Export pages or content out of a PDF into other formats — images "
+            "Export pages or content out of a PDF into other formats: images "
             "(PNG, JPEG, WebP), SVG, plain text, structured JSON/XML, CBZ, or "
             "tables. Choose the format and options, then save new files. The "
             "PDF itself is not modified."
@@ -369,7 +369,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         help_text=(
             "Convert a PDF to an editable Word (.docx) file via LibreOffice. "
             "Complex layouts, columns, and graphics may not match the PDF "
-            "exactly — treat the result as a starting point for editing. "
+            "exactly. Treat the result as a starting point for editing. "
             "Needs LibreOffice installed. Writes a new DOCX; the PDF is "
             "unchanged."
         ),
@@ -463,7 +463,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "preview to place it, or use the snap grid. Size is a percent of the "
             "page diagonal; opacity and angle apply live. Flatten burns the "
             "watermark into page content (harder to remove later). Output is "
-            "always a new PDF — the source file is never overwritten."
+            "always a new PDF. The source file is never overwritten."
         ),
     ),
     ToolEntry(
@@ -566,7 +566,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "Apply whole-page color effects: greyscale, invert, or a "
             "background tint. Some effects rasterize pages (turn them into "
             "images), which can increase file size and reduce text "
-            "selectability — the tool warns when that applies. Saves a new "
+            "selectability; the tool warns when that applies. Saves a new "
             "PDF."
         ),
     ),
@@ -611,7 +611,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         help_text=(
             "Password-protect a new copy of the PDF and optionally restrict "
             "printing, copying, or editing. You choose open and/or permissions "
-            "passwords. Keep passwords somewhere safe — PageDrop cannot recover "
+            "passwords. Keep passwords somewhere safe; PageDrop cannot recover "
             "them. The unlocked original is not changed."
         ),
     ),
@@ -641,7 +641,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "Scrub privacy-sensitive extras before sharing: strip document "
             "metadata and optionally remove annotations. Produces a cleaner "
             "copy for distribution. Does not replace redaction for sensitive "
-            "content on the page — use redaction in the viewer for that."
+            "content on the page; use redaction in the viewer for that."
         ),
     ),
 )
@@ -716,9 +716,9 @@ class ToolTile(QFrame):
 
     def _subtitle_text(self) -> str:
         if self._capability is not None and not self._capability.available:
-            return f"{_absence_subtitle(self._capability)} — {self.entry.description}"
+            return f"{_absence_subtitle(self._capability)}: {self.entry.description}"
         if self.entry.coming_soon and self.entry.action is None:
-            return f"Coming soon — {self.entry.description}"
+            return f"Coming soon: {self.entry.description}"
         return self.entry.description
 
     def is_blocked(self) -> bool:

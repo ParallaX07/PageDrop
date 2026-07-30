@@ -138,7 +138,7 @@ def preview_pdf(path: str | Path, parent: QWidget | None = None) -> bool:
 
     dialog = QDialog(parent)
     dialog.setObjectName("ResultPreviewDialog")
-    dialog.setWindowTitle(f"Preview — {filename}")
+    dialog.setWindowTitle(f"Preview: {filename}")
     dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dialog.setWindowModality(Qt.WindowModality.NonModal)
     dialog.resize(720, 900)

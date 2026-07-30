@@ -1615,7 +1615,7 @@ class MainWindow(QMainWindow):
         count = tab.edit_model.logical_count()
         noun = "page" if count == 1 else "pages"
         self.setWindowTitle(
-            f"{self.APP_TITLE} — {tab.tab_title} ({count} {noun})"
+            f"{self.APP_TITLE}: {tab.tab_title} ({count} {noun})"
         )
 
     def _extract_selected_to_folder(self) -> None:
@@ -2206,7 +2206,7 @@ class MainWindow(QMainWindow):
             )
             if target is self._active_tab():
                 self._transient_status(
-                    "Redaction verification failed — output discarded"
+                    "Redaction verification failed. Output discarded"
                 )
             return False
         except (PdfPasswordRequiredError, PdfPasswordError, RedactionError) as exc:

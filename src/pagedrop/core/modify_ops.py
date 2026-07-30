@@ -798,7 +798,7 @@ def remove_blank_pages(
             doc.close()
         return report
     if report.blank_count >= report.page_count:
-        raise ValueError("All pages look blank — refusing to write an empty PDF")
+        raise ValueError("All pages look blank; refusing to write an empty PDF")
 
     doc = open_pdf(source_pdf, password=password)
     try:
@@ -873,7 +873,7 @@ def apply_color_effect(
 
 # Documented warning for UI copy when raster effects are selected.
 RASTER_EFFECT_WARNING = (
-    "This effect rasterizes pages — vector text and sharp lines may be lost."
+    "This effect rasterizes pages. Vector text and sharp lines may be lost."
 )
 BLANK_PAGE_HEURISTIC_HINT = (
     "Blank detection skips pages with extractable text or images, then checks "

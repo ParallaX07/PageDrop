@@ -227,7 +227,7 @@ class PreferencesDialog(QDialog):
         confirm.setText("Download English (tessdata_fast) language data?")
         confirm.setInformativeText(
             f"Saves eng.traineddata to:\n{dest}\n\n"
-            "PageDrop never downloads language data silently — only when you ask."
+            "PageDrop never downloads language data silently, only when you ask."
         )
         download_btn = confirm.addButton(
             "Download", QMessageBox.ButtonRole.AcceptRole

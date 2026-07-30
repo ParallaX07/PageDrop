@@ -854,9 +854,9 @@ def _configure_header_footer(shell: ToolShellWindow) -> None:
     form = QFormLayout(options)
     form.setContentsMargins(0, 0, 0, 0)
     header = QLineEdit()
-    header.setPlaceholderText("Optional — tokens {page} {total}")
+    header.setPlaceholderText("Optional: tokens {page} {total}")
     footer = QLineEdit()
-    footer.setPlaceholderText("Optional — tokens {page} {total}")
+    footer.setPlaceholderText("Optional: tokens {page} {total}")
     form.addRow("Header", header)
     form.addRow("Footer", footer)
     hint = QLabel("At least one of header or footer is required.")
@@ -1041,7 +1041,7 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
     action.addItem("Generate TOC page", "toc_page")
     action.addItem("Clear bookmarks", "clear")
     editor = QPlainTextEdit()
-    editor.setPlaceholderText("level|title|page — one per line\n1|Introduction|1")
+    editor.setPlaceholderText("level|title|page; one per line\n1|Introduction|1")
     editor.setMaximumHeight(120)
     status = QLabel("Drop a PDF to inspect existing bookmarks.")
     status.setObjectName("ToolsHint")
@@ -1325,7 +1325,7 @@ def open_modify_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | Non
             multi=multi,
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
-            browse_title=f"Choose PDF — {entry.title}",
+            browse_title=f"Choose PDF: {entry.title}",
         )
         _CONFIGURERS[tool_id](shell)
         store[tool_id] = shell

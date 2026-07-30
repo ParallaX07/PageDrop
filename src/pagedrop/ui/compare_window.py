@@ -351,7 +351,7 @@ class CompareWindow(JobChromeMixin, QWidget):
 
         self._prev_act = toolbar.addAction("Previous page")
         self._next_act = toolbar.addAction("Next page")
-        self._page_label = QLabel("Page —")
+        self._page_label = QLabel("Page:")
         toolbar.addWidget(self._page_label)
         toolbar.addSeparator()
 
@@ -553,8 +553,8 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._export_act.setEnabled(True)
         self._result_bar.clear()
         self._populate_changes()
-        self._pane_a.set_title(f"PDF A — {Path(path_a).name}")
-        self._pane_b.set_title(f"PDF B — {Path(path_b).name}")
+        self._pane_a.set_title(f"PDF A: {Path(path_a).name}")
+        self._pane_b.set_title(f"PDF B: {Path(path_b).name}")
         self._fit_width()
         total = max(report.page_count_a, report.page_count_b, 1)
         n = len(report.changes)
@@ -704,7 +704,7 @@ class CompareWindow(JobChromeMixin, QWidget):
 
         if errors:
             detail = "; ".join(errors)
-            self.statusBar().showMessage(f"Could not render page — {detail}")
+            self.statusBar().showMessage(f"Could not render page: {detail}")
             self._toast.show_toast("Could not render compare page", kind="error")
 
     def _export_heatmap(self) -> None:

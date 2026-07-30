@@ -493,11 +493,11 @@ class PdfTab(QWidget):
         self._quality_guidance_shown = True
         if thumbnail_quality() == "low":
             return (
-                "Large document at high zoom — try a smaller thumbnail size "
+                "Large document at high zoom. Try a smaller thumbnail size "
                 "for smoother scrolling"
             )
         return (
-            "Large document at high zoom — try a smaller thumbnail size, "
+            "Large document at high zoom. Try a smaller thumbnail size, "
             "or View → Thumbnail quality"
         )
 

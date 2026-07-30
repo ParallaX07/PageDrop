@@ -75,7 +75,7 @@ def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):
     main_window._open_pdf()
     qtbot.waitUntil(
         lambda: main_window.windowTitle()
-        == f"PageDrop — {five_page_pdf.name} (5 pages)",
+        == f"PageDrop: {five_page_pdf.name} (5 pages)",
         timeout=5000,
     )
 

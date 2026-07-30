@@ -880,7 +880,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         status = f"Created {len(written)} PDF {file_noun} from {count} {noun}"
         # ResultActionsBar still binds to the first path only (O12 — no multi-file API).
         if len(written) > 1:
-            status = f"{status} — showing first"
+            status = f"{status}. Showing first"
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         if written:

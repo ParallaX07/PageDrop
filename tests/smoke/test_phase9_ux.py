@@ -22,7 +22,7 @@ def test_smoke_window_title_includes_page_count(qtbot, five_page_pdf):
     window._load_pdf(str(five_page_pdf))
     qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
 
-    expected = f"PageDrop — {five_page_pdf.name} (5 pages)"
+    expected = f"PageDrop: {five_page_pdf.name} (5 pages)"
     assert window.windowTitle() == expected
 
     window.close()

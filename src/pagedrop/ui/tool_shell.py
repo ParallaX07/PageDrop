@@ -40,7 +40,7 @@ from pagedrop.ui.job_chrome import JobChromeMixin
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import StatusFooter
 
-_PRIVACY_LINE = "Files stay on this computer — nothing is uploaded."
+_PRIVACY_LINE = "Files stay on this computer. Nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 
 # Canonical drop-zone prompts (O5). Prefer these over one-off wording.

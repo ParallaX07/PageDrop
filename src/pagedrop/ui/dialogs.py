@@ -415,7 +415,7 @@ def prompt_missing_tessdata(
             "Configure tessdata",
             "Point Preferences at a folder that contains language files "
             "(for example eng.traineddata), or download the optional English pack.\n\n"
-            "PageDrop uses PyMuPDF’s built-in OCR — you do not need a separate "
+            "PageDrop uses PyMuPDF’s built-in OCR. You do not need a separate "
             "Tesseract executable as the primary path.\n\n"
             f"Optional download URL:\n{ENG_FAST_URL}",
         )
@@ -436,7 +436,7 @@ def build_missing_tessdata_dialog(
     message.setText(f"{subject}: Language data missing")
     informative = (
         "OCR needs tessdata language files (for example eng.traineddata).\n"
-        "Configure a folder, or download the optional English pack — "
+        "Configure a folder, or download the optional English pack. "
         "PageDrop never downloads this on first launch."
     )
     if detail:
@@ -564,7 +564,7 @@ def build_missing_libreoffice_dialog(
     message.setText(f"{subject}: LibreOffice not found")
     informative = (
         "Install LibreOffice to convert Word, Excel, and PowerPoint files locally.\n"
-        "PageDrop never installs it — open the download page, or copy the winget "
+        "PageDrop never installs it. Open the download page, or copy the winget "
         "command and run it yourself."
     )
     if detail:

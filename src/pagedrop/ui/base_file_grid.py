@@ -201,7 +201,7 @@ class BaseFileGrid(QScrollArea):
             return
         self._failed_paths.add(path)
         self.rendering_error.emit(
-            f"Could not preview {Path(path).name} — "
+            f"Could not preview {Path(path).name}: "
             "file may be corrupt or unreadable"
         )
 

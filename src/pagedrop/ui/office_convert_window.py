@@ -94,7 +94,7 @@ def _configure_office_convert(shell: ToolShellWindow) -> None:
 
     hint = QLabel(
         "Drop a Word, Excel, or PowerPoint file (or OpenDocument). "
-        "PageDrop converts locally — nothing is uploaded."
+        "PageDrop converts locally. Nothing is uploaded."
     )
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
@@ -128,11 +128,11 @@ def _configure_office_convert(shell: ToolShellWindow) -> None:
         if report.any_available:
             pref = BACKEND_LABELS.get(report.preferred, report.preferred)
             shell.statusBar().showMessage(
-                f"Ready — preferred backend: {pref}"
+                f"Ready. Preferred backend: {pref}"
             )
         else:
             shell.statusBar().showMessage(
-                "No Office backend — Configure or install LibreOffice"
+                "No Office backend. Configure or install LibreOffice"
             )
 
     def on_configure() -> None:
@@ -352,7 +352,7 @@ def open_office_convert_shell(tools: ToolsWindow) -> ToolShellWindow | None:
             multi=False,
             accept=is_office_path,
             dialog_filter=office_dialog_filter(),
-            browse_title=f"Choose document — {entry.title}",
+            browse_title=f"Choose document: {entry.title}",
             empty_prompt=EMPTY_PROMPT_OFFICE,
         )
         _configure_office_convert(shell)

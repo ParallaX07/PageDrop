@@ -58,7 +58,7 @@ SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("Reset zoom", "Ctrl+0"),
             ("Thumbnail zoom", "Ctrl+scroll"),
             ("Command palette", "Ctrl+Shift+P"),
-            ("Tools", "Ctrl+Shift+O — not Ctrl+T (that opens a new tab)"),
+            ("Tools", "Ctrl+Shift+O, not Ctrl+T (that opens a new tab)"),
             ("Keyboard shortcuts", "Ctrl+/"),
         ),
     ),
@@ -67,7 +67,7 @@ SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             (
                 "Previous tab (MRU)",
-                "Ctrl+Tab — toggles the last two tabs, not sequential next",
+                "Ctrl+Tab toggles the last two tabs, not sequential next",
             ),
             ("Cycle tabs backward", "Ctrl+Shift+Tab"),
             ("New tab", "Ctrl+T"),
@@ -107,7 +107,7 @@ class TipsOverlay(QWidget):
         card_layout.addWidget(intro)
 
         for name, body in FIRST_RUN_TIPS:
-            row = QLabel(f"<b>{name}</b> — {body}")
+            row = QLabel(f"<b>{name}</b>: {body}")
             row.setObjectName("TipsOverlayTip")
             row.setWordWrap(True)
             row.setTextFormat(Qt.TextFormat.RichText)

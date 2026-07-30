@@ -313,7 +313,7 @@ def test_split_multi_file_success_copy_mentions_showing_first(
     status = shell.statusBar().currentMessage()
     toast = shell._toast._message.text()
     bar = shell._result_bar._label.text()
-    assert status == "Saved 3 files — showing first"
+    assert status == "Saved 3 files. Showing first"
     assert status == toast == bar
     assert shell._result_bar._path == str(first)
     assert shell.editor is None

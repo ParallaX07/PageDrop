@@ -39,7 +39,7 @@ def test_window_title_includes_dirty_star(main_window, five_page_pdf, qtbot):
     wait_for_pdf_loaded(qtbot, main_window)
     assert (
         main_window.windowTitle()
-        == f"PageDrop — {five_page_pdf.name} (5 pages)"
+        == f"PageDrop: {five_page_pdf.name} (5 pages)"
     )
 
     tab = main_window._tab_manager.active_tab
@@ -47,7 +47,7 @@ def test_window_title_includes_dirty_star(main_window, five_page_pdf, qtbot):
     assert tab.delete_selected_pages()
     assert (
         main_window.windowTitle()
-        == f"PageDrop — {five_page_pdf.name}* (4 pages)"
+        == f"PageDrop: {five_page_pdf.name}* (4 pages)"
     )
 
 

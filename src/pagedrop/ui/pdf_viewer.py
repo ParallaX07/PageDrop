@@ -1688,22 +1688,22 @@ class PdfViewerWidget(QWidget):
             tile.set_tool(tool)
             tile.clear_selection()
         labels = {
-            AnnotTool.SELECT: "Select text — click boxes to move or resize",
-            AnnotTool.HIGHLIGHT: "Highlight — drag over text",
-            AnnotTool.UNDERLINE: "Underline — drag over text",
-            AnnotTool.STRIKEOUT: "Strikeout — drag over text",
-            AnnotTool.INK: "Ink — draw freehand",
-            AnnotTool.RECT: "Rectangle — drag",
-            AnnotTool.CIRCLE: "Circle — drag",
-            AnnotTool.LINE: "Line — drag",
-            AnnotTool.STAMP: "Stamp — click to place",
-            AnnotTool.FREETEXT: "Free text — click to place; select to format",
-            AnnotTool.IMAGE: "Image — drag a box, then choose a file",
-            AnnotTool.COMMENT: "Comment — click to place",
-            AnnotTool.REDACT: "Redact — drag a region, then Confirm or Cancel",
-            AnnotTool.FORM_FILL: "Fill form — click a field",
-            AnnotTool.FORM_TEXT: "Add text field — drag",
-            AnnotTool.FORM_CHECK: "Add checkbox — drag",
+            AnnotTool.SELECT: "Select text: click boxes to move or resize",
+            AnnotTool.HIGHLIGHT: "Highlight: drag over text",
+            AnnotTool.UNDERLINE: "Underline: drag over text",
+            AnnotTool.STRIKEOUT: "Strikeout: drag over text",
+            AnnotTool.INK: "Ink: draw freehand",
+            AnnotTool.RECT: "Rectangle: drag",
+            AnnotTool.CIRCLE: "Circle: drag",
+            AnnotTool.LINE: "Line: drag",
+            AnnotTool.STAMP: "Stamp: click to place",
+            AnnotTool.FREETEXT: "Free text: click to place; select to format",
+            AnnotTool.IMAGE: "Image: drag a box, then choose a file",
+            AnnotTool.COMMENT: "Comment: click to place",
+            AnnotTool.REDACT: "Redact: drag a region, then Confirm or Cancel",
+            AnnotTool.FORM_FILL: "Fill form: click a field",
+            AnnotTool.FORM_TEXT: "Add text field: drag",
+            AnnotTool.FORM_CHECK: "Add checkbox: drag",
         }
         self.status_message.emit(labels.get(tool, tool.value))
 
@@ -2227,7 +2227,7 @@ class PdfViewerWidget(QWidget):
             return
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Markup added — Save As to keep")
+        self.status_message.emit("Markup added. Save As to keep")
 
     def _on_flatten_forms(self) -> None:
         if self._markup is None:
@@ -2243,7 +2243,7 @@ class PdfViewerWidget(QWidget):
         self._markup.push_form_flatten()
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Flatten forms queued — Save As to apply")
+        self.status_message.emit("Flatten forms queued. Save As to apply")
 
     def _build_redact_confirm_chrome(self) -> QFrame:
         bar = QFrame(self)
@@ -2446,7 +2446,7 @@ class PdfViewerWidget(QWidget):
         self._selected_overlay = new
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Free text updated — Save As to keep")
+        self.status_message.emit("Free text updated. Save As to keep")
 
     def _on_freetext_text_finished(self) -> None:
         if self._freetext_format_syncing:
@@ -2491,7 +2491,7 @@ class PdfViewerWidget(QWidget):
         self.refresh_markup_overlays()
         self.markup_changed.emit()
         self.status_message.emit(
-            "Redaction marked — Save As to permanently remove"
+            "Redaction marked. Save As to permanently remove"
         )
 
     def _cancel_pending_redact(self, *, status: bool = False) -> None:
@@ -2558,7 +2558,7 @@ class PdfViewerWidget(QWidget):
             self._set_selected_overlay(new)
             self.refresh_markup_overlays()
             self.markup_changed.emit()
-            self.status_message.emit("Moved — Save As to keep")
+            self.status_message.emit("Moved. Save As to keep")
             return
         if tool_value == "edit_freetext":
             old = payload.get("annotation")
@@ -2657,7 +2657,7 @@ class PdfViewerWidget(QWidget):
             self._set_selected_overlay(created)
             self.refresh_markup_overlays()
             self.markup_changed.emit()
-            self.status_message.emit("Markup added — Save As to keep")
+            self.status_message.emit("Markup added. Save As to keep")
             self._sync_freetext_format_bar(focus_text=True)
             return
         elif tool == AnnotTool.IMAGE:
@@ -2717,7 +2717,7 @@ class PdfViewerWidget(QWidget):
             return
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Markup added — Save As to keep")
+        self.status_message.emit("Markup added. Save As to keep")
 
     def _on_form_field_activated(self, logical: int, widget: object) -> None:
         if self._markup is None or not isinstance(widget, WidgetInfo):
@@ -2735,7 +2735,7 @@ class PdfViewerWidget(QWidget):
             return
         self._markup.push_form_fill({widget.name: text})
         self.markup_changed.emit()
-        self.status_message.emit(f"Queued fill for “{widget.name}” — Save As to keep")
+        self.status_message.emit(f"Queued fill for “{widget.name}”. Save As to keep")
 
     def _build_side_panel(self) -> QTabWidget:
         tabs = QTabWidget()
