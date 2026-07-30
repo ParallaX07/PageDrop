@@ -1638,7 +1638,38 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         letter-spacing: -0.2px;
     }}
 
-    QLabel#ToolShellDescription {{
+    /* R19: ? nests beside the title as a filled chip (not far-right / transparent). */
+    QToolButton#ToolShellHelp {{
+        color: {text_primary};
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 700;
+        min-width: 22px;
+        max-width: 22px;
+        min-height: 22px;
+        max-height: 22px;
+        padding: 0;
+    }}
+
+    QToolButton#ToolShellHelp:hover {{
+        color: {TEXT_ON_ACCENT};
+        background-color: {ACCENT};
+        border-color: {ACCENT};
+    }}
+
+    QToolButton#ToolShellHelp:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QFrame#ToolShellHelpPopup {{
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QLabel#ToolShellHelpBody {{
         color: {text_secondary};
         font-size: 13px;
     }}

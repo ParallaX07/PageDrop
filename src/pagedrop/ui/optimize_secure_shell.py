@@ -455,6 +455,7 @@ def open_optimize_secure_shell(
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=False,

@@ -391,6 +391,7 @@ def open_ocr_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=False,

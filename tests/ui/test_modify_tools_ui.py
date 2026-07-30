@@ -86,10 +86,12 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     assert options_col is not None
     assert options_col.minimumWidth() == 400
     assert options_col.maximumWidth() == 460
-    # R18: tool title + description dock in the options column (not shell root).
+    # R18: tool title + ? dock in the options column (not shell root).
     assert options_col.isAncestorOf(shell._header_host)
     assert shell._title_label.text() == "Watermark"
+    assert shell._help_btn.isVisible()
     assert shell.layout().indexOf(shell._header_host) < 0
+    assert shell.findChild(QLabel, "ToolShellDescription") is None
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)
     assert any(s.suffix() == "°" for s in spins)

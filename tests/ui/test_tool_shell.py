@@ -616,9 +616,9 @@ def test_r11_standard_shell_run_enabled_after_file_pick(qtbot, tmp_path):
 
 
 def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
-    """R11: booklet-style empty options must not expand a blank options band.
+    """R11: empty options must not expand a blank form band.
 
-    R18: header hides with the collapsed band (tab title + Run tip name the tool).
+    R19: compact title+? header stays visible (help reachable); stretch stays 0.
     """
     from PyQt6.QtWidgets import QFormLayout, QLabel, QWidget
 
@@ -628,12 +628,13 @@ def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
     shell.show()
     qtbot.waitExposed(shell, timeout=5000)
 
-    assert not shell._options_scroll.isVisible()
-    assert not shell._header_host.isVisible()
+    assert shell._options_scroll.isVisible()
+    assert shell._header_host.isVisible()
+    assert shell._help_btn.isVisible()
     root = shell.layout()
     assert root.stretch(root.indexOf(shell._options_scroll)) == 0
 
-    # Real controls restore the scroll stretch and show the options header.
+    # Real controls restore the scroll stretch.
     opts = QWidget()
     form = QFormLayout(opts)
     form.addRow("Hint", QLabel("x"))
@@ -645,7 +646,7 @@ def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
 
 
 def test_r18_header_lives_in_options_not_root(qtbot):
-    """R18: title + description are under options, not above the drop zone."""
+    """R18/R19: title + ? are under options, not above the drop zone."""
     from PyQt6.QtWidgets import QFormLayout, QLabel, QVBoxLayout, QWidget
 
     shell = ToolShellWindow(title="Demo", description="In options")
@@ -660,7 +661,8 @@ def test_r18_header_lives_in_options_not_root(qtbot):
     assert root.indexOf(shell._title_label) < 0
     assert shell._options_host.isAncestorOf(shell._title_label)
     assert shell._title_label.text() == "Demo"
-    assert shell._desc_label.text() == "In options"
+    assert shell.findChild(QLabel, "ToolShellDescription") is None
+    assert shell._help_btn.text() == "?"
 
     # adopt_header docks into an external column (Watermark pattern).
     col = QWidget()
@@ -670,14 +672,52 @@ def test_r18_header_lives_in_options_not_root(qtbot):
     assert not shell._options_host.isAncestorOf(shell._header_host)
 
 
+def test_r19_help_popup_shows_help_text(qtbot):
+    """R19: ? opens a popup with help_text (falls back to description)."""
+    from PyQt6.QtWidgets import QFormLayout, QLabel, QWidget
+
+    from pagedrop.ui.tool_shell import _ToolHelpPopup
+
+    shell = ToolShellWindow(
+        title="Demo",
+        description="Short line",
+        help_text="Detailed help about this tool for the popup.",
+    )
+    qtbot.addWidget(shell)
+    opts = QWidget()
+    form = QFormLayout(opts)
+    form.addRow("Hint", QLabel("x"))
+    shell.set_options_widget(opts)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    assert shell.findChild(QLabel, "ToolShellDescription") is None
+    shell._help_btn.click()
+    qtbot.waitUntil(
+        lambda: shell._help_popup is not None and shell._help_popup.isVisible(),
+        timeout=2000,
+    )
+    assert isinstance(shell._help_popup, _ToolHelpPopup)
+    body = shell._help_popup.findChild(QLabel, "ToolShellHelpBody")
+    assert body is not None
+    assert "Detailed help" in body.text()
+    shell._help_btn.click()
+    qtbot.waitUntil(
+        lambda: shell._help_popup is None or not shell._help_popup.isVisible(),
+        timeout=2000,
+    )
+
+
 def test_r11_booklet_shell_hides_empty_options(qtbot, isolated_settings):
-    """R11: organize booklet uses empty options → scroll collapsed."""
+    """R11/R19: booklet empty form — no expand; title+? header still visible."""
     tools = ToolsWindow()
     qtbot.addWidget(tools)
     shell = open_organize_shell(tools, "booklet")
     assert shell is not None
     qtbot.addWidget(shell)
-    assert not shell._options_scroll.isVisible()
+    assert shell._options_scroll.isVisible()
+    assert shell._header_host.isVisible()
+    assert shell._help_btn.isVisible()
     root = shell.layout()
     assert root.stretch(root.indexOf(shell._options_scroll)) == 0
     assert shell._actions_host.isVisible()

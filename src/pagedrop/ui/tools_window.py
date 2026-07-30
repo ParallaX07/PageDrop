@@ -65,6 +65,8 @@ class ToolEntry:
     coming_soon: bool = False
     action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure" | "modify" | "ocr" | "extract_tables"
     icon: str | None = None  # Phosphor stem under assets/icons/
+    # R19: detailed shell help popup; None → shell falls back to description.
+    help_text: str | None = None
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -86,6 +88,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("extract", "ranges", "split"),
         action="organize",
         icon="scissors",
+        help_text=(
+            "Break one PDF into several new files by page ranges (for example "
+            "1-3, 5, 8-10). Each range becomes its own PDF. Useful when you need "
+            "chapters, attachments, or a subset of pages without editing the "
+            "original. The source file is never overwritten."
+        ),
     ),
     ToolEntry(
         "alternate",
@@ -95,6 +103,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("interleave", "mix"),
         action="organize",
         icon="arrows-left-right",
+        help_text=(
+            "Interleave pages from two PDFs into one new file — page 1 from A, "
+            "page 1 from B, page 2 from A, and so on. Handy for duplex scans "
+            "that came out as separate front/back files, or for merging two "
+            "related sequences. Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "reverse",
@@ -104,6 +118,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("flip", "blank"),
         action="organize",
         icon="arrow-counter-clockwise",
+        help_text=(
+            "Flip the page order of a PDF (last page becomes first). Optionally "
+            "add a blank page when reversing odd-length documents for duplex "
+            "printing. Writes a new file; the original is unchanged."
+        ),
     ),
     ToolEntry(
         "n_up",
@@ -113,6 +132,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("impose", "grid", "2-up", "4-up"),
         action="organize",
         icon="grid-four",
+        help_text=(
+            "N-up means putting several original pages onto each sheet of the "
+            "new PDF — for example 2-up (two pages side by side) or 4-up "
+            "(a 2×2 grid). Choose rows and columns; PageDrop scales pages to "
+            "fit the cells. Use it to save paper when printing handouts, or to "
+            "make a compact overview. Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "booklet",
@@ -122,6 +148,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("impose", "print"),
         action="organize",
         icon="book-open",
+        help_text=(
+            "Rearranges pages so that when you print double-sided and fold the "
+            "stack in half, you get a simple booklet (like a folded pamphlet). "
+            "Each sheet holds two pages (2-up), ordered for saddle-style "
+            "folding. Print duplex, fold, and staple in the middle. Best for "
+            "short documents; output is a new PDF ready to print."
+        ),
     ),
     ToolEntry(
         "posterize",
@@ -131,6 +164,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("tiles", "poster"),
         action="organize",
         icon="bounding-box",
+        help_text=(
+            "Slice each page into a grid of tiles (rows × columns). Each tile "
+            "becomes its own page in the new PDF so you can print a large page "
+            "across several sheets and tape them into a poster. Pick how many "
+            "rows and columns you need. The source file is not changed."
+        ),
     ),
     ToolEntry(
         "divide",
@@ -140,6 +179,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("halve", "cut"),
         action="organize",
         icon="columns",
+        help_text=(
+            "Cut every page in half — horizontally or vertically — so each "
+            "half becomes its own page in a new PDF. Useful for scanned "
+            "spreads, booklets that were scanned as one page, or two-up "
+            "sheets you want to separate again."
+        ),
     ),
     ToolEntry(
         "combine",
@@ -149,6 +194,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("scroll", "strip"),
         action="organize",
         icon="arrows-in-line-vertical",
+        help_text=(
+            "Stack every page of the PDF into one continuous tall (or wide) "
+            "page — like a long screenshot strip. Handy for sharing a full "
+            "document as a single scrollable page. Creates a new file."
+        ),
     ),
     ToolEntry(
         "normalize",
@@ -158,6 +208,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("resize", "paper", "a4", "letter"),
         action="organize",
         icon="arrows-out",
+        help_text=(
+            "Make every page the same paper size (Letter, A4, and similar). "
+            "Choose fit (scale to fit inside, may letterbox) or fill (cover "
+            "the page, may crop). Useful before merging mixed-size scans or "
+            "sending to a printer that expects one size. Writes a new PDF."
+        ),
     ),
     ToolEntry(
         "attachments",
@@ -167,6 +223,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("embed", "embfile"),
         action="organize",
         icon="paperclip",
+        help_text=(
+            "PDFs can carry embedded files (attachments) inside them. List "
+            "what is already embedded, add new files, extract copies to disk, "
+            "or remove attachments. Changes are written to a new PDF so the "
+            "original stays intact."
+        ),
     ),
     ToolEntry(
         "metadata",
@@ -176,6 +238,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("info", "xmp", "strip"),
         action="organize",
         icon="info",
+        help_text=(
+            "Edit document properties such as title, author, subject, and "
+            "keywords, or strip metadata for privacy. Load values from the "
+            "current file, change them, and save a new PDF. The source file "
+            "is never overwritten."
+        ),
     ),
     ToolEntry(
         "page_labels",
@@ -185,6 +253,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("roman", "numbering"),
         action="organize",
         icon="list-numbers",
+        help_text=(
+            "Page labels are how a PDF names pages in the viewer (i, ii, iii "
+            "for a preface, then 1, 2, 3 for the body). Set styles and ranges "
+            "so the sidebar and print dialogs show the labels you want. This "
+            "does not stamp numbers onto the page art — use Page numbers for "
+            "that. Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "zip",
@@ -194,6 +269,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("archive", "compress"),
         action="organize",
         icon="file-zip",
+        help_text=(
+            "Put one or more PDFs into a ZIP archive for sharing or backup. "
+            "The PDFs themselves are not recompressed as PDF; they are packed "
+            "as files inside the zip. Originals are left alone."
+        ),
     ),
     ToolEntry(
         "compare",
@@ -231,6 +311,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         ),
         action="convert_to_pdf",
         icon="file-arrow-down",
+        help_text=(
+            "Turn supported non-PDF files into a new PDF — SVG, XPS, ebooks, "
+            "Markdown, HTML, text, CBZ, CSV, Excel, and similar. Drop one or "
+            "more files and run. Layout fidelity depends on the format. The "
+            "originals are left alone."
+        ),
     ),
     ToolEntry(
         "export_from_pdf",
@@ -240,6 +326,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("export", "png", "jpeg", "webp", "svg", "csv"),
         action="export_from_pdf",
         icon="export",
+        help_text=(
+            "Export pages or content out of a PDF into other formats — images "
+            "(PNG, JPEG, WebP), SVG, plain text, structured JSON/XML, CBZ, or "
+            "tables. Choose the format and options, then save new files. The "
+            "PDF itself is not modified."
+        ),
     ),
     ToolEntry(
         "office_to_pdf",
@@ -258,6 +350,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         ),
         action="office_to_pdf",
         icon="file-doc",
+        help_text=(
+            "Convert Word, Excel, or PowerPoint documents to PDF using "
+            "Microsoft Office (Windows) or LibreOffice when available. The "
+            "status line names which engine ran. Output is a new PDF; the "
+            "Office file is unchanged."
+        ),
     ),
     ToolEntry(
         "pdf_to_word",
@@ -268,6 +366,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         capability_id=LIBREOFFICE,
         action="pdf_to_word",
         icon="file-doc",
+        help_text=(
+            "Convert a PDF to an editable Word (.docx) file via LibreOffice. "
+            "Complex layouts, columns, and graphics may not match the PDF "
+            "exactly — treat the result as a starting point for editing. "
+            "Needs LibreOffice installed. Writes a new DOCX; the PDF is "
+            "unchanged."
+        ),
     ),
     ToolEntry(
         "ocr_pdf",
@@ -278,6 +383,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         capability_id=TESSDATA,
         action="ocr",
         icon="scan",
+        help_text=(
+            "Optical character recognition (OCR) reads text from scanned or "
+            "image-only pages and adds a searchable text layer to a new PDF. "
+            "Needs tessdata language packs configured in settings. Pick "
+            "languages that match the document. The original file is never "
+            "overwritten."
+        ),
     ),
     ToolEntry(
         "extract_tables",
@@ -287,6 +399,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("tables", "csv", "json", "xlsx", "excel", "spreadsheet"),
         action="extract_tables",
         icon="table",
+        help_text=(
+            "Find tables in a PDF and export them to CSV, JSON, or Excel. "
+            "Best on clear, grid-like tables; complex or scanned layouts may "
+            "need cleanup afterward. Creates new data files; the PDF stays "
+            "as-is."
+        ),
     ),
     ToolEntry(
         "pdf_to_csv",
@@ -296,6 +414,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("tables", "csv", "spreadsheet", "export"),
         action="pdf_to_csv",
         icon="table",
+        help_text=(
+            "Extract tables from a PDF into CSV files you can open in a "
+            "spreadsheet. Works best with neat, text-based tables. Output is "
+            "new CSV files; the PDF is not modified."
+        ),
     ),
     ToolEntry(
         "pdf_to_excel",
@@ -306,6 +429,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         capability_id=OPENPYXL,
         action="pdf_to_excel",
         icon="table",
+        help_text=(
+            "Extract tables from a PDF into an Excel workbook (.xlsx). Needs "
+            "the optional openpyxl capability. Best on clear text tables. "
+            "Writes a new spreadsheet; the PDF is unchanged."
+        ),
     ),
     ToolEntry(
         "crop",
@@ -315,6 +443,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("trim", "margins", "cropbox"),
         action="modify",
         icon="crop",
+        help_text=(
+            "Trim margins from every page (or a page range). You can adjust "
+            "the CropBox (viewer crop) or rebuild pages to permanently remove "
+            "trimmed content. Use it to clean scanned borders or focus on the "
+            "content area. Saves a new PDF."
+        ),
     ),
     ToolEntry(
         "watermark",
@@ -324,6 +458,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("stamp", "overlay", "confidential"),
         action="modify",
         icon="drop",
+        help_text=(
+            "Stamp text or an image onto chosen pages. Drag the overlay in the "
+            "preview to place it, or use the snap grid. Size is a percent of the "
+            "page diagonal; opacity and angle apply live. Flatten burns the "
+            "watermark into page content (harder to remove later). Output is "
+            "always a new PDF — the source file is never overwritten."
+        ),
     ),
     ToolEntry(
         "header_footer",
@@ -333,6 +474,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("header", "footer", "running"),
         action="modify",
         icon="text-t",
+        help_text=(
+            "Add running header and/or footer text on each page. You can use "
+            "tokens for page numbers and similar fields. Position left, "
+            "center, or right. Writes a new PDF with the stamps applied."
+        ),
     ),
     ToolEntry(
         "page_numbers",
@@ -342,6 +488,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("numbering", "folio"),
         action="modify",
         icon="hash",
+        help_text=(
+            "Draw page numbers onto the page (visible on the printed page), "
+            "with format and position options. Different from Page labels, "
+            "which only change how the viewer names pages in the sidebar. "
+            "Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "bates",
@@ -351,6 +503,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("bates", "exhibit", "stamp"),
         action="modify",
         icon="hash",
+        help_text=(
+            "Bates numbering stamps a unique sequential ID on each page "
+            "(often used in legal discovery), optionally with a prefix and "
+            "across multiple PDFs in one run. Numbers continue in order "
+            "through the batch. Each stamped file is saved as a new PDF."
+        ),
     ),
     ToolEntry(
         "bookmarks",
@@ -360,6 +518,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("outline", "toc", "contents"),
         action="modify",
         icon="bookmarks",
+        help_text=(
+            "Edit the PDF outline (bookmarks that appear in the sidebar) and "
+            "optionally generate a table-of-contents page from them. Helps "
+            "readers jump to sections in long documents. Saves a new PDF."
+        ),
     ),
     ToolEntry(
         "annotations",
@@ -369,6 +532,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("flatten", "bake", "markup", "forms"),
         action="modify",
         icon="note-pencil",
+        help_text=(
+            "Remove markup annotations, or flatten them (and form appearances) "
+            "so they become ordinary page content that cannot be edited as "
+            "comments. Use flatten before sharing a final copy; use remove to "
+            "strip review marks. Always writes a new file."
+        ),
     ),
     ToolEntry(
         "blank_pages",
@@ -378,6 +547,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("empty", "detect", "remove"),
         action="modify",
         icon="file-dashed",
+        help_text=(
+            "Detect mostly blank pages (common after scanning) and remove them "
+            "after you confirm. Review the detection before running so "
+            "lightly marked pages are not dropped by mistake. Output is a new "
+            "PDF."
+        ),
     ),
     ToolEntry(
         "color_effects",
@@ -387,6 +562,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("greyscale", "grayscale", "invert", "scanner"),
         action="modify",
         icon="palette",
+        help_text=(
+            "Apply whole-page color effects: greyscale, invert, or a "
+            "background tint. Some effects rasterize pages (turn them into "
+            "images), which can increase file size and reduce text "
+            "selectability — the tool warns when that applies. Saves a new "
+            "PDF."
+        ),
     ),
     ToolEntry(
         "compress",
@@ -396,6 +578,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("shrink", "optimize"),
         action="optimize_secure",
         icon="file-zip",
+        help_text=(
+            "Create a smaller copy of the PDF by recompressing images and "
+            "cleaning structure where possible. Quality vs size is a tradeoff; "
+            "try it when emailing or uploading large scans. The original file "
+            "is left unchanged."
+        ),
     ),
     ToolEntry(
         "repair",
@@ -405,6 +593,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("fix", "rewrite", "recover"),
         action="optimize_secure",
         icon="wrench",
+        help_text=(
+            "Rewrite the PDF into a clean new file. Can help when a document "
+            "opens with errors, has odd structure, or fails in other tools. "
+            "Not a guarantee for severely corrupt files. Source is never "
+            "overwritten."
+        ),
     ),
     ToolEntry(
         "encrypt",
@@ -414,6 +608,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("password", "protect", "permissions"),
         action="optimize_secure",
         icon="lock",
+        help_text=(
+            "Password-protect a new copy of the PDF and optionally restrict "
+            "printing, copying, or editing. You choose open and/or permissions "
+            "passwords. Keep passwords somewhere safe — PageDrop cannot recover "
+            "them. The unlocked original is not changed."
+        ),
     ),
     ToolEntry(
         "decrypt",
@@ -423,6 +623,11 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("password", "unlock", "remove password"),
         action="optimize_secure",
         icon="lock-open",
+        help_text=(
+            "Remove password protection by writing an unlocked copy. You must "
+            "know the current password. Use this when you own the file and "
+            "need an unprotected version for editing or archiving."
+        ),
     ),
     ToolEntry(
         "sanitize",
@@ -432,6 +637,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("scrub", "metadata", "privacy", "annotations"),
         action="optimize_secure",
         icon="broom",
+        help_text=(
+            "Scrub privacy-sensitive extras before sharing: strip document "
+            "metadata and optionally remove annotations. Produces a cleaner "
+            "copy for distribution. Does not replace redaction for sensitive "
+            "content on the page — use redaction in the viewer for that."
+        ),
     ),
 )
 
