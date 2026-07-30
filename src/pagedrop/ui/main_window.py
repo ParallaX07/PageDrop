@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
-    QStyle,
     QToolBar,
     QToolButton,
     QWidget,
@@ -46,6 +45,7 @@ from pagedrop.ui.keyboard_nav import (
 from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
+from pagedrop.ui import icons
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
@@ -126,6 +126,9 @@ class MainWindow(QMainWindow):
         self._build_status_widgets()
         self._build_central_widget()
         self._set_chrome_visible(chrome_visible(), persist=False)
+        refresh_cb = self._refresh_action_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
         QApplication.instance().installEventFilter(self)
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
@@ -161,14 +164,13 @@ class MainWindow(QMainWindow):
         """Create the single action catalogue used by menu, toolbar, and shortcuts."""
         actions = ActionRegistry(self)
         self._actions = actions
-        style = self.style()
 
         actions.register(
             "open",
             "&Open PDF",
             slot=self._open_pdf,
             shortcut=QKeySequence.StandardKey.Open,
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            icon=icons.icon("folder-open"),
             tip="Open a PDF (Ctrl+O)",
         )
         self._close_action = actions.register(
@@ -286,9 +288,7 @@ class MainWindow(QMainWindow):
             "preview",
             "Preview",
             slot=self._open_preview,
-            icon=style.standardIcon(
-                QStyle.StandardPixmap.SP_FileDialogDetailedView
-            ),
+            icon=icons.icon("list"),
             tip="Preview selected page (Enter or double-click a card)",
             enabled=False,
         )
@@ -321,7 +321,7 @@ class MainWindow(QMainWindow):
             "Move up",
             slot=self._move_selected_pages_up,
             shortcut="Ctrl+Up",
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            icon=icons.icon("arrow-up"),
             tip="Move selected pages up (Ctrl+↑)",
             enabled=False,
         )
@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
             "Move down",
             slot=self._move_selected_pages_down,
             shortcut="Ctrl+Down",
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+            icon=icons.icon("arrow-down"),
             tip="Move selected pages down (Ctrl+↓)",
             enabled=False,
         )
@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
             "Delete page(s)",
             slot=self._delete_selected_pages,
             shortcut=QKeySequence(Qt.Key.Key_Delete),
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            icon=icons.icon("trash"),
             tip="Delete selected pages (Delete)",
             enabled=False,
         )
@@ -416,6 +416,15 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+0",
             add_to_window=True,
         )
+
+    def _refresh_action_icons(self) -> None:
+        """Re-tint Phosphor toolbar icons after a light/dark swap."""
+        a = self._actions
+        a["open"].setIcon(icons.icon("folder-open"))
+        a["preview"].setIcon(icons.icon("list"))
+        a["move_up"].setIcon(icons.icon("arrow-up"))
+        a["move_down"].setIcon(icons.icon("arrow-down"))
+        a["delete_pages"].setIcon(icons.icon("trash"))
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()

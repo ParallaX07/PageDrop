@@ -15,6 +15,8 @@ TESSDATA = SRC / "pagedrop" / "data" / "tessdata"
 
 datas: list[tuple[str, str]] = [
     (str(ASSETS / "logo.png"), "pagedrop/assets"),
+    # Phosphor toolbar SVGs (R4) — must resolve via importlib.resources when frozen.
+    (str(ASSETS / "icons"), "pagedrop/assets/icons"),
     # Licence notices must ship inside the onefile archive / installer.
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),
@@ -29,10 +31,11 @@ hiddenimports: list[str] = [
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
+    "PyQt6.QtSvg",
 ]
 
 # PyQt6: widget stack only — skip WebEngine, Bluetooth, Multimedia, etc.
-for qt_mod in ("PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets"):
+for qt_mod in ("PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets", "PyQt6.QtSvg"):
     hiddenimports += collect_submodules(qt_mod)
 
 # Qt DLLs, plugins (platforms/styles/imageformats), and translations are

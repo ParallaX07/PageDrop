@@ -26,6 +26,7 @@ packages = ["src/pagedrop"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/pagedrop/data" = "pagedrop/data"
+"src/pagedrop/assets" = "pagedrop/assets"
 
 [dependency-groups]
 dev = [

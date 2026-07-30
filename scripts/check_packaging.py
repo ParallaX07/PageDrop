@@ -46,6 +46,15 @@ def _assert_notices_in_spec(spec_text: str) -> None:
     )
 
 
+def _assert_icons_in_spec(spec_text: str) -> None:
+    assert "assets/icons" in spec_text or 'ASSETS / "icons"' in spec_text, (
+        "pagedrop.spec must bundle Phosphor SVG icons under pagedrop/assets/icons"
+    )
+    assert "PyQt6.QtSvg" in spec_text, (
+        "pagedrop.spec must collect PyQt6.QtSvg for SVG toolbar icons"
+    )
+
+
 def _assert_notices_in_dist_if_present() -> None:
     """Onefile embeds notices in the archive; optional loose copy beside the exe is fine.
 
@@ -79,7 +88,9 @@ def main() -> None:
     _assert_notices_content(notices_text)
 
     assert SPEC.is_file(), f"missing {SPEC}"
-    _assert_notices_in_spec(SPEC.read_text(encoding="utf-8"))
+    spec_text = SPEC.read_text(encoding="utf-8")
+    _assert_notices_in_spec(spec_text)
+    _assert_icons_in_spec(spec_text)
     _assert_notices_in_dist_if_present()
 
     assert "THIRD_PARTY_NOTICES.md" in iss_text, (

@@ -1631,7 +1631,11 @@ def border_hover_qcolor() -> "QColor":
 
 
 def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
-    """Red × icon for tab close buttons."""
+    """Red × icon for tab close buttons.
+
+    ponytail: stay painted (not Phosphor) — tab chrome needs a small tinted ×,
+    not a toolbar glyph. Upgrade: move into ``icons.py`` if close gets an SVG.
+    """
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
