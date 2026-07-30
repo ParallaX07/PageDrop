@@ -114,6 +114,50 @@ def test_stylesheet_includes_focus_rings_for_controls():
     assert "QSlider#ZoomSlider:focus" in sheet
     assert "QPushButton#ZoomButton:focus" in sheet
     assert "QTabWidget#PdfViewerSide::pane" in sheet
+    assert "QCheckBox:focus::indicator" in sheet
+    assert "QRadioButton:focus::indicator" in sheet
+
+
+def test_r10a_page_chips_and_prefs_chrome():
+    """R10a: theme-aware chips, annot rail focus, prefs section/divider QSS."""
+    from pagedrop.ui.theme import ACCENT, TEXT_ON_ACCENT
+
+    dark = app_stylesheet()
+    light = app_stylesheet(light=True)
+
+    dark_chip = "rgba(19, 19, 22, 160)"
+    light_chip = "rgba(26, 26, 31, 170)"
+
+    for sheet, chip_bg in ((dark, dark_chip), (light, light_chip)):
+        page = sheet.split("QLabel#PageCardPageOverlay")[1].split("}")[0]
+        rot = sheet.split("QLabel#PageCardRotationOverlay")[1].split("}")[0]
+        assert chip_bg in page
+        assert chip_bg in rot
+        assert TEXT_ON_ACCENT in page
+        assert "QLabel#PreferencesSection" in sheet
+        assert "QFrame#PreferencesDivider" in sheet
+        assert "QWidget#PdfViewerAnnotTools QToolButton:focus" in sheet
+        assert "QWidget#PdfViewerAnnotTools QToolButton:pressed" in sheet
+        assert "QToolButton#PdfViewerAnnotCollapse:focus" in sheet
+        assert "QToolButton#PdfViewerAnnotExpand:pressed" in sheet
+        assert f"solid {ACCENT}" in sheet.split(
+            "QWidget#PdfViewerAnnotTools QToolButton:focus"
+        )[1].split("}")[0]
+
+    # Light sheet must not rely on the dark-only hardcoded chip rgba alone.
+    light_page = light.split("QLabel#PageCardPageOverlay")[1].split("}")[0]
+    assert dark_chip not in light_page
+    assert light_chip in light_page
+
+
+def test_r10a_prefs_dialog_has_section_dividers(qtbot, isolated_settings):
+    """R10a: prefs groups are separated by PreferencesDivider frames."""
+    from PyQt6.QtWidgets import QFrame, QLabel
+
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    assert len(dialog.findChildren(QLabel, "PreferencesSection")) == 5
+    assert len(dialog.findChildren(QFrame, "PreferencesDivider")) == 4
 
 
 def test_light_stylesheet_styles_dialogs(isolated_settings):

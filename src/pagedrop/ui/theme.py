@@ -133,6 +133,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         status_success = STATUS_SUCCESS_LIGHT
         status_warning = STATUS_WARNING_LIGHT
         busy_overlay_bg = "rgba(247, 248, 250, 200)"
+        # Chips sit on page-paper thumbs (always light) — dark pill either chrome.
+        page_chip_bg = "rgba(26, 26, 31, 170)"
     else:
         bg_base = BG_BASE
         bg_surface = BG_SURFACE
@@ -155,6 +157,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         status_success = STATUS_SUCCESS
         status_warning = STATUS_WARNING
         busy_overlay_bg = "rgba(19, 19, 22, 180)"
+        page_chip_bg = "rgba(19, 19, 22, 160)"
 
     text_muted = text_secondary if high_contrast else text_muted_tok
     border_default = border_hover if high_contrast else border_default_tok
@@ -336,6 +339,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QCheckBox:focus,
     QRadioButton:focus {{
         outline: none;
+    }}
+
+    QCheckBox:focus::indicator,
+    QRadioButton:focus::indicator {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QComboBox {{
@@ -957,7 +965,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QWidget#PdfViewerAnnotTools QToolButton {{
         text-align: left;
         padding: 5px 8px;
-        border: none;
+        border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
         color: {text_secondary};
         background-color: transparent;
@@ -968,16 +976,27 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
     }}
 
+    QWidget#PdfViewerAnnotTools QToolButton:pressed {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
     QWidget#PdfViewerAnnotTools QToolButton:checked {{
         color: {text_primary};
         background-color: {bg_card};
         border: 1px solid {ACCENT};
     }}
 
+    QWidget#PdfViewerAnnotTools QToolButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
     QToolButton#PdfViewerAnnotCollapse,
     QToolButton#PdfViewerAnnotExpand {{
         color: {text_muted};
-        border: none;
+        border: 1px solid transparent;
+        border-radius: {RADIUS_CONTROL}px;
         padding: 4px;
         background-color: transparent;
     }}
@@ -986,7 +1005,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton#PdfViewerAnnotExpand:hover {{
         color: {text_primary};
         background-color: {bg_card_hover};
-        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QToolButton#PdfViewerAnnotCollapse:pressed,
+    QToolButton#PdfViewerAnnotExpand:pressed {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QToolButton#PdfViewerAnnotCollapse:focus,
+    QToolButton#PdfViewerAnnotExpand:focus {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QTabWidget#PdfViewerSide {{
@@ -1568,7 +1598,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PageCardPageOverlay {{
         color: {TEXT_ON_ACCENT};
-        background-color: rgba(19, 19, 22, 160);
+        background-color: {page_chip_bg};
         font-size: 11px;
         font-weight: 600;
         padding: {SPACE_1}px {SPACE_2}px;
@@ -1576,12 +1606,27 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PageCardRotationOverlay {{
         color: {TEXT_ON_ACCENT};
-        background-color: rgba(19, 19, 22, 160);
+        background-color: {page_chip_bg};
         font-family: {FONT_MONO};
         font-size: 10px;
         font-weight: 600;
         padding: {SPACE_1}px {SPACE_1}px;
         border-radius: {SPACE_1}px;
+    }}
+
+    QLabel#PreferencesSection {{
+        color: {text_muted};
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        padding-top: {SPACE_1}px;
+    }}
+
+    QFrame#PreferencesDivider {{
+        background-color: {border_subtle};
+        border: none;
+        max-height: 1px;
+        margin: {SPACE_2}px 0;
     }}
     QLabel#MergeFileCardThumbnail,
     QLabel#ConvertFileCardThumbnail {{
