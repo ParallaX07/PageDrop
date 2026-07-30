@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -458,6 +459,8 @@ def test_show_in_folder_opens_parent(tmp_path, monkeypatch):
     target = tmp_path / "doc.pdf"
     target.write_bytes(b"%PDF")
     opened: list[str] = []
+    # Monkeypatching result_actions.sys.platform mutates the shared sys module.
+    host_is_windows = sys.platform == "win32"
 
     monkeypatch.setattr(
         "pagedrop.ui.result_actions.QDesktopServices.openUrl",
@@ -466,7 +469,10 @@ def test_show_in_folder_opens_parent(tmp_path, monkeypatch):
     # Force folder-open path (non-win/mac select).
     monkeypatch.setattr("pagedrop.ui.result_actions.sys.platform", "linux")
     assert show_in_folder(target) is True
-    assert opened == [str(tmp_path.resolve())]
+    # QUrl.toLocalFile() uses forward slashes on Windows; pathlib uses backslash.
+    folder = str(tmp_path.resolve())
+    expected = folder.replace("\\", "/") if host_is_windows else folder
+    assert opened == [expected]
 
 
 def test_search_enter_focuses_first_tile(qtbot):

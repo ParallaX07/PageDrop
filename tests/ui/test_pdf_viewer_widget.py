@@ -161,7 +161,8 @@ def test_fit_width_canvas_shrinks_after_narrower_viewport(qtbot, viewer_pdf: Pat
 
     viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
     try:
-        viewer.resize(1100, 700)
+        # Offscreen Qt ignores soft resize(); fixed size forces geometry.
+        viewer.setFixedSize(1100, 700)
         viewer.show()
         qtbot.waitExposed(viewer, timeout=5000)
         viewer.set_layout_mode(ViewerLayout.CONTINUOUS)
@@ -170,7 +171,7 @@ def test_fit_width_canvas_shrinks_after_narrower_viewport(qtbot, viewer_pdf: Pat
         viewer._sync_continuous_tiles()
         wide = viewer._canvas.width()
 
-        viewer.resize(700, 700)
+        viewer.setFixedSize(700, 700)
         qtbot.waitUntil(
             lambda: viewer._scroll.viewport().width() < 800,
             timeout=3000,

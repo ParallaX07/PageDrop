@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import time
 from pathlib import Path
 
@@ -177,7 +178,9 @@ def test_drop_zone_accepts_file_urls(qtbot, tmp_path):
     )
     zone.dropEvent(drop)
     assert drop.isAccepted()
-    assert zone.paths() == [str(pdf)]
+    # QUrl.toLocalFile() uses forward slashes on Windows; pathlib uses backslash.
+    expected = str(pdf).replace("\\", "/") if sys.platform == "win32" else str(pdf)
+    assert zone.paths() == [expected]
 
 
 def test_drop_zone_default_prompts(qtbot):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -18,6 +19,10 @@ _live_dirs: set[Path] = set()
 # Backend mkdtemp trees (LO/Office) claimed while a conversion holds them.
 _live_backend_dirs: set[Path] = set()
 
+# Windows: OpenProcess access right for existence check (no terminate / no signal).
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+
 
 def _write_owner_pid(path: Path) -> None:
     """Record the owning process so other PageDrop processes skip this tree."""
@@ -25,6 +30,37 @@ def _write_owner_pid(path: Path) -> None:
         (path / _OWNER_FILE).write_text(str(os.getpid()), encoding="ascii")
     except OSError:
         pass
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if *pid* still refers to a running process.
+
+    On Windows, ``os.kill(pid, 0)`` is *not* a liveness probe: signal ``0`` is
+    ``CTRL_C_EVENT``, so it calls ``GenerateConsoleCtrlEvent`` and can SIGINT
+    every process attached to the same console (pytest controller + xdist workers).
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(
+            _PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        )
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        # Access denied ⇒ process exists but we cannot open it.
+        return ctypes.GetLastError() == _ERROR_ACCESS_DENIED
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _owner_process_alive(path: Path) -> bool:
@@ -35,18 +71,7 @@ def _owner_process_alive(path: Path) -> bool:
         pid = int(raw)
     except (OSError, ValueError):
         return False
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Exists but we cannot signal it — treat as live.
-        return True
-    except OSError:
-        return False
-    return True
+    return _pid_alive(pid)
 
 
 def claim_backend_temp(path: Path) -> Path:

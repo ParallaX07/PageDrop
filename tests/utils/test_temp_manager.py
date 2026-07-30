@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import atexit
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from pagedrop.utils.temp_manager import TempManager
+from pagedrop.utils.temp_manager import TempManager, _pid_alive
+
+
+def test_pid_alive_self_and_bogus():
+    """Liveness check must not use os.kill(pid, 0) on Windows (CTRL_C_EVENT)."""
+    assert _pid_alive(os.getpid()) is True
+    assert _pid_alive(-1) is False
+    assert _pid_alive(0) is False
+    # Unlikely to be a live PID; must return False without raising / signaling.
+    assert _pid_alive(2_147_000_000) is False
 
 
 def test_creates_prefixed_dir():
