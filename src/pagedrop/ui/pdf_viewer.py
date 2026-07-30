@@ -20,9 +20,11 @@ from typing import Literal
 from PyQt6.QtCore import (
     QEvent,
     QObject,
+    QPoint,
     QPointF,
     QRectF,
     QRunnable,
+    QSize,
     QThreadPool,
     QTimer,
     Qt,
@@ -84,12 +86,8 @@ from pagedrop.core.forms import FormCreateOp
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.redact import (
-    RedactionRegion,
-    RedactionScope,
-    RedactionVerifyError,
-    redact_edit_model,
-)
+from pagedrop.core.redact import RedactionRegion
+from pagedrop.ui.icons import icon, register_refresh, unregister_refresh
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
 from pagedrop.core.pdf_service import (
     MAX_PRINT_PAGES,
@@ -126,6 +124,8 @@ from pagedrop.ui.theme import (
     VIEWER_PAGE_BG,
     ZOOM_WHEEL_STEP,
     accent_qcolor,
+    close_tab_hex,
+    status_success_hex,
     token_qcolor,
 )
 
@@ -612,6 +612,7 @@ class _PageTile(QWidget):
         self._text_failed = False
         self._tool = AnnotTool.SELECT
         self._overlay_entries: list[MarkupEntry] = []
+        self._pending_redact: RedactionRegion | None = None
         self._markup_color = _DEFAULT_MARKUP_COLOR
         self._selected_op: AnnotationOp | None = None
         self._transform_mode: str | None = None
@@ -658,6 +659,13 @@ class _PageTile(QWidget):
                 for e in entries
             ):
                 self._selected_op = None
+        self.update()
+
+    def set_pending_redaction(self, region: RedactionRegion | None) -> None:
+        """Show an unconfirmed redact mark (Confirm/Cancel chrome owns commit)."""
+        if region is not None and region.page_index != self.logical_page:
+            region = None
+        self._pending_redact = region
         self.update()
 
     def set_page_meta(
@@ -872,6 +880,20 @@ class _PageTile(QWidget):
             painter.fillRect(wr, color)
 
     def _paint_markup_overlays(self, painter: QPainter) -> None:
+        if self._pending_redact is not None:
+            wr = _map_pdf_rect_to_widget(
+                self._pending_redact.rect,
+                self._page_w,
+                self._page_h,
+                self.width(),
+                self.height(),
+                self._rotation,
+            )
+            painter.fillRect(wr, token_qcolor(PAGE_INK, 140))
+            pen = QPen(token_qcolor(CLOSE_TAB), 2)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(wr)
         for entry in self._overlay_entries:
             if entry.kind == "redaction" and entry.redaction is not None:
                 region = entry.redaction
@@ -1545,6 +1567,7 @@ class PdfViewerWidget(QWidget):
         self._tool = AnnotTool.SELECT
         self._markup_color = _DEFAULT_MARKUP_COLOR
         self._selected_overlay: AnnotationOp | None = None
+        self._pending_redact: RedactionRegion | None = None
         self._layout = ViewerLayout.CONTINUOUS
         self._zoom_mode = ZoomMode.FIT_WIDTH
         self._zoom_percent = DEFAULT_ZOOM_PERCENT
@@ -1596,6 +1619,9 @@ class PdfViewerWidget(QWidget):
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self._scroll.horizontalScrollBar().valueChanged.connect(
+            self._sync_redact_confirm_geometry
+        )
         # Scrollbar show/hide changes viewport size without resizing this widget.
         self._scroll.viewport().installEventFilter(self)
 
@@ -1625,6 +1651,11 @@ class PdfViewerWidget(QWidget):
         self._splitter.setStretchFactor(2, 0)
         self._splitter.setSizes([SIDE_PANEL_WIDTH, 800, ANNOT_RAIL_WIDTH])
         root.addWidget(self._splitter, stretch=1)
+
+        self._redact_confirm = self._build_redact_confirm_chrome()
+        refresh_cb = self._refresh_redact_confirm_icons
+        register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: unregister_refresh(refresh_cb))
 
     # --- public API ---------------------------------------------------------
 
@@ -1663,6 +1694,7 @@ class PdfViewerWidget(QWidget):
         self._markup = markup
         self._tool = AnnotTool.SELECT
         self._sync_annot_tool_ui()
+        self._cancel_pending_redact(status=False)
         self._current_page = 0
         self._hits = []
         self._hit_index = -1
@@ -1735,7 +1767,7 @@ class PdfViewerWidget(QWidget):
             AnnotTool.FREETEXT: "Free text — click to place; drag handles to resize",
             AnnotTool.IMAGE: "Image — drag a box, then choose a file",
             AnnotTool.COMMENT: "Comment — click to place",
-            AnnotTool.REDACT: "Redact — drag a region; Apply redaction exports a verified copy",
+            AnnotTool.REDACT: "Redact — drag a region, then Confirm or Cancel",
             AnnotTool.FORM_FILL: "Fill form — click a field",
             AnnotTool.FORM_TEXT: "Add text field — drag",
             AnnotTool.FORM_CHECK: "Add checkbox — drag",
@@ -1770,12 +1802,14 @@ class PdfViewerWidget(QWidget):
         for tile in self._tiles.values():
             tile.set_overlay_entries(entries)
             tile.set_markup_color(self._markup_color)
+            tile.set_pending_redaction(self._pending_redact)
             tile.set_selected_op(
                 self._selected_overlay
                 if self._selected_overlay is not None
                 and self._selected_overlay.page_index == tile.logical_page
                 else None
             )
+        self._sync_redact_confirm_geometry()
 
     def _set_selected_overlay(self, op: AnnotationOp | None) -> None:
         self._selected_overlay = op
@@ -2163,18 +2197,6 @@ class PdfViewerWidget(QWidget):
         flatten_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         flatten_btn.clicked.connect(self._on_flatten_forms)
         tools_layout.addWidget(flatten_btn)
-
-        apply_redact_btn = QToolButton()
-        apply_redact_btn.setText("Apply redaction")
-        apply_redact_btn.setAccessibleName("Apply redaction")
-        apply_redact_btn.setToolTip(
-            "Write a new PDF with marked regions permanently removed and verified"
-        )
-        apply_redact_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        apply_redact_btn.clicked.connect(self._on_apply_redaction)
-        tools_layout.addWidget(apply_redact_btn)
         tools_layout.addStretch(1)
         outer.addWidget(self._annot_tools_host, stretch=1)
 
@@ -2288,108 +2310,103 @@ class PdfViewerWidget(QWidget):
         self.markup_changed.emit()
         self.status_message.emit("Flatten forms queued — Save As to apply")
 
-    def _on_apply_redaction(self) -> None:
-        """Export a GC-rewritten copy with marked regions permanently removed."""
-        if self._markup is None or self._model is None:
-            return
-        regions = self._markup.redaction_regions()
-        if not regions:
-            QMessageBox.information(
-                self,
-                "Apply redaction",
-                "Mark one or more regions with the Redact tool first.",
-            )
-            return
+    def _build_redact_confirm_chrome(self) -> QFrame:
+        bar = QFrame(self)
+        bar.setObjectName("PdfViewerRedactConfirm")
+        bar.setAccessibleName("Confirm or cancel redaction")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Apply redaction")
-        form = QFormLayout(dialog)
-        strip_meta = QCheckBox("Strip document metadata")
-        strip_meta.setChecked(True)
-        strip_xmp = QCheckBox("Strip XMP metadata")
-        strip_xmp.setChecked(True)
-        remove_att = QCheckBox("Remove embedded attachments")
-        remove_att.setChecked(False)
-        form.addRow(strip_meta)
-        form.addRow(strip_xmp)
-        form.addRow(remove_att)
-        note = QLabel(
-            "Writes a new PDF with marked content permanently removed, then "
-            "verifies extraction in a fresh process. The original file is never "
-            "modified. Failed verification deletes the output."
-        )
-        note.setWordWrap(True)
-        form.addRow(note)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        form.addRow(buttons)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
+        confirm = QToolButton()
+        confirm.setObjectName("PdfViewerRedactConfirmBtn")
+        confirm.setIconSize(QSize(16, 16))
+        confirm.setToolTip("Confirm redaction mark")
+        confirm.setAccessibleName("Confirm redaction")
+        confirm.clicked.connect(self._confirm_pending_redact)
+        self._redact_confirm_btn = confirm
+        layout.addWidget(confirm)
 
-        stem = Path(self._model.original_path).stem if self._model.original_path else "document"
-        suggested = str(Path(self._model.original_path).with_name(f"{stem}-redacted.pdf"))
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save redacted PDF",
-            suggested,
-            "PDF files (*.pdf);;All files (*)",
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".pdf"):
-            path = f"{path}.pdf"
+        cancel = QToolButton()
+        cancel.setObjectName("PdfViewerRedactCancelBtn")
+        cancel.setIconSize(QSize(16, 16))
+        cancel.setToolTip("Cancel redaction mark")
+        cancel.setAccessibleName("Cancel redaction")
+        cancel.clicked.connect(lambda: self._cancel_pending_redact(status=True))
+        self._redact_cancel_btn = cancel
+        layout.addWidget(cancel)
 
-        scope = RedactionScope(
-            strip_metadata=strip_meta.isChecked(),
-            strip_xmp=strip_xmp.isChecked(),
-            remove_attachments=remove_att.isChecked(),
-        )
-        try:
-            redact_edit_model(
-                self._model,
-                path,
-                regions,
-                markup=self._markup.non_redaction_ops(),
-                passwords=self._passwords(),
-                scope=scope,
-                verify=True,
-            )
-        except RedactionVerifyError as exc:
-            QMessageBox.critical(
-                self,
-                "Redaction verification failed",
-                f"{exc}\n\nNo redacted copy was produced.",
-            )
-            self.status_message.emit("Redaction verification failed — output discarded")
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Apply redaction",
-                f"Could not write redacted PDF:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Apply redaction",
-                f"Could not apply redaction:\n{exc}",
-            )
-            return
+        self._refresh_redact_confirm_icons()
+        bar.hide()
+        return bar
 
-        self._markup.clear_redactions()
+    def _refresh_redact_confirm_icons(self) -> None:
+        if not hasattr(self, "_redact_confirm_btn"):
+            return
+        self._redact_confirm_btn.setIcon(icon("check", color=status_success_hex()))
+        self._redact_cancel_btn.setIcon(icon("x", color=close_tab_hex()))
+
+    def _begin_pending_redact(self, region: RedactionRegion) -> None:
+        self._pending_redact = region
+        self.refresh_markup_overlays()
+        self.status_message.emit("Confirm or cancel the redaction mark")
+
+    def _confirm_pending_redact(self) -> None:
+        if self._markup is None or self._pending_redact is None:
+            return
+        self._markup.push_redaction(self._pending_redact)
+        self._pending_redact = None
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        name = Path(path).name
-        self.status_message.emit(f"Redacted copy saved as {name}")
-        QMessageBox.information(
-            self,
-            "Redaction complete",
-            f"Verified redacted copy saved as:\n{path}",
+        self.status_message.emit(
+            "Redaction marked — Save As to permanently remove"
         )
+
+    def _cancel_pending_redact(self, *, status: bool = False) -> None:
+        if self._pending_redact is None and (
+            not hasattr(self, "_redact_confirm") or self._redact_confirm.isHidden()
+        ):
+            return
+        self._pending_redact = None
+        self.refresh_markup_overlays()
+        if status:
+            self.status_message.emit("Redaction cancelled")
+
+    def _sync_redact_confirm_geometry(self) -> None:
+        if not hasattr(self, "_redact_confirm"):
+            return
+        region = self._pending_redact
+        if region is None:
+            self._redact_confirm.hide()
+            return
+        hint = self._redact_confirm.sizeHint()
+        bar_w = max(hint.width(), 56)
+        bar_h = max(hint.height(), 28)
+        tile = self._tiles.get(region.page_index)
+        if (
+            tile is not None
+            and tile.isVisible()
+            and tile.width() > 0
+            and tile.height() > 0
+        ):
+            wr = _map_pdf_rect_to_widget(
+                region.rect,
+                tile._page_w,
+                tile._page_h,
+                tile.width(),
+                tile.height(),
+                tile._rotation,
+            )
+            anchor = tile.mapTo(self, QPoint(int(wr.right()), int(wr.bottom()) + 6))
+            x = min(max(0, anchor.x() - bar_w), max(0, self.width() - bar_w))
+            y = min(max(0, anchor.y()), max(0, self.height() - bar_h))
+        else:
+            # Tile not laid out yet — keep Confirm/Cancel visible at a fallback.
+            x = max(0, (self.width() - bar_w) // 2)
+            y = max(0, self.height() - bar_h - 12)
+        self._redact_confirm.setGeometry(x, y, bar_w, bar_h)
+        self._redact_confirm.raise_()
+        self._redact_confirm.show()
 
     def _on_markup_gesture(self, logical: int, tool_value: str, payload: object) -> None:
         if self._markup is None or not isinstance(payload, dict):
@@ -2573,12 +2590,7 @@ class PdfViewerWidget(QWidget):
             if not rect:
                 return
             region = RedactionRegion(page_index=logical, rect=tuple(rect))  # type: ignore[arg-type]
-            self._markup.push_redaction(region)
-            self.refresh_markup_overlays()
-            self.markup_changed.emit()
-            self.status_message.emit(
-                "Redaction marked — Apply redaction to export a verified copy"
-            )
+            self._begin_pending_redact(region)
             return
         elif tool in (AnnotTool.FORM_TEXT, AnnotTool.FORM_CHECK):
             rect = payload.get("rect")
@@ -2816,42 +2828,45 @@ class PdfViewerWidget(QWidget):
 
     def _rebuild_canvas(self) -> None:
         self._clear_tiles()
-        if self._model is None:
-            self._canvas.setMinimumSize(0, 0)
-            self._canvas.resize(0, 0)
-            return
-        if self._layout == ViewerLayout.CONTINUOUS:
-            width = self._render_width_px + 2 * PAGE_GAP_PX
-            height = self._continuous_canvas_height()
-            self._canvas.setMinimumSize(width, height)
-            self._canvas.resize(width, height)
-            self._sync_continuous_tiles()
-            return
-        pages = self._pages_to_show()
-        if self._layout == ViewerLayout.SPREAD and len(pages) == 2:
-            sizes = [self._display_size_for(p) for p in pages]
-            total_w = sizes[0][0] + sizes[1][0] + 3 * PAGE_GAP_PX
-            total_h = max(sizes[0][1], sizes[1][1]) + 2 * PAGE_GAP_PX
+        try:
+            if self._model is None:
+                self._canvas.setMinimumSize(0, 0)
+                self._canvas.resize(0, 0)
+                return
+            if self._layout == ViewerLayout.CONTINUOUS:
+                width = self._render_width_px + 2 * PAGE_GAP_PX
+                height = self._continuous_canvas_height()
+                self._canvas.setMinimumSize(width, height)
+                self._canvas.resize(width, height)
+                self._sync_continuous_tiles()
+                return
+            pages = self._pages_to_show()
+            if self._layout == ViewerLayout.SPREAD and len(pages) == 2:
+                sizes = [self._display_size_for(p) for p in pages]
+                total_w = sizes[0][0] + sizes[1][0] + 3 * PAGE_GAP_PX
+                total_h = max(sizes[0][1], sizes[1][1]) + 2 * PAGE_GAP_PX
+                self._canvas.setMinimumSize(total_w, total_h)
+                self._canvas.resize(total_w, total_h)
+                x = PAGE_GAP_PX
+                for p, (w, h) in zip(pages, sizes):
+                    tile = self._make_tile(p)
+                    tile.setParent(self._canvas)
+                    tile.setGeometry(x, PAGE_GAP_PX, w, h)
+                    tile.show()
+                    x += w + PAGE_GAP_PX
+                return
+            # single
+            w, h = self._display_size_for(pages[0])
+            total_w = w + 2 * PAGE_GAP_PX
+            total_h = h + 2 * PAGE_GAP_PX
             self._canvas.setMinimumSize(total_w, total_h)
             self._canvas.resize(total_w, total_h)
-            x = PAGE_GAP_PX
-            for p, (w, h) in zip(pages, sizes):
-                tile = self._make_tile(p)
-                tile.setParent(self._canvas)
-                tile.setGeometry(x, PAGE_GAP_PX, w, h)
-                tile.show()
-                x += w + PAGE_GAP_PX
-            return
-        # single
-        w, h = self._display_size_for(pages[0])
-        total_w = w + 2 * PAGE_GAP_PX
-        total_h = h + 2 * PAGE_GAP_PX
-        self._canvas.setMinimumSize(total_w, total_h)
-        self._canvas.resize(total_w, total_h)
-        tile = self._make_tile(pages[0])
-        tile.setParent(self._canvas)
-        tile.setGeometry(PAGE_GAP_PX, PAGE_GAP_PX, w, h)
-        tile.show()
+            tile = self._make_tile(pages[0])
+            tile.setParent(self._canvas)
+            tile.setGeometry(PAGE_GAP_PX, PAGE_GAP_PX, w, h)
+            tile.show()
+        finally:
+            self._sync_redact_confirm_geometry()
 
     def _sync_continuous_tiles(self) -> None:
         """Create/destroy continuous-mode tiles for the visible band (+ prefetch)."""
@@ -2915,6 +2930,7 @@ class PdfViewerWidget(QWidget):
         tile.set_markup_color(self._markup_color)
         if self._markup is not None:
             tile.set_overlay_entries(self._markup.ops())
+        tile.set_pending_redaction(self._pending_redact)
         if (
             self._selected_overlay is not None
             and self._selected_overlay.page_index == logical
@@ -3308,6 +3324,7 @@ class PdfViewerWidget(QWidget):
         self.status_message.emit(f"Saved {out.name}")
 
     def _on_scroll(self, _value: int = 0) -> None:
+        self._sync_redact_confirm_geometry()
         if self._layout != ViewerLayout.CONTINUOUS or self._model is None:
             return
         self._sync_continuous_tiles()
@@ -3379,6 +3396,10 @@ class PdfViewerWidget(QWidget):
         key = event.key()
         mods = event.modifiers()
         if key == Qt.Key.Key_Escape:
+            if self._pending_redact is not None:
+                self._cancel_pending_redact(status=True)
+                event.accept()
+                return
             if self._selected_overlay is not None:
                 self._set_selected_overlay(None)
                 event.accept()

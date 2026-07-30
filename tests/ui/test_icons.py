@@ -26,6 +26,7 @@ def test_available_names_cover_toolbar_set():
         "selection-all",
         "selection-slash",
         "x",
+        "check",
         "stack",
         "scissors",
         "lock",

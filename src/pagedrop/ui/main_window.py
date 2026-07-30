@@ -30,12 +30,18 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_writer import write_pdf
+from pagedrop.core.redact import (
+    RedactionError,
+    RedactionVerifyError,
+    redact_edit_model,
+)
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import CommandPalette, action_label
 from pagedrop.ui.dialogs import (
     fit_message_box_buttons,
     prompt_pdf_password,
+    prompt_redaction_scope,
     prompt_unsaved_changes,
 )
 from pagedrop.ui.keyboard_nav import (
@@ -2167,14 +2173,43 @@ class MainWindow(QMainWindow):
             )
             return False
 
+        regions = target.markup_session.redaction_regions()
+        passwords = target.credentials.snapshot()
+        non_redact = target.markup_session.non_redaction_ops() or None
+
         try:
-            write_pdf(
-                model,
-                path,
-                markup=target.markup_session.non_redaction_ops() or None,
-                passwords=target.credentials.snapshot(),
+            if regions:
+                scope = prompt_redaction_scope(self)
+                if scope is None:
+                    return False
+                redact_edit_model(
+                    model,
+                    path,
+                    regions,
+                    markup=non_redact,
+                    passwords=passwords,
+                    scope=scope,
+                    verify=True,
+                )
+            else:
+                write_pdf(
+                    model,
+                    path,
+                    markup=non_redact,
+                    passwords=passwords,
+                )
+        except RedactionVerifyError as exc:
+            QMessageBox.critical(
+                self,
+                "Redaction verification failed",
+                f"{exc}\n\nNo redacted copy was produced.",
             )
-        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            if target is self._active_tab():
+                self._transient_status(
+                    "Redaction verification failed — output discarded"
+                )
+            return False
+        except (PdfPasswordRequiredError, PdfPasswordError, RedactionError) as exc:
             QMessageBox.critical(
                 self,
                 "Save as",
@@ -2198,19 +2233,15 @@ class MainWindow(QMainWindow):
 
         remember_directory(path)
         model.mark_saved(path)
-        had_redactions = bool(target.markup_session.redaction_regions())
         target.clear_markup_after_save()
+        if regions:
+            target.clear_redactions_after_apply()
         target.clear_custom_tab_title()
         target._sync_dirty_from_model()
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
-            if had_redactions:
-                self._transient_status(
-                    f"Saved to {Path(path).name} — redaction marks kept; use Apply redaction"
-                )
-            else:
-                self._transient_status(f"Saved to {Path(path).name}")
+            self._transient_status(f"Saved to {Path(path).name}")
             self._show_toast(f"Saved to {Path(path).name}", kind="success")
         return True
 

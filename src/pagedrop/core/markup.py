@@ -1,8 +1,8 @@
 """Pending viewer markup — annotations, forms, and redaction marks with undo/redo.
 
 Annotation / form ops are applied on Save As (via ``write_pdf``).
-Redaction marks are applied only through the dedicated redaction export
-(``pagedrop.core.redact``) — never via ordinary Save As.
+Redaction marks are applied on Save As via ``redact_edit_model`` (GC rewrite +
+fresh-process verify) — never via ordinary ``write_pdf``.
 """
 
 from __future__ import annotations

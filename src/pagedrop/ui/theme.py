@@ -1157,6 +1157,36 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {ACCENT};
     }}
 
+    QFrame#PdfViewerRedactConfirm {{
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn,
+    QToolButton#PdfViewerRedactCancelBtn {{
+        border: 1px solid transparent;
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 4px;
+        background-color: transparent;
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn:hover,
+    QToolButton#PdfViewerRedactCancelBtn:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn:pressed,
+    QToolButton#PdfViewerRedactCancelBtn:pressed {{
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn:focus,
+    QToolButton#PdfViewerRedactCancelBtn:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
     QTabWidget#PdfViewerSide {{
         background-color: {bg_surface};
         color: {text_primary};

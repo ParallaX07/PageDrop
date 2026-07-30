@@ -127,6 +127,8 @@ def test_markup_rail_hygiene_no_stamp_field_check_or_color(
     assert "Check" not in labels
     assert "Color" not in labels
     assert viewer.findChild(QToolButton, "PdfViewerMarkupColor") is None
+    rail_texts = [b.text() for b in viewer._annot_tools_host.findChildren(QToolButton)]
+    assert "Apply redaction" not in rail_texts
     # Kept discoverable tools still on the rail.
     for kept in ("Highlight", "Fill", "Redact", "Text", "Ink", "Rect"):
         assert kept in labels
@@ -134,6 +136,204 @@ def test_markup_rail_hygiene_no_stamp_field_check_or_color(
     assert AnnotTool.STAMP not in rail_tools
     assert AnnotTool.FORM_TEXT not in rail_tools
     assert AnnotTool.FORM_CHECK not in rail_tools
+
+
+def test_redact_confirm_cancel_chrome(
+    qtbot, main_window, markup_pdf: Path
+) -> None:
+    """R16: redact gesture is pending until Confirm; Cancel drops the mark."""
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+
+    viewer = tab.viewer_widget
+    session = tab.markup_session
+    assert not session.is_dirty()
+
+    viewer._on_markup_gesture(0, "redact", {"rect": (40.0, 60.0, 120.0, 90.0)})
+    assert viewer._pending_redact is not None
+    assert viewer._pending_redact.rect == (40.0, 60.0, 120.0, 90.0)
+    assert session.redaction_regions() == []
+    assert not session.is_dirty()
+    assert not viewer._redact_confirm.isHidden()
+    assert viewer.findChild(QToolButton, "PdfViewerRedactConfirmBtn") is not None
+    assert viewer.findChild(QToolButton, "PdfViewerRedactCancelBtn") is not None
+
+    viewer._cancel_pending_redact(status=True)
+    assert viewer._pending_redact is None
+    assert session.redaction_regions() == []
+    assert viewer._redact_confirm.isHidden()
+
+    viewer._on_markup_gesture(0, "redact", {"rect": (50.0, 70.0, 130.0, 100.0)})
+    viewer._confirm_pending_redact()
+    assert viewer._pending_redact is None
+    regions = session.redaction_regions()
+    assert len(regions) == 1
+    assert regions[0].rect == (50.0, 70.0, 130.0, 100.0)
+    assert session.is_dirty()
+    assert viewer._redact_confirm.isHidden()
+    qtbot.waitUntil(lambda: tab.is_dirty, timeout=2000)
+
+
+def test_save_as_with_redaction_uses_verify_path(
+    qtbot, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R16: pending redaction regions go through redact_edit_model(verify=True)."""
+    import hashlib
+
+    from PyQt6.QtWidgets import QFileDialog
+
+    from pagedrop.core.annotations import AnnotationOp
+    from pagedrop.core.redact import (
+        RedactionRegion,
+        inspect_redaction_result,
+        redact_edit_model,
+    )
+
+    secret = "SAVEAS_REDACT_SECRET"
+    src = tmp_path / "secret.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=400, height=300)
+        page.insert_text((40, 80), f"Hello {secret} world", fontsize=14)
+        doc.save(str(src))
+    finally:
+        doc.close()
+    hits = fitz.open(str(src))
+    try:
+        r = hits[0].search_for(secret)[0]
+        rect = (float(r.x0), float(r.y0), float(r.x1), float(r.y1))
+    finally:
+        hits.close()
+    before = hashlib.sha256(src.read_bytes()).hexdigest()
+
+    window = main_window
+    window._load_pdf(str(src))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    session = tab.markup_session
+    session.push_annotation(
+        AnnotationOp(kind="highlight", page_index=0, rects=((40, 100, 120, 130),))
+    )
+    session.push_redaction(RedactionRegion(0, rect))
+    tab._sync_dirty_from_model()
+    assert tab.is_dirty
+
+    out = tmp_path / "verified.pdf"
+    calls: list[dict] = []
+    real_redact = redact_edit_model
+
+    def _spy(*args, **kwargs):
+        calls.append(dict(kwargs))
+        assert kwargs.get("verify", True) is True
+        assert kwargs.get("scope") is not None
+        return real_redact(*args, **kwargs)
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
+    )
+    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _spy)
+
+    assert window._save_as(tab) is True
+    assert len(calls) == 1
+    assert out.is_file()
+    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+    assert inspect_redaction_result(out, absent_text=[secret]).ok
+    assert session.redaction_regions() == []
+    assert not session.is_dirty()
+    assert not tab.is_dirty
+    assert tab.edit_model is not None
+    assert tab.edit_model.save_path == str(out)
+
+
+def test_save_as_redaction_verify_fail_keeps_marks(
+    qtbot, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failed verify discards output and leaves redaction marks on the tab."""
+    from PyQt6.QtWidgets import QFileDialog
+
+    from pagedrop.core.redact import RedactionRegion, RedactionVerifyError
+
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page().insert_text((40, 80), "keep me", fontsize=14)
+        doc.save(str(src))
+    finally:
+        doc.close()
+    before = src.read_bytes()
+
+    window = main_window
+    window._load_pdf(str(src))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    session = tab.markup_session
+    session.push_redaction(RedactionRegion(0, (40.0, 60.0, 120.0, 90.0)))
+    tab._sync_dirty_from_model()
+    assert tab.is_dirty
+
+    out = tmp_path / "should_not_remain.pdf"
+
+    def _fail(*_a, **_k):
+        raise RedactionVerifyError("simulated verify failure")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
+    )
+    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _fail)
+
+    assert window._save_as(tab) is False
+    assert not out.exists()
+    assert len(session.redaction_regions()) == 1
+    assert tab.is_dirty
+    assert src.read_bytes() == before
+    assert tab.edit_model is not None
+    assert tab.edit_model.save_path is None
+
+
+def test_save_as_redaction_scope_cancel_aborts(
+    qtbot, main_window, markup_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PyQt6.QtWidgets import QFileDialog
+
+    from pagedrop.core.redact import RedactionRegion
+
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    session = tab.markup_session
+    session.push_redaction(RedactionRegion(0, (40.0, 60.0, 120.0, 90.0)))
+    tab._sync_dirty_from_model()
+    assert tab.is_dirty
+
+    out = tmp_path / "cancelled.pdf"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
+    )
+    monkeypatch.setattr(
+        "pagedrop.ui.main_window.prompt_redaction_scope",
+        lambda *_a, **_k: None,
+    )
+
+    def _must_not_run(*_a, **_k):
+        raise AssertionError("redact_edit_model must not run when scope is cancelled")
+
+    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _must_not_run)
+
+    assert window._save_as(tab) is False
+    assert not out.exists()
+    assert len(session.redaction_regions()) == 1
+    assert tab.is_dirty
 
 
 def test_color_on_select_stores_color_cancel_keeps_tool(

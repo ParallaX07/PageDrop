@@ -8,11 +8,18 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QWidget,
 )
+
+from pagedrop.core.redact import RedactionScope
 
 from pagedrop.core.backends.libreoffice import (
     DOWNLOAD_URL,
@@ -73,6 +80,45 @@ def prompt_pdf_password(
     if not ok:
         return None
     return text
+
+
+def prompt_redaction_scope(parent: QWidget | None) -> RedactionScope | None:
+    """Scope checkboxes before verified Save As redaction. None on cancel."""
+    if os.environ.get("PAGEDROP_TESTING") == "1":
+        return RedactionScope()
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Redaction options")
+    form = QFormLayout(dialog)
+    strip_meta = QCheckBox("Strip document metadata")
+    strip_meta.setChecked(True)
+    strip_xmp = QCheckBox("Strip XMP metadata")
+    strip_xmp.setChecked(True)
+    remove_att = QCheckBox("Remove embedded attachments")
+    remove_att.setChecked(False)
+    form.addRow(strip_meta)
+    form.addRow(strip_xmp)
+    form.addRow(remove_att)
+    note = QLabel(
+        "Writes a new PDF with marked content permanently removed, then "
+        "verifies extraction in a fresh process. The original file is never "
+        "modified. Failed verification deletes the output."
+    )
+    note.setWordWrap(True)
+    form.addRow(note)
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    )
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    form.addRow(buttons)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return RedactionScope(
+        strip_metadata=strip_meta.isChecked(),
+        strip_xmp=strip_xmp.isChecked(),
+        remove_attachments=remove_att.isChecked(),
+    )
 
 
 def fit_message_box_buttons(message: QMessageBox) -> None:
