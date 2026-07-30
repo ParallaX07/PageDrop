@@ -22,7 +22,7 @@ if (-not $SkipBuild) {
     }
 }
 
-$Exe = Join-Path $Root "dist\pagedrop\pagedrop.exe"
+$Exe = Join-Path $Root "dist\pagedrop.exe"
 if (-not (Test-Path $Exe)) {
     throw "Expected executable not found: $Exe"
 }
@@ -46,7 +46,7 @@ finally {
 
 Write-Host ""
 Write-Host "Manual verification (clean machine without Python):"
-Write-Host "  1. Copy dist\pagedrop\ to a VM or PC without Python."
+Write-Host "  1. Install via PageDrop-*-Setup.exe on a VM or PC without Python."
 Write-Host "  2. Open a PDF via File -> Open PDF."
 Write-Host "  3. Drag a page thumbnail into Explorer and confirm a file is created."
 Write-Host ""

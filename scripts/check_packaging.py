@@ -47,17 +47,18 @@ def _assert_notices_in_spec(spec_text: str) -> None:
 
 
 def _assert_notices_in_dist_if_present() -> None:
-    dist = ROOT / "dist" / "pagedrop"
-    if not dist.is_dir():
+    """Onefile embeds notices in the archive; optional loose copy beside the exe is fine.
+
+    When a onefile binary exists under dist/, do not require an unpacked tree.
+    If a loose THIRD_PARTY_NOTICES.md sits next to the exe (installer staging), require it non-empty.
+    """
+    dist = ROOT / "dist"
+    onefile_candidates = [dist / "pagedrop", dist / "pagedrop.exe"]
+    if not any(p.is_file() for p in onefile_candidates):
         return
-    candidates = [
-        dist / "THIRD_PARTY_NOTICES.md",
-        dist / "_internal" / "THIRD_PARTY_NOTICES.md",
-    ]
-    assert any(p.is_file() and p.stat().st_size > 0 for p in candidates), (
-        f"frozen tree at {dist} exists but THIRD_PARTY_NOTICES.md is missing "
-        f"(looked in: {', '.join(str(p) for p in candidates)})"
-    )
+    loose = dist / "THIRD_PARTY_NOTICES.md"
+    if loose.is_file():
+        assert loose.stat().st_size > 0, f"{loose} is empty"
 
 
 def main() -> None:
@@ -80,6 +81,10 @@ def main() -> None:
     assert SPEC.is_file(), f"missing {SPEC}"
     _assert_notices_in_spec(SPEC.read_text(encoding="utf-8"))
     _assert_notices_in_dist_if_present()
+
+    assert "THIRD_PARTY_NOTICES.md" in iss_text, (
+        "windows.iss must install THIRD_PARTY_NOTICES.md beside the exe"
+    )
 
     print(f"ok packaging checks (version {ver})")
 

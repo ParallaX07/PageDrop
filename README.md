@@ -40,9 +40,8 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 **Windows (GitHub Releases)**, no Python required:
 
-1. Go to [Releases](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-*-Setup.exe` installer, or the `PageDrop-v*-windows-x64.zip` portable version.
+1. Go to [Releases](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-*-Setup.exe` installer.
 2. Run Setup.exe and follow the wizard. It installs to Program Files and adds a Start Menu shortcut.
-3. Or extract the zip, keep `pagedrop.exe` next to its `_internal\` folder, and double-click `pagedrop.exe`.
 
 > Windows may show a SmartScreen warning on unsigned builds. Choose **More info → Run anyway** if that happens.
 
@@ -50,77 +49,48 @@ macOS and Linux binaries aren't published yet. Run from source (below) or build 
 
 ## Quick start
 
-1. **Open a PDF**: File → Open PDF (`Ctrl+O`), or the toolbar Open button. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab. File → Open Recent reopens recent paths.
-2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or select a page or range like `1-5` with **Ctrl+F**.
-3. **Drag to a folder**: drag selected thumbnails into Explorer, Finder, or any file manager. Each page becomes its own PDF, like `report_page_0003.pdf`.
-4. **Edit across PDFs**: reorder, delete, duplicate (`Ctrl+D`), or rotate pages. Drop another PDF onto the grid to insert its pages. Drag pages between windows, and hold Shift while dropping to move instead of copy. Undo with `Ctrl+Z`. Then File → Save As.
-5. **Merge, Create PDF, or Tools**: Merge PDFs and Create PDF open as editor tabs (same strip as your PDFs). **Tools** (`Ctrl+Shift+O`) is the searchable hub for organize, convert, modify, optimize, and secure jobs.
+1. **Open a PDF**: File → Open PDF (`Ctrl+O`), or the toolbar Open button. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab.
+2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or select a range like `1-5` with **Ctrl+F**.
+3. **Drag to a folder**: drag selected thumbnails into your file manager. Each page becomes its own PDF.
+4. **Edit across PDFs**: reorder, delete, duplicate (`Ctrl+D`), or rotate. Drop another PDF onto the grid to insert pages. Drag between windows; hold Shift to move instead of copy. Undo with `Ctrl+Z`. Then File → Save As.
+5. **Merge, Create PDF, or Tools**: Merge and Create PDF open as editor tabs. **Tools** (`Ctrl+Shift+O`) is the searchable hub for organize, convert, modify, optimize, and secure jobs.
 
-The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette.
+The first launch shows short tips. Press **Ctrl+/** for shortcuts, or **Ctrl+Shift+P** for the command palette.
+
+Full walkthrough: [docs/user-guide.md](docs/user-guide.md).
 
 ## Features
 
 ### Thumbnail grid and drag-out
 
-- Open one or more PDFs and view every page as a scrollable thumbnail grid
-- Drag pages to Explorer, Finder, Nautilus, Dolphin, or any file manager to extract selected pages as individual PDFs
-- Select pages with click, Ctrl+click, Shift+click, or Ctrl+A
-- Zoom thumbnails with Ctrl+scroll, reset with Ctrl+0, and double-click or press Enter for a full-page preview; arrow keys plus Space handle keyboard navigation
-- Right-click to extract selected pages to a folder, a new tab, or a new window
-- File → Export All Pages writes every page as its own PDF
+- Open one or more PDFs as a scrollable thumbnail grid
+- Drag pages to any file manager to extract them as individual PDFs
+- Zoom with Ctrl+scroll; double-click or Enter for a full-page preview
+- Right-click to extract to a folder, new tab, or new window; File → Export All Pages writes every page
 
 ### Multi-tab editor
 
-- Browser-style tabs keep multiple PDFs open at once, each in its own workspace
-- Reorder pages by dragging them or using Move up / Move down / Move to… (Ctrl+Shift+M)
-- Delete, duplicate, and rotate pages from the toolbar, context menu, or shortcuts
-- Undo and redo page edits with `Ctrl+Z` / `Ctrl+Shift+Z`; deleting many pages at once can prompt for confirmation (Edit menu)
-- Drop PDFs onto the grid, including a blank tab, to open or insert pages at the cursor
-- Save As writes your edits to a new file. The original stays untouched
-- Dirty tabs show a `*` in the title, and closing one prompts Save As, Discard, or Cancel
-- Window size and position are restored on launch, and toasts confirm saves, extracts, and similar actions
+- Browser-style tabs; reorder, delete, duplicate, rotate; undo/redo
+- Drop PDFs onto the grid to open or insert; Save As never overwrites the original
+- Dirty tabs show `*`; closing prompts Save As, Discard, or Cancel
 
 ### Multi-window workflows
 
-- Open PDFs in new windows, tear tabs off the tab bar, or use File → New Window
-- Drag pages between windows to copy by default, or hold Shift while dropping to move pages from one document to another (a short Undo toast appears after a move)
-- Each window has its own tab strip, so Merge, Create PDF, and Tools can stay open beside editor tabs
+- New windows, tear-off tabs, or File → New Window
+- Drag pages between windows to copy; Shift+drop to move
 
-### Merge PDFs
+### Merge PDFs and Create PDF
 
-An editor tab (menu bar **Merge PDFs**, or the Tools hub tile) for combining whole PDF files:
-
-- Add, remove, and reorder files, with drag-and-drop supported
-- Add folder recursively adds PDFs from a directory
-- Double-click or press Enter on a file to preview all its pages
-- Merge writes one combined PDF and leaves source files unchanged; success offers Preview / Open in editor / Show in folder without auto-opening the result
-
-### Create PDF
-
-An editor tab (menu bar **Create PDF**, or the Tools hub tile) for turning images into PDFs:
-
-- Supports PNG, JPEG, BMP, GIF, TIFF, WebP, and other raster formats PyMuPDF can open
-- Add images via dialog or drag-and-drop (PDFs get rejected here; use Merge PDFs for those)
-- Export as one combined PDF with one page per image, or as separate PDFs with one file per image
-- Reorder images before exporting, and double-click or press Enter for a full-size preview with Ctrl+scroll zoom
-- Same result actions as Merge — no auto-open into a PDF tab
+- **Merge PDFs** — combine whole files (add folder, reorder, preview); sources unchanged
+- **Create PDF** — images → one PDF or separate PDFs; same Preview / Open / Show in folder result actions (no auto-open)
 
 ### Tools hub
 
-A searchable catalogue tab (**Tools**, `Ctrl+Shift+O`) for batch and multi-step jobs. Tiles open modeless tool pages in the same tab strip (drop zone → options → Run → cancelable progress → toast + Preview / Open / Show in folder).
-
-- **Organize** — split/extract, alternate, reverse, N-up, booklet, posterize, divide, combine, normalize size, attachments, metadata, page labels, ZIP, compare
-- **Convert** — Create PDF, Convert to PDF, Export from PDF, Office to PDF, PDF to Word, OCR, extract tables / PDF to CSV / Excel (optional backends show clearly when missing)
-- **Modify** — crop, watermark, header & footer, page numbers, Bates, bookmarks/TOC, annotations, blank pages, color effects
-- **Optimize / Secure** — compress, repair, encrypt, decrypt, sanitize
-- Coming-soon tiles stay hidden until you enable **Show upcoming**; optional engines (Office COM, LibreOffice, tessdata, openpyxl) are capability-detected so core editing still works without them
+Searchable catalogue (`Ctrl+Shift+O`) for organize, convert, modify, optimize, and secure jobs. Optional backends are capability-detected. Details: [docs/tools.md](docs/tools.md).
 
 ### Preferences and accessibility
 
-- View → Toggle Light Theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
-- Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, and **Reduce motion** (platform reduce-motion is still honored when available)
-- High-contrast preferences are respected where the platform exposes them
-- Keyboard-first use across the main, Merge, Create, and Tools/shell toolbars and grids; Help → Keyboard Shortcuts (`Ctrl+/`) covers everything
+Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available.
 
 ## Keyboard shortcuts
 
@@ -149,13 +119,11 @@ A searchable catalogue tab (**Tools**, `Ctrl+Shift+O`) for batch and multi-step 
 | Keyboard shortcuts | Ctrl+/ |
 | Back to grid / list (in preview) | Escape |
 
-Ctrl+Tab toggles the most recently used previous tab rather than moving sequentially. Ctrl+Shift+Tab cycles backward through all tabs. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab).
+Ctrl+Tab toggles the most recently used previous tab. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab). Cross-window: drop copies; Shift+drop moves.
 
-For cross-window page drags: dropping copies pages, and Shift+drop moves them.
+More detail: [docs/user-guide.md](docs/user-guide.md).
 
 ## Run from source
-
-Use this for development or on platforms without a published binary.
 
 **Requirements:** Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
@@ -168,117 +136,35 @@ uv run pagedrop
 
 You don't need to activate a virtualenv manually. `uv` handles the environment for you.
 
-## Development
+Deeper setup, layout, and tests: [docs/development.md](docs/development.md).
 
-### Project layout
+## Documentation
 
-```
-src/pagedrop/
-├── main.py              # entry point
-├── ui/                  # PyQt6 windows, tabs, grids, Merge/Create/Tools pages
-├── core/                # PDF loading, editing model, merge/convert/tools writers
-└── utils/               # temp file lifecycle
-tests/                   # unit, UI, and smoke tests
-```
-
-### Tech stack
-
-| Role | Library |
+| Doc | Contents |
 |---|---|
-| GUI + drag-and-drop | PyQt6 |
-| PDF read/write/split/render | PyMuPDF (fitz) |
-| Project manager | uv |
+| [docs/README.md](docs/README.md) | Docs index |
+| [User guide](docs/user-guide.md) | Workflows, preferences, shortcuts |
+| [Tools](docs/tools.md) | Tools hub catalogue and backends |
+| [Development](docs/development.md) | Source layout, stack, tests |
+| [Building](docs/building.md) | PyInstaller, smoke checks, Windows installer |
+| [Architecture](docs/architecture.md) | Layers, edit model, jobs, locking |
+| [Licensing](docs/licensing.md) | Binary redistribution policy |
 
-PageDrop uses PyQt6 for drag-and-drop because it supports `QDrag` with `file://` URLs, the protocol file managers expect when accepting dropped files.
-
-### Tests
-
-Run the full suite:
-
-```bash
-uv run pytest tests/ -v
-```
-
-Run smoke tests only:
+## Development and packaging
 
 ```bash
-uv run pytest tests/smoke/ -v
+make test          # full suite via all_tests.py
+make build-exe     # PyInstaller onefile → dist/pagedrop(.exe)
+make smoke-exe     # build + Unix exe smoke
+make test-release  # full pytest gate + executable smoke
 ```
 
-Or use the Makefile:
+Windows installer and packaging checklist: [docs/building.md](docs/building.md). Architecture overview: [docs/architecture.md](docs/architecture.md).
 
-```bash
-make test        # all tests via all_tests.py
-make test-phase4 # cumulative gate through a specific phase
-```
+## License
 
-Test fixtures generate on the fly. See `tests/fixtures/README.md` for details.
-
-### Building an executable
-
-Install dev dependencies (this includes PyInstaller), then build:
-
-```bash
-uv sync --group dev
-uv run pyinstaller --noconfirm pagedrop.spec
-```
-
-The onedir bundle lands in `dist/pagedrop/`. Launch it with `dist/pagedrop/pagedrop` on Linux/macOS or `dist/pagedrop/pagedrop.exe` on Windows.
-
-Smoke-test the build (it builds first unless you pass `--skip-build` / `-SkipBuild`):
-
-```bash
-# Linux/macOS
-./scripts/smoke_exe.sh
-
-# Windows
-.\scripts\smoke_exe.ps1
-```
-
-Or via Makefile:
-
-```bash
-make build-exe
-make smoke-exe          # Unix smoke script
-make test-release       # full pytest gate + exe smoke (set PAGEDROP_EXE if needed)
-```
-
-### Windows installer (GitHub Releases)
-
-Version comes from `pyproject.toml`. Generate icons once, or after logo changes, then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isinfo.php), with `iscc` on PATH or `$env:ISCC`):
-
-```powershell
-uv run --with pillow python scripts/generate_icons.py   # or: make generate-icons
-.\scripts\build_windows_installer.ps1                   # or: make build-installer
-# reuse existing dist: .\scripts\build_windows_installer.ps1 -SkipBuild
-uv run python scripts/check_packaging.py
-```
-
-Output lands at `installer/Output/PageDrop-<version>-Setup.exe` (gitignored: don't commit binaries).
-
-Publish to GitHub Releases (replace `X.Y.Z` with the `pyproject.toml` version):
-
-```powershell
-gh release create "vX.Y.Z" `
-  "installer/Output/PageDrop-X.Y.Z-Setup.exe" `
-  --repo ParallaX07/PageDrop `
-  --title "vX.Y.Z" `
-  --notes "Windows Setup.exe for PageDrop X.Y.Z."
-```
-
-You can also attach a portable zip of `dist/pagedrop/` as `PageDrop-vX.Y.Z-windows-x64.zip` on the same release.
-
-Before tagging a release, run the full suite plus the executable smoke test:
-
-```bash
-uv run pytest tests/ -v --ignore=tests/smoke/test_phase16_executable.py
-PAGEDROP_EXE=./dist/pagedrop/pagedrop uv run pytest tests/smoke/test_phase16_executable.py -v
-```
-
-On Windows PowerShell, set `$env:PAGEDROP_EXE = ".\dist\pagedrop\pagedrop.exe"` instead.
-
-Verify manually on a machine without Python: open a PDF, drag a page into the file manager, and confirm the extracted files appear.
+PageDrop source is MIT — see [`LICENSE`](LICENSE). Redistributing frozen binaries that include free PyQt6 and PyMuPDF wheels is a Combined Work under stricter terms; see [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Status
 
-**v0.3.0**: Windows Setup.exe and a portable zip are up on [Releases](https://github.com/ParallaX07/PageDrop/releases). This build adds password-protected PDFs, page rotate/duplicate, undo/redo, export-all pages, a command palette, onboarding tips, recent files, window geometry persistence, toast notifications, a light theme, and accessibility/reduce-motion preferences on top of the 0.2.0 core workflows. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
+**v0.3.0**: Windows Setup.exe is on [Releases](https://github.com/ParallaX07/PageDrop/releases). This build adds password-protected PDFs, page rotate/duplicate, undo/redo, export-all pages, a command palette, onboarding tips, recent files, window geometry persistence, toast notifications, a light theme, and accessibility/reduce-motion preferences on top of the 0.2.0 core workflows. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.

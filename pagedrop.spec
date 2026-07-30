@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for PageDrop — onedir GUI executable."""
+"""PyInstaller spec for PageDrop — onefile GUI executable."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ TESSDATA = SRC / "pagedrop" / "data" / "tessdata"
 
 datas: list[tuple[str, str]] = [
     (str(ASSETS / "logo.png"), "pagedrop/assets"),
-    # Licence notices must ship with onedir / installer.
+    # Licence notices must ship inside the onefile archive / installer.
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),
 ]
@@ -75,8 +75,10 @@ _icon = ASSETS / "app-icon.ico"
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
+    a.zipfiles,
     [],
-    exclude_binaries=True,
     name="pagedrop",
     debug=False,
     bootloader_ignore_signals=False,
@@ -91,14 +93,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(_icon) if _icon.is_file() else None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name="pagedrop",
 )

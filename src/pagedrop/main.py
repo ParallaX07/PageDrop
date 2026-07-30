@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 _APP_NAME = "PageDrop"
 _ORG_NAME = "PageDrop"
 
-# Frozen onedir: Office COM helper re-enters this exe before Qt starts.
+# Frozen: Office COM helper re-enters this exe before Qt starts.
 _OFFICE_COM_WORKER_FLAG = "--pagedrop-office-com-worker"
 
 

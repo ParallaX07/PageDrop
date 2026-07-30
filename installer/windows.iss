@@ -3,7 +3,7 @@
 ; Prerequisites:
 ;   uv sync --group dev
 ;   uv run --with pillow python scripts/generate_icons.py   ; if app-icon.ico missing
-;   uv run pyinstaller --noconfirm pagedrop.spec            ; dist/pagedrop/
+;   uv run pyinstaller --noconfirm pagedrop.spec            ; dist/pagedrop.exe
 ;
 ; Build installer (version from pyproject.toml via /DAppVersion=…):
 ;   .\scripts\build_windows_installer.ps1
@@ -18,7 +18,7 @@
 #define AppExeName "pagedrop.exe"
 #define AppName "PageDrop"
 #define AppPublisher "PageDrop"
-#define DistDir "..\dist\pagedrop"
+#define DistExe "..\dist\pagedrop.exe"
 
 [Setup]
 AppId={{A7C3E91F-2B4D-4F8A-9E1C-6D5B0A8F3C21}}
@@ -44,8 +44,10 @@ LicenseFile=..\LICENSE
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; PyInstaller --onedir output (pagedrop.exe, _internal\, assets, …)
-Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; PyInstaller onefile output + licence texts beside the installed exe
+Source: "{#DistExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

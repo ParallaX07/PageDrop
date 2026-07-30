@@ -28,7 +28,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   (cd "$ROOT" && uv run pyinstaller --noconfirm pagedrop.spec)
 fi
 
-EXE="$ROOT/dist/pagedrop/pagedrop"
+EXE="$ROOT/dist/pagedrop"
 
 if [[ ! -x "$EXE" && ! -f "$EXE" ]]; then
   echo "Expected executable not found: $EXE" >&2
@@ -58,7 +58,7 @@ fi
 echo "OK: process stayed alive for 5 seconds."
 echo ""
 echo "Manual verification (clean machine without Python):"
-echo "  1. Copy dist/pagedrop/ to a system without Python."
+echo "  1. Install via the Windows Setup.exe (or run dist/pagedrop for local smoke)."
 echo "  2. Open a PDF via File -> Open PDF."
 echo "  3. Drag a page thumbnail into the file manager and confirm a file is created."
 echo ""
