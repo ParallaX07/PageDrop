@@ -59,8 +59,9 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 - **License:** MIT
 - **Copyright:** Copyright (c) 2023 Phosphor Icons
 - **Notes:** PageDrop vendors a small regular-weight SVG subset under
-  `src/pagedrop/assets/icons/` for toolbar chrome (loaded/tinted by
-  `pagedrop.ui.icons`). Not a PyPI icon package. The MIT license text follows:
+  `src/pagedrop/assets/icons/` for toolbar chrome and Tools hub tiles
+  (loaded/tinted by `pagedrop.ui.icons`). Not a PyPI icon package. The MIT
+  license text follows:
 
 ```
 MIT License

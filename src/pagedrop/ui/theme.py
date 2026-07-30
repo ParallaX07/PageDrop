@@ -1742,29 +1742,8 @@ def close_tab_hex() -> str:
 
 
 def tab_close_icon(*, color: str | None = None) -> "QIcon":
-    """Red × icon for tab close buttons.
-
-    ponytail: stay painted (not Phosphor) — tab chrome needs a small tinted ×,
-    not a toolbar glyph. Upgrade: move into ``icons.py`` if close gets an SVG.
-    """
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+    """Red × icon for tab close buttons (Phosphor ``x``, destructive tint)."""
+    from pagedrop.ui import icons
 
     ink = color if color is not None else close_tab_hex()
-    size = 16
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(ink))
-    pen.setWidthF(2.0)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    painter.setPen(pen)
-
-    inset = 4
-    painter.drawLine(inset, inset, size - inset, size - inset)
-    painter.drawLine(size - inset, inset, inset, size - inset)
-    painter.end()
-
-    return QIcon(pixmap)
+    return icons.icon("x", color=ink)

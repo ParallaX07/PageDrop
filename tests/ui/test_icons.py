@@ -17,10 +17,56 @@ def test_available_names_cover_toolbar_set():
         "arrow-up",
         "arrow-down",
         "arrow-left",
+        "arrow-clockwise",
+        "arrow-counter-clockwise",
+        "arrows-down-up",
+        "copy",
         "floppy-disk",
         "list",
+        "selection-all",
+        "selection-slash",
+        "x",
+        "stack",
+        "scissors",
+        "lock",
     ):
         assert expected in names
+
+
+def test_tab_close_icon_uses_phosphor_x(qapp):
+    from pagedrop.ui.theme import tab_close_icon
+
+    icon = tab_close_icon()
+    assert not icon.isNull()
+    # Explicit tint still works (destructive red path).
+    tinted = tab_close_icon(color="#E85D5D")
+    assert not tinted.isNull()
+
+
+def test_tab_close_button_is_toolbutton_with_icon(qapp):
+    """Qt's built-in CloseButton ignores setIcon; we replace it with QToolButton."""
+    from PyQt6.QtWidgets import QTabBar, QToolButton
+
+    from pagedrop.ui.tab_manager import TabManager
+    from pagedrop.utils.temp_manager import TempManager
+
+    tabs = TabManager(TempManager())
+    tabs.add_blank_tab()
+    btn = tabs.tabBar().tabButton(0, QTabBar.ButtonPosition.RightSide)
+    assert isinstance(btn, QToolButton)
+    assert btn.objectName() == "TabCloseButton"
+    assert not btn.icon().isNull()
+    assert btn.accessibleName() == "Close tab"
+
+
+def test_catalogue_icons_are_vendored():
+    from pagedrop.ui.icons import available_names
+    from pagedrop.ui.tools_window import TOOL_CATALOGUE
+
+    names = available_names()
+    for entry in TOOL_CATALOGUE:
+        assert entry.icon, f"{entry.id} missing icon"
+        assert entry.icon in names, f"{entry.id} → unknown icon {entry.icon!r}"
 
 
 def test_icon_returns_non_null_for_each_vendored_name(qapp):

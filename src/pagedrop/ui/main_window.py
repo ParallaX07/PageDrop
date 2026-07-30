@@ -297,6 +297,7 @@ class MainWindow(QMainWindow):
             "Select all",
             slot=self._select_all_pages,
             shortcut=QKeySequence.StandardKey.SelectAll,
+            icon=icons.icon("selection-all"),
             tip="Select all pages (Ctrl+A)",
             enabled=False,
         )
@@ -304,6 +305,7 @@ class MainWindow(QMainWindow):
             "deselect_all",
             "Deselect all",
             slot=self._clear_selection,
+            icon=icons.icon("selection-slash"),
             tip="Clear selection (Esc)",
             enabled=False,
         )
@@ -339,6 +341,7 @@ class MainWindow(QMainWindow):
             "Move to…",
             slot=self._move_selected_pages_to,
             shortcut="Ctrl+Shift+M",
+            icon=icons.icon("arrows-down-up"),
             tip="Move selected pages to a page number (Ctrl+Shift+M)",
             enabled=False,
         )
@@ -356,6 +359,7 @@ class MainWindow(QMainWindow):
             "Duplicate",
             slot=self._duplicate_selected_pages,
             shortcut="Ctrl+D",
+            icon=icons.icon("copy"),
             tip="Duplicate selected pages (Ctrl+D)",
             enabled=False,
         )
@@ -363,6 +367,7 @@ class MainWindow(QMainWindow):
             "rotate_cw",
             "Rotate CW",
             slot=lambda: self._rotate_selected_pages(90),
+            icon=icons.icon("arrow-clockwise"),
             tip="Rotate selected pages clockwise",
             enabled=False,
         )
@@ -370,6 +375,7 @@ class MainWindow(QMainWindow):
             "rotate_ccw",
             "Rotate CCW",
             slot=lambda: self._rotate_selected_pages(-90),
+            icon=icons.icon("arrow-counter-clockwise"),
             tip="Rotate selected pages counter-clockwise",
             enabled=False,
         )
@@ -422,9 +428,15 @@ class MainWindow(QMainWindow):
         a = self._actions
         a["open"].setIcon(icons.icon("folder-open"))
         a["preview"].setIcon(icons.icon("list"))
+        a["select_all"].setIcon(icons.icon("selection-all"))
+        a["deselect_all"].setIcon(icons.icon("selection-slash"))
         a["move_up"].setIcon(icons.icon("arrow-up"))
         a["move_down"].setIcon(icons.icon("arrow-down"))
+        a["move_to"].setIcon(icons.icon("arrows-down-up"))
         a["delete_pages"].setIcon(icons.icon("trash"))
+        a["duplicate_pages"].setIcon(icons.icon("copy"))
+        a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
+        a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()

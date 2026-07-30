@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QEvent, Qt, QObject, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QScrollArea,
@@ -27,6 +28,7 @@ from pagedrop.core.capabilities import (
     CapabilityStatus,
     probe,
 )
+from pagedrop.ui import icons
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
@@ -58,6 +60,7 @@ class ToolEntry:
     capability_id: str | None = None
     coming_soon: bool = False
     action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure" | "modify" | "ocr" | "extract_tables"
+    icon: str | None = None  # Phosphor stem under assets/icons/
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -69,6 +72,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("combine", "join"),
         action="merge",
+        icon="stack",
     ),
     ToolEntry(
         "split",
@@ -77,6 +81,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("extract", "ranges", "split"),
         action="organize",
+        icon="scissors",
     ),
     ToolEntry(
         "alternate",
@@ -85,6 +90,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("interleave", "mix"),
         action="organize",
+        icon="arrows-left-right",
     ),
     ToolEntry(
         "reverse",
@@ -93,6 +99,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("flip", "blank"),
         action="organize",
+        icon="arrow-counter-clockwise",
     ),
     ToolEntry(
         "n_up",
@@ -101,6 +108,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("impose", "grid", "2-up", "4-up"),
         action="organize",
+        icon="grid-four",
     ),
     ToolEntry(
         "booklet",
@@ -109,6 +117,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("impose", "print"),
         action="organize",
+        icon="book-open",
     ),
     ToolEntry(
         "posterize",
@@ -117,6 +126,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("tiles", "poster"),
         action="organize",
+        icon="bounding-box",
     ),
     ToolEntry(
         "divide",
@@ -125,6 +135,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("halve", "cut"),
         action="organize",
+        icon="columns",
     ),
     ToolEntry(
         "combine",
@@ -133,6 +144,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("scroll", "strip"),
         action="organize",
+        icon="arrows-in-line-vertical",
     ),
     ToolEntry(
         "normalize",
@@ -141,6 +153,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("resize", "paper", "a4", "letter"),
         action="organize",
+        icon="arrows-out",
     ),
     ToolEntry(
         "attachments",
@@ -149,6 +162,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("embed", "embfile"),
         action="organize",
+        icon="paperclip",
     ),
     ToolEntry(
         "metadata",
@@ -157,6 +171,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("info", "xmp", "strip"),
         action="organize",
+        icon="info",
     ),
     ToolEntry(
         "page_labels",
@@ -165,6 +180,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("roman", "numbering"),
         action="organize",
+        icon="list-numbers",
     ),
     ToolEntry(
         "zip",
@@ -173,6 +189,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("archive", "compress"),
         action="organize",
+        icon="file-zip",
     ),
     ToolEntry(
         "compare",
@@ -181,6 +198,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("diff", "heatmap", "side-by-side", "compare"),
         action="organize",
+        icon="git-diff",
     ),
     ToolEntry(
         "create_pdf",
@@ -189,6 +207,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("images", "photos"),
         action="create_pdf",
+        icon="images",
     ),
     ToolEntry(
         "convert_to_pdf",
@@ -207,6 +226,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "excel",
         ),
         action="convert_to_pdf",
+        icon="file-arrow-down",
     ),
     ToolEntry(
         "export_from_pdf",
@@ -215,6 +235,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("export", "png", "jpeg", "webp", "svg", "csv"),
         action="export_from_pdf",
+        icon="export",
     ),
     ToolEntry(
         "office_to_pdf",
@@ -232,6 +253,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "libreoffice",
         ),
         action="office_to_pdf",
+        icon="file-doc",
     ),
     ToolEntry(
         "pdf_to_word",
@@ -241,6 +263,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("word", "docx", "libreoffice", "export"),
         capability_id=LIBREOFFICE,
         action="pdf_to_word",
+        icon="file-doc",
     ),
     ToolEntry(
         "ocr_pdf",
@@ -250,6 +273,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("ocr", "tesseract", "searchable", "scan", "tessdata"),
         capability_id=TESSDATA,
         action="ocr",
+        icon="scan",
     ),
     ToolEntry(
         "extract_tables",
@@ -258,6 +282,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("tables", "csv", "json", "xlsx", "excel", "spreadsheet"),
         action="extract_tables",
+        icon="table",
     ),
     ToolEntry(
         "pdf_to_csv",
@@ -266,6 +291,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("tables", "csv", "spreadsheet", "export"),
         action="pdf_to_csv",
+        icon="table",
     ),
     ToolEntry(
         "pdf_to_excel",
@@ -275,6 +301,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("tables", "xlsx", "excel", "spreadsheet", "export"),
         capability_id=OPENPYXL,
         action="pdf_to_excel",
+        icon="table",
     ),
     ToolEntry(
         "crop",
@@ -283,6 +310,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("trim", "margins", "cropbox"),
         action="modify",
+        icon="crop",
     ),
     ToolEntry(
         "watermark",
@@ -291,6 +319,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("stamp", "overlay", "confidential"),
         action="modify",
+        icon="drop",
     ),
     ToolEntry(
         "header_footer",
@@ -299,6 +328,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("header", "footer", "running"),
         action="modify",
+        icon="text-t",
     ),
     ToolEntry(
         "page_numbers",
@@ -307,6 +337,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("numbering", "folio"),
         action="modify",
+        icon="hash",
     ),
     ToolEntry(
         "bates",
@@ -315,6 +346,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("bates", "exhibit", "stamp"),
         action="modify",
+        icon="hash",
     ),
     ToolEntry(
         "bookmarks",
@@ -323,6 +355,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("outline", "toc", "contents"),
         action="modify",
+        icon="bookmarks",
     ),
     ToolEntry(
         "annotations",
@@ -331,6 +364,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("flatten", "bake", "markup", "forms"),
         action="modify",
+        icon="note-pencil",
     ),
     ToolEntry(
         "blank_pages",
@@ -339,6 +373,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("empty", "detect", "remove"),
         action="modify",
+        icon="file-dashed",
     ),
     ToolEntry(
         "color_effects",
@@ -347,6 +382,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("greyscale", "grayscale", "invert", "scanner"),
         action="modify",
+        icon="palette",
     ),
     ToolEntry(
         "compress",
@@ -355,6 +391,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Optimize",
         keywords=("shrink", "optimize"),
         action="optimize_secure",
+        icon="file-zip",
     ),
     ToolEntry(
         "repair",
@@ -363,6 +400,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Optimize",
         keywords=("fix", "rewrite", "recover"),
         action="optimize_secure",
+        icon="wrench",
     ),
     ToolEntry(
         "encrypt",
@@ -371,6 +409,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Secure",
         keywords=("password", "protect", "permissions"),
         action="optimize_secure",
+        icon="lock",
     ),
     ToolEntry(
         "decrypt",
@@ -379,6 +418,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Secure",
         keywords=("password", "unlock", "remove password"),
         action="optimize_secure",
+        icon="lock-open",
     ),
     ToolEntry(
         "sanitize",
@@ -387,6 +427,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Secure",
         keywords=("scrub", "metadata", "privacy", "annotations"),
         action="optimize_secure",
+        icon="broom",
     ),
 )
 
@@ -436,9 +477,18 @@ class ToolTile(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
 
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._icon_label: QLabel | None = None
+        if entry.icon:
+            self._icon_label = QLabel()
+            self._icon_label.setObjectName("ToolTileIcon")
+            self._icon_label.setFixedSize(20, 20)
+            title_row.addWidget(self._icon_label, 0, Qt.AlignmentFlag.AlignTop)
         self._title = QLabel(entry.title)
         self._title.setObjectName("ToolTileTitle")
-        layout.addWidget(self._title)
+        title_row.addWidget(self._title, 1)
+        layout.addLayout(title_row)
 
         self._subtitle = QLabel(self._subtitle_text())
         self._subtitle.setObjectName("ToolTileSubtitle")
@@ -446,6 +496,7 @@ class ToolTile(QFrame):
         layout.addWidget(self._subtitle)
 
         self._refresh_chrome()
+        self.refresh_icon()
 
     def _subtitle_text(self) -> str:
         if self._capability is not None and not self._capability.available:
@@ -469,7 +520,11 @@ class ToolTile(QFrame):
         if isinstance(layout, QVBoxLayout):
             layout.setContentsMargins(*margins)
             layout.setSpacing(2 if compact else 4)
+        if self._icon_label is not None:
+            size = 16 if compact else 20
+            self._icon_label.setFixedSize(size, size)
         self._refresh_chrome()
+        self.refresh_icon()
 
     def refresh_capability(self) -> None:
         if self.entry.capability_id is None:
@@ -477,6 +532,13 @@ class ToolTile(QFrame):
         self._capability = probe(self.entry.capability_id, refresh=False)
         self._subtitle.setText(self._subtitle_text())
         self._refresh_chrome()
+
+    def refresh_icon(self) -> None:
+        if self._icon_label is None or not self.entry.icon:
+            return
+        size = 16 if self._compact else 20
+        pix = icons.icon(self.entry.icon).pixmap(QSize(size, size))
+        self._icon_label.setPixmap(pix)
 
     def _refresh_chrome(self) -> None:
         """Sync rare state properties; hover/focus come from shared app QSS."""
@@ -588,6 +650,15 @@ class ToolsWindow(QWidget):
         self._build_ui()
         self.installEventFilter(self._nav_filter)
         self._apply_filter("")
+
+        refresh_cb = self._refresh_tile_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
+
+    def _refresh_tile_icons(self) -> None:
+        """Re-tint catalogue glyph pixmaps after a light/dark swap."""
+        for tile in self._tiles:
+            tile.refresh_icon()
 
     @property
     def tab_title(self) -> str:
