@@ -36,7 +36,7 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-<a href="https://apps.microsoft.com/detail/9PBS1QFP36C0?mode=direct">
+<a href="https://get.microsoft.com/installer/download/9pbs1qfp36c0?referrer=appbadge" target="_self">
   <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft Store" width="200">
 </a>
 
