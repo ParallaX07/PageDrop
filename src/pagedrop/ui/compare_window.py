@@ -59,14 +59,18 @@ from pagedrop.ui.tool_page import StatusFooter, present_tool_page
 from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
-    BG_CARD,
     CLOSE_TAB,
     STATUS_SUCCESS,
     STATUS_WARNING,
-    TEXT_MUTED,
+    chrome_card_qcolor,
+    chrome_text_muted_qcolor,
+    close_tab_hex,
+    status_success_hex,
+    status_warning_hex,
     token_qcolor,
 )
 
+# Diff highlight washes on page paper (content plane — not chrome ink).
 _DELETED = token_qcolor(CLOSE_TAB, 90)
 _ADDED = token_qcolor(STATUS_SUCCESS, 90)
 _MODIFIED = token_qcolor(STATUS_WARNING, 90)
@@ -203,9 +207,9 @@ class _ComparePageCanvas(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.fillRect(self.rect(), token_qcolor(BG_CARD))
+        painter.fillRect(self.rect(), chrome_card_qcolor())
         if self._pixmap.isNull():
-            painter.setPen(token_qcolor(TEXT_MUTED))
+            painter.setPen(chrome_text_muted_qcolor())
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No page")
             return
         painter.drawPixmap(0, 0, self._pixmap)
@@ -569,13 +573,13 @@ class CompareWindow(JobChromeMixin, QWidget):
         for change in r.changes:
             if change.kind == "deleted":
                 prefix = "Removed"
-                color = CLOSE_TAB
+                color = close_tab_hex()
             elif change.kind == "added":
                 prefix = "Added"
-                color = STATUS_SUCCESS
+                color = status_success_hex()
             else:
                 prefix = "Changed"
-                color = STATUS_WARNING
+                color = status_warning_hex()
             page = (change.page_a if change.page_a is not None else change.page_b) or 0
             label = f"{prefix} “{_truncate(change.text, 72)}”  ·  p.{page + 1}"
             item = QListWidgetItem(label)

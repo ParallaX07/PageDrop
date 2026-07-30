@@ -31,12 +31,26 @@ TEXT_MUTED = "#82828E"
 # Ink on accent / filled interactive chrome (labels, selection text, focus rings)
 TEXT_ON_ACCENT = "#FFFFFF"
 
+# Light chrome mirrors — paint helpers + app_stylesheet(light=True) share these
+# so toggling light never leaves dark-only module hex on white surfaces.
+TEXT_PRIMARY_LIGHT = "#1A1A1F"
+TEXT_SECONDARY_LIGHT = "#4A4A55"
+TEXT_MUTED_LIGHT = "#5A5D68"
+BG_CARD_LIGHT = "#FFFFFF"
+BG_BASE_LIGHT = "#F7F8FA"
+BG_GRID_LIGHT = "#F0F1F4"
+
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
+CLOSE_TAB_LIGHT = "#D14343"
+CLOSE_TAB_HOVER_BG_LIGHT = "#F5D6D6"
 
 # Semantic status (compare diffs, validation errors, toast kinds)
 STATUS_SUCCESS = "#4CAF6E"
 STATUS_WARNING = "#F0B43C"
+# Darker status ink for light chrome text (toast / lists) — AA ≥ 4.5 on white
+STATUS_SUCCESS_LIGHT = "#1B7A3D"
+STATUS_WARNING_LIGHT = "#8A6200"
 
 # Viewer page paper — intentional light plane even under dark chrome
 VIEWER_PAGE_BG = "#FAFAFA"
@@ -98,24 +112,26 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Light / HC overrides under distinct locals so we never mutate module tokens.
     if light:
         # Cool off-white base; white cards; light borders (Bento light translation).
-        bg_base = "#F7F8FA"
-        bg_surface = "#FFFFFF"
-        bg_grid = "#F0F1F4"
-        bg_card = "#FFFFFF"
+        bg_base = BG_BASE_LIGHT
+        bg_surface = BG_CARD_LIGHT
+        bg_grid = BG_GRID_LIGHT
+        bg_card = BG_CARD_LIGHT
         bg_card_hover = "#EEF0F4"
         bg_thumb_empty = "#E2E4EA"
-        bg_toolbar = "#FFFFFF"
-        bg_status = "#FFFFFF"
-        bg_tab_bar = "#F7F8FA"
-        bg_preview_footer = "#FFFFFF"
+        bg_toolbar = BG_CARD_LIGHT
+        bg_status = BG_CARD_LIGHT
+        bg_tab_bar = BG_BASE_LIGHT
+        bg_preview_footer = BG_CARD_LIGHT
         border_subtle_tok = "#E5E7EB"
         border_default_tok = "#D1D5DB"
         border_hover = BORDER_HOVER_LIGHT
-        text_primary = "#1A1A1F"
-        text_secondary = "#4A4A55"
-        text_muted_tok = "#5A5D68"
-        close_tab = "#D14343"
-        close_tab_hover_bg = "#F5D6D6"
+        text_primary = TEXT_PRIMARY_LIGHT
+        text_secondary = TEXT_SECONDARY_LIGHT
+        text_muted_tok = TEXT_MUTED_LIGHT
+        close_tab = CLOSE_TAB_LIGHT
+        close_tab_hover_bg = CLOSE_TAB_HOVER_BG_LIGHT
+        status_success = STATUS_SUCCESS_LIGHT
+        status_warning = STATUS_WARNING_LIGHT
         busy_overlay_bg = "rgba(247, 248, 250, 200)"
     else:
         bg_base = BG_BASE
@@ -136,6 +152,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         text_muted_tok = TEXT_MUTED
         close_tab = CLOSE_TAB
         close_tab_hover_bg = CLOSE_TAB_HOVER_BG
+        status_success = STATUS_SUCCESS
+        status_warning = STATUS_WARNING
         busy_overlay_bg = "rgba(19, 19, 22, 180)"
 
     text_muted = text_secondary if high_contrast else text_muted_tok
@@ -885,7 +903,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#PagePreviewImage {{
-        background-color: #FAFAFA;
+        background-color: {VIEWER_PAGE_BG};
         padding: 8px;
     }}
 
@@ -1079,7 +1097,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToastOverlayMessage[kind="success"] {{
-        color: {STATUS_SUCCESS};
+        color: {status_success};
     }}
 
     QLabel#ToastOverlayMessage[kind="error"] {{
@@ -1087,7 +1105,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToastOverlayMessage[kind="warning"] {{
-        color: {STATUS_WARNING};
+        color: {status_warning};
     }}
 
     QLabel#ToastOverlayMessage[kind="info"] {{
@@ -1688,7 +1706,42 @@ def border_hover_qcolor() -> "QColor":
     return token_qcolor(BORDER_HOVER_LIGHT if light_theme() else BORDER_HOVER)
 
 
-def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
+def chrome_card_qcolor() -> "QColor":
+    """Card/surface fill for programmatic paint (pairs with light/dark QSS)."""
+    from pagedrop.ui.settings import light_theme
+
+    return token_qcolor(BG_CARD_LIGHT if light_theme() else BG_CARD)
+
+
+def chrome_text_muted_qcolor() -> "QColor":
+    """Muted chrome ink for programmatic paint (pairs with light/dark QSS)."""
+    from pagedrop.ui.settings import light_theme
+
+    return token_qcolor(TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED)
+
+
+def status_success_hex() -> str:
+    """Success ink for toast/list text — darkened under light chrome for AA."""
+    from pagedrop.ui.settings import light_theme
+
+    return STATUS_SUCCESS_LIGHT if light_theme() else STATUS_SUCCESS
+
+
+def status_warning_hex() -> str:
+    """Warning ink for toast/list text — darkened under light chrome for AA."""
+    from pagedrop.ui.settings import light_theme
+
+    return STATUS_WARNING_LIGHT if light_theme() else STATUS_WARNING
+
+
+def close_tab_hex() -> str:
+    """Destructive / close-tab red (pairs with light/dark QSS)."""
+    from pagedrop.ui.settings import light_theme
+
+    return CLOSE_TAB_LIGHT if light_theme() else CLOSE_TAB
+
+
+def tab_close_icon(*, color: str | None = None) -> "QIcon":
     """Red × icon for tab close buttons.
 
     ponytail: stay painted (not Phosphor) — tab chrome needs a small tinted ×,
@@ -1697,13 +1750,14 @@ def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
+    ink = color if color is not None else close_tab_hex()
     size = 16
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color))
+    pen = QPen(QColor(ink))
     pen.setWidthF(2.0)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)

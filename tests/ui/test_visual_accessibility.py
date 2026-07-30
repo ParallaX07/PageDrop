@@ -21,11 +21,11 @@ def test_text_muted_meets_wcag_aa_on_bg_base():
 
 
 def test_light_text_muted_meets_wcag_aa_on_bg_grid():
-    # Keep in sync with app_stylesheet(light=True) text_muted_tok / bg_grid.
-    light_muted = "#5A5D68"
-    light_bg_grid = "#F0F1F4"
-    assert contrast_ratio(light_muted, light_bg_grid) >= 4.5
-    assert light_muted in app_stylesheet(light=True)
+    # Keep in sync with app_stylesheet(light=True) text_muted / bg_grid tokens.
+    from pagedrop.ui.theme import BG_GRID_LIGHT, TEXT_MUTED_LIGHT
+
+    assert contrast_ratio(TEXT_MUTED_LIGHT, BG_GRID_LIGHT) >= 4.5
+    assert TEXT_MUTED_LIGHT in app_stylesheet(light=True)
 
 
 def test_high_contrast_stylesheet_strengthens_chrome():
@@ -223,7 +223,9 @@ def test_theme_smoke_light_dark_and_high_contrast():
     from pagedrop.ui.theme import (
         ACCENT,
         STATUS_SUCCESS,
+        STATUS_SUCCESS_LIGHT,
         STATUS_WARNING,
+        STATUS_WARNING_LIGHT,
         TEXT_ON_ACCENT,
         VIEWER_PAGE_BG,
         token_qcolor,
@@ -233,7 +235,11 @@ def test_theme_smoke_light_dark_and_high_contrast():
     light = app_stylesheet(light=True)
     high = app_stylesheet(high_contrast=True)
 
-    for sheet in (dark, light, high):
+    for sheet, success, warning in (
+        (dark, STATUS_SUCCESS, STATUS_WARNING),
+        (light, STATUS_SUCCESS_LIGHT, STATUS_WARNING_LIGHT),
+        (high, STATUS_SUCCESS, STATUS_WARNING),
+    ):
         assert "QFrame#DropIndicator" in sheet
         assert "QLabel#ToolsErrorHint" in sheet
         assert "QLabel#ComparePaneTitle" in sheet
@@ -241,13 +247,13 @@ def test_theme_smoke_light_dark_and_high_contrast():
         assert "QLabel#CompareSummary" in sheet
         assert VIEWER_PAGE_BG in sheet
         assert "QPushButton#ToolbarSecondary" in sheet
-        assert f"color: {STATUS_SUCCESS}" in sheet
-        assert f"color: {STATUS_WARNING}" in sheet
+        assert f"color: {success}" in sheet
+        assert f"color: {warning}" in sheet
         assert f"color: {TEXT_ON_ACCENT}" in sheet
         # Success toast must not fall back to accent blue.
         assert 'ToastOverlayMessage[kind="success"]' in sheet
         success_block = sheet.split('ToastOverlayMessage[kind="success"]')[1].split("}")[0]
-        assert STATUS_SUCCESS in success_block
+        assert success in success_block
         assert ACCENT.lstrip("#") not in success_block
         assert "2F9BE6" not in success_block
 
@@ -680,3 +686,99 @@ def test_r7_feedback_motion_only_in_busy_overlay():
         if "QPropertyAnimation" in path.read_text(encoding="utf-8")
     )
     assert animated == ["busy_overlay.py"]
+
+
+def test_r8_light_hc_parity_freeze(isolated_settings):
+    """R8: dark/light/HC sheets share chrome roles; light status ink meets AA; HC thickens."""
+    from pagedrop.ui.settings import set_light_theme
+    from pagedrop.ui.theme import (
+        ACCENT,
+        BG_CARD,
+        BG_CARD_LIGHT,
+        BG_GRID_LIGHT,
+        CLOSE_TAB,
+        CLOSE_TAB_LIGHT,
+        STATUS_SUCCESS,
+        STATUS_SUCCESS_LIGHT,
+        STATUS_WARNING,
+        STATUS_WARNING_LIGHT,
+        TEXT_MUTED,
+        TEXT_MUTED_LIGHT,
+        TEXT_PRIMARY_LIGHT,
+        VIEWER_PAGE_BG,
+        chrome_card_qcolor,
+        chrome_text_muted_qcolor,
+        close_tab_hex,
+        status_success_hex,
+        status_warning_hex,
+    )
+
+    modes = (
+        dict(light=False, high_contrast=False),
+        dict(light=True, high_contrast=False),
+        dict(light=False, high_contrast=True),
+        dict(light=True, high_contrast=True),
+    )
+    roles = (
+        "QPushButton#ToolbarPrimary",
+        "QPushButton#ToolbarSecondary",
+        "QFrame#PageCard",
+        "QFrame#ToolTile",
+        "ToastOverlayMessage",
+        "QWidget#BusyOverlay",
+        "QTabWidget#TabManager",
+        "QWidget#ZoomControls",
+        "QFrame#ToolShellDropZone",
+        "QWidget#EmptyStatePanel",
+    )
+    sheets = {f"{m['light']}_{m['high_contrast']}": app_stylesheet(**m) for m in modes}
+    for sheet in sheets.values():
+        for role in roles:
+            assert role in sheet
+        assert VIEWER_PAGE_BG in sheet
+
+    dark, light, dark_hc, light_hc = (
+        sheets["False_False"],
+        sheets["True_False"],
+        sheets["False_True"],
+        sheets["True_True"],
+    )
+    assert light != dark
+    assert light_hc != light
+    assert light_hc != dark_hc
+    assert "border: 2px solid" in dark
+    assert "border: 3px solid" in dark_hc
+    assert f"border: 4px solid {ACCENT}" in dark_hc
+    assert f"border: 3px solid {ACCENT}" in light_hc
+    assert f"border: 4px solid {ACCENT}" in light_hc
+    assert TEXT_PRIMARY_LIGHT in light
+    success_block = light.split('ToastOverlayMessage[kind="success"]')[1].split("}")[0]
+    warning_block = light.split('ToastOverlayMessage[kind="warning"]')[1].split("}")[0]
+    assert STATUS_SUCCESS_LIGHT in success_block
+    assert STATUS_SUCCESS not in success_block
+    assert STATUS_WARNING_LIGHT in warning_block
+    assert STATUS_WARNING not in warning_block
+
+    # Light toast / list status ink must hold AA on white and off-white chrome.
+    for fg, bg in (
+        (STATUS_SUCCESS_LIGHT, "#FFFFFF"),
+        (STATUS_SUCCESS_LIGHT, BG_GRID_LIGHT),
+        (STATUS_WARNING_LIGHT, "#FFFFFF"),
+        (STATUS_WARNING_LIGHT, BG_GRID_LIGHT),
+        (TEXT_MUTED_LIGHT, BG_GRID_LIGHT),
+    ):
+        assert contrast_ratio(fg, bg) >= 4.5
+
+    # Paint helpers stay paired with stylesheet tokens after toggle.
+    set_light_theme(True)
+    assert chrome_card_qcolor().name().upper() == BG_CARD_LIGHT.upper()
+    assert chrome_text_muted_qcolor().name().upper() == TEXT_MUTED_LIGHT.upper()
+    assert status_success_hex() == STATUS_SUCCESS_LIGHT
+    assert status_warning_hex() == STATUS_WARNING_LIGHT
+    assert close_tab_hex() == CLOSE_TAB_LIGHT
+    set_light_theme(False)
+    assert chrome_card_qcolor().name().upper() == BG_CARD.upper()
+    assert chrome_text_muted_qcolor().name().upper() == TEXT_MUTED.upper()
+    assert status_success_hex() == STATUS_SUCCESS
+    assert status_warning_hex() == STATUS_WARNING
+    assert close_tab_hex() == CLOSE_TAB

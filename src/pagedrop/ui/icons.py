@@ -15,10 +15,9 @@ from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
-from pagedrop.ui.theme import ACCENT, TEXT_PRIMARY
+from pagedrop.ui.theme import ACCENT, TEXT_PRIMARY, TEXT_PRIMARY_LIGHT
 
-# Matches app_stylesheet(light=True) text_primary (module TEXT_PRIMARY is dark-only).
-_TEXT_PRIMARY_LIGHT = "#1A1A1F"
+# Module TEXT_PRIMARY is dark-only; light chrome uses TEXT_PRIMARY_LIGHT.
 _ICON_SIZES = (16, 20, 24, 32)
 
 _cache: dict[tuple[str, str], QIcon] = {}
@@ -82,7 +81,7 @@ def unregister_refresh(callback: Callable[[], None]) -> None:
 def _chrome_text_hex() -> str:
     from pagedrop.ui.settings import light_theme
 
-    return _TEXT_PRIMARY_LIGHT if light_theme() else TEXT_PRIMARY
+    return TEXT_PRIMARY_LIGHT if light_theme() else TEXT_PRIMARY
 
 
 def _icons_dir() -> Path:
