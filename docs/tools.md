@@ -34,6 +34,8 @@ Compress, repair, encrypt, decrypt, sanitize.
 
 Capabilities are probed at runtime through a soft registry. Missing engines never break app startup. When a tool needs something that is not installed (for example Office COM on Windows, LibreOffice, or tessdata), the UI names what is missing and offers configure / recheck paths.
 
+PageDrop never installs third-party apps. For LibreOffice it opens the official download page or copies a winget command for you to run yourself. OCR language packs (tessdata) download only after an explicit confirm.
+
 Office conversions name the engine in status. If a COM run fails, fallback to another engine requires an explicit retry — PageDrop does not silently swap backends.
 
 ## Cancel and cleanup

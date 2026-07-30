@@ -38,6 +38,8 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 **Microsoft Store**: install from the [Microsoft Store listing](https://apps.microsoft.com/detail/9PBS1QFP36C0).
 
+> Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
+
 **Windows (GitHub Releases)**, no Python required:
 
 1. Go to [Releases](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-*-Setup.exe` installer.

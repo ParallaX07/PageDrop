@@ -31,16 +31,11 @@ DEFAULT_TIMEOUT_SEC = 300.0
 
 _POLL_SEC = 0.1
 
-# Consent-only install hints (UI opens these on user click — never silent).
+# Consent-only install hints (UI opens download or copies this — never runs installers).
 DOWNLOAD_URL = "https://www.libreoffice.org/download/"
-WINGET_INSTALL_ARGV = (
-    "winget",
-    "install",
-    "--id",
-    "TheDocumentFoundation.LibreOffice",
-    "-e",
+WINGET_INSTALL_COMMAND = (
+    "winget install --id TheDocumentFoundation.LibreOffice -e"
 )
-WINGET_INSTALL_COMMAND = " ".join(WINGET_INSTALL_ARGV)
 
 
 class LibreOfficeConversionError(JobError):

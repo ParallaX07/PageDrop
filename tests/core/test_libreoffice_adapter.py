@@ -297,8 +297,33 @@ def test_missing_libreoffice_dialog_has_download_and_recheck(qtbot) -> None:
     assert any("Download" in t for t in texts)
     assert any("Recheck" in t for t in texts)
     if sys.platform == "win32":
-        assert "lo_winget" in names
+        assert "lo_copy_winget" in names
+        assert any("Copy winget" in t for t in texts)
         assert WINGET_INSTALL_COMMAND in dialog.informativeText()
     else:
-        assert "lo_winget" not in names
+        assert "lo_copy_winget" not in names
         assert "libreoffice.org" in DOWNLOAD_URL
+
+
+def test_copy_libreoffice_winget_command_sets_clipboard(qtbot, monkeypatch) -> None:
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    from pagedrop.ui.dialogs import _copy_libreoffice_winget_command
+    import pagedrop.ui.dialogs as dialogs_mod
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    clipboard = QApplication.clipboard()
+    assert clipboard is not None
+    clipboard.clear()
+
+    shown: list[str] = []
+
+    def fake_info(parent, title, text):  # noqa: ANN001
+        shown.append(f"{title}\n{text}")
+
+    monkeypatch.setattr(dialogs_mod.QMessageBox, "information", fake_info)
+    _copy_libreoffice_winget_command(host)
+
+    assert clipboard.text() == WINGET_INSTALL_COMMAND
+    assert shown and WINGET_INSTALL_COMMAND in shown[0]
