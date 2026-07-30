@@ -36,7 +36,9 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-**Microsoft Store**: install from the [Microsoft Store listing](https://apps.microsoft.com/detail/9PBS1QFP36C0).
+<a href="https://apps.microsoft.com/detail/9PBS1QFP36C0?mode=direct">
+  <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft Store" width="200">
+</a>
 
 > Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
 
