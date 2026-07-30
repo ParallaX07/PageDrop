@@ -170,22 +170,22 @@ def test_theme_smoke_light_dark_and_high_contrast():
 
 
 def test_toolbar_secondary_is_ghost_not_primary():
-    """R1: #ToolbarSecondary is outline/ghost, distinct from filled primary."""
+    """R1: #ToolbarSecondary is outline/ghost, distinct from filled primary (dark+light)."""
     from pagedrop.ui.theme import ACCENT
 
-    sheet = app_stylesheet()
-    assert "QPushButton#ToolbarSecondary" in sheet
-    assert "QToolBar QToolButton#ToolbarSecondary" in sheet
-    secondary = sheet.split("QPushButton#ToolbarSecondary,")[1].split(
-        "QPushButton#ToolbarSecondary:hover"
-    )[0]
-    assert "transparent" in secondary
-    assert ACCENT not in secondary
-    primary = sheet.split("QPushButton#ToolbarPrimary,")[1].split(
-        "QPushButton#ToolbarPrimary:hover"
-    )[0]
-    assert ACCENT in primary
-    assert "transparent" not in primary
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        assert "QPushButton#ToolbarSecondary" in sheet
+        assert "QToolBar QToolButton#ToolbarSecondary" in sheet
+        secondary = sheet.split("QPushButton#ToolbarSecondary,")[1].split(
+            "QPushButton#ToolbarSecondary:hover"
+        )[0]
+        assert "transparent" in secondary
+        assert ACCENT not in secondary
+        primary = sheet.split("QPushButton#ToolbarPrimary,")[1].split(
+            "QPushButton#ToolbarPrimary:hover"
+        )[0]
+        assert ACCENT in primary
+        assert "transparent" not in primary
 
 
 def test_paint_helpers_pair_with_light_stylesheet(isolated_settings):
