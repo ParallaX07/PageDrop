@@ -123,17 +123,105 @@ def test_light_stylesheet_styles_dialogs(isolated_settings):
     assert "QListWidget::item:selected" in light
     assert "QTreeWidget::item:selected" in light
     assert "QTabWidget#PdfViewerSide::pane" in light
-    # Viewer QToolButtons sit outside QToolBar — must still get light surfaces.
+    # Viewer QToolButtons sit outside QToolBar — must still get light ink.
     assert "QToolButton," in light
-    assert "background-color: #FFFFFF" in light
     assert "color: #1A1A1F" in light
+    assert "background-color: #FFFFFF" in light
     assert "QFrame#WatermarkOptionsCard" in light
     assert "QPushButton#ToolbarPrimary" in light
+
+
+def test_r3_toolbar_default_is_flat():
+    """R3: default tool buttons are transparent/hairline, not dense bordered cards."""
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        block = sheet.split("QToolButton,")[1].split("QToolButton:hover,")[0]
+        assert "transparent" in block
+        assert "border: 1px solid transparent" in block
+        # Primary fill still uses accent; default tools must not.
+        from pagedrop.ui.theme import ACCENT
+
+        assert ACCENT not in block
+
+
+def test_r3_primary_label_meets_wcag_aa_on_accent():
+    """R3: TEXT_ON_ACCENT on accent fill/hover/pressed ≥ 4.5:1 (dark + light share tokens)."""
+    from pagedrop.ui.theme import ACCENT, ACCENT_HOVER, ACCENT_PRESSED, TEXT_ON_ACCENT
+
+    for bg in (ACCENT, ACCENT_HOVER, ACCENT_PRESSED):
+        assert contrast_ratio(TEXT_ON_ACCENT, bg) >= 4.5
+    # Primary QSS still wires white ink onto the accent fill.
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        primary = sheet.split("QPushButton#ToolbarPrimary,")[1].split(
+            "QPushButton#ToolbarPrimary:hover"
+        )[0]
+        assert ACCENT in primary
+        assert TEXT_ON_ACCENT in primary
+
+
+def test_r3_zoom_controls_use_spacing_tokens(qtbot):
+    """R3: zoom cluster margins/gaps read from SPACE_* tokens."""
+    from pagedrop.ui.theme import SPACE_1, SPACE_2
+
+    zoom = ZoomControls(min_width=80, max_width=480, step=16, initial=160)
+    qtbot.addWidget(zoom)
+    margins = zoom.layout().contentsMargins()
+    assert margins.left() == SPACE_2
+    assert margins.top() == SPACE_1
+    assert margins.right() == SPACE_2
+    assert margins.bottom() == SPACE_1
+    assert zoom.layout().spacing() == SPACE_1
+    sheet = app_stylesheet()
+    assert "QWidget#ZoomControls" in sheet
+    assert "background-color: transparent" in sheet.split("QWidget#ZoomControls")[1].split(
+        "QLabel#ZoomCaption"
+    )[0]
+
+
+def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):
+    """R3: Open / Merge / Save PDF / Run are primary; browse/add are secondary."""
+    open_btn = main_window._toolbar.widgetForAction(main_window._actions["open"])
+    assert open_btn is not None
+    assert open_btn.objectName() == "ToolbarPrimary"
+    preview = main_window._toolbar.widgetForAction(main_window._actions["preview"])
+    assert preview is not None
+    assert preview.objectName() == ""
+
+    from pagedrop.ui.merge_window import MergeWindow
+
+    merge = MergeWindow()
+    qtbot.addWidget(merge)
+    assert merge._toolbar.widgetForAction(merge._add_action).objectName() == "ToolbarSecondary"
+    assert (
+        merge._toolbar.widgetForAction(merge._add_folder_action).objectName()
+        == "ToolbarSecondary"
+    )
+    assert merge._toolbar.widgetForAction(merge._merge_action).objectName() == "ToolbarPrimary"
+
+    from pagedrop.ui.convert_window import ConvertWindow
+
+    convert = ConvertWindow()
+    qtbot.addWidget(convert)
+    assert (
+        convert._toolbar.widgetForAction(convert._add_action).objectName()
+        == "ToolbarSecondary"
+    )
+    assert (
+        convert._toolbar.widgetForAction(convert._create_action).objectName()
+        == "ToolbarPrimary"
+    )
+
+    from pagedrop.ui.tool_shell import ToolShellWindow
+
+    shell = ToolShellWindow(title="Demo", description="Role audit")
+    qtbot.addWidget(shell)
+    assert shell._run_btn.objectName() == "ToolbarPrimary"
+    assert shell.drop_zone._clear_btn.objectName() == "ToolbarSecondary"
 
 
 def test_theme_smoke_light_dark_and_high_contrast():
     """O8: tokens + objectName chrome present in dark, light, and HC sheets."""
     from pagedrop.ui.theme import (
+        ACCENT,
         STATUS_SUCCESS,
         STATUS_WARNING,
         TEXT_ON_ACCENT,
@@ -160,6 +248,7 @@ def test_theme_smoke_light_dark_and_high_contrast():
         assert 'ToastOverlayMessage[kind="success"]' in sheet
         success_block = sheet.split('ToastOverlayMessage[kind="success"]')[1].split("}")[0]
         assert STATUS_SUCCESS in success_block
+        assert ACCENT.lstrip("#") not in success_block
         assert "2F9BE6" not in success_block
 
     assert high != dark
@@ -263,9 +352,7 @@ def test_watermark_selection_chrome_uses_accent_token():
     # accent_qcolor() must match the ACCENT token in both light and dark mode.
     color = accent_qcolor()
     assert color.isValid()
-    assert color.red() == 0x2F
-    assert color.green() == 0x9B
-    assert color.blue() == 0xE6
+    assert f"#{color.red():02X}{color.green():02X}{color.blue():02X}" == ACCENT.upper()
 
     # on_accent_qcolor() must be fully opaque white (readable on accent backgrounds).
     ink = on_accent_qcolor()
@@ -274,8 +361,7 @@ def test_watermark_selection_chrome_uses_accent_token():
     assert ink.green() == 255
     assert ink.blue() == 255
 
-    # The ACCENT hex string encodes the same RGB the old literal QColor(47,155,230) did.
-    assert ACCENT.upper() == "#2F9BE6"
+    assert ACCENT.upper() == "#1868AD"
 
 
 def test_r2_fonts_and_spacing_tokens():

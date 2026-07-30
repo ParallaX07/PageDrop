@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.ui.theme import SPACE_1, SPACE_2
+
 
 class ZoomControls(QWidget):
     """Compact thumbnail zoom cluster: −, slider, +, and pixel readout."""
@@ -37,8 +39,8 @@ class ZoomControls(QWidget):
         self.setAccessibleName("Thumbnail zoom")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 8, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
+        layout.setSpacing(SPACE_1)
 
         self._caption = QLabel("Zoom")
         self._caption.setObjectName("ZoomCaption")

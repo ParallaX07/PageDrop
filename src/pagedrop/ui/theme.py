@@ -19,9 +19,11 @@ BORDER_HOVER = "#5C5C68"
 # Light chrome border — shared by app_stylesheet locals + paint helpers
 BORDER_HOVER_LIGHT = "#9CA3AF"
 
-ACCENT = "#2F9BE6"
-ACCENT_HOVER = "#4AADED"
-ACCENT_PRESSED = "#1F7FCC"
+# ponytail: darkened from #2F9BE6 so TEXT_ON_ACCENT meets WCAG AA ≥ 4.5 on
+# fill / hover / pressed; brighten only if labels move off the fill.
+ACCENT = "#1868AD"
+ACCENT_HOVER = "#1C74BC"
+ACCENT_PRESSED = "#13558E"
 
 TEXT_PRIMARY = "#F2F2F4"
 TEXT_SECONDARY = "#A8A8B3"
@@ -366,26 +368,28 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_2}px {SPACE_3}px;
     }}
 
-    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
+    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync.
+       R3: default tools are flat/hairline; filled primary + outline secondary stay. */
     QToolButton,
     QToolBar QToolButton {{
-        background-color: {bg_card};
+        background-color: transparent;
         color: {text_primary};
-        border: 1px solid {border_default};
+        border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px 14px;
-        font-weight: 600;
+        padding: 6px 10px;
+        font-weight: 500;
     }}
 
     QToolButton:hover,
     QToolBar QToolButton:hover {{
         background-color: {bg_card_hover};
-        border-color: {border_hover};
+        border-color: {border_subtle};
     }}
 
     QToolButton:pressed,
     QToolBar QToolButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_card};
+        border-color: {border_default};
     }}
 
     QToolButton:focus,
@@ -397,6 +401,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ACCENT};
         color: {TEXT_ON_ACCENT};
         border: 1px solid {ACCENT_PRESSED};
+        font-weight: 600;
     }}
 
     QToolButton:checked:hover {{
@@ -407,7 +412,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton:disabled,
     QToolBar QToolButton:disabled {{
         color: {text_muted};
-        border-color: {border_subtle};
+        background-color: transparent;
+        border-color: transparent;
     }}
 
     QPushButton#ToolbarPrimary,
@@ -416,6 +422,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {TEXT_ON_ACCENT};
         border: 1px solid {ACCENT_PRESSED};
         font-weight: 600;
+        padding: 6px 14px;
     }}
 
     QPushButton#ToolbarPrimary:hover,
@@ -544,22 +551,23 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#ZoomControls {{
-        background-color: {bg_card};
+        background-color: transparent;
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
+        padding: {SPACE_1}px;
     }}
 
     QLabel#ZoomCaption {{
         color: {text_muted};
         font-size: 11px;
         font-weight: 600;
-        padding: 0 2px 0 0;
+        padding: 0 {SPACE_1}px 0 0;
     }}
 
     QPushButton#ZoomButton {{
-        background-color: {bg_surface};
+        background-color: transparent;
         color: {text_primary};
-        border: 1px solid {border_default};
+        border: 1px solid transparent;
         border-radius: 6px;
         font-size: 15px;
         font-weight: 600;
@@ -568,12 +576,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ZoomButton:hover:enabled {{
         background-color: {bg_card_hover};
-        border-color: {border_hover};
+        border-color: {border_subtle};
         color: {text_primary};
     }}
 
     QPushButton#ZoomButton:pressed:enabled {{
-        background-color: {bg_base};
+        background-color: {bg_card};
+        border-color: {border_default};
     }}
 
     QPushButton#ZoomButton:focus {{
@@ -582,7 +591,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ZoomButton:disabled {{
         color: {text_muted};
-        border-color: {border_subtle};
+        background-color: transparent;
+        border-color: transparent;
     }}
 
     QSlider#ZoomSlider {{

@@ -405,6 +405,9 @@ class ConvertWindow(JobChromeMixin, QWidget):
         )
         self._add_action.triggered.connect(self._add_images)
         tip(self._add_action, "Add images to convert")
+        add_button = toolbar.widgetForAction(self._add_action)
+        if add_button is not None:
+            add_button.setObjectName("ToolbarSecondary")
 
         self._remove_action = toolbar.addAction(
             self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
