@@ -574,10 +574,13 @@ def _configure_metadata(shell: ToolShellWindow) -> None:
         for key, edit in fields.items():
             edit.setText(str(meta.get(key) or ""))
 
+    load_row = QHBoxLayout()
     load_btn = QPushButton("Load from file")
     load_btn.setObjectName("ToolbarSecondary")
     load_btn.clicked.connect(load_meta)
-    form.addRow("", load_btn)
+    load_row.addWidget(load_btn)
+    load_row.addStretch(1)
+    form.addRow(load_row)
     shell.set_options_widget(options)
 
     def on_files_changed() -> None:

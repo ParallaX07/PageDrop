@@ -570,3 +570,110 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
 
     shell.close()
     tools.close()
+
+
+# --- R11: Run host + vertical rhythm -----------------------------------------
+
+
+def test_r11_drop_zone_and_options_margins(qtbot):
+    """R11: drop-zone (16,12,16,12); options layout symmetric (no P9 8px right)."""
+    zone = FileDropZone()
+    qtbot.addWidget(zone)
+    m = zone.layout().contentsMargins()
+    assert (m.left(), m.top(), m.right(), m.bottom()) == (16, 12, 16, 12)
+
+    shell = ToolShellWindow(title="Demo", description="Margins")
+    qtbot.addWidget(shell)
+    om = shell._options_layout.contentsMargins()
+    assert (om.left(), om.top(), om.right(), om.bottom()) == (0, 0, 0, 0)
+
+
+def test_r11_standard_shell_run_enabled_after_file_pick(qtbot, tmp_path):
+    """R11: standard shell keeps one Run in #ToolShellActions; enables after pick."""
+    from PyQt6.QtWidgets import QPushButton, QToolBar
+
+    src = tmp_path / "doc.pdf"
+    _write_pdf(src, pages=1)
+
+    shell = ToolShellWindow(title="Reverse", description="Reverse pages")
+    qtbot.addWidget(shell)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    assert shell._actions_host.isVisible()
+    assert shell._run_btn.parentWidget() is shell._actions_host
+    assert not shell._run_btn.isEnabled()
+    assert shell.findChild(QToolBar, "ToolShellToolbar") is None
+
+    shell.drop_zone.set_paths([str(src)])
+    assert shell._run_btn.isEnabled()
+    runs = [
+        w
+        for w in shell.findChildren(QPushButton)
+        if w.objectName() == "ToolbarPrimary" and w.text() == "Run"
+    ]
+    assert runs == [shell._run_btn]
+
+
+def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
+    """R11: booklet-style empty options must not expand a blank options band."""
+    from PyQt6.QtWidgets import QFormLayout, QLabel, QWidget
+
+    shell = ToolShellWindow(title="Booklet", description="No options")
+    qtbot.addWidget(shell)
+    shell.set_options_widget(QWidget())
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    assert not shell._options_scroll.isVisible()
+    root = shell.layout()
+    assert root.stretch(root.indexOf(shell._options_scroll)) == 0
+
+    # Real controls restore the scroll stretch.
+    opts = QWidget()
+    form = QFormLayout(opts)
+    form.addRow("Hint", QLabel("x"))
+    shell.set_options_widget(opts)
+    assert shell._options_scroll.isVisible()
+    assert root.stretch(root.indexOf(shell._options_scroll)) == 1
+
+
+def test_r11_booklet_shell_hides_empty_options(qtbot, isolated_settings):
+    """R11: organize booklet uses empty options → scroll collapsed."""
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_organize_shell(tools, "booklet")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    assert not shell._options_scroll.isVisible()
+    root = shell.layout()
+    assert root.stretch(root.indexOf(shell._options_scroll)) == 0
+    assert shell._actions_host.isVisible()
+    assert shell._run_btn.parentWidget() is shell._actions_host
+    shell.close()
+    tools.close()
+
+
+def test_r11_metadata_load_from_file_left_aligned(qtbot, isolated_settings):
+    """R11: Load from file is compact/left — not a full-width form-spanning primary."""
+    from PyQt6.QtWidgets import QPushButton
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_organize_shell(tools, "metadata")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.resize(640, 520)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    load_btn = next(
+        b
+        for b in shell._options_host.findChildren(QPushButton)
+        if b.text() == "Load from file"
+    )
+    assert load_btn.objectName() == "ToolbarSecondary"
+    # Must not stretch across the options host (old form.addRow("", btn) look).
+    assert load_btn.width() < shell._options_host.width() * 0.6
+    shell.close()
+    tools.close()

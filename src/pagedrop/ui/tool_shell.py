@@ -154,7 +154,7 @@ class FileDropZone(QFrame):
         self._press_pos: QPoint | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
         # Do not setAlignment(AlignCenter) on the layout — that shrinks Preferred
         # children to sizeHint width, wraps the prompt, then clips it.
@@ -472,6 +472,14 @@ def run_tool_job(
     _tool_job_pool().start(worker)
 
 
+def _options_has_controls(widget: QWidget) -> bool:
+    """True when *widget* has a layout with rows/controls (not a bare QWidget())."""
+    lay = widget.layout()
+    if lay is not None:
+        return lay.count() > 0
+    return any(isinstance(c, QWidget) for c in widget.children())
+
+
 class ToolShellWindow(JobChromeMixin, QWidget):
     """Reusable tool chrome: title → drop → options → Run → results (editor tab)."""
 
@@ -554,7 +562,7 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._options_host.setObjectName("ToolShellOptions")
         self._options_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._options_layout = QVBoxLayout(self._options_host)
-        self._options_layout.setContentsMargins(0, 0, 8, 0)
+        self._options_layout.setContentsMargins(0, 0, 0, 0)
         self._options_layout.setSpacing(8)
         self._options_layout.addStretch(1)
         self._options_scroll.setWidget(self._options_host)
@@ -609,11 +617,26 @@ class ToolShellWindow(JobChromeMixin, QWidget):
             child = item.widget()
             if child is not None:
                 child.deleteLater()
+
+        root = self.layout()
+        scroll_idx = root.indexOf(self._options_scroll) if root is not None else -1
+
+        # R11: bare / empty host must not leave a dead expanding options band.
+        if not _options_has_controls(widget):
+            widget.deleteLater()
+            self._options_scroll.hide()
+            if scroll_idx >= 0:
+                root.setStretch(scroll_idx, 0)
+            return
+
         widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
         self._options_layout.addWidget(widget)
         self._options_layout.addStretch(1)
+        self._options_scroll.show()
+        if scroll_idx >= 0:
+            root.setStretch(scroll_idx, 1)
 
     def set_chrome_widget(self, widget: QWidget | None) -> None:
         """Optional header above the drop zone (Change File, file meta, …)."""
