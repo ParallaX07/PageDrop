@@ -800,6 +800,58 @@ def test_r7_busy_overlay_opacity_fade_keeps_cancel_hittable(qtbot, isolated_sett
     assert not overlay.isVisible()
 
 
+def test_r10c_busy_overlay_no_refade_while_visible(qtbot, isolated_settings):
+    """R10c: progress updates change the label without restarting opacity fade."""
+    from PyQt6.QtCore import QAbstractAnimation
+    from PyQt6.QtWidgets import QWidget
+
+    from pagedrop.ui.busy_overlay import BusyOverlay
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(320, 240)
+    host.show()
+    overlay = BusyOverlay(host)
+    overlay.set_cancellable(True)
+
+    set_reduce_motion(False)
+    overlay.show_message("Working…")
+    qtbot.waitUntil(
+        lambda: overlay._fade.state() == QAbstractAnimation.State.Stopped,
+        timeout=1000,
+    )
+    assert overlay._opacity_effect is not None
+    assert overlay._opacity_effect.opacity() == 1.0
+
+    overlay.show_message("Page 2 of 10…")
+    assert overlay._message.text() == "Page 2 of 10…"
+    assert overlay._fade.state() == QAbstractAnimation.State.Stopped
+    assert overlay._opacity_effect.opacity() == 1.0
+    assert overlay._cancel_btn.isVisible()
+    assert overlay._cancel_btn.isEnabled()
+
+    # Mid-enter progress tick must not restart the fade from 0.
+    overlay.hide_overlay()
+    qtbot.waitUntil(lambda: not overlay.isVisible(), timeout=1000)
+    overlay.show_message("Working…")
+    assert overlay._fade.state() == QAbstractAnimation.State.Running
+    opacity_mid = overlay._opacity_effect.opacity()
+    overlay.show_message("Still working…")
+    assert overlay._message.text() == "Still working…"
+    assert overlay._fade.state() == QAbstractAnimation.State.Running
+    assert overlay._opacity_effect.opacity() >= opacity_mid
+
+    set_reduce_motion(True)
+    overlay.hide_overlay()
+    qtbot.waitUntil(lambda: not overlay.isVisible(), timeout=1000)
+    overlay.show_message("Working…")
+    assert overlay._opacity_effect is None
+    overlay.show_message("Almost done…")
+    assert overlay._message.text() == "Almost done…"
+    assert overlay._fade.state() == QAbstractAnimation.State.Stopped
+    assert overlay._opacity_effect is None
+
+
 def test_r7_feedback_motion_only_in_busy_overlay():
     """R7: no QPropertyAnimation on tab switch / palette / grid keyboard paths."""
     from pathlib import Path

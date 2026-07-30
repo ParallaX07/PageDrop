@@ -103,6 +103,9 @@ class BusyOverlay(QWidget):
         self._message.setText(message)
         self.setAccessibleDescription(message)
         self._sync_geometry()
+        # Progress ticks call this while shown — update label only (no opacity re-blink).
+        if self.isVisible() and not self._hiding:
+            return
         self._hiding = False
         self._fade.stop()
         self.show()
