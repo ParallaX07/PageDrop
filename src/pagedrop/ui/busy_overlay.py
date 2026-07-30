@@ -6,13 +6,14 @@ from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-# info | success | error | undo — property drives theme chrome
+# info | success | error | warning | undo — property drives theme chrome
 ToastKind = str
 
 # Accessible description so AT hears kind, not only the message text.
 _TOAST_KIND_A11Y: dict[str, str] = {
     "success": "Success notification",
     "error": "Error notification",
+    "warning": "Warning notification",
     "undo": "Undo notification",
     "info": "Notification",
 }

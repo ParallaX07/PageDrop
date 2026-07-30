@@ -24,11 +24,13 @@ ACCENT_PRESSED = "#1F7FCC"
 TEXT_PRIMARY = "#F2F2F4"
 TEXT_SECONDARY = "#A8A8B3"
 TEXT_MUTED = "#82828E"
+# Ink on accent / filled interactive chrome (labels, selection text, focus rings)
+TEXT_ON_ACCENT = "#FFFFFF"
 
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
 
-# Semantic status (compare diffs, validation errors)
+# Semantic status (compare diffs, validation errors, toast kinds)
 STATUS_SUCCESS = "#4CAF6E"
 STATUS_WARNING = "#F0B43C"
 
@@ -199,7 +201,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
         padding: 8px 10px;
         selection-background-color: {ACCENT};
-        selection-color: #FFFFFF;
+        selection-color: {TEXT_ON_ACCENT};
     }}
 
     QLineEdit:focus {{
@@ -226,7 +228,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
         background-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
     }}
 
     QListWidget::item:hover:!selected,
@@ -327,7 +329,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_subtle};
         selection-background-color: {ACCENT};
-        selection-color: #FFFFFF;
+        selection-color: {TEXT_ON_ACCENT};
     }}
 
     QSpinBox {{
@@ -379,7 +381,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton:checked {{
         background-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         border: 1px solid {ACCENT_PRESSED};
     }}
 
@@ -397,7 +399,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToolbarPrimary,
     QToolBar QToolButton#ToolbarPrimary {{
         background-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         border: 1px solid {ACCENT_PRESSED};
         font-weight: 600;
     }}
@@ -416,13 +418,47 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ToolbarPrimary:focus,
     QToolBar QToolButton#ToolbarPrimary:focus {{
-        border: {focus_width}px solid #FFFFFF;
+        border: {focus_width}px solid {TEXT_ON_ACCENT};
     }}
 
     QPushButton#ToolbarPrimary:disabled {{
         background-color: {bg_card_hover};
         color: {text_muted};
         border-color: {border_subtle};
+    }}
+
+    /* Ghost / outline secondary — quieter than default fill, not accent primary. */
+    QPushButton#ToolbarSecondary,
+    QToolBar QToolButton#ToolbarSecondary {{
+        background-color: transparent;
+        color: {text_secondary};
+        border: 1px solid {border_default};
+        font-weight: 600;
+    }}
+
+    QPushButton#ToolbarSecondary:hover,
+    QToolBar QToolButton#ToolbarSecondary:hover {{
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#ToolbarSecondary:pressed,
+    QToolBar QToolButton#ToolbarSecondary:pressed {{
+        background-color: {bg_base};
+        color: {text_primary};
+    }}
+
+    QPushButton#ToolbarSecondary:focus,
+    QToolBar QToolButton#ToolbarSecondary:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPushButton#ToolbarSecondary:disabled,
+    QToolBar QToolButton#ToolbarSecondary:disabled {{
+        color: {text_muted};
+        border-color: {border_subtle};
+        background-color: transparent;
     }}
 
     QToolButton#NewTabButton {{
@@ -570,7 +606,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::handle:horizontal:hover {{
-        background: #FFFFFF;
+        background: {TEXT_ON_ACCENT};
         border-color: {ACCENT_HOVER};
     }}
 
@@ -584,7 +620,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QSlider#ZoomSlider:focus::handle:horizontal {{
         background: {ACCENT};
-        border: 2px solid #FFFFFF;
+        border: 2px solid {TEXT_ON_ACCENT};
         width: 14px;
         height: 14px;
         margin: -6px 0;
@@ -803,7 +839,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QMessageBox QPushButton:default {{
         background-color: {ACCENT};
         border-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         font-weight: 600;
     }}
 
@@ -1016,11 +1052,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToastOverlayMessage[kind="success"] {{
-        color: {ACCENT};
+        color: {STATUS_SUCCESS};
     }}
 
     QLabel#ToastOverlayMessage[kind="error"] {{
         color: {close_tab};
+    }}
+
+    QLabel#ToastOverlayMessage[kind="warning"] {{
+        color: {STATUS_WARNING};
+    }}
+
+    QLabel#ToastOverlayMessage[kind="info"] {{
+        color: {text_secondary};
     }}
 
     QPushButton#ToastOverlayUndo {{
@@ -1435,7 +1479,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
     }}
     QLabel#PageCardPageOverlay {{
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         background-color: rgba(19, 19, 22, 160);
         font-size: 11px;
         font-weight: 600;
@@ -1443,7 +1487,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: 4px;
     }}
     QLabel#PageCardRotationOverlay {{
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         background-color: rgba(19, 19, 22, 160);
         font-family: {FONT_MONO};
         font-size: 10px;
@@ -1534,9 +1578,7 @@ def accent_qcolor(*, alpha: int = 255) -> "QColor":
 
 def on_accent_qcolor() -> "QColor":
     """Ink color for text/icons drawn on top of the accent background."""
-    from PyQt6.QtGui import QColor
-
-    return QColor(255, 255, 255)
+    return token_qcolor(TEXT_ON_ACCENT)
 
 
 def shadow_qcolor(*, alpha: int = 55) -> "QColor":

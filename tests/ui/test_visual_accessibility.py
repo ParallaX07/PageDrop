@@ -136,6 +136,7 @@ def test_theme_smoke_light_dark_and_high_contrast():
     from pagedrop.ui.theme import (
         STATUS_SUCCESS,
         STATUS_WARNING,
+        TEXT_ON_ACCENT,
         VIEWER_PAGE_BG,
         token_qcolor,
     )
@@ -151,12 +152,40 @@ def test_theme_smoke_light_dark_and_high_contrast():
         assert "QLabel#CompareModeLabel" in sheet
         assert "QLabel#CompareSummary" in sheet
         assert VIEWER_PAGE_BG in sheet
+        assert "QPushButton#ToolbarSecondary" in sheet
+        assert f"color: {STATUS_SUCCESS}" in sheet
+        assert f"color: {STATUS_WARNING}" in sheet
+        assert f"color: {TEXT_ON_ACCENT}" in sheet
+        # Success toast must not fall back to accent blue.
+        assert 'ToastOverlayMessage[kind="success"]' in sheet
+        success_block = sheet.split('ToastOverlayMessage[kind="success"]')[1].split("}")[0]
+        assert STATUS_SUCCESS in success_block
+        assert "2F9BE6" not in success_block
 
     assert high != dark
     assert "border: 3px solid" in high
     assert STATUS_SUCCESS.startswith("#")
     assert STATUS_WARNING.startswith("#")
     assert token_qcolor(STATUS_SUCCESS, 90).alpha() == 90
+
+
+def test_toolbar_secondary_is_ghost_not_primary():
+    """R1: #ToolbarSecondary is outline/ghost, distinct from filled primary."""
+    from pagedrop.ui.theme import ACCENT
+
+    sheet = app_stylesheet()
+    assert "QPushButton#ToolbarSecondary" in sheet
+    assert "QToolBar QToolButton#ToolbarSecondary" in sheet
+    secondary = sheet.split("QPushButton#ToolbarSecondary,")[1].split(
+        "QPushButton#ToolbarSecondary:hover"
+    )[0]
+    assert "transparent" in secondary
+    assert ACCENT not in secondary
+    primary = sheet.split("QPushButton#ToolbarPrimary,")[1].split(
+        "QPushButton#ToolbarPrimary:hover"
+    )[0]
+    assert ACCENT in primary
+    assert "transparent" not in primary
 
 
 def test_drop_indicator_uses_object_name_not_inline_stylesheet(qtbot):
