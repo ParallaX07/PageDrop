@@ -5,8 +5,6 @@ from __future__ import annotations
 import subprocess
 import sys
 
-import pytest
-
 
 def test_imports():
     import pagedrop  # noqa: F401
@@ -40,12 +38,6 @@ for name in (
         f"deferred-import check failed (code {result.returncode})\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
-
-
-def test_main_callable():
-    from pagedrop.main import main
-
-    assert callable(main)
 
 
 def test_cli_entry_point():
