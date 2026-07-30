@@ -52,6 +52,7 @@ class PreferencesDialog(QDialog):
         self.setMinimumWidth(480)
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
         safety_heading = QLabel("Safety")

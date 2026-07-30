@@ -96,6 +96,8 @@ ZOOM_WHEEL_STEP = 16
 PAGE_NUMBER_OVERLAY_MIN_WIDTH = DEFAULT_THUMBNAIL_WIDTH + ZOOM_WHEEL_STEP * 5
 MIN_PREVIEW_RENDER_WIDTH = 400
 CARD_WIDTH = DEFAULT_THUMBNAIL_WIDTH + CARD_PADDING
+# Mid-toolbar PDF name cap — long names must not shove zoom off-screen (R14).
+TOOLBAR_FILENAME_MAX_WIDTH = 220
 
 
 def relative_luminance(hex_color: str) -> float:
@@ -436,6 +438,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    /* Encrypt permissions — surface + card radius so it matches section language. */
+    QGroupBox#EncryptPermissions {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CARD}px;
+    }}
+
+    QGroupBox#EncryptPermissions::title {{
+        color: {text_secondary};
+    }}
+
     QToolBar {{
         background-color: {bg_toolbar};
         border: none;
@@ -620,6 +633,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
         font-weight: 500;
         padding: 0 4px;
+        max-width: {TOOLBAR_FILENAME_MAX_WIDTH}px;
     }}
 
     QLabel#ToolbarFilename[active="true"] {{

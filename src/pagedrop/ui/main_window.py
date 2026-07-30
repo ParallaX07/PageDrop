@@ -69,6 +69,7 @@ from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    TOOLBAR_FILENAME_MAX_WIDTH,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
@@ -514,6 +515,8 @@ class MainWindow(QMainWindow):
         self._filename_label.setObjectName("ToolbarFilename")
         self._filename_label.setProperty("active", False)
         self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self._filename_label.setWordWrap(False)
+        self._filename_label.setMaximumWidth(TOOLBAR_FILENAME_MAX_WIDTH)
         toolbar.addWidget(self._filename_label)
 
         spacer = QWidget()
@@ -924,9 +927,10 @@ class MainWindow(QMainWindow):
             self._reset_toolbar_for_blank_tab()
             return
 
-        filename = Path(tab.pdf_path).name if tab.pdf_path else "No file open"
+        pdf_path = tab.pdf_path or ""
+        filename = Path(pdf_path).name if pdf_path else "No file open"
         self._update_window_title()
-        self._filename_label.setText(filename)
+        self._set_toolbar_filename(filename, tooltip=pdf_path)
         self._filename_label.setProperty("active", True)
         self._filename_label.style().unpolish(self._filename_label)
         self._filename_label.style().polish(self._filename_label)
@@ -953,10 +957,22 @@ class MainWindow(QMainWindow):
         )
         self._update_selection_status(selection)
 
+    def _set_toolbar_filename(self, filename: str, *, tooltip: str = "") -> None:
+        """Show a single-line elided name; full path stays on the tooltip (R14)."""
+        metrics = self._filename_label.fontMetrics()
+        self._filename_label.setText(
+            metrics.elidedText(
+                filename,
+                Qt.TextElideMode.ElideRight,
+                TOOLBAR_FILENAME_MAX_WIDTH,
+            )
+        )
+        self._filename_label.setToolTip(tooltip)
+
     def _reset_toolbar_for_blank_tab(self) -> None:
         tab = self._active_tab()
         self._update_window_title()
-        self._filename_label.setText("No file open")
+        self._set_toolbar_filename("No file open")
         self._filename_label.setProperty("active", False)
         self._filename_label.style().unpolish(self._filename_label)
         self._filename_label.style().polish(self._filename_label)

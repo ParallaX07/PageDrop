@@ -116,6 +116,31 @@ def test_encrypt_password_mismatch_blocked(qtbot, tmp_path, monkeypatch, isolate
     tools.close()
 
 
+def test_encrypt_permissions_group_tokenized(qtbot, isolated_settings):
+    """R14: Encrypt permissions use #EncryptPermissions + themed QSS, not raw Fusion."""
+    from PyQt6.QtWidgets import QGroupBox
+
+    from pagedrop.ui.theme import app_stylesheet
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_optimize_secure_shell(tools, "encrypt")
+    assert shell is not None
+    qtbot.addWidget(shell)
+
+    boxes = [
+        w
+        for w in shell.findChildren(QGroupBox)
+        if w.objectName() == "EncryptPermissions"
+    ]
+    assert len(boxes) == 1
+    sheet = app_stylesheet()
+    assert "QGroupBox#EncryptPermissions" in sheet
+    assert "border-radius" in sheet
+    shell.close()
+    tools.close()
+
+
 def test_decrypt_prompts_for_password(qtbot, tmp_path, monkeypatch, isolated_settings):
     enc = tmp_path / "locked.pdf"
     out = tmp_path / "unlocked.pdf"

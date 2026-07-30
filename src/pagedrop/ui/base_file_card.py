@@ -192,12 +192,14 @@ class InternalReorderFileCard(BaseFileCard):
         self._thumbnail_label.setObjectName(f"{object_name}Thumbnail")
 
         filename = Path(path).name
-        self._title_label = QLabel(filename)
+        self._title_full = filename
+        self._title_label = QLabel()
         self._title_label.setObjectName(f"{object_name}Title")
         self._title_label.setAlignment(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
-        self._title_label.setWordWrap(True)
+        self._title_label.setWordWrap(False)
+        self._refresh_title_elide()
 
         self._subtitle_label = QLabel(subtitle)
         self._subtitle_label.setObjectName(f"{object_name}Subtitle")
@@ -214,6 +216,18 @@ class InternalReorderFileCard(BaseFileCard):
         layout.addWidget(self._subtitle_label)
 
         self._apply_visual_state()
+
+    def _refresh_title_elide(self) -> None:
+        """Single-line elide — wrapped titles rag the Merge/Convert grid (R14)."""
+        avail = max(1, self._card_width - 2 * SPACE_2)
+        self._title_label.setMaximumWidth(avail)
+        self._title_label.setText(
+            self._title_label.fontMetrics().elidedText(
+                self._title_full,
+                Qt.TextElideMode.ElideRight,
+                avail,
+            )
+        )
 
     def _item_index(self) -> int:
         return self.file_index
@@ -233,6 +247,7 @@ class InternalReorderFileCard(BaseFileCard):
     ) -> None:
         self._card_width = width
         self.setFixedWidth(width)
+        self._refresh_title_elide()
         if refresh_thumbnail:
             self._refresh_thumbnail_display(fast=fast)
 
