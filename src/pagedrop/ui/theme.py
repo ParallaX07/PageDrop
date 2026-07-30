@@ -739,6 +739,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_2}px 0 0 0;
     }}
 
+    /* R6: flat tab strip — accent underline + muted inactive; no filled selected box. */
     QTabWidget#TabManager::pane {{
         border: none;
         background-color: {bg_base};
@@ -755,7 +756,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         border: none;
         border-bottom: 2px solid transparent;
-        padding: 8px 14px 7px 14px;
+        padding: {SPACE_2}px {SPACE_3}px {SPACE_2 - 1}px {SPACE_3}px;
         margin-right: 2px;
         min-width: 80px;
         max-width: 220px;
@@ -764,14 +765,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QTabWidget#TabManager > QTabBar::tab:selected {{
         color: {text_primary};
-        background-color: {bg_surface};
+        background-color: transparent;
         border-bottom: 2px solid {ACCENT};
         font-weight: 600;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:hover:!selected {{
         color: {text_secondary};
-        background-color: {bg_card};
+        background-color: transparent;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:selected:hover {{
@@ -781,7 +782,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QTabWidget#TabManager QTabBar QAbstractButton {{
         background-color: transparent;
         border: none;
-        border-radius: 4px;
+        border-radius: {SPACE_1}px;
         padding: 2px;
         min-width: 18px;
         max-width: 18px;
@@ -1333,19 +1334,21 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
     }}
 
+    /* R6: drop zone ghost/outline — same quiet language as #ToolbarSecondary. */
     QFrame#ToolShellDropZone {{
-        background-color: {bg_surface};
+        background-color: transparent;
         border: 1px dashed {border_default};
         border-radius: {RADIUS_CARD}px;
     }}
 
     QFrame#ToolShellDropZone[dropActive="true"] {{
         border-color: {ACCENT};
-        background-color: {bg_card};
+        border-style: dashed;
+        background-color: {bg_card_hover};
     }}
 
     QFrame#ToolShellDropZone:focus {{
-        border-color: {ACCENT};
+        border: {focus_width}px dashed {ACCENT};
     }}
 
     QLabel#ToolShellDropPrompt {{
@@ -1364,8 +1367,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 12px;
     }}
 
+    /* R6: result chrome hairline; action buttons mirror #ToolbarSecondary. */
     QWidget#ResultActionsBar {{
-        background-color: {bg_surface};
+        background-color: transparent;
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -1373,6 +1377,46 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ResultActionsLabel {{
         color: {text_secondary};
         font-size: 13px;
+    }}
+
+    QPushButton#ResultActionsPreview,
+    QPushButton#ResultActionsOpen,
+    QPushButton#ResultActionsFolder {{
+        background-color: transparent;
+        color: {text_secondary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        font-weight: 600;
+        padding: 6px 12px;
+    }}
+
+    QPushButton#ResultActionsPreview:hover,
+    QPushButton#ResultActionsOpen:hover,
+    QPushButton#ResultActionsFolder:hover {{
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#ResultActionsPreview:pressed,
+    QPushButton#ResultActionsOpen:pressed,
+    QPushButton#ResultActionsFolder:pressed {{
+        background-color: {bg_base};
+        color: {text_primary};
+    }}
+
+    QPushButton#ResultActionsPreview:focus,
+    QPushButton#ResultActionsOpen:focus,
+    QPushButton#ResultActionsFolder:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPushButton#ResultActionsPreview:disabled,
+    QPushButton#ResultActionsOpen:disabled,
+    QPushButton#ResultActionsFolder:disabled {{
+        color: {text_muted};
+        border-color: {border_subtle};
+        background-color: transparent;
     }}
 
     QLabel#ToolsHint {{
@@ -1543,22 +1587,34 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    /* R6: ToolTiles — quieter rest/hover; keep HC-aware focus rings. */
     QFrame#ToolTile {{
-        background-color: {bg_card};
-        border: 1px solid {border_subtle};
+        background-color: transparent;
+        border: 1px solid transparent;
         border-radius: {RADIUS_CARD}px;
     }}
     QFrame#ToolTile:hover {{
-        background-color: {bg_card_hover};
-        border-color: {border_hover};
-    }}
-    QFrame#ToolTile[blocked="true"]:hover {{
         background-color: {bg_card};
         border-color: {border_subtle};
     }}
+    QFrame#ToolTile[blocked="true"],
+    QFrame#ToolTile[comingSoon="true"] {{
+        background-color: transparent;
+        border-color: transparent;
+    }}
+    QFrame#ToolTile[blocked="true"]:hover,
+    QFrame#ToolTile[comingSoon="true"]:hover {{
+        background-color: transparent;
+        border-color: transparent;
+    }}
     QFrame#ToolTile:focus {{
-        background-color: {bg_card_hover};
-        border: 2px solid {ACCENT};
+        background-color: {bg_card};
+        border: {focus_width}px solid {ACCENT};
+    }}
+    QFrame#ToolTile[blocked="true"]:focus,
+    QFrame#ToolTile[comingSoon="true"]:focus {{
+        background-color: transparent;
+        border: {focus_width}px solid {ACCENT};
     }}
     QFrame#ToolTile[compact="true"] {{
         border-radius: {max(6, RADIUS_CARD - 2)}px;

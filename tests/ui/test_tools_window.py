@@ -143,6 +143,22 @@ def test_search_filters_category_grid(qtbot):
     window.close()
 
 
+def test_density_toggle_sets_compact_property(qtbot):
+    """R6: Compact density toggle still flips tile compact state/property."""
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    merge = next(t for t in window._tiles if t.entry.id == "merge")
+    assert merge.property("compact") is False
+    window._compact_btn.setChecked(True)
+    assert merge.property("compact") is True
+    assert all(t.property("compact") is True for t in window._tiles)
+    window._compact_btn.setChecked(False)
+    assert merge.property("compact") is False
+    window.close()
+
+
 def test_search_matches_multiple_words(qtbot):
     window = ToolsWindow()
     qtbot.addWidget(window)

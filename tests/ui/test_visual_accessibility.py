@@ -519,3 +519,68 @@ def test_r5_smoke_select_hover_focus_drag_badge(qtbot, isolated_settings):
         for y in range(2, min(28, badge.height()))
         for x in range(max(0, badge.width() - 40), badge.width())
     )
+
+
+def test_r6_tab_manager_underline_and_inactive_mute():
+    """R6: selected tab uses accent underline; inactive tabs stay muted; no filled box."""
+    from pagedrop.ui.theme import ACCENT, app_stylesheet
+
+    dark = app_stylesheet()
+    light = app_stylesheet(light=True)
+    high = app_stylesheet(high_contrast=True)
+
+    for sheet in (dark, light, high):
+        assert "QTabWidget#TabManager > QTabBar::tab:selected" in sheet
+        selected = sheet.split("QTabWidget#TabManager > QTabBar::tab:selected")[
+            1
+        ].split("QTabWidget#TabManager > QTabBar::tab:hover")[0]
+        assert f"border-bottom: 2px solid {ACCENT}" in selected
+        assert "background-color: transparent" in selected
+        rest = sheet.split("QTabWidget#TabManager > QTabBar::tab {")[1].split(
+            "QTabWidget#TabManager > QTabBar::tab:selected"
+        )[0]
+        assert "color:" in rest
+        assert "background-color: transparent" in rest
+
+
+def test_r6_tool_tile_quiet_chrome_keeps_focus_rings():
+    """R6: ToolTiles are quiet at rest; focus rings stay HC-aware and visible."""
+    from pagedrop.ui.theme import ACCENT, app_stylesheet
+
+    dark = app_stylesheet()
+    high = app_stylesheet(high_contrast=True)
+
+    rest = dark.split("QFrame#ToolTile {")[1].split("QFrame#ToolTile:hover")[0]
+    assert "background-color: transparent" in rest
+    assert "border: 1px solid transparent" in rest
+
+    assert "QFrame#ToolTile:focus" in dark
+    assert f"border: 2px solid {ACCENT}" in dark
+    assert f"border: 3px solid {ACCENT}" in high
+    assert 'QFrame#ToolTile[blocked="true"]:hover' in dark
+    assert 'QFrame#ToolTile[compact="true"]' in dark
+
+
+def test_r6_tool_shell_drop_and_result_match_secondary():
+    """R6: drop zone + result actions use ghost/outline secondary language."""
+    from pagedrop.ui.theme import ACCENT, app_stylesheet
+
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        drop = sheet.split("QFrame#ToolShellDropZone {")[1].split(
+            "QFrame#ToolShellDropZone[dropActive"
+        )[0]
+        assert "background-color: transparent" in drop
+        assert "border: 1px dashed" in drop
+
+        bar = sheet.split("QWidget#ResultActionsBar {")[1].split(
+            "QLabel#ResultActionsLabel"
+        )[0]
+        assert "background-color: transparent" in bar
+
+        btn = sheet.split("QPushButton#ResultActionsPreview,")[1].split(
+            "QPushButton#ResultActionsPreview:hover"
+        )[0]
+        assert "background-color: transparent" in btn
+        assert "border: 1px solid" in btn
+        assert "QFrame#ToolShellDropZone:focus" in sheet
+        assert f"dashed {ACCENT}" in sheet
