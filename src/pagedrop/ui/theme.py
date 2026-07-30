@@ -1675,6 +1675,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-width: 64px;
     }}
 
+    /* Create PDF output mode — checkable peers beside toolbar actions. */
+    QWidget#OutputModeHost QToolButton {{
+        padding: 6px 12px;
+    }}
+
     QScrollArea#WatermarkPreviewScroll {{
         background-color: {bg_surface};
         border: none;

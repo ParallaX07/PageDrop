@@ -205,7 +205,7 @@ def test_menubar_create_pdf_beside_merge(main_window, qtbot):
 
 
 def test_toolbar_zoom_before_primary_action(qtbot):
-    """Convert matches Merge: after the spacer, zoom then Save PDF (+ radios)."""
+    """Convert matches Merge: after the spacer, zoom then Save PDF (+ mode)."""
     from PyQt6.QtWidgets import QToolBar
 
     window = _convert_window(qtbot)
@@ -218,8 +218,33 @@ def test_toolbar_zoom_before_primary_action(qtbot):
     children = list(toolbar.children())
     zoom_i = children.index(window._zoom_controls)
     create_i = children.index(create_btn)
-    radio_i = children.index(window._single_mode_action)
-    assert zoom_i < create_i < radio_i
+    mode_i = children.index(window._output_mode_host)
+    assert zoom_i < create_i < mode_i
+
+
+def test_convert_toolbar_has_no_radio_buttons(qtbot):
+    """R13: Create PDF mode uses checkable tool buttons, not QRadioButton."""
+    from PyQt6.QtWidgets import QRadioButton, QToolBar, QToolButton
+
+    window = _convert_window(qtbot)
+    toolbar = window.findChild(QToolBar)
+    assert toolbar is not None
+
+    assert toolbar.findChildren(QRadioButton) == []
+    assert isinstance(window._single_mode_action, QToolButton)
+    assert isinstance(window._separate_mode_action, QToolButton)
+    assert window._single_mode_action.isCheckable()
+    assert window._separate_mode_action.isCheckable()
+    assert window._output_mode_host.objectName() == "OutputModeHost"
+    assert window._single_mode_action.parent() is window._output_mode_host
+    assert window._separate_mode_action.parent() is window._output_mode_host
+
+    assert window._create_action.text() == "Save PDF…"
+    window._separate_mode_action.setChecked(True)
+    assert window._create_action.text() == "Choose folder…"
+    window._single_mode_action.setChecked(True)
+    assert window._create_action.text() == "Save PDF…"
+    assert window._output_mode == "single"
 
 
 def test_image_preview_arrow_keys_and_zoom(qtbot, tmp_path):

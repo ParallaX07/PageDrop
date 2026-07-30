@@ -7,13 +7,14 @@ from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEven
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
-        QMessageBox,
-    QRadioButton,
+    QMessageBox,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -459,14 +460,36 @@ class ConvertWindow(JobChromeMixin, QWidget):
         if create_button is not None:
             create_button.setObjectName("ToolbarPrimary")
 
-        self._single_mode_action = QRadioButton("One PDF")
+        mode_host = QWidget()
+        mode_host.setObjectName("OutputModeHost")
+        mode_row = QHBoxLayout(mode_host)
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(0)
+        self._single_mode_action = QToolButton()
+        self._single_mode_action.setText("One PDF")
+        self._single_mode_action.setCheckable(True)
         self._single_mode_action.setChecked(True)
-        self._separate_mode_action = QRadioButton("Separate PDFs")
-        mode_group = QButtonGroup(self)
+        self._single_mode_action.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self._single_mode_action.setToolTip("Combine all images into one PDF")
+        self._single_mode_action.setStatusTip("Combine all images into one PDF")
+        self._separate_mode_action = QToolButton()
+        self._separate_mode_action.setText("Separate PDFs")
+        self._separate_mode_action.setCheckable(True)
+        self._separate_mode_action.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self._separate_mode_action.setToolTip("Save each image as its own PDF")
+        self._separate_mode_action.setStatusTip("Save each image as its own PDF")
+        mode_group = QButtonGroup(mode_host)
+        mode_group.setExclusive(True)
         mode_group.addButton(self._single_mode_action)
         mode_group.addButton(self._separate_mode_action)
-        toolbar.addWidget(self._single_mode_action)
-        toolbar.addWidget(self._separate_mode_action)
+        mode_row.addWidget(self._single_mode_action)
+        mode_row.addWidget(self._separate_mode_action)
+        toolbar.addWidget(mode_host)
+        self._output_mode_host = mode_host
 
         enable_toolbar_keyboard_navigation(toolbar)
         set_content_tab_order(toolbar, self._stack, status_bar=self.statusBar())
@@ -535,8 +558,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._remove_action.setVisible(not in_preview)
         self._move_up_action.setVisible(not in_preview)
         self._move_down_action.setVisible(not in_preview)
-        self._single_mode_action.setVisible(not in_preview)
-        self._separate_mode_action.setVisible(not in_preview)
+        self._output_mode_host.setVisible(not in_preview)
         self._create_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
@@ -547,8 +569,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
         self._create_action.setEnabled(has_files and not self._converting)
         self._zoom_controls.setEnabled(has_files and not in_preview and not self._converting)
-        self._single_mode_action.setEnabled(toolbar_enabled)
-        self._separate_mode_action.setEnabled(toolbar_enabled)
+        self._output_mode_host.setEnabled(toolbar_enabled)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget

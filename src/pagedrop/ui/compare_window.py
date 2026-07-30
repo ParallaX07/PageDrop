@@ -326,21 +326,24 @@ class CompareWindow(JobChromeMixin, QWidget):
         paths.setSpacing(6)
         self._row_a = _PathBrowseRow(self, label="PDF A", browse_title="Choose first PDF")
         self._row_b = _PathBrowseRow(self, label="PDF B", browse_title="Choose second PDF")
+        self._compare_btn = QPushButton("Compare")
+        self._compare_btn.setObjectName("ToolbarPrimary")
+        self._compare_btn.setDefault(True)
+        # R13: primary trails the last browse row — not a solo stretch row.
+        row_b_layout = self._row_b.layout()
+        assert isinstance(row_b_layout, QHBoxLayout)
+        row_b_layout.addWidget(self._compare_btn)
         paths.addWidget(self._row_a)
         paths.addWidget(self._row_b)
         root.addLayout(paths)
 
-        actions = QHBoxLayout()
-        self._compare_btn = QPushButton("Compare")
-        self._compare_btn.setObjectName("ToolbarPrimary")
-        self._compare_btn.setDefault(True)
-        actions.addWidget(self._compare_btn)
-        actions.addStretch(1)
-        root.addLayout(actions)
-
         toolbar = QToolBar("Compare", self)
+        toolbar.setObjectName("CompareToolbar")
         toolbar.setMovable(False)
+        # R13: mode/nav/zoom/sync/export stay hidden until a report exists.
+        toolbar.setVisible(False)
         root.addWidget(toolbar)
+        self._toolbar = toolbar
         self._mode_label = QLabel("  Side-by-side  ")
         self._mode_label.setObjectName("CompareModeLabel")
         toolbar.addWidget(self._mode_label)
@@ -546,6 +549,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._report = report
         self._page_index = 0
         self._selected_change = None
+        self._toolbar.setVisible(True)
         self._export_act.setEnabled(True)
         self._result_bar.clear()
         self._populate_changes()
