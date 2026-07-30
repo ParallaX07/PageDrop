@@ -468,3 +468,116 @@ def test_text_markup_uses_char_rects_not_drag_box(qtbot) -> None:
     tile._sel_start = QPointF(200, 200)
     tile._sel_end = QPointF(250, 250)
     assert tile._drag_payload() == {"rects": ()}
+
+
+def test_freetext_place_defaults_and_format_bar(
+    qtbot, main_window, markup_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R17: place without dialog; format bar only when selected; format updates op."""
+    from PyQt6.QtWidgets import QColorDialog, QFrame
+
+    from pagedrop.core.pdf_writer import write_pdf
+
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+
+    viewer = tab.viewer_widget
+    session = tab.markup_session
+    assert viewer.findChild(QFrame, "FreeTextFormatBar") is None
+
+    viewer._on_markup_gesture(0, "freetext", {"point": (40.0, 120.0)})
+    ops = [e.annotation for e in session.ops() if e.annotation is not None]
+    assert len(ops) == 1
+    op = ops[0]
+    assert op.kind == "freetext"
+    assert op.text == "Text"
+    assert op.fontsize == 12.0
+    assert op.fontname == "helv"
+    assert not op.bold and not op.italic
+    assert viewer._selected_overlay == op
+    bar = viewer.findChild(QFrame, "FreeTextFormatBar")
+    assert bar is not None and not bar.isHidden()
+
+    viewer._ft_bold.setChecked(True)
+    viewer._ft_italic.setChecked(True)
+    viewer._ft_font.setCurrentIndex(viewer._ft_font.findData("cour"))
+    viewer._ft_size.setValue(18.0)
+    viewer._ft_text.setText("Hello")
+    viewer._ft_text.editingFinished.emit()
+
+    updated = session.ops()[0].annotation
+    assert updated is not None
+    assert updated.text == "Hello"
+    assert updated.bold and updated.italic
+    assert updated.fontname == "cour"
+    assert updated.fontsize == 18.0
+
+    def _fake_color(*_a, **_k) -> QColor:
+        return QColor(20, 40, 200)
+
+    monkeypatch.setattr(QColorDialog, "getColor", staticmethod(_fake_color))
+    viewer._on_freetext_pick_color()
+    colored = session.ops()[0].annotation
+    assert colored is not None
+    assert colored.color[2] == pytest.approx(200 / 255, abs=0.01)
+
+    viewer._set_selected_overlay(None)
+    assert bar.isHidden()
+
+    viewer._on_markup_gesture(
+        0, "select_overlay", {"annotation": session.ops()[0].annotation}
+    )
+    assert not bar.isHidden()
+
+    out = tmp_path / "freetext_saved.pdf"
+    write_pdf(tab.edit_model, str(out), markup=tab.peek_markup_ops())
+    summaries = list_annotation_summaries(str(out))
+    assert any(content == "Hello" for _p, _t, content in summaries)
+
+    doc = fitz.open(str(out))
+    try:
+        annot = next(
+            a for a in doc[0].annots() or [] if a.type[0] == fitz.PDF_ANNOT_FREE_TEXT
+        )
+        ds = doc.xref_get_key(annot.xref, "DS")
+        assert ds[0] == "string"
+        assert "bold" in ds[1] and "italic" in ds[1]
+        assert "Courier" in ds[1]
+    finally:
+        doc.close()
+
+
+def test_edit_freetext_focuses_format_bar_not_dialog(
+    qtbot, main_window, markup_pdf: Path
+) -> None:
+    """Double-click edit path selects + focuses the format bar text field."""
+    from PyQt6.QtWidgets import QFrame
+
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+
+    viewer = tab.viewer_widget
+    session = tab.markup_session
+    op = AnnotationOp(
+        kind="freetext",
+        page_index=0,
+        rects=((40, 100, 160, 140),),
+        text="Edit me",
+        fontsize=12.0,
+    )
+    session.push_annotation(op)
+    viewer.refresh_markup_overlays()
+
+    viewer._on_markup_gesture(0, "edit_freetext", {"annotation": op})
+    bar = viewer.findChild(QFrame, "FreeTextFormatBar")
+    assert bar is not None and not bar.isHidden()
+    assert viewer._ft_text.text() == "Edit me"
+    assert viewer._selected_overlay == op

@@ -1186,6 +1186,89 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {ACCENT};
     }}
 
+    QFrame#FreeTextFormatBar {{
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText {{
+        min-height: 24px;
+        padding: 2px 6px;
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        background-color: {bg_card};
+        color: {text_primary};
+    }}
+
+    QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont,
+    QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize {{
+        min-height: 24px;
+        padding: 2px 4px;
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        background-color: {bg_card};
+        color: {text_primary};
+    }}
+
+    QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont:focus,
+    QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QToolButton#FreeTextFormatBold,
+    QToolButton#FreeTextFormatItalic,
+    QToolButton#FreeTextFormatColor,
+    QToolButton#FreeTextFormatDelete {{
+        border: 1px solid transparent;
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 4px 6px;
+        background-color: transparent;
+        color: {text_primary};
+        min-width: 24px;
+    }}
+
+    QToolButton#FreeTextFormatBold {{
+        font-weight: 700;
+    }}
+
+    QToolButton#FreeTextFormatItalic {{
+        font-style: italic;
+    }}
+
+    QToolButton#FreeTextFormatBold:hover,
+    QToolButton#FreeTextFormatItalic:hover,
+    QToolButton#FreeTextFormatColor:hover,
+    QToolButton#FreeTextFormatDelete:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QToolButton#FreeTextFormatBold:pressed,
+    QToolButton#FreeTextFormatItalic:pressed,
+    QToolButton#FreeTextFormatColor:pressed,
+    QToolButton#FreeTextFormatDelete:pressed {{
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QToolButton#FreeTextFormatBold:checked,
+    QToolButton#FreeTextFormatItalic:checked {{
+        background-color: {bg_card};
+        border: 1px solid {ACCENT};
+        color: {ACCENT};
+    }}
+
+    QToolButton#FreeTextFormatBold:focus,
+    QToolButton#FreeTextFormatItalic:focus,
+    QToolButton#FreeTextFormatColor:focus,
+    QToolButton#FreeTextFormatDelete:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
     QTabWidget#PdfViewerSide {{
         background-color: {bg_surface};
         color: {text_primary};
