@@ -160,6 +160,54 @@ def test_r10a_prefs_dialog_has_section_dividers(qtbot, isolated_settings):
     assert len(dialog.findChildren(QFrame, "PreferencesDivider")) == 4
 
 
+def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
+    """R10b: editor empty dashed/dropActive; queue kbd; logo-only editor."""
+    from PyQt6.QtWidgets import QLabel
+
+    from pagedrop.ui.convert_file_grid import ConvertFileGrid
+    from pagedrop.ui.merge_file_grid import MergeFileGrid
+    from pagedrop.ui.theme import ACCENT, app_stylesheet
+    from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        empty = sheet.split("QWidget#EmptyStatePanel {")[1].split(
+            "QWidget#EmptyStatePanel[dropActive"
+        )[0]
+        assert "border: 1px dashed" in empty
+        assert 'QWidget#EmptyStatePanel[dropActive="true"]' in sheet
+        assert f"border-color: {ACCENT}" in sheet.split(
+            'QWidget#EmptyStatePanel[dropActive="true"]'
+        )[1].split("}")[0]
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    assert "Ctrl+O" in grid._empty_kbd.text()
+    assert "Ctrl+A" in grid._empty_kbd.text()
+    assert grid._empty_logo.accessibleName() == "PageDrop logo"
+    # Editor keeps logo only — no second empty glyph label.
+    empty_labels = [
+        w
+        for w in grid._empty_state.findChildren(QLabel)
+        if w.parent() is grid._empty_state
+    ]
+    assert empty_labels == [
+        grid._empty_logo,
+        grid._empty_title,
+        grid._empty_hint,
+        grid._empty_kbd,
+    ]
+
+    merge = MergeFileGrid()
+    convert = ConvertFileGrid()
+    qtbot.addWidget(merge)
+    qtbot.addWidget(convert)
+    assert "Drop PDFs" in merge._empty_kbd.text()
+    assert "Drop images" in convert._empty_kbd.text()
+    assert "← →" not in merge._empty_kbd.text()
+    assert merge._empty_glyph_name == "stack"
+    assert convert._empty_glyph_name == "images"
+
+
 def test_light_stylesheet_styles_dialogs(isolated_settings):
     light = app_stylesheet(light=True)
     assert "#F7F8FA" in light

@@ -731,8 +731,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_grid};
     }}
 
+    /* R10b: editor empty reads as a drop zone — same dashed language as Tools. */
     QWidget#EmptyStatePanel {{
         background-color: transparent;
+        border: 1px dashed {border_default};
+        border-radius: {RADIUS_CARD}px;
+        margin: {SPACE_4}px;
+    }}
+
+    QWidget#EmptyStatePanel[dropActive="true"] {{
+        border-color: {ACCENT};
+        border-style: dashed;
+        background-color: {bg_card_hover};
     }}
 
     QLabel#GridEmptyLogo {{
@@ -1351,10 +1361,16 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    QLabel#ToolsEmptyGlyph {{
+        background: transparent;
+        border: none;
+        padding: 0;
+    }}
+
     QLabel#ToolsEmptyState {{
         color: {text_muted};
         font-size: 13px;
-        padding: 24px;
+        padding: 0;
     }}
 
     QWidget#ToolShellCentral {{

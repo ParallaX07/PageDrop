@@ -1614,6 +1614,7 @@ class ThumbnailGrid(QScrollArea):
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._accept_drag_over_grid(event):
             self._start_drag_autoscroll_tracking()
+            self._set_empty_drop_active(True)
             self._handle_drag_over_grid(event)
             return
         event.ignore()
@@ -1628,12 +1629,14 @@ class ThumbnailGrid(QScrollArea):
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
+        self._set_empty_drop_active(False)
         self._restore_status_after_drag()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
+        self._set_empty_drop_active(False)
         self._restore_status_after_drag()
         mime = event.mimeData()
         source_grid = self._grid_for_widget(event.source())
@@ -2037,8 +2040,18 @@ class ThumbnailGrid(QScrollArea):
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
         self._empty_state.show()
 
+    def _set_empty_drop_active(self, active: bool) -> None:
+        """Toggle dashed-panel dropActive chrome while the empty state is visible."""
+        if not self._empty_state.isVisibleTo(self):
+            active = False
+        self._empty_state.setProperty("dropActive", active)
+        style = self._empty_state.style()
+        style.unpolish(self._empty_state)
+        style.polish(self._empty_state)
+
     def _update_empty_state(self) -> None:
         if self._cards:
+            self._set_empty_drop_active(False)
             self._empty_state.hide()
         else:
             self._empty_state.show()

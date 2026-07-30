@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, QThreadPool, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QSize, QThreadPool, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QDragEnterEvent,
     QDragMoveEvent,
@@ -29,18 +29,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.assets import empty_state_logo_pixmap
 from pagedrop.core.drag_mime import (
     INTERNAL_MERGE_FILE_MIME,
     decode_page_indices,
 )
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui import icons
 from pagedrop.ui.base_file_card import InternalReorderFileCard
 from pagedrop.ui.grid_helpers import (
     ctrl_wheel_zoom_step,
     drop_index_at_pos,
     drop_indicator_rect,
 )
+from pagedrop.ui.settings import light_theme
 from pagedrop.ui.theme import (
     CARD_PADDING,
     CARD_WIDTH,
@@ -52,11 +53,14 @@ from pagedrop.ui.theme import (
     SPACE_4,
     SPACE_6,
     SPACE_7,
+    TEXT_MUTED,
+    TEXT_MUTED_LIGHT,
 )
 from pagedrop.utils.list_utils import move_items
 
 ZOOM_RENDER_DEBOUNCE_MS = 200
 RENDER_POOL_DRAIN_MS = 2000
+_EMPTY_GLYPH_PX = 48
 
 
 class BaseFileGrid(QScrollArea):
@@ -82,9 +86,8 @@ class BaseFileGrid(QScrollArea):
         empty_kbd_object_name: str,
         empty_title: str,
         empty_hint: str,
-        empty_kbd: str = (
-            "← → ↑ ↓ navigate  ·  Space select  ·  Enter preview"
-        ),
+        empty_kbd: str,
+        empty_glyph: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -133,11 +136,12 @@ class BaseFileGrid(QScrollArea):
         empty_layout.setSpacing(SPACE_2)
         empty_layout.setContentsMargins(SPACE_6, SPACE_7, SPACE_6, SPACE_7)
 
+        self._empty_glyph_name = empty_glyph
         self._empty_logo = QLabel()
         self._empty_logo.setObjectName(empty_logo_object_name)
         self._empty_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_logo.setAccessibleName("PageDrop logo")
-        self._empty_logo.setPixmap(empty_state_logo_pixmap())
+        self._empty_logo.setAccessibleName(empty_title)
+        self._refresh_empty_glyph()
 
         self._empty_title = QLabel(empty_title)
         self._empty_title.setObjectName(empty_title_object_name)
@@ -171,6 +175,17 @@ class BaseFileGrid(QScrollArea):
             on_selection_changed=self._on_selection_changed,
         )
         self._painted_selection: set[int] = set()
+
+        refresh_cb = self._refresh_empty_glyph
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
+
+    def _refresh_empty_glyph(self) -> None:
+        tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED
+        pix = icons.icon(self._empty_glyph_name, color=tint).pixmap(
+            QSize(_EMPTY_GLYPH_PX, _EMPTY_GLYPH_PX)
+        )
+        self._empty_logo.setPixmap(pix)
 
     def _create_card(self, index: int, path: str) -> InternalReorderFileCard:
         raise NotImplementedError

@@ -25,10 +25,20 @@ def test_empty_states_show_keyboard_hints(qtbot):
 
     assert merge._empty_kbd.isVisibleTo(merge)
     assert convert._empty_kbd.isVisibleTo(convert)
-    assert "Space" in merge._empty_kbd.text()
-    assert "Enter" in convert._empty_kbd.text()
+    assert "Drop PDFs" in merge._empty_kbd.text()
+    assert "Add PDFs" in merge._empty_kbd.text()
+    assert "Drop images" in convert._empty_kbd.text()
+    assert "Add images" in convert._empty_kbd.text()
+    assert "Space" not in merge._empty_kbd.text()
+    assert "Enter" not in convert._empty_kbd.text()
     assert merge._empty_kbd.objectName() == "MergeEmptyKbd"
     assert convert._empty_kbd.objectName() == "ConvertEmptyKbd"
+    # R10b: muted Phosphor glyph, not the app logo.
+    assert merge._empty_glyph_name == "stack"
+    assert convert._empty_glyph_name == "images"
+    assert merge._empty_logo.accessibleName() != "PageDrop logo"
+    assert not merge._empty_logo.pixmap().isNull()
+    assert not convert._empty_logo.pixmap().isNull()
 
 
 def test_merge_reorder_by_drop(qtbot, one_page_pdf, five_page_pdf, tmp_path):

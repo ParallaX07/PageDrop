@@ -33,7 +33,11 @@ from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import launch_organize_tool
+from pagedrop.ui.settings import light_theme
+from pagedrop.ui.theme import TEXT_MUTED, TEXT_MUTED_LIGHT
 from pagedrop.ui.tool_page import StatusFooter
+
+_EMPTY_GLYPH_PX = 32
 
 CATEGORIES: tuple[str, ...] = (
     "Organize",
@@ -659,6 +663,14 @@ class ToolsWindow(QWidget):
         """Re-tint catalogue glyph pixmaps after a light/dark swap."""
         for tile in self._tiles:
             tile.refresh_icon()
+        self._refresh_empty_glyph()
+
+    def _refresh_empty_glyph(self) -> None:
+        tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED
+        pix = icons.icon("wrench", color=tint).pixmap(
+            QSize(_EMPTY_GLYPH_PX, _EMPTY_GLYPH_PX)
+        )
+        self._empty_glyph.setPixmap(pix)
 
     @property
     def tab_title(self) -> str:
@@ -772,11 +784,24 @@ class ToolsWindow(QWidget):
                 tile.installEventFilter(self._nav_filter)
                 self._tiles.append(tile)
 
+        self._empty_state = QWidget()
+        self._empty_state.setObjectName("ToolsEmptyPanel")
+        empty_layout = QVBoxLayout(self._empty_state)
+        empty_layout.setContentsMargins(0, 24, 0, 24)
+        empty_layout.setSpacing(8)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_glyph = QLabel()
+        self._empty_glyph.setObjectName("ToolsEmptyGlyph")
+        self._empty_glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_glyph.setAccessibleName("Tools")
+        self._refresh_empty_glyph()
         self._empty_label = QLabel("No tools match your search.")
         self._empty_label.setObjectName("ToolsEmptyState")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.hide()
-        self._catalogue_layout.addWidget(self._empty_label)
+        empty_layout.addWidget(self._empty_glyph)
+        empty_layout.addWidget(self._empty_label)
+        self._empty_state.hide()
+        self._catalogue_layout.addWidget(self._empty_state)
 
         self._upcoming_btn = QToolButton()
         self._upcoming_btn.setObjectName("ToolsUpcomingToggle")
@@ -898,7 +923,7 @@ class ToolsWindow(QWidget):
             any_visible = any_visible or section_visible
             match_count += shown
 
-        self._empty_label.setVisible(not any_visible)
+        self._empty_state.setVisible(not any_visible)
 
         if query:
             noun = "tool" if match_count == 1 else "tools"

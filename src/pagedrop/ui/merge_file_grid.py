@@ -84,6 +84,8 @@ class MergeFileGrid(BaseFileGrid):
             empty_kbd_object_name="MergeEmptyKbd",
             empty_title="Add PDFs to merge",
             empty_hint="Use Add PDFs or drop files here",
+            empty_kbd="Drop PDFs here  ·  or use Add PDFs",
+            empty_glyph="stack",
             parent=parent,
         )
 
