@@ -505,7 +505,7 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._init_job_chrome_state()
         self._run_handler: Callable[[], None] | None = None
         self._run_enabled_check: Callable[[], bool] | None = None
-        self._status = StatusFooter(initial="Add a file to begin")
+        self._status = StatusFooter()
 
         self.setWindowTitle(title)
         self.setObjectName("ToolShellWindow")

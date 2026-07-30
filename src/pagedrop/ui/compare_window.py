@@ -271,7 +271,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         super().__init__(parent)
         self.tool_page_id = self.PAGE_ID
         self._editor = editor
-        self._status = StatusFooter(initial="Choose two PDFs and click Compare")
+        self._status = StatusFooter()
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("CompareWindow")
         self.setMinimumSize(960, 640)

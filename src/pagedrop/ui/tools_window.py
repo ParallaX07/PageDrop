@@ -666,7 +666,7 @@ class ToolsWindow(QWidget):
         self._show_upcoming = False
         self._compact = False
         self._grid_columns = _GRID_COLUMNS
-        self._status = StatusFooter(initial="Choose a tool")
+        self._status = StatusFooter()
         self._toast = ToastOverlay(self)
 
         self.setWindowTitle(self.WINDOW_TITLE)

@@ -45,7 +45,16 @@ def test_modify_tiles_open_shells(qtbot, isolated_settings):
 
 
 def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_settings):
-    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QToolBar, QToolButton
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QDoubleSpinBox,
+        QFrame,
+        QLabel,
+        QPushButton,
+        QToolBar,
+        QToolButton,
+        QWidget,
+    )
 
     from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
 
@@ -65,10 +74,18 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     assert not options_card.isAncestorOf(shell._run_btn)
     assert not shell._actions_host.isVisible()
     assert shell.findChild(QToolBar, "ToolShellToolbar") is None
-    assert any(
+    # R12: drag hint is a canvas tooltip, not a header QLabel.
+    canvas = host.findChild(WatermarkPreviewCanvas, "WatermarkPreviewCanvas")
+    assert canvas is not None
+    assert "Drag watermark" in canvas.toolTip()
+    assert not any(
         isinstance(lab, QLabel) and "Drag watermark" in lab.text()
         for lab in host.findChildren(QLabel)
     )
+    options_col = host.findChild(QWidget, "WatermarkOptionsColumn")
+    assert options_col is not None
+    assert options_col.minimumWidth() == 400
+    assert options_col.maximumWidth() == 460
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)
     assert any(s.suffix() == "°" for s in spins)
@@ -95,7 +112,38 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     ]
     assert len(zoom_btns) == 2
     shell.resize(900, 640)
+    shell.show()
     qtbot.wait(20)
+    # R12: options stay in the locked band; preview gets the horizontal remainder.
+    assert 400 <= options_col.width() <= 460
+    preview = host.findChild(QFrame, "WatermarkPreviewCard")
+    assert preview is not None
+    assert preview.width() > options_col.width()
+    # Idle status placeholder must not reserve a full-width strip.
+    assert not shell.statusBar().isVisible()
+    assert shell.statusBar().currentMessage() == ""
+    tools.close()
+
+
+def test_r12_crop_margins_use_2x2_grid(qtbot, isolated_settings):
+    from PyQt6.QtWidgets import QDoubleSpinBox, QGridLayout, QWidget
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "crop")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    host = shell._options_host
+    margins = host.findChild(QWidget, "CropMarginsGrid")
+    assert margins is not None
+    grid = margins.layout()
+    assert isinstance(grid, QGridLayout)
+    assert grid.rowCount() == 2
+    assert grid.columnCount() == 2
+    # Four margin spins live in the grid (not four stacked QFormLayout rows).
+    spins = margins.findChildren(QDoubleSpinBox)
+    assert len(spins) == 4
+    assert all(s.suffix().strip() == "pt" for s in spins)
     tools.close()
 
 
@@ -127,6 +175,8 @@ def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolate
     qtbot.waitUntil(lambda: not shell.drop_zone.isVisible(), timeout=3000)
     chrome = shell._chrome_host
     assert chrome.isVisible()
+    # R12: loaded chrome tightens title/desc/Change-file rhythm (spacing only).
+    assert shell.layout().spacing() == 8
     change = chrome.findChild(QPushButton)
     assert change is not None and change.text() == "Change file"
     assert any("src.pdf" in lab.text() for lab in chrome.findChildren(QLabel))

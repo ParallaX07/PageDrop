@@ -119,8 +119,47 @@ def test_stylesheet_includes_focus_rings_for_controls():
     assert "QSlider#ZoomSlider:focus" in sheet
     assert "QPushButton#ZoomButton:focus" in sheet
     assert "QTabWidget#PdfViewerSide::pane" in sheet
-    assert "QCheckBox:focus::indicator" in sheet
-    assert "QRadioButton:focus::indicator" in sheet
+    assert "QCheckBox:focus::indicator" not in sheet
+    assert "QRadioButton:focus::indicator" not in sheet
+    assert "QCheckBox::indicator:focus" in sheet
+    assert "QRadioButton::indicator:focus" in sheet
+
+
+def test_checkbox_focus_ring_stays_on_indicator(qtbot, isolated_settings):
+    """Fusion + ``:focus::indicator`` painted a full-widget accent box — keep ring on the square."""
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QApplication, QCheckBox, QVBoxLayout, QWidget
+
+    from pagedrop.ui.theme import ACCENT, app_stylesheet
+
+    app = QApplication.instance()
+    assert app is not None
+    app.setStyleSheet(app_stylesheet(light=False))
+
+    host = QWidget()
+    host.setStyleSheet("background:#1A1A1F;")
+    lay = QVBoxLayout(host)
+    lay.setContentsMargins(14, 14, 14, 14)
+    cb = QCheckBox("Flatten watermark")
+    lay.addWidget(cb)
+    qtbot.addWidget(host)
+    host.resize(400, 60)
+    host.show()
+    qtbot.waitExposed(host)
+    cb.setFocus()
+    qtbot.waitUntil(cb.hasFocus, timeout=1000)
+
+    img = host.grab().toImage()
+    accent = QColor(ACCENT)
+    g = cb.geometry()
+    top_accent = sum(
+        1
+        for x in range(g.x(), g.x() + g.width())
+        if img.pixelColor(x, g.y()) == accent
+    )
+    # Widget-level frame would paint nearly the full width; indicator is ~16–20px.
+    assert top_accent < g.width() // 4
+    assert top_accent > 0
 
 
 def test_r10a_page_chips_and_prefs_chrome():

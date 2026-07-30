@@ -677,3 +677,19 @@ def test_r11_metadata_load_from_file_left_aligned(qtbot, isolated_settings):
     assert load_btn.width() < shell._options_host.width() * 0.6
     shell.close()
     tools.close()
+
+
+def test_tool_shell_hides_idle_status_footer(qtbot):
+    """Placeholder idle status must not reserve a full-width strip."""
+    shell = ToolShellWindow(title="Demo", description="Demo tool")
+    qtbot.addWidget(shell)
+    shell.show()
+    status = shell.statusBar()
+    assert status.currentMessage() == ""
+    assert status.isHidden()
+    status.showMessage("Working…")
+    assert not status.isHidden()
+    assert status.isVisible()
+    assert status.currentMessage() == "Working…"
+    status.showMessage("")
+    assert status.isHidden()

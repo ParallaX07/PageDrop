@@ -370,7 +370,8 @@ class WatermarkPreviewCanvas(QWidget):
     def _fit_scale(self) -> float:
         if self._page_pix.isNull():
             return 1.0
-        margin = 8.0
+        # R12: keep a thin gutter; extra host height/width should grow the page.
+        margin = 4.0
         avail_w = max(1.0, self._host_w - 2 * margin)
         avail_h = max(1.0, self._host_h - 2 * margin)
         pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
@@ -380,7 +381,7 @@ class WatermarkPreviewCanvas(QWidget):
         if self._page_pix.isNull():
             self.setMinimumSize(max(240, self._host_w), max(280, self._host_h))
             return
-        margin = 8.0
+        margin = 4.0
         pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
         scale = self._fit_scale() * self._zoom
         need_w = int(math.ceil(pw * scale + 2 * margin))
@@ -388,6 +389,7 @@ class WatermarkPreviewCanvas(QWidget):
         if self._zoom > 1.0 + 1e-6:
             self.setMinimumSize(max(self._host_w, need_w), max(self._host_h, need_h))
         else:
+            # Fill the scroll viewport so fit-scale tracks reclaimed window height.
             self.setMinimumSize(self._host_w, self._host_h)
 
     def _page_display_rect(self) -> QRectF:

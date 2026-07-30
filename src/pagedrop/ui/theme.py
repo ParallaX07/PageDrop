@@ -319,6 +319,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QRadioButton {{
         color: {text_primary};
         spacing: 8px;
+        border: none;
+        background-color: transparent;
+        outline: none;
     }}
 
     QCheckBox::indicator,
@@ -346,10 +349,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QCheckBox:focus,
     QRadioButton:focus {{
         outline: none;
+        border: none;
     }}
 
-    QCheckBox:focus::indicator,
-    QRadioButton:focus::indicator {{
+    /* ::indicator:focus — NOT :focus::indicator. Fusion paints a full-widget
+       accent frame for the latter (Flatten watermark blue box). */
+    QCheckBox::indicator:focus,
+    QRadioButton::indicator:focus {{
         border: {focus_width}px solid {ACCENT};
     }}
 
@@ -1669,14 +1675,22 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-width: 64px;
     }}
 
-    QScrollArea#WatermarkPreviewScroll,
-    QScrollArea#WatermarkOptionsScroll {{
+    QScrollArea#WatermarkPreviewScroll {{
         background-color: {bg_surface};
         border: none;
     }}
 
-    QScrollArea#WatermarkPreviewScroll > QWidget,
-    QScrollArea#WatermarkOptionsScroll > QWidget {{
+    QScrollArea#WatermarkOptionsScroll {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QScrollArea#WatermarkPreviewScroll > QWidget {{
+        background-color: {bg_surface};
+    }}
+
+    QScrollArea#WatermarkOptionsScroll > QWidget,
+    QWidget#WatermarkOptionsForm {{
         background-color: {bg_surface};
     }}
 

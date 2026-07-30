@@ -136,10 +136,30 @@ def _configure_crop(shell: ToolShellWindow) -> None:
     mode = QComboBox()
     mode.addItem("CropBox (soft crop)", "cropbox")
     mode.addItem("Rebuild (hard clip)", "rebuild")
-    form.addRow("Left", left)
-    form.addRow("Right", right)
-    form.addRow("Top", top)
-    form.addRow("Bottom", bottom)
+    # R12: Left|Right / Top|Bottom in a 2×2 grid (not four stacked form rows).
+    margins_host = QWidget()
+    margins_host.setObjectName("CropMarginsGrid")
+    margins_grid = QGridLayout(margins_host)
+    margins_grid.setContentsMargins(0, 0, 0, 0)
+    margins_grid.setHorizontalSpacing(10)
+    margins_grid.setVerticalSpacing(8)
+
+    def _margin_cell(caption: str, spin: QDoubleSpinBox) -> QWidget:
+        cell = QWidget()
+        cell_lay = QVBoxLayout(cell)
+        cell_lay.setContentsMargins(0, 0, 0, 0)
+        cell_lay.setSpacing(2)
+        lab = QLabel(caption)
+        lab.setObjectName("ToolsHint")
+        cell_lay.addWidget(lab)
+        cell_lay.addWidget(spin)
+        return cell
+
+    margins_grid.addWidget(_margin_cell("Left", left), 0, 0)
+    margins_grid.addWidget(_margin_cell("Right", right), 0, 1)
+    margins_grid.addWidget(_margin_cell("Top", top), 1, 0)
+    margins_grid.addWidget(_margin_cell("Bottom", bottom), 1, 1)
+    form.addRow(margins_host)
     form.addRow("Mode", mode)
     hint = QLabel(
         "Margins in points. CropBox keeps page size metadata; "
@@ -219,9 +239,12 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
 
     preview_card = QFrame()
     preview_card.setObjectName("WatermarkPreviewCard")
+    preview_card.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
     preview_lay = QVBoxLayout(preview_card)
-    preview_lay.setContentsMargins(12, 12, 12, 12)
-    preview_lay.setSpacing(8)
+    preview_lay.setContentsMargins(10, 8, 10, 10)
+    preview_lay.setSpacing(6)
 
     header = QHBoxLayout()
     header.setSpacing(8)
@@ -253,9 +276,6 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     zoom_in.setToolTip("Zoom in (Ctrl+scroll)")
     zoom_in.setAccessibleName("Zoom in")
 
-    drag_hint = QLabel("Drag watermark to position")
-    drag_hint.setObjectName("ToolsHint")
-
     header.addWidget(preview_title)
     header.addStretch(1)
     header.addWidget(prev_btn)
@@ -265,27 +285,46 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     header.addWidget(zoom_out)
     header.addWidget(zoom_label)
     header.addWidget(zoom_in)
-    header.addSpacing(8)
-    header.addWidget(drag_hint)
     preview_lay.addLayout(header)
 
     canvas = WatermarkPreviewCanvas()
+    # R12: drag hint lives on the canvas (not an 11th header widget).
+    canvas.setToolTip("Drag watermark to position")
     preview_scroll = WatermarkPreviewScroll(canvas)
+    preview_scroll.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
     preview_lay.addWidget(preview_scroll, stretch=1)
-    body_row.addWidget(preview_card, stretch=3)
+    # R12: preview takes horizontal remainder; options fixed band (not stretch 3/2).
+    # Smoke: ≤380 still cramped for long labels / snap — keep ~400–460 readable.
+    body_row.addWidget(preview_card, stretch=1)
 
     # Options column: scrollable card + sticky Run footer (R11 — no shell Run strip).
     # Form stays on the styled QFrame (scroll widget) so light/dark QSS fills correctly;
     # a plain QWidget inside the viewport would show the unthemed palette (dark blotch).
     options_column = QWidget()
-    options_column.setMinimumWidth(280)
+    options_column.setObjectName("WatermarkOptionsColumn")
+    options_column.setMinimumWidth(400)
+    options_column.setMaximumWidth(460)
+    options_column.setSizePolicy(
+        QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+    )
     options_col = QVBoxLayout(options_column)
     options_col.setContentsMargins(0, 0, 0, 0)
     options_col.setSpacing(8)
 
+    # Border on the outer frame; scroll sits inside so the scrollbar does not
+    # eat the card's right edge (pre-fix: card-as-scroll-widget clipped the border).
     options_card = QFrame()
     options_card.setObjectName("WatermarkOptionsCard")
-    form = QFormLayout(options_card)
+    card_lay = QVBoxLayout(options_card)
+    card_lay.setContentsMargins(0, 0, 0, 0)
+    card_lay.setSpacing(0)
+
+    form_host = QWidget()
+    form_host.setObjectName("WatermarkOptionsForm")
+    form_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    form = QFormLayout(form_host)
     form.setContentsMargins(14, 14, 14, 14)
     form.setVerticalSpacing(10)
     form.setHorizontalSpacing(10)
@@ -494,8 +533,8 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     form.addRow(flatten_hint)
 
     # Hidden spins keep range + test findability; sliders drive the UI.
-    opacity.setParent(options_card)
-    angle.setParent(options_card)
+    opacity.setParent(form_host)
+    angle.setParent(form_host)
     opacity.hide()
     angle.hide()
 
@@ -504,10 +543,11 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     options_scroll.setWidgetResizable(True)
     options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
     options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    options_scroll.setWidget(options_card)
-    options_col.addWidget(options_scroll, stretch=1)
+    options_scroll.setWidget(form_host)
+    card_lay.addWidget(options_scroll)
+    options_col.addWidget(options_card, stretch=1)
     shell.adopt_run_button(options_col)
-    body_row.addWidget(options_column, stretch=2)
+    body_row.addWidget(options_column, stretch=0)
 
     while shell._options_layout.count():
         item = shell._options_layout.takeAt(0)
@@ -644,6 +684,12 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     def _update_zoom_label(factor: float) -> None:
         zoom_label.setText(f"{int(round(factor * 100))}%")
 
+    def _set_header_rhythm(loaded: bool) -> None:
+        # R12: after pick, title + description + Change-file stack can sit tighter.
+        root = shell.layout()
+        if root is not None:
+            root.setSpacing(8 if loaded else 12)
+
     def _on_files_changed() -> None:
         paths = shell.drop_zone.paths()
         if not paths:
@@ -652,6 +698,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             canvas.clear_source()
             _page_count["n"] = 0
             file_meta.setText("")
+            _set_header_rhythm(False)
             _update_page_label()
             return
         source = paths[0]
@@ -682,6 +729,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         file_meta.setText(f"{name}  ·  {count} page{'s' if count != 1 else ''}")
         shell._chrome_host.show()  # type: ignore[attr-defined]
         shell.set_drop_zone_visible(False)
+        _set_header_rhythm(True)
         canvas.set_source(
             source, page_count=count, page_index=0, password=password
         )
