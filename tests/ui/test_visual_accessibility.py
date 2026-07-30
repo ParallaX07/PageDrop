@@ -188,6 +188,42 @@ def test_toolbar_secondary_is_ghost_not_primary():
     assert "transparent" not in primary
 
 
+def test_paint_helpers_pair_with_light_stylesheet(isolated_settings):
+    """R1: border/shadow paint helpers share light tokens with app_stylesheet."""
+    from pagedrop.ui.accessibility import apply_app_stylesheet, refresh_themed_widgets
+    from pagedrop.ui.settings import set_light_theme
+    from pagedrop.ui.theme import (
+        BORDER_HOVER,
+        BORDER_HOVER_LIGHT,
+        SHADOW_ALPHA_CAP_LIGHT,
+        SHADOW_RGB,
+        SHADOW_RGB_LIGHT,
+        border_hover_qcolor,
+        shadow_qcolor,
+    )
+
+    light_sheet = app_stylesheet(light=True)
+    dark_sheet = app_stylesheet(light=False)
+    assert BORDER_HOVER_LIGHT in light_sheet
+    assert BORDER_HOVER in dark_sheet
+
+    set_light_theme(True)
+    refresh_themed_widgets()
+    light_border = border_hover_qcolor()
+    assert light_border.name().upper() == BORDER_HOVER_LIGHT.upper()
+    light_shadow = shadow_qcolor(alpha=72)
+    assert (light_shadow.red(), light_shadow.green(), light_shadow.blue()) == SHADOW_RGB_LIGHT
+    assert light_shadow.alpha() == SHADOW_ALPHA_CAP_LIGHT
+
+    set_light_theme(False)
+    apply_app_stylesheet()
+    dark_border = border_hover_qcolor()
+    assert dark_border.name().upper() == BORDER_HOVER.upper()
+    dark_shadow = shadow_qcolor(alpha=72)
+    assert (dark_shadow.red(), dark_shadow.green(), dark_shadow.blue()) == SHADOW_RGB
+    assert dark_shadow.alpha() == 72
+
+
 def test_drop_indicator_uses_object_name_not_inline_stylesheet(qtbot):
     grid = ThumbnailGrid()
     qtbot.addWidget(grid)

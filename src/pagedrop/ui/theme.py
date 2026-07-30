@@ -16,6 +16,8 @@ BG_PREVIEW_FOOTER = "#1A1A1F"
 BORDER_SUBTLE = "#2E2E36"
 BORDER_DEFAULT = "#45454F"
 BORDER_HOVER = "#5C5C68"
+# Light chrome border — shared by app_stylesheet locals + paint helpers
+BORDER_HOVER_LIGHT = "#9CA3AF"
 
 ACCENT = "#2F9BE6"
 ACCENT_HOVER = "#4AADED"
@@ -47,6 +49,9 @@ COMMENT_PIN_EDGE = "#B48C00"
 
 # Tinted shadow (cool blue, not pure black)
 SHADOW_RGB = (14, 22, 38)
+SHADOW_RGB_LIGHT = (30, 40, 60)
+# ponytail: light shadows stay soft; raise cap if cards need more depth in light
+SHADOW_ALPHA_CAP_LIGHT = 40
 
 RADIUS_CARD = 12
 RADIUS_CONTROL = 8
@@ -94,7 +99,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         bg_preview_footer = "#FFFFFF"
         border_subtle_tok = "#E5E7EB"
         border_default_tok = "#D1D5DB"
-        border_hover = "#9CA3AF"
+        border_hover = BORDER_HOVER_LIGHT
         text_primary = "#1A1A1F"
         text_secondary = "#4A4A55"
         text_muted_tok = "#5A5D68"
@@ -1582,13 +1587,14 @@ def on_accent_qcolor() -> "QColor":
 
 
 def shadow_qcolor(*, alpha: int = 55) -> "QColor":
-    """Tinted drop-shadow color."""
+    """Tinted drop-shadow color (pairs with light/dark chrome; not QSS)."""
     from PyQt6.QtGui import QColor
 
     from pagedrop.ui.settings import light_theme
 
     if light_theme():
-        return QColor(30, 40, 60, min(alpha, 40))
+        r, g, b = SHADOW_RGB_LIGHT
+        return QColor(r, g, b, min(alpha, SHADOW_ALPHA_CAP_LIGHT))
     r, g, b = SHADOW_RGB
     return QColor(r, g, b, alpha)
 
@@ -1596,14 +1602,13 @@ def shadow_qcolor(*, alpha: int = 55) -> "QColor":
 def border_hover_qcolor() -> "QColor":
     """Theme-aware hover/stack border for programmatic paint (not QSS).
 
-    Do not use ``token_qcolor(BORDER_HOVER)`` — that hex is dark-only and
-    stays stale after a light/dark toggle.
+    Do not use ``token_qcolor(BORDER_HOVER)`` alone — that hex is dark-only and
+    stays stale after a light/dark toggle. Light uses ``BORDER_HOVER_LIGHT``,
+    the same token as ``app_stylesheet(light=True)``.
     """
     from pagedrop.ui.settings import light_theme
 
-    if light_theme():
-        return token_qcolor("#9CA3AF")
-    return token_qcolor(BORDER_HOVER)
+    return token_qcolor(BORDER_HOVER_LIGHT if light_theme() else BORDER_HOVER)
 
 
 def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":

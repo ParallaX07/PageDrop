@@ -110,11 +110,11 @@ def test_render_stacked_page_pngs_hits_doc_cache(tmp_path, monkeypatch):
 def test_stacked_border_follows_light_dark_theme(tmp_path, qtbot, isolated_settings):
     """O16: stack page borders use border_hover_qcolor (updates on theme toggle)."""
     from pagedrop.ui.settings import set_light_theme
-    from pagedrop.ui.theme import BORDER_HOVER, border_hover_qcolor
+    from pagedrop.ui.theme import BORDER_HOVER, BORDER_HOVER_LIGHT, border_hover_qcolor
 
     set_light_theme(True)
     light = border_hover_qcolor()
-    assert light.name().upper() == "#9CA3AF"
+    assert light.name().upper() == BORDER_HOVER_LIGHT.upper()
 
     set_light_theme(False)
     dark = border_hover_qcolor()
