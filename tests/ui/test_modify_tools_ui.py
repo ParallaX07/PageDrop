@@ -86,6 +86,10 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     assert options_col is not None
     assert options_col.minimumWidth() == 400
     assert options_col.maximumWidth() == 460
+    # R18: tool title + description dock in the options column (not shell root).
+    assert options_col.isAncestorOf(shell._header_host)
+    assert shell._title_label.text() == "Watermark"
+    assert shell.layout().indexOf(shell._header_host) < 0
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)
     assert any(s.suffix() == "°" for s in spins)
@@ -175,8 +179,7 @@ def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolate
     qtbot.waitUntil(lambda: not shell.drop_zone.isVisible(), timeout=3000)
     chrome = shell._chrome_host
     assert chrome.isVisible()
-    # R12: loaded chrome tightens title/desc/Change-file rhythm (spacing only).
-    assert shell.layout().spacing() == 8
+    # R18: title/desc live in the options column — no root spacing rhythm for that stack.
     change = chrome.findChild(QPushButton)
     assert change is not None and change.text() == "Change file"
     assert any("src.pdf" in lab.text() for lab in chrome.findChildren(QLabel))

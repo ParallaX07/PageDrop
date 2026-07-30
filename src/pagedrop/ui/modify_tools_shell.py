@@ -312,6 +312,8 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     options_col = QVBoxLayout(options_column)
     options_col.setContentsMargins(0, 0, 0, 0)
     options_col.setSpacing(8)
+    # R18: title + description sticky above the form card (before wipe deletes them).
+    shell.adopt_header(options_col)
 
     # Border on the outer frame; scroll sits inside so the scrollbar does not
     # eat the card's right edge (pre-fix: card-as-scroll-widget clipped the border).
@@ -684,12 +686,6 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     def _update_zoom_label(factor: float) -> None:
         zoom_label.setText(f"{int(round(factor * 100))}%")
 
-    def _set_header_rhythm(loaded: bool) -> None:
-        # R12: after pick, title + description + Change-file stack can sit tighter.
-        root = shell.layout()
-        if root is not None:
-            root.setSpacing(8 if loaded else 12)
-
     def _on_files_changed() -> None:
         paths = shell.drop_zone.paths()
         if not paths:
@@ -698,7 +694,6 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             canvas.clear_source()
             _page_count["n"] = 0
             file_meta.setText("")
-            _set_header_rhythm(False)
             _update_page_label()
             return
         source = paths[0]
@@ -729,7 +724,6 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         file_meta.setText(f"{name}  ·  {count} page{'s' if count != 1 else ''}")
         shell._chrome_host.show()  # type: ignore[attr-defined]
         shell.set_drop_zone_visible(False)
-        _set_header_rhythm(True)
         canvas.set_source(
             source, page_count=count, page_index=0, password=password
         )

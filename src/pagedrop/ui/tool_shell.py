@@ -481,7 +481,7 @@ def _options_has_controls(widget: QWidget) -> bool:
 
 
 class ToolShellWindow(JobChromeMixin, QWidget):
-    """Reusable tool chrome: title → drop → options → Run → results (editor tab)."""
+    """Reusable tool chrome: drop → options (title+desc) → Run → results (editor tab)."""
 
     def __init__(
         self,
@@ -514,15 +514,6 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
-
-        self._title_label = QLabel(title)
-        self._title_label.setObjectName("ToolShellTitle")
-        root.addWidget(self._title_label)
-
-        self._desc_label = QLabel(description)
-        self._desc_label.setObjectName("ToolShellDescription")
-        self._desc_label.setWordWrap(True)
-        root.addWidget(self._desc_label)
 
         # Optional chrome above the drop zone (e.g. Change File after pick).
         self._chrome_host = QWidget()
@@ -564,6 +555,21 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._options_layout = QVBoxLayout(self._options_host)
         self._options_layout.setContentsMargins(0, 0, 0, 0)
         self._options_layout.setSpacing(8)
+
+        # R18: title + description live in the options region (not above the drop zone).
+        self._header_host = QWidget()
+        self._header_host.setObjectName("ToolShellHeader")
+        header_lay = QVBoxLayout(self._header_host)
+        header_lay.setContentsMargins(0, 0, 0, 0)
+        header_lay.setSpacing(4)
+        self._title_label = QLabel(title)
+        self._title_label.setObjectName("ToolShellTitle")
+        header_lay.addWidget(self._title_label)
+        self._desc_label = QLabel(description)
+        self._desc_label.setObjectName("ToolShellDescription")
+        self._desc_label.setWordWrap(True)
+        header_lay.addWidget(self._desc_label)
+        self._options_layout.addWidget(self._header_host)
         self._options_layout.addStretch(1)
         self._options_scroll.setWidget(self._options_host)
         root.addWidget(self._options_scroll, stretch=1)
@@ -612,23 +618,33 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         return self._drop_zone
 
     def set_options_widget(self, widget: QWidget) -> None:
+        # Preserve R18 header when clearing form widgets / stretch.
         while self._options_layout.count():
             item = self._options_layout.takeAt(0)
             child = item.widget()
-            if child is not None:
-                child.deleteLater()
+            if child is None or child is self._header_host:
+                continue
+            child.deleteLater()
 
         root = self.layout()
         scroll_idx = root.indexOf(self._options_scroll) if root is not None else -1
+        header_in_options = self._header_host.parentWidget() is self._options_host
 
         # R11: bare / empty host must not leave a dead expanding options band.
+        # R18: hide header with the band — tab title + Run tip still name the tool.
         if not _options_has_controls(widget):
             widget.deleteLater()
+            if header_in_options:
+                self._options_layout.addWidget(self._header_host)
+                self._header_host.hide()
             self._options_scroll.hide()
             if scroll_idx >= 0:
                 root.setStretch(scroll_idx, 0)
             return
 
+        if header_in_options:
+            self._options_layout.addWidget(self._header_host)
+            self._header_host.show()
         widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
@@ -661,6 +677,16 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         """Optional extra gate for Run (e.g. backend present). Re-evaluates now."""
         self._run_enabled_check = check
         self._update_run_enabled()
+
+    def adopt_header(self, parent_layout: QBoxLayout) -> None:
+        """Reparent title + description into ``parent_layout`` (R18).
+
+        Preview/split shells dock the header in the options column so the drop
+        zone / preview reclaim the full-width title stack. Same labels, one home.
+        """
+        self._options_layout.removeWidget(self._header_host)
+        parent_layout.insertWidget(0, self._header_host)
+        self._header_host.show()
 
     def adopt_run_button(self, parent_layout: QBoxLayout) -> None:
         """Reparent the single Run button into ``parent_layout``; hide shell actions.

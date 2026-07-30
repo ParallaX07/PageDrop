@@ -616,7 +616,10 @@ def test_r11_standard_shell_run_enabled_after_file_pick(qtbot, tmp_path):
 
 
 def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
-    """R11: booklet-style empty options must not expand a blank options band."""
+    """R11: booklet-style empty options must not expand a blank options band.
+
+    R18: header hides with the collapsed band (tab title + Run tip name the tool).
+    """
     from PyQt6.QtWidgets import QFormLayout, QLabel, QWidget
 
     shell = ToolShellWindow(title="Booklet", description="No options")
@@ -626,16 +629,45 @@ def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
     qtbot.waitExposed(shell, timeout=5000)
 
     assert not shell._options_scroll.isVisible()
+    assert not shell._header_host.isVisible()
     root = shell.layout()
     assert root.stretch(root.indexOf(shell._options_scroll)) == 0
 
-    # Real controls restore the scroll stretch.
+    # Real controls restore the scroll stretch and show the options header.
     opts = QWidget()
     form = QFormLayout(opts)
     form.addRow("Hint", QLabel("x"))
     shell.set_options_widget(opts)
     assert shell._options_scroll.isVisible()
+    assert shell._header_host.isVisible()
+    assert shell._options_host.isAncestorOf(shell._header_host)
     assert root.stretch(root.indexOf(shell._options_scroll)) == 1
+
+
+def test_r18_header_lives_in_options_not_root(qtbot):
+    """R18: title + description are under options, not above the drop zone."""
+    from PyQt6.QtWidgets import QFormLayout, QLabel, QVBoxLayout, QWidget
+
+    shell = ToolShellWindow(title="Demo", description="In options")
+    qtbot.addWidget(shell)
+    opts = QWidget()
+    form = QFormLayout(opts)
+    form.addRow("Hint", QLabel("x"))
+    shell.set_options_widget(opts)
+
+    root = shell.layout()
+    assert root.indexOf(shell._header_host) < 0
+    assert root.indexOf(shell._title_label) < 0
+    assert shell._options_host.isAncestorOf(shell._title_label)
+    assert shell._title_label.text() == "Demo"
+    assert shell._desc_label.text() == "In options"
+
+    # adopt_header docks into an external column (Watermark pattern).
+    col = QWidget()
+    col_lay = QVBoxLayout(col)
+    shell.adopt_header(col_lay)
+    assert col.isAncestorOf(shell._header_host)
+    assert not shell._options_host.isAncestorOf(shell._header_host)
 
 
 def test_r11_booklet_shell_hides_empty_options(qtbot, isolated_settings):
