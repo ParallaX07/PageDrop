@@ -303,7 +303,7 @@ def test_sanitize_cancel_mid_run_clears_busy_chrome(
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
 
     assert not out.exists()
-    assert not shell._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert shell.statusBar().currentMessage() == "Cancelled"
     assert hashlib.sha256(src.read_bytes()).hexdigest() == source_hash
 

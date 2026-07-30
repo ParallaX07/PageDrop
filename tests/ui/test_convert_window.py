@@ -312,7 +312,7 @@ def test_convert_failed_matches_end_job_feedback(qtbot, monkeypatch):
     window._on_convert_failed("convert boom")
 
     assert not window._converting
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert window.statusBar().currentMessage() == "Create PDF failed"
     assert toasts and toasts[-1] == ("Create PDF failed", "error")
     assert dialogs and "convert boom" in str(dialogs[-1])

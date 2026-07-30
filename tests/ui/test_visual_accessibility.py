@@ -584,3 +584,99 @@ def test_r6_tool_shell_drop_and_result_match_secondary():
         assert "border: 1px solid" in btn
         assert "QFrame#ToolShellDropZone:focus" in sheet
         assert f"dashed {ACCENT}" in sheet
+
+
+def test_r7_toast_motion_gated_by_reduce_motion(qtbot, isolated_settings):
+    """R7: toast slides/fades when motion on; instant when reduce-motion."""
+    from PyQt6.QtCore import QAbstractAnimation
+    from PyQt6.QtWidgets import QWidget
+
+    from pagedrop.ui.busy_overlay import ToastOverlay
+    from pagedrop.ui.theme import STATUS_SUCCESS
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.resize(400, 300)
+    parent.show()
+    toast = ToastOverlay(parent)
+
+    set_reduce_motion(False)
+    toast.show_toast("Saved", kind="success")
+    assert toast.isVisible()
+    assert toast._message.property("kind") == "success"
+    # Kind chrome stays semantic during enter (R1 success green, not delayed).
+    assert STATUS_SUCCESS.startswith("#")
+    assert toast._motion_anim.state() == QAbstractAnimation.State.Running
+    assert toast.motion_t > 0.0
+    qtbot.waitUntil(
+        lambda: toast._motion_anim.state() == QAbstractAnimation.State.Stopped,
+        timeout=1000,
+    )
+    assert toast.motion_t == 0.0
+    assert toast._opacity_effect is not None
+    assert toast._opacity_effect.opacity() == 1.0
+
+    toast.hide()
+    set_reduce_motion(True)
+    toast.show_toast("Saved", kind="success")
+    assert toast.isVisible()
+    assert toast._motion_anim.state() == QAbstractAnimation.State.Stopped
+    assert toast.motion_t == 0.0
+    assert toast._opacity_effect is None
+    assert toast._message.property("kind") == "success"
+
+
+def test_r7_busy_overlay_opacity_fade_keeps_cancel_hittable(qtbot, isolated_settings):
+    """R7: busy fades opacity only; Cancel works mid-fade."""
+    from PyQt6.QtCore import QAbstractAnimation
+    from PyQt6.QtWidgets import QWidget
+
+    from pagedrop.ui.busy_overlay import BusyOverlay
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(320, 240)
+    host.show()
+    overlay = BusyOverlay(host)
+    overlay.set_cancellable(True)
+    cancelled: list[bool] = []
+    overlay.cancelled.connect(lambda: cancelled.append(True))
+
+    set_reduce_motion(False)
+    overlay.show_message("Working…")
+    assert overlay.isVisible()
+    assert overlay._fade.state() == QAbstractAnimation.State.Running
+    assert overlay._opacity_effect is not None
+    assert overlay._opacity_effect.opacity() < 1.0
+    assert overlay._cancel_btn.isVisible()
+    assert overlay._cancel_btn.isEnabled()
+    overlay._cancel_btn.click()
+    assert cancelled == [True]
+
+    overlay.hide_overlay()
+    assert overlay._hiding is True
+    assert overlay.isVisible()
+    assert overlay._cancel_btn.isVisible()
+    qtbot.waitUntil(lambda: not overlay.isVisible(), timeout=1000)
+    assert overlay._opacity_effect is None
+
+    set_reduce_motion(True)
+    overlay.show_message("Working…")
+    assert overlay.isVisible()
+    assert overlay._fade.state() == QAbstractAnimation.State.Stopped
+    assert overlay._opacity_effect is None
+    overlay.hide_overlay()
+    assert not overlay.isVisible()
+
+
+def test_r7_feedback_motion_only_in_busy_overlay():
+    """R7: no QPropertyAnimation on tab switch / palette / grid keyboard paths."""
+    from pathlib import Path
+
+    ui_root = Path(__file__).resolve().parents[2] / "src" / "pagedrop" / "ui"
+    animated = sorted(
+        path.name
+        for path in ui_root.glob("*.py")
+        if "QPropertyAnimation" in path.read_text(encoding="utf-8")
+    )
+    assert animated == ["busy_overlay.py"]

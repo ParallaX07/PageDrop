@@ -2,12 +2,35 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    pyqtProperty,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from pagedrop.ui.accessibility import prefers_reduce_motion
 
 # info | success | error | warning | undo — property drives theme chrome
 ToastKind = str
+
+# Occasional feedback only (Emil frequency rule). Ease-out ~150–200ms.
+_MOTION_MS = 180
+_EASE_OUT = QEasingCurve.Type.OutCubic
+_TOAST_SLIDE_PX = 12
+_TOAST_MARGINS = (24, 24, 24, 48)
 
 # Accessible description so AT hears kind, not only the message text.
 _TOAST_KIND_A11Y: dict[str, str] = {
@@ -31,6 +54,16 @@ class BusyOverlay(QWidget):
         self.setObjectName("BusyOverlay")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName("Busy")
+
+        # Lazy effect — permanent QGraphicsOpacityEffect segfaults on Qt teardown.
+        # Init motion fields before hide() — hideEvent clears effects.
+        self._opacity_effect: QGraphicsOpacityEffect | None = None
+        self._fade = QPropertyAnimation(self)
+        self._fade.setPropertyName(b"opacity")
+        self._fade.setDuration(_MOTION_MS)
+        self._fade.setEasingCurve(_EASE_OUT)
+        self._fade.finished.connect(self._on_fade_finished)
+        self._hiding = False
         self.hide()
 
         layout = QVBoxLayout(self)
@@ -70,12 +103,67 @@ class BusyOverlay(QWidget):
         self._message.setText(message)
         self.setAccessibleDescription(message)
         self._sync_geometry()
+        self._hiding = False
+        self._fade.stop()
         self.show()
         self.raise_()
+        if prefers_reduce_motion():
+            self._clear_opacity_effect()
+        else:
+            # Opacity only — Cancel stays hittable for the whole fade.
+            effect = self._ensure_opacity_effect()
+            effect.setOpacity(0.0)
+            self._fade.setTargetObject(effect)
+            self._fade.setStartValue(0.0)
+            self._fade.setEndValue(1.0)
+            self._fade.start()
         self._grab_focus()
 
     def hide_overlay(self) -> None:
+        if not self.isVisible() and not self._hiding:
+            return
+        self._fade.stop()
+        if prefers_reduce_motion() or self._opacity_effect is None:
+            self._finish_hide()
+            return
+        self._hiding = True
+        effect = self._opacity_effect
+        start = float(effect.opacity())
+        self._fade.setTargetObject(effect)
+        self._fade.setStartValue(start)
+        self._fade.setEndValue(0.0)
+        self._fade.start()
+
+    def _ensure_opacity_effect(self) -> QGraphicsOpacityEffect:
+        if self._opacity_effect is None:
+            # Unparented: setGraphicsEffect owns the effect.
+            effect = QGraphicsOpacityEffect()
+            self.setGraphicsEffect(effect)
+            self._opacity_effect = effect
+        return self._opacity_effect
+
+    def _clear_opacity_effect(self) -> None:
+        self._fade.stop()
+        if self._opacity_effect is None:
+            return
+        self.setGraphicsEffect(None)
+        self._opacity_effect = None
+
+    def _on_fade_finished(self) -> None:
+        if self._hiding:
+            self._finish_hide()
+
+    def _finish_hide(self) -> None:
+        self._hiding = False
+        self._clear_opacity_effect()
         self.hide()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # Drop effect before Qt tears the tree down (avoids exit SIGSEGV).
+        self._hiding = False
+        if getattr(self, "_fade", None) is not None:
+            self._clear_opacity_effect()
+        super().hideEvent(event)
 
     def _escape_cancels(self) -> bool:
         return (
@@ -143,13 +231,23 @@ class ToastOverlay(QWidget):
         super().__init__(parent)
         self.setObjectName("ToastOverlay")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        # 0 = resting; 1 = slid below + faded out (enter/exit share this axis).
+        # Init motion fields before hide() — hideEvent clears effects.
+        self._motion_t = 0.0
+        self._opacity_effect: QGraphicsOpacityEffect | None = None
+        self._motion_anim = QPropertyAnimation(self, b"motion_t", self)
+        self._motion_anim.setDuration(_MOTION_MS)
+        self._motion_anim.setEasingCurve(_EASE_OUT)
+        self._motion_anim.finished.connect(self._on_motion_finished)
+        self._exiting = False
         self.hide()
 
         layout = QVBoxLayout(self)
         layout.setAlignment(
             Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter
         )
-        layout.setContentsMargins(24, 24, 24, 48)
+        layout.setContentsMargins(*_TOAST_MARGINS)
 
         self._card = QWidget()
         self._card.setObjectName("ToastOverlayCard")
@@ -175,11 +273,45 @@ class ToastOverlay(QWidget):
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.hide)
+        self._timer.timeout.connect(self._dismiss)
         self._on_undo: Callable[[], None] | None = None
 
         if parent is not None:
             parent.installEventFilter(self)
+
+    def _ensure_opacity_effect(self) -> QGraphicsOpacityEffect:
+        if self._opacity_effect is None:
+            effect = QGraphicsOpacityEffect()
+            self._card.setGraphicsEffect(effect)
+            self._opacity_effect = effect
+        return self._opacity_effect
+
+    def _clear_opacity_effect(self) -> None:
+        self._motion_anim.stop()
+        if self._opacity_effect is None:
+            return
+        self._card.setGraphicsEffect(None)
+        self._opacity_effect = None
+
+    def _get_motion_t(self) -> float:
+        return self._motion_t
+
+    def _set_motion_t(self, value: float) -> None:
+        self._motion_t = float(value)
+        if self._opacity_effect is not None:
+            self._opacity_effect.setOpacity(
+                max(0.0, min(1.0, 1.0 - self._motion_t))
+            )
+        left, top, right, bottom = _TOAST_MARGINS
+        # AlignBottom: smaller bottom margin sits the card lower (enter from below).
+        self.layout().setContentsMargins(
+            left,
+            top,
+            right,
+            int(bottom - _TOAST_SLIDE_PX * self._motion_t),
+        )
+
+    motion_t = pyqtProperty(float, _get_motion_t, _set_motion_t)
 
     def show_toast(
         self,
@@ -222,18 +354,59 @@ class ToastOverlay(QWidget):
                     else self.DEFAULT_TIMEOUT_MS
                 )
 
+        self._exiting = False
+        self._motion_anim.stop()
         self._sync_geometry()
         self.show()
         self.raise_()
+        if prefers_reduce_motion():
+            self._clear_opacity_effect()
+            self.motion_t = 0.0
+        else:
+            self._ensure_opacity_effect()
+            self.motion_t = 1.0
+            self._motion_anim.setStartValue(1.0)
+            self._motion_anim.setEndValue(0.0)
+            self._motion_anim.start()
         self._timer.start(timeout_ms)
+
+    def _dismiss(self) -> None:
+        if not self.isVisible():
+            return
+        self._timer.stop()
+        if prefers_reduce_motion() or self._opacity_effect is None:
+            self.hide()
+            return
+        self._exiting = True
+        self._motion_anim.stop()
+        start = self._motion_t
+        self._motion_anim.setStartValue(start)
+        self._motion_anim.setEndValue(1.0)
+        self._motion_anim.start()
+
+    def _on_motion_finished(self) -> None:
+        if self._exiting:
+            self._exiting = False
+            self.hide()
+            self.motion_t = 0.0
 
     def _on_undo_clicked(self) -> None:
         callback = self._on_undo
         self._on_undo = None
-        self.hide()
+        self._exiting = False
         self._timer.stop()
+        self.hide()
+        self.motion_t = 0.0
         if callback is not None:
             callback()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._exiting = False
+        if getattr(self, "_motion_anim", None) is not None and hasattr(
+            self, "_card"
+        ):
+            self._clear_opacity_effect()
+        super().hideEvent(event)
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:

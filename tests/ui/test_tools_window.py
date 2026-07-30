@@ -202,7 +202,7 @@ def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
 
     window.end_job(error="Something went wrong with the job.")
     assert shown == ["Something went wrong with the job."]
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert status.currentMessage() == "Job failed"
     assert window._toast.isVisible()
     window.close()
@@ -321,7 +321,7 @@ def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
     assert prompts == [False, True]
     window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
     assert not window.is_job_running()
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert window.statusBar().currentMessage() == "Cancelled"
     assert enc.read_bytes() == source_bytes
     window.close()

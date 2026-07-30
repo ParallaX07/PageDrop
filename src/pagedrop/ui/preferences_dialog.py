@@ -92,7 +92,8 @@ class PreferencesDialog(QDialog):
         self._reduce_motion = QCheckBox("Reduce motion")
         self._reduce_motion.setObjectName("PreferencesReduceMotion")
         self._reduce_motion.setToolTip(
-            "Minimize non-essential animation (skeleton pulse, hover shadows). "
+            "Minimize non-essential animation (toasts, busy overlay, "
+            "skeleton pulse, hover shadows). "
             "Platform reduce-motion settings are still honored when available."
         )
         self._reduce_motion.setChecked(reduce_motion())

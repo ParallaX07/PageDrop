@@ -257,7 +257,7 @@ def test_export_shell_cancel_mid_run_clears_busy_chrome(
     shell._busy_overlay._cancel_btn.click()
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
 
-    assert not shell._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert not shell._result_bar.isVisible()
     assert not any(out_dir.glob("*.png"))
     assert shell.statusBar().currentMessage() == "Cancelled"

@@ -562,7 +562,7 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
 
     assert not out.exists()
-    assert not shell._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert not shell._result_bar.isVisible()
     assert shell.statusBar().currentMessage() == "Cancelled"
     assert _file_hash(src) == source_hash

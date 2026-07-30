@@ -80,7 +80,7 @@ def test_merge_runs_in_background_without_blocking_ui(qtbot, one_page_pdf, five_
 
     qtbot.waitUntil(lambda: not window._merging, timeout=10000)
     assert output.is_file()
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert "Merged 2 files" in window.statusBar().currentMessage()
     assert window._result_bar.isVisible()
     assert window._result_bar._path == str(output)
@@ -293,7 +293,7 @@ def test_merge_failed_matches_end_job_feedback(qtbot, monkeypatch):
     window._on_merge_failed("merge boom")
 
     assert not window._merging
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert window.statusBar().currentMessage() == "Merge failed"
     assert toasts and toasts[-1] == ("Merge failed", "error")
     assert dialogs and "merge boom" in str(dialogs[-1])
