@@ -68,6 +68,10 @@ from pagedrop.ui.theme import (
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
     PAGE_NUMBER_OVERLAY_MIN_WIDTH,
+    SPACE_3,
+    SPACE_4,
+    SPACE_6,
+    SPACE_7,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.utils.list_utils import move_items, to_index_for_start
@@ -247,8 +251,8 @@ class ThumbnailGrid(QScrollArea):
         self._container = QWidget()
         self._container.setObjectName("ThumbnailContainer")
         self._layout = QGridLayout(self._container)
-        self._layout.setSpacing(12)
-        self._layout.setContentsMargins(16, 16, 16, 16)
+        self._layout.setSpacing(SPACE_3)
+        self._layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
         self._layout.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
@@ -262,7 +266,7 @@ class ThumbnailGrid(QScrollArea):
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.setSpacing(6)
-        empty_layout.setContentsMargins(32, 48, 32, 48)
+        empty_layout.setContentsMargins(SPACE_6, SPACE_7, SPACE_6, SPACE_7)
 
         self._empty_logo = QLabel()
         self._empty_logo.setObjectName("GridEmptyLogo")

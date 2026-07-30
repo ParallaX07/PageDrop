@@ -60,7 +60,16 @@ RADIUS_BADGE = 6
 FONT_UI = '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
 FONT_MONO = '"Cascadia Mono", "Consolas", monospace'
 
-CARD_PADDING = 16
+# Spacing scale (4px steps) — toolbar / grid / empty-state rhythm
+SPACE_1 = 4
+SPACE_2 = 8
+SPACE_3 = 12
+SPACE_4 = 16
+SPACE_5 = 24
+SPACE_6 = 32
+SPACE_7 = 48
+
+CARD_PADDING = SPACE_4
 DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 80
 MAX_THUMBNAIL_WIDTH = 480
@@ -353,8 +362,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_toolbar};
         border: none;
         border-bottom: 1px solid {border_subtle};
-        spacing: 8px;
-        padding: 8px 12px;
+        spacing: {SPACE_2}px;
+        padding: {SPACE_2}px {SPACE_3}px;
     }}
 
     /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
@@ -691,7 +700,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#GridEmptyLogo {{
         background: transparent;
         border: none;
-        padding: 0 0 12px 0;
+        padding: 0 0 {SPACE_3}px 0;
     }}
 
     QLabel#GridEmptyState {{
@@ -1141,7 +1150,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#MergeEmptyLogo {{
         background: transparent;
         border: none;
-        padding: 0 0 12px 0;
+        padding: 0 0 {SPACE_3}px 0;
     }}
 
     QLabel#MergeEmptyTitle {{
@@ -1173,7 +1182,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ConvertEmptyLogo {{
         background: transparent;
         border: none;
-        padding: 0 0 12px 0;
+        padding: 0 0 {SPACE_3}px 0;
     }}
 
     QLabel#ConvertEmptyTitle {{

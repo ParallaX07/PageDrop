@@ -276,3 +276,46 @@ def test_watermark_selection_chrome_uses_accent_token():
 
     # The ACCENT hex string encodes the same RGB the old literal QColor(47,155,230) did.
     assert ACCENT.upper() == "#2F9BE6"
+
+
+def test_r2_fonts_and_spacing_tokens():
+    """R2: Windows-first fonts unchanged; spacing scale feeds toolbar/grid chrome."""
+    from pagedrop.ui.theme import (
+        CARD_PADDING,
+        FONT_MONO,
+        FONT_UI,
+        SPACE_2,
+        SPACE_3,
+        SPACE_4,
+    )
+
+    assert FONT_UI.startswith('"Segoe UI Variable"')
+    assert "Segoe UI" in FONT_UI
+    assert FONT_MONO.startswith('"Cascadia Mono"')
+    # R2: do not expand for Linux-friendly product faces.
+    assert "Ubuntu" not in FONT_UI
+    assert "Noto" not in FONT_UI
+    assert "SF Pro" not in FONT_UI
+
+    assert CARD_PADDING == SPACE_4 == 16
+    assert SPACE_3 == 12
+    sheet = app_stylesheet()
+    assert FONT_UI in sheet
+    assert FONT_MONO in sheet
+    assert f"padding: {SPACE_2}px {SPACE_3}px" in sheet
+    assert f"padding: 0 0 {SPACE_3}px 0" in sheet
+
+
+def test_r2_empty_state_shortcuts_unchanged(qtbot):
+    """R2: empty-state kbd strings stay accurate; spacing reads from tokens."""
+    from pagedrop.ui.theme import SPACE_3, SPACE_4, SPACE_6, SPACE_7
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    assert grid._layout.spacing() == SPACE_3
+    assert grid._layout.contentsMargins().left() == SPACE_4
+    empty_margins = grid._empty_state.layout().contentsMargins()
+    assert empty_margins.left() == SPACE_6
+    assert empty_margins.top() == SPACE_7
+    assert "Ctrl+O" in grid._empty_kbd.text()
+    assert "Ctrl+A" in grid._empty_kbd.text()

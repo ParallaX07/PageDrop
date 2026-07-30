@@ -47,6 +47,11 @@ from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    SPACE_2,
+    SPACE_3,
+    SPACE_4,
+    SPACE_6,
+    SPACE_7,
 )
 from pagedrop.utils.list_utils import move_items
 
@@ -113,8 +118,8 @@ class BaseFileGrid(QScrollArea):
         self._container = QWidget()
         self._container.setObjectName(container_object_name)
         self._layout = QGridLayout(self._container)
-        self._layout.setSpacing(12)
-        self._layout.setContentsMargins(16, 16, 16, 16)
+        self._layout.setSpacing(SPACE_3)
+        self._layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
         self._layout.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
@@ -125,8 +130,8 @@ class BaseFileGrid(QScrollArea):
         self._empty_state.setAccessibleDescription(empty_hint)
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setSpacing(8)
-        empty_layout.setContentsMargins(32, 48, 32, 48)
+        empty_layout.setSpacing(SPACE_2)
+        empty_layout.setContentsMargins(SPACE_6, SPACE_7, SPACE_6, SPACE_7)
 
         self._empty_logo = QLabel()
         self._empty_logo.setObjectName(empty_logo_object_name)
