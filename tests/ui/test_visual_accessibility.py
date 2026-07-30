@@ -208,6 +208,39 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
     assert convert._empty_glyph_name == "images"
 
 
+def test_r10c_press_feedback_gaps(qtbot):
+    """R10c: named pushables + ToolTile expose pressed darken (no CSS scale)."""
+    from PyQt6.QtCore import QPoint, Qt
+
+    from pagedrop.ui.theme import app_stylesheet
+    from pagedrop.ui.tools_window import TOOL_CATALOGUE, ToolTile
+
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        assert "QPushButton#BusyOverlayCancel:pressed" in sheet
+        assert "QPushButton#ToastOverlayUndo:pressed" in sheet
+        assert "QPushButton#WatermarkZoomButton:pressed:enabled" in sheet
+        assert 'QFrame#ToolTile[pressed="true"]' in sheet
+        assert "QTabWidget#TabManager QTabBar QAbstractButton:pressed" in sheet
+        assert "QWidget#PdfViewerAnnotTools QToolButton:pressed" in sheet
+        assert "transform:" not in sheet
+        assert "scale(" not in sheet
+
+    entry = next(e for e in TOOL_CATALOGUE if e.id == "merge")
+    tile = ToolTile(entry)
+    qtbot.addWidget(tile)
+    tile.resize(200, 100)
+    tile.show()
+    assert tile.property("pressed") is False
+
+    activated: list[str] = []
+    tile.activated.connect(activated.append)
+    qtbot.mousePress(tile, Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
+    assert tile.property("pressed") is True
+    qtbot.mouseRelease(tile, Qt.MouseButton.LeftButton, pos=QPoint(8, 8))
+    assert tile.property("pressed") is False
+    assert activated == [entry.id]
+
+
 def test_light_stylesheet_styles_dialogs(isolated_settings):
     light = app_stylesheet(light=True)
     assert "#F7F8FA" in light

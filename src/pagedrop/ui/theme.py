@@ -42,8 +42,10 @@ BG_GRID_LIGHT = "#F0F1F4"
 
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
+CLOSE_TAB_PRESSED_BG = "#2A1519"
 CLOSE_TAB_LIGHT = "#D14343"
 CLOSE_TAB_HOVER_BG_LIGHT = "#F5D6D6"
+CLOSE_TAB_PRESSED_BG_LIGHT = "#E8B4B4"
 
 # Semantic status (compare diffs, validation errors, toast kinds)
 STATUS_SUCCESS = "#4CAF6E"
@@ -130,11 +132,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         text_muted_tok = TEXT_MUTED_LIGHT
         close_tab = CLOSE_TAB_LIGHT
         close_tab_hover_bg = CLOSE_TAB_HOVER_BG_LIGHT
+        close_tab_pressed_bg = CLOSE_TAB_PRESSED_BG_LIGHT
         status_success = STATUS_SUCCESS_LIGHT
         status_warning = STATUS_WARNING_LIGHT
         busy_overlay_bg = "rgba(247, 248, 250, 200)"
         # Chips sit on page-paper thumbs (always light) — dark pill either chrome.
         page_chip_bg = "rgba(26, 26, 31, 170)"
+        # R10c: one step deeper than bg_base for generic press fills.
+        bg_pressed = "#E2E4EA"
     else:
         bg_base = BG_BASE
         bg_surface = BG_SURFACE
@@ -154,10 +159,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         text_muted_tok = TEXT_MUTED
         close_tab = CLOSE_TAB
         close_tab_hover_bg = CLOSE_TAB_HOVER_BG
+        close_tab_pressed_bg = CLOSE_TAB_PRESSED_BG
         status_success = STATUS_SUCCESS
         status_warning = STATUS_WARNING
         busy_overlay_bg = "rgba(19, 19, 22, 180)"
         page_chip_bg = "rgba(19, 19, 22, 160)"
+        bg_pressed = "#0E0E11"
 
     text_muted = text_secondary if high_contrast else text_muted_tok
     border_default = border_hover if high_contrast else border_default_tok
@@ -296,7 +303,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
     }}
 
     QPushButton:focus {{
@@ -416,7 +423,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton:pressed,
     QToolBar QToolButton:pressed {{
-        background-color: {bg_card};
+        background-color: {bg_pressed};
         border-color: {border_default};
     }}
 
@@ -494,7 +501,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ToolbarSecondary:pressed,
     QToolBar QToolButton#ToolbarSecondary:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
         color: {text_primary};
     }}
 
@@ -531,7 +538,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#NewTabButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
     }}
 
     QToolButton#NewTabButton:focus {{
@@ -560,7 +567,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#ChromeToggleButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
     }}
 
     QToolButton#ChromeToggleButton:focus {{
@@ -828,6 +835,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QTabWidget#TabManager QTabBar QAbstractButton:hover {{
         background-color: {close_tab_hover_bg};
+    }}
+
+    QTabWidget#TabManager QTabBar QAbstractButton:pressed {{
+        background-color: {close_tab_pressed_bg};
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton:focus {{
@@ -1116,6 +1127,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
     }}
 
+    QPushButton#BusyOverlayCancel:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
     QWidget#ToastOverlay {{
         background-color: transparent;
     }}
@@ -1164,6 +1180,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToastOverlayUndo:hover {{
         background-color: {bg_card_hover};
         border-color: {border_hover};
+    }}
+
+    QPushButton#ToastOverlayUndo:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
     }}
 
     QWidget#TipsOverlay {{
@@ -1465,7 +1486,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ResultActionsPreview:pressed,
     QPushButton#ResultActionsOpen:pressed,
     QPushButton#ResultActionsFolder:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
         color: {text_primary};
     }}
 
@@ -1525,6 +1546,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#WatermarkZoomButton:hover:enabled {{
         background-color: {bg_card_hover};
         border-color: {border_hover};
+    }}
+
+    QPushButton#WatermarkZoomButton:pressed:enabled {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
     }}
 
     QPushButton#WatermarkZoomButton:focus {{
@@ -1676,13 +1702,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card};
         border-color: {border_subtle};
     }}
+    QFrame#ToolTile[pressed="true"] {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
     QFrame#ToolTile[blocked="true"],
     QFrame#ToolTile[comingSoon="true"] {{
         background-color: transparent;
         border-color: transparent;
     }}
     QFrame#ToolTile[blocked="true"]:hover,
-    QFrame#ToolTile[comingSoon="true"]:hover {{
+    QFrame#ToolTile[comingSoon="true"]:hover,
+    QFrame#ToolTile[blocked="true"][pressed="true"],
+    QFrame#ToolTile[comingSoon="true"][pressed="true"] {{
         background-color: transparent;
         border-color: transparent;
     }}

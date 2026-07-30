@@ -467,6 +467,7 @@ class ToolTile(QFrame):
         self.entry = entry
         self._compact = False
         self.setObjectName("ToolTile")
+        self.setProperty("pressed", False)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -557,12 +558,34 @@ class ToolTile(QFrame):
         style.polish(self)
         self.update()
 
+    def _set_pressed(self, pressed: bool) -> None:
+        if bool(self.property("pressed")) == pressed:
+            return
+        self.setProperty("pressed", pressed)
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
+        self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and not self.is_blocked():
+            self._set_pressed(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
+        was_pressed = bool(self.property("pressed"))
+        self._set_pressed(False)
+        if event.button() == Qt.MouseButton.LeftButton and was_pressed:
             self.activated.emit(self.entry.id)
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._set_pressed(False)
+        super().leaveEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
