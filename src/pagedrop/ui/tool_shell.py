@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -16,7 +17,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -36,7 +36,6 @@ from pagedrop.ui.dialogs import (
     prompt_pdf_password,
 )
 from pagedrop.ui.job_chrome import JobChromeMixin
-from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import StatusFooter
 
@@ -553,6 +552,7 @@ class ToolShellWindow(JobChromeMixin, QWidget):
 
         self._options_host = QWidget()
         self._options_host.setObjectName("ToolShellOptions")
+        self._options_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._options_layout = QVBoxLayout(self._options_host)
         self._options_layout.setContentsMargins(0, 0, 8, 0)
         self._options_layout.setSpacing(8)
@@ -560,30 +560,25 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._options_scroll.setWidget(self._options_host)
         root.addWidget(self._options_scroll, stretch=1)
 
-        toolbar = QToolBar("Tool", self)
-        toolbar.setObjectName("ToolShellToolbar")
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        self._toolbar = toolbar
-
-        spacer = QWidget()
-        spacer.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        toolbar.addWidget(spacer)
+        # R11: compact actions row — never a one-button QToolBar.
+        self._actions_host = QWidget()
+        self._actions_host.setObjectName("ToolShellActions")
+        self._actions_layout = QHBoxLayout(self._actions_host)
+        self._actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._actions_layout.setSpacing(8)
+        self._actions_layout.addStretch(1)
 
         self._run_btn = QPushButton("Run")
         self._run_btn.setObjectName("ToolbarPrimary")
         self._run_btn.setDefault(True)
         self._run_btn.setEnabled(False)
+        self._run_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         # Match Merge/Create primary-action tips: short sentence-case what Run does.
         self._run_btn.setToolTip(description)
         self._run_btn.setStatusTip(description)
         self._run_btn.clicked.connect(self._on_run)
-        toolbar.addWidget(self._run_btn)
-
-        enable_toolbar_keyboard_navigation(toolbar)
-        root.addWidget(toolbar)
+        self._actions_layout.addWidget(self._run_btn)
+        root.addWidget(self._actions_host)
 
         self._make_job_chrome_widgets()
         self._wire_result_actions()
@@ -643,6 +638,20 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         """Optional extra gate for Run (e.g. backend present). Re-evaluates now."""
         self._run_enabled_check = check
         self._update_run_enabled()
+
+    def adopt_run_button(self, parent_layout: QBoxLayout) -> None:
+        """Reparent the single Run button into ``parent_layout``; hide shell actions.
+
+        Preview/split shells dock Run as an options-column footer so the body
+        reclaims the full-width actions strip. Enable/click wiring stays on
+        ``_run_btn`` — one button object, one enable path.
+        """
+        self._actions_layout.removeWidget(self._run_btn)
+        self._run_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        parent_layout.addWidget(self._run_btn)
+        self._actions_host.hide()
 
     def _set_job_controls_enabled(self, enabled: bool) -> None:
         self._drop_zone.setEnabled(enabled)

@@ -274,9 +274,17 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     preview_lay.addWidget(preview_scroll, stretch=1)
     body_row.addWidget(preview_card, stretch=3)
 
+    # Options column: scrollable card + sticky Run footer (R11 — no shell Run strip).
+    # Form stays on the styled QFrame (scroll widget) so light/dark QSS fills correctly;
+    # a plain QWidget inside the viewport would show the unthemed palette (dark blotch).
+    options_column = QWidget()
+    options_column.setMinimumWidth(280)
+    options_col = QVBoxLayout(options_column)
+    options_col.setContentsMargins(0, 0, 0, 0)
+    options_col.setSpacing(8)
+
     options_card = QFrame()
     options_card.setObjectName("WatermarkOptionsCard")
-    options_card.setMinimumWidth(280)
     form = QFormLayout(options_card)
     form.setContentsMargins(14, 14, 14, 14)
     form.setVerticalSpacing(10)
@@ -482,13 +490,14 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     form.addRow("Opacity", opacity_host)
     form.addRow("Angle", angle_host)
     form.addRow("Snap", pos_host)
+    form.addRow("", flatten)
+    form.addRow(flatten_hint)
+
     # Hidden spins keep range + test findability; sliders drive the UI.
     opacity.setParent(options_card)
     angle.setParent(options_card)
     opacity.hide()
     angle.hide()
-    form.addRow("", flatten)
-    form.addRow(flatten_hint)
 
     options_scroll = QScrollArea()
     options_scroll.setObjectName("WatermarkOptionsScroll")
@@ -496,7 +505,9 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
     options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     options_scroll.setWidget(options_card)
-    body_row.addWidget(options_scroll, stretch=2)
+    options_col.addWidget(options_scroll, stretch=1)
+    shell.adopt_run_button(options_col)
+    body_row.addWidget(options_column, stretch=2)
 
     while shell._options_layout.count():
         item = shell._options_layout.takeAt(0)

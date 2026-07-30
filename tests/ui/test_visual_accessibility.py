@@ -712,9 +712,12 @@ def test_r6_tool_tile_quiet_chrome_keeps_focus_rings():
 
 def test_r6_tool_shell_drop_and_result_match_secondary():
     """R6: drop zone + result actions use ghost/outline secondary language."""
-    from pagedrop.ui.theme import ACCENT, app_stylesheet
+    from pagedrop.ui.theme import ACCENT, BG_BASE, BG_BASE_LIGHT, app_stylesheet
 
-    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+    for sheet, expected_base in (
+        (app_stylesheet(), BG_BASE),
+        (app_stylesheet(light=True), BG_BASE_LIGHT),
+    ):
         drop = sheet.split("QFrame#ToolShellDropZone {")[1].split(
             "QFrame#ToolShellDropZone[dropActive"
         )[0]
@@ -733,6 +736,14 @@ def test_r6_tool_shell_drop_and_result_match_secondary():
         assert "border: 1px solid" in btn
         assert "QFrame#ToolShellDropZone:focus" in sheet
         assert f"dashed {ACCENT}" in sheet
+
+        # Light/dark: options scroll must be solid — transparent + unthemed
+        # viewport paints charcoal under light ink (Watermark-class bug).
+        opts = sheet.split("QScrollArea#ToolShellOptionsScroll {")[1].split("}")[0]
+        assert "transparent" not in opts
+        assert expected_base in opts
+        assert "QWidget#ToolShellWindow" in sheet
+        assert "QWidget#ToolShellCentral" not in sheet
 
 
 def test_r7_toast_motion_gated_by_reduce_motion(qtbot, isolated_settings):

@@ -1386,7 +1386,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 12px;
     }}
 
-    QWidget#ToolsCentral {{
+    QWidget#ToolsWindow {{
         background-color: {bg_base};
     }}
 
@@ -1397,6 +1397,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QScrollArea#ToolsScroll {{
         background-color: {bg_base};
         border: none;
+    }}
+
+    QScrollArea#ToolsScroll > QWidget {{
+        background-color: {bg_base};
     }}
 
     QLineEdit#ToolsSearch {{
@@ -1456,7 +1460,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 0;
     }}
 
-    QWidget#ToolShellCentral {{
+    QWidget#ToolShellWindow {{
         background-color: {bg_base};
     }}
 
@@ -1472,13 +1476,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 13px;
     }}
 
+    /* Solid fill — transparent scroll + unthemed viewport reads charcoal under
+       light chrome (same class of bug as pre-fix Watermark options). */
     QScrollArea#ToolShellOptionsScroll {{
-        background-color: transparent;
+        background-color: {bg_base};
         border: none;
     }}
 
+    QScrollArea#ToolShellOptionsScroll > QWidget {{
+        background-color: {bg_base};
+    }}
+
     QWidget#ToolShellOptions {{
-        background-color: transparent;
+        background-color: {bg_base};
     }}
 
     /* R6: drop zone ghost/outline — same quiet language as #ToolbarSecondary. */
@@ -1624,14 +1634,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-width: 64px;
     }}
 
-    QScrollArea#WatermarkPreviewScroll {{
-        background-color: transparent;
+    QScrollArea#WatermarkPreviewScroll,
+    QScrollArea#WatermarkOptionsScroll {{
+        background-color: {bg_surface};
         border: none;
     }}
 
-    QScrollArea#WatermarkOptionsScroll {{
-        background-color: transparent;
-        border: none;
+    QScrollArea#WatermarkPreviewScroll > QWidget,
+    QScrollArea#WatermarkOptionsScroll > QWidget {{
+        background-color: {bg_surface};
+    }}
+
+    QWidget#WatermarkPreviewCanvas {{
+        background-color: {bg_surface};
     }}
 
     QSlider#WatermarkSlider::groove:horizontal {{

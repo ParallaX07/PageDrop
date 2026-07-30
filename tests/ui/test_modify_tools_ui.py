@@ -45,7 +45,7 @@ def test_modify_tiles_open_shells(qtbot, isolated_settings):
 
 
 def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_settings):
-    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QToolButton
+    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QToolBar, QToolButton
 
     from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
 
@@ -58,7 +58,13 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
 
     assert host.findChild(WatermarkPreviewCanvas, "WatermarkPreviewCanvas") is not None
     assert host.findChild(QFrame, "WatermarkPreviewCard") is not None
-    assert host.findChild(QFrame, "WatermarkOptionsCard") is not None
+    options_card = host.findChild(QFrame, "WatermarkOptionsCard")
+    assert options_card is not None
+    # R11: Run docks in options column footer (outside scroll card); shell strip hidden.
+    assert host.isAncestorOf(shell._run_btn)
+    assert not options_card.isAncestorOf(shell._run_btn)
+    assert not shell._actions_host.isVisible()
+    assert shell.findChild(QToolBar, "ToolShellToolbar") is None
     assert any(
         isinstance(lab, QLabel) and "Drag watermark" in lab.text()
         for lab in host.findChildren(QLabel)
