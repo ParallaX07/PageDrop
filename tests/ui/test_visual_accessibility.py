@@ -242,6 +242,23 @@ def test_r10c_press_feedback_gaps(qtbot):
     assert activated == [entry.id]
 
 
+def test_r10e_feedback_hygiene_chrome():
+    """R10e: Tools footer / undo / splitter / scrollbar pressed; no progress sweep."""
+    from pagedrop.ui.theme import app_stylesheet
+
+    for sheet in (app_stylesheet(), app_stylesheet(light=True)):
+        assert "QLabel#ToolPageStatus" in sheet
+        assert "QWidget#MoveUndoToast QLabel" in sheet
+        assert "QPushButton#MoveUndoButton:pressed" in sheet
+        assert "QScrollBar::handle:vertical:pressed" in sheet
+        assert "QScrollBar::handle:horizontal:pressed" in sheet
+        assert "QSplitter::handle:pressed" in sheet
+        # Static accent chunk only — no indeterminate shimmer widget.
+        assert "QProgressBar::chunk" in sheet
+        assert "@keyframes" not in sheet
+        assert "indeterminate" not in sheet.lower()
+
+
 def test_light_stylesheet_styles_dialogs(isolated_settings):
     light = app_stylesheet(light=True)
     assert "#F7F8FA" in light

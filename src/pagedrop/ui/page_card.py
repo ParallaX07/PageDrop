@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
+from PyQt6.QtGui import QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -37,7 +37,15 @@ from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
-from pagedrop.ui.theme import CARD_PADDING, RADIUS_BADGE, SPACE_1, SPACE_2, accent_qcolor, on_accent_qcolor
+from pagedrop.ui.theme import (
+    CARD_PADDING,
+    RADIUS_BADGE,
+    SPACE_1,
+    SPACE_2,
+    accent_qcolor,
+    on_accent_qcolor,
+    shadow_qcolor,
+)
 from pagedrop.utils.temp_manager import TempManager
 
 # Portrait placeholder while the real thumbnail is rendering.
@@ -466,7 +474,7 @@ class PageCard(BaseFileCard):
 
         # Hairline edge so the accent chip stays readable on stacked thumbs
         painter.setBrush(accent_qcolor())
-        painter.setPen(QColor(0, 0, 0, 90))
+        painter.setPen(shadow_qcolor(alpha=90))
         painter.drawRoundedRect(
             badge_x, badge_y, badge_w, badge_h, RADIUS_BADGE, RADIUS_BADGE
         )

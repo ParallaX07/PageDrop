@@ -185,6 +185,43 @@ def test_add_folder_skips_invalid_pdfs(qtbot, one_page_pdf, tmp_path, monkeypatc
     assert "skipped 1" in window.statusBar().currentMessage()
 
 
+def test_add_folder_large_batch_uses_busy_overlay(
+    qtbot, one_page_pdf, tmp_path, monkeypatch
+):
+    """R10e: folder check ≥ threshold uses BusyOverlay, not QProgressDialog."""
+    import pagedrop.ui.merge_window as merge_mod
+
+    root = tmp_path / "batch"
+    root.mkdir()
+    for i in range(merge_mod._FOLDER_PROGRESS_THRESHOLD):
+        (root / f"f{i}.pdf").write_bytes(one_page_pdf.read_bytes())
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(root),
+    )
+
+    window = _merge_window(qtbot)
+    seen: list[str] = []
+    original = window._busy_overlay.show_message
+
+    def _track(message: str) -> None:
+        seen.append(message)
+        original(message)
+
+    monkeypatch.setattr(window._busy_overlay, "show_message", _track)
+    window._add_folder()
+
+    assert any(m.startswith("Checking") for m in seen)
+    assert window._model.file_count() == merge_mod._FOLDER_PROGRESS_THRESHOLD
+    assert not window._busy_overlay.isVisible()
+    assert window._busy_overlay._cancel_btn.isHidden()
+    assert "QProgressDialog" not in Path(merge_mod.__file__).read_text(
+        encoding="utf-8"
+    )
+
+
 def test_toolbar_actions_have_status_tips(qtbot):
     window = _merge_window(qtbot)
     labeled = [

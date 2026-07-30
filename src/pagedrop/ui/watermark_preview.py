@@ -25,7 +25,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
-from pagedrop.ui.theme import accent_qcolor
+from pagedrop.ui.theme import accent_qcolor, on_accent_qcolor
 from pagedrop.core.modify_ops import watermark_text_box
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
@@ -530,7 +530,7 @@ class WatermarkPreviewCanvas(QWidget):
         rh = QPointF(0.0, -wh / 2 - _ROTATE_OFFSET)
         painter.setPen(QPen(accent_qcolor(), 1, Qt.PenStyle.DashLine))
         painter.drawLine(top, rh)
-        painter.setBrush(QColor(255, 255, 255))
+        painter.setBrush(on_accent_qcolor())
         painter.setPen(QPen(accent_qcolor(), 1))
         painter.drawEllipse(rh, _HANDLE_PX / 2, _HANDLE_PX / 2)
         painter.restore()
@@ -698,7 +698,7 @@ def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
         (wr.left(), wr.bottom()),
         (wr.left(), mid_y),
     )
-    painter.setBrush(QColor(255, 255, 255))
+    painter.setBrush(on_accent_qcolor())
     painter.setPen(QPen(accent_qcolor(), 1))
     for px, py in points:
         painter.drawRect(QRectF(px - hs / 2, py - hs / 2, hs, hs))

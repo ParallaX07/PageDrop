@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QMessageBox,
-    QProgressDialog,
     QStackedWidget,
     QToolBar,
     QVBoxLayout,
@@ -110,6 +109,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._credentials = RuntimeCredentials()
         self._preview_loader: PdfLoader | None = None
         self._merging = False
+        self._folder_checking = False
         self._merge_pool = QThreadPool(self)
         self._merge_pool.setMaxThreadCount(1)
         self._status = StatusFooter()
@@ -306,14 +306,16 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._merge_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
-        toolbar_enabled = not self._merging
+        toolbar_enabled = not self._merging and not self._folder_checking
         self._add_action.setEnabled(toolbar_enabled)
         self._add_folder_action.setEnabled(toolbar_enabled)
         self._remove_action.setEnabled(has_selection and toolbar_enabled)
         self._move_up_action.setEnabled(self._can_move_up() and toolbar_enabled)
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
-        self._merge_action.setEnabled(has_files and not self._merging)
-        self._zoom_controls.setEnabled(has_files and not in_preview and not self._merging)
+        self._merge_action.setEnabled(has_files and not self._merging and not self._folder_checking)
+        self._zoom_controls.setEnabled(
+            has_files and not in_preview and not self._merging and not self._folder_checking
+        )
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -561,69 +563,76 @@ class MergeWindow(JobChromeMixin, QWidget):
         accepted: list[str] = []
         skipped: list[tuple[str, str]] = []
         total = len(paths)
-        progress: QProgressDialog | None = None
-        if total >= _FOLDER_PROGRESS_THRESHOLD:
-            progress = QProgressDialog(
-                "Checking PDFs…",
-                "Cancel",
-                0,
-                total,
-                self,
-            )
-            progress.setWindowTitle("Add folder")
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
-            progress.setValue(0)
-
+        show_busy = total >= _FOLDER_PROGRESS_THRESHOLD
         cancelled = False
-        for index, path in enumerate(paths):
-            if progress is not None:
-                progress.setValue(index)
-                progress.setLabelText(f"Checking {Path(path).name}…")
-                QApplication.processEvents()
-                if progress.wasCanceled():
-                    cancelled = True
-                    break
 
-            password = self._credentials.get(path)
-            while True:
-                try:
-                    page_count = self._page_count(path, password=password)
-                    break
-                except PdfPasswordRequiredError:
-                    password = prompt_pdf_password(self, Path(path).name)
-                    if password is None:
-                        skipped.append((path, "password cancelled"))
-                        page_count = None
-                        break
-                except PdfPasswordError:
-                    password = prompt_pdf_password(
-                        self, Path(path).name, incorrect=True
+        def _on_folder_cancel() -> None:
+            nonlocal cancelled
+            cancelled = True
+
+        if show_busy:
+            self._folder_checking = True
+            self._update_actions()
+            self._busy_overlay.set_cancellable(True)
+            self._busy_overlay.cancelled.connect(_on_folder_cancel)
+            self._busy_overlay.show_message("Checking PDFs…")
+            self.statusBar().showMessage("Checking PDFs…")
+
+        try:
+            for path in paths:
+                if show_busy:
+                    self._busy_overlay.show_message(
+                        f"Checking {Path(path).name}…"
                     )
-                    if password is None:
-                        skipped.append((path, "password cancelled"))
+                    self.statusBar().showMessage(
+                        f"Checking {Path(path).name}…"
+                    )
+                    QApplication.processEvents()
+                    if cancelled:
+                        break
+
+                password = self._credentials.get(path)
+                while True:
+                    try:
+                        page_count = self._page_count(path, password=password)
+                        break
+                    except PdfPasswordRequiredError:
+                        password = prompt_pdf_password(self, Path(path).name)
+                        if password is None:
+                            skipped.append((path, "password cancelled"))
+                            page_count = None
+                            break
+                    except PdfPasswordError:
+                        password = prompt_pdf_password(
+                            self, Path(path).name, incorrect=True
+                        )
+                        if password is None:
+                            skipped.append((path, "password cancelled"))
+                            page_count = None
+                            break
+                    except PdfEmptyError:
+                        skipped.append((path, "no pages"))
                         page_count = None
                         break
-                except PdfEmptyError:
-                    skipped.append((path, "no pages"))
-                    page_count = None
-                    break
-                except PdfLoadError as exc:
-                    skipped.append((path, str(exc)))
-                    page_count = None
-                    break
-            if page_count is None:
-                continue
+                    except PdfLoadError as exc:
+                        skipped.append((path, str(exc)))
+                        page_count = None
+                        break
+                if page_count is None:
+                    continue
 
-            resolved = str(Path(path).resolve())
-            if password is not None:
-                self._credentials.set(resolved, password)
-            self._page_counts[resolved] = page_count
-            accepted.append(resolved)
-
-        if progress is not None:
-            progress.setValue(total if not cancelled else progress.value())
-            progress.close()
+                resolved = str(Path(path).resolve())
+                if password is not None:
+                    self._credentials.set(resolved, password)
+                self._page_counts[resolved] = page_count
+                accepted.append(resolved)
+        finally:
+            if show_busy:
+                self._busy_overlay.cancelled.disconnect(_on_folder_cancel)
+                self._busy_overlay.set_cancellable(False)
+                self._busy_overlay.hide_overlay()
+                self._folder_checking = False
+                self._update_actions()
 
         return accepted, skipped, cancelled
 

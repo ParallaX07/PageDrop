@@ -714,6 +714,39 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    /* R10e: tool-tab footers mirror QStatusBar so Tools/editor chrome feel related. */
+    QLabel#ToolPageStatus {{
+        background-color: {bg_status};
+        color: {text_secondary};
+        border-top: 1px solid {border_subtle};
+        padding: {SPACE_1}px {SPACE_3}px;
+        min-height: 22px;
+    }}
+
+    QWidget#MoveUndoToast QLabel {{
+        color: {text_secondary};
+        font-weight: 600;
+    }}
+
+    QPushButton#MoveUndoButton {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 2px 10px;
+        font-weight: 600;
+    }}
+
+    QPushButton#MoveUndoButton:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#MoveUndoButton:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
     QProgressBar {{
         background-color: {bg_card};
         border: 1px solid {border_subtle};
@@ -861,6 +894,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background: {border_hover};
     }}
 
+    QScrollBar::handle:vertical:pressed {{
+        background: {text_muted};
+    }}
+
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
     }}
@@ -881,8 +918,33 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background: {border_hover};
     }}
 
+    QScrollBar::handle:horizontal:pressed {{
+        background: {text_muted};
+    }}
+
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         width: 0;
+    }}
+
+    /* R10e: splitter grip press feedback (viewer / compare). */
+    QSplitter::handle {{
+        background-color: {border_subtle};
+    }}
+
+    QSplitter::handle:hover {{
+        background-color: {border_default};
+    }}
+
+    QSplitter::handle:pressed {{
+        background-color: {border_hover};
+    }}
+
+    QSplitter::handle:horizontal {{
+        height: 3px;
+    }}
+
+    QSplitter::handle:vertical {{
+        width: 3px;
     }}
 
     QMessageBox {{
