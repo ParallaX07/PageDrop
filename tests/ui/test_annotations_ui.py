@@ -6,10 +6,12 @@ from pathlib import Path
 
 import fitz
 import pytest
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QColorDialog, QToolButton
 
 from pagedrop.core.annotations import AnnotationOp, list_annotation_summaries
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.pdf_viewer import AnnotTool
+from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool
 from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
 
 
@@ -29,6 +31,15 @@ def _active_tab(window) -> PdfTab:
     return tab
 
 
+def _rail_tool_labels(viewer) -> list[str]:
+    host = viewer._annot_tools_host
+    return [
+        btn.text()
+        for btn in host.findChildren(QToolButton)
+        if viewer._annot_group.id(btn) >= 0
+    ]
+
+
 @pytest.fixture
 def markup_pdf(tmp_path: Path) -> Path:
     path = tmp_path / "markup.pdf"
@@ -36,8 +47,19 @@ def markup_pdf(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def accept_markup_color(monkeypatch: pytest.MonkeyPatch):
+    """Accept color dialog with a distinct magenta so storage is observable."""
+
+    def _fake_get_color(*_args, **_kwargs) -> QColor:
+        return QColor(200, 40, 180)
+
+    monkeypatch.setattr(QColorDialog, "getColor", staticmethod(_fake_get_color))
+    return (200 / 255, 40 / 255, 180 / 255)
+
+
 def test_annot_tools_and_markup_dirty_undo_save(
-    qtbot, main_window, markup_pdf: Path, tmp_path: Path
+    qtbot, main_window, markup_pdf: Path, tmp_path: Path, accept_markup_color
 ) -> None:
     window = main_window
     window._load_pdf(str(markup_pdf))
@@ -56,23 +78,9 @@ def test_annot_tools_and_markup_dirty_undo_save(
     viewer._toggle_annot_rail()
     assert not viewer._annot_rail_collapsed
 
-    for tool in (
-        AnnotTool.HIGHLIGHT,
-        AnnotTool.UNDERLINE,
-        AnnotTool.STRIKEOUT,
-        AnnotTool.INK,
-        AnnotTool.RECT,
-        AnnotTool.CIRCLE,
-        AnnotTool.LINE,
-        AnnotTool.STAMP,
-        AnnotTool.FREETEXT,
-        AnnotTool.IMAGE,
-        AnnotTool.COMMENT,
-        AnnotTool.REDACT,
-        AnnotTool.FORM_FILL,
-        AnnotTool.FORM_TEXT,
-        AnnotTool.FORM_CHECK,
-    ):
+    for _label, tool in ANNOT_TOOL_ITEMS:
+        if tool == AnnotTool.SELECT:
+            continue
         viewer.set_annot_tool(tool)
         assert viewer.annot_tool == tool
 
@@ -100,6 +108,81 @@ def test_annot_tools_and_markup_dirty_undo_save(
     write_pdf(tab.edit_model, str(out), markup=tab.peek_markup_ops())
     types = [t for _, t, _ in list_annotation_summaries(str(out))]
     assert "Highlight" in types
+
+
+def test_markup_rail_hygiene_no_stamp_field_check_or_color(
+    qtbot, main_window, markup_pdf: Path
+) -> None:
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+
+    viewer = tab.viewer_widget
+    labels = _rail_tool_labels(viewer)
+    assert "Stamp" not in labels
+    assert "Field" not in labels
+    assert "Check" not in labels
+    assert "Color" not in labels
+    assert viewer.findChild(QToolButton, "PdfViewerMarkupColor") is None
+    # Kept discoverable tools still on the rail.
+    for kept in ("Highlight", "Fill", "Redact", "Text", "Ink", "Rect"):
+        assert kept in labels
+    rail_tools = {tool for _label, tool in ANNOT_TOOL_ITEMS}
+    assert AnnotTool.STAMP not in rail_tools
+    assert AnnotTool.FORM_TEXT not in rail_tools
+    assert AnnotTool.FORM_CHECK not in rail_tools
+
+
+def test_color_on_select_stores_color_cancel_keeps_tool(
+    qtbot, main_window, markup_pdf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+    viewer = tab.viewer_widget
+
+    calls: list[str] = []
+
+    def accept(*_a, **_k) -> QColor:
+        calls.append("accept")
+        return QColor(10, 20, 30)
+
+    def cancel(*_a, **_k) -> QColor:
+        calls.append("cancel")
+        return QColor()  # invalid → cancelled
+
+    monkeypatch.setattr(QColorDialog, "getColor", staticmethod(accept))
+    viewer.set_annot_tool(AnnotTool.HIGHLIGHT)
+    assert viewer.annot_tool == AnnotTool.HIGHLIGHT
+    assert viewer._markup_color == pytest.approx((10 / 255, 20 / 255, 30 / 255))
+    assert calls == ["accept"]
+
+    # Same-tool re-click must not re-prompt.
+    viewer.set_annot_tool(AnnotTool.HIGHLIGHT)
+    assert calls == ["accept"]
+
+    # Enter a different color-capable tool → re-prompt.
+    monkeypatch.setattr(QColorDialog, "getColor", staticmethod(accept))
+    viewer.set_annot_tool(AnnotTool.INK)
+    assert viewer.annot_tool == AnnotTool.INK
+    assert calls == ["accept", "accept"]
+
+    # Cancel → stay on Ink; rail check state restored.
+    monkeypatch.setattr(QColorDialog, "getColor", staticmethod(cancel))
+    viewer.set_annot_tool(AnnotTool.RECT)
+    assert viewer.annot_tool == AnnotTool.INK
+    assert calls == ["accept", "accept", "cancel"]
+    viewer._sync_annot_tool_ui()
+    for i, (_label, tool) in enumerate(ANNOT_TOOL_ITEMS):
+        btn = viewer._annot_group.button(i)
+        assert btn is not None
+        assert btn.isChecked() == (tool == AnnotTool.INK)
 
 
 def test_viewer_markup_undo_redo_via_main_window(

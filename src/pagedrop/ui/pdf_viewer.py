@@ -180,6 +180,8 @@ class AnnotTool(str, Enum):
 
 
 # Shared by the right rail and the page context menu.
+# ponytail: Stamp / Field / Check stay in AnnotTool + core for writer compatibility;
+# rail/menu hide them until a real stamp picker / form-author UX exists (R15).
 ANNOT_TOOL_ITEMS: tuple[tuple[str, AnnotTool], ...] = (
     ("Select", AnnotTool.SELECT),
     ("Highlight", AnnotTool.HIGHLIGHT),
@@ -189,18 +191,27 @@ ANNOT_TOOL_ITEMS: tuple[tuple[str, AnnotTool], ...] = (
     ("Rect", AnnotTool.RECT),
     ("Circle", AnnotTool.CIRCLE),
     ("Line", AnnotTool.LINE),
-    ("Stamp", AnnotTool.STAMP),
     ("Text", AnnotTool.FREETEXT),
     ("Image", AnnotTool.IMAGE),
     ("Comment", AnnotTool.COMMENT),
     ("Redact", AnnotTool.REDACT),
     ("Fill", AnnotTool.FORM_FILL),
-    ("Field", AnnotTool.FORM_TEXT),
-    ("Check", AnnotTool.FORM_CHECK),
 )
 
 _TEXT_MARKUP_TOOLS = frozenset(
     {AnnotTool.HIGHLIGHT, AnnotTool.UNDERLINE, AnnotTool.STRIKEOUT}
+)
+# Color chosen on enter (R15); session keeps last pick in ``_markup_color``.
+_COLOR_CAPABLE_TOOLS = frozenset(
+    {
+        AnnotTool.HIGHLIGHT,
+        AnnotTool.UNDERLINE,
+        AnnotTool.STRIKEOUT,
+        AnnotTool.INK,
+        AnnotTool.RECT,
+        AnnotTool.CIRCLE,
+        AnnotTool.LINE,
+    }
 )
 
 _HANDLE_CURSORS: dict[str, Qt.CursorShape] = {
@@ -1700,6 +1711,12 @@ class PdfViewerWidget(QWidget):
         return self._tool
 
     def set_annot_tool(self, tool: AnnotTool) -> None:
+        # Same-tool click: keep tool + color; re-prompt only on enter from another tool.
+        if tool == self._tool:
+            return
+        if tool in _COLOR_CAPABLE_TOOLS and not self._prompt_markup_color():
+            self._sync_annot_tool_ui()
+            return
         self._tool = tool
         self._sync_annot_tool_ui()
         for tile in self._tiles.values():
@@ -1707,9 +1724,9 @@ class PdfViewerWidget(QWidget):
             tile.clear_selection()
         labels = {
             AnnotTool.SELECT: "Select text — click boxes to move or resize",
-            AnnotTool.HIGHLIGHT: "Highlight — drag over text (color from Markup color)",
-            AnnotTool.UNDERLINE: "Underline — drag over text (color from Markup color)",
-            AnnotTool.STRIKEOUT: "Strikeout — drag over text (color from Markup color)",
+            AnnotTool.HIGHLIGHT: "Highlight — drag over text",
+            AnnotTool.UNDERLINE: "Underline — drag over text",
+            AnnotTool.STRIKEOUT: "Strikeout — drag over text",
             AnnotTool.INK: "Ink — draw freehand",
             AnnotTool.RECT: "Rectangle — drag",
             AnnotTool.CIRCLE: "Circle — drag",
@@ -1724,6 +1741,21 @@ class PdfViewerWidget(QWidget):
             AnnotTool.FORM_CHECK: "Add checkbox — drag",
         }
         self.status_message.emit(labels.get(tool, tool.value))
+
+    def _prompt_markup_color(self) -> bool:
+        """Ask for markup color; return False if cancelled (caller keeps prior tool)."""
+        r, g, b = (
+            int(self._markup_color[0] * 255),
+            int(self._markup_color[1] * 255),
+            int(self._markup_color[2] * 255),
+        )
+        chosen = QColorDialog.getColor(QColor(r, g, b), self, "Markup color")
+        if not chosen.isValid():
+            return False
+        self._markup_color = (chosen.redF(), chosen.greenF(), chosen.blueF())
+        for tile in self._tiles.values():
+            tile.set_markup_color(self._markup_color)
+        return True
 
     def _sync_annot_tool_ui(self) -> None:
         if not hasattr(self, "_annot_group"):
@@ -1766,25 +1798,6 @@ class PdfViewerWidget(QWidget):
         label = "Image" if target.kind == "image" else "Text"
         self.status_message.emit(f"{label} removed")
         return True
-
-    def _pick_markup_color(self) -> None:
-        rgb = [int(c * 255) for c in self._markup_color]
-        chosen = QColorDialog.getColor(QColor(*rgb), self, "Markup color")
-        if not chosen.isValid():
-            return
-        self._markup_color = (chosen.red() / 255.0, chosen.green() / 255.0, chosen.blue() / 255.0)
-        self._sync_markup_color_button()
-        for tile in self._tiles.values():
-            tile.set_markup_color(self._markup_color)
-        self.status_message.emit("Markup color updated")
-
-    def _sync_markup_color_button(self) -> None:
-        if not hasattr(self, "_markup_color_btn"):
-            return
-        r, g, b = (int(c * 255) for c in self._markup_color)
-        self._markup_color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); min-height: 22px;"
-        )
 
     def set_layout_mode(self, mode: ViewerLayout) -> None:
         if mode == self._layout:
@@ -2142,18 +2155,6 @@ class PdfViewerWidget(QWidget):
             self._annot_group.addButton(btn, i)
             btn.clicked.connect(lambda _checked=False, t=tool: self.set_annot_tool(t))
             tools_layout.addWidget(btn)
-
-        self._markup_color_btn = QToolButton()
-        self._markup_color_btn.setText("Color")
-        self._markup_color_btn.setObjectName("PdfViewerMarkupColor")
-        self._markup_color_btn.setAccessibleName("Markup color")
-        self._markup_color_btn.setToolTip("Color for highlight, underline, and strikeout")
-        self._markup_color_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._markup_color_btn.clicked.connect(self._pick_markup_color)
-        self._sync_markup_color_button()
-        tools_layout.addWidget(self._markup_color_btn)
 
         flatten_btn = QToolButton()
         flatten_btn.setText("Flatten forms")
