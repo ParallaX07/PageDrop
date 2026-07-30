@@ -109,7 +109,11 @@ def test_stylesheet_includes_focus_rings_for_controls():
     assert "QTreeWidget {" in sheet
     assert "QPushButton {" in sheet
     assert "QComboBox {" in sheet
-    assert "QSpinBox {" in sheet
+    assert "QSpinBox," in sheet
+    assert "QDoubleSpinBox {" in sheet
+    assert "QPlainTextEdit," in sheet
+    assert "QTextEdit {" in sheet
+    assert "QGroupBox {" in sheet
     assert "QCheckBox," in sheet
     assert "QLineEdit {" in sheet
     assert "QSlider#ZoomSlider:focus" in sheet

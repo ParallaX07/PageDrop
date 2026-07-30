@@ -383,16 +383,51 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         selection-color: {TEXT_ON_ACCENT};
     }}
 
-    QSpinBox {{
+    QSpinBox,
+    QDoubleSpinBox {{
         background-color: {bg_card};
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 8px;
+        selection-background-color: {ACCENT};
+        selection-color: {TEXT_ON_ACCENT};
     }}
 
-    QSpinBox:focus {{
+    QSpinBox:focus,
+    QDoubleSpinBox:focus {{
         border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPlainTextEdit,
+    QTextEdit {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 8px 10px;
+        selection-background-color: {ACCENT};
+        selection-color: {TEXT_ON_ACCENT};
+    }}
+
+    QPlainTextEdit:focus,
+    QTextEdit:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QGroupBox {{
+        color: {text_primary};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+        margin-top: 12px;
+        padding: 12px 10px 10px 10px;
+    }}
+
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 4px;
+        color: {text_secondary};
     }}
 
     QToolBar {{
