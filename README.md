@@ -167,4 +167,4 @@ PageDrop source is MIT — see [`LICENSE`](LICENSE). Redistributing frozen binar
 
 ## Status
 
-**v0.3.0**: Windows Setup.exe is on [Releases](https://github.com/ParallaX07/PageDrop/releases). This build adds password-protected PDFs, page rotate/duplicate, undo/redo, export-all pages, a command palette, onboarding tips, recent files, window geometry persistence, toast notifications, a light theme, and accessibility/reduce-motion preferences on top of the 0.2.0 core workflows. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
+**v0.4.0**: Windows Setup.exe is on [Releases](https://github.com/ParallaX07/PageDrop/releases). Builds on 0.3.0 with a modeless Tools hub — organize (split/extract/reorder), side-by-side compare, watermark, native import/export, Office/LibreOffice conversion, OCR, annotations/forms/markup, security-grade redaction, Optimize & Secure, attachment ZIP extract — plus cancellable jobs, document caching, and broader password/thread-safety hardening. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
