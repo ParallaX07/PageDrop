@@ -88,8 +88,12 @@ def refresh_themed_widgets(app: QApplication | None = None) -> None:
 
     Card/tile chrome uses dynamic properties + shared app QSS, so a single
     stylesheet swap restyles selection/hover/focus without per-card rebuilds.
+    Also clears Phosphor icon tint cache so toolbar glyphs match light/dark.
     """
     apply_app_stylesheet(app or QApplication.instance())
+    from pagedrop.ui.icons import refresh_icons
+
+    refresh_icons()
 
 class _AccessibilityWatcher(QObject):
     """Re-apply chrome when the system palette changes (Qt < 6.10 fallback path)."""
