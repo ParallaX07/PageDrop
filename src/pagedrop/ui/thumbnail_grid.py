@@ -31,7 +31,6 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QFrame,
     QGridLayout,
     QLabel,
     QMenu,
@@ -56,6 +55,7 @@ from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.drag_autoscroll import DragAutoScroller
 from pagedrop.ui.grid_helpers import (
+    DropIndicator,
     ctrl_wheel_zoom_step,
     drop_index_at_pos as insertion_index_at_pos,
     drop_indicator_rect,
@@ -93,7 +93,6 @@ CARD_CREATE_YIELD_MS = 1
 # Legacy alias for tests that still patch the old name.
 CARD_CREATE_BATCH = CARD_CREATE_MAX
 DEFERRED_LAYOUT_BATCH = 48
-SKELETON_PULSE_MS = 550
 POOL_DRAIN_POLL_MS = 16
 
 
@@ -352,19 +351,13 @@ class ThumbnailGrid(QScrollArea):
         self._busy_message = ""
         self._busy_render_generation = -1
         self._busy_render_width = 0
-        self._skeleton_pulse_dim = False
-        self._skeleton_pulse_timer = QTimer(self)
-        self._skeleton_pulse_timer.setInterval(SKELETON_PULSE_MS)
-        self._skeleton_pulse_timer.timeout.connect(self._pulse_skeleton_cards)
+        self._skeleton_pulse_active = False
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
         self._focused_index: int | None = None
         self._drop_insertion_index: int | None = None
-        self._drop_indicator = QFrame(self._container)
-        self._drop_indicator.setObjectName("DropIndicator")
-        self._drop_indicator.setFixedWidth(3)
-        self._drop_indicator.hide()
+        self._drop_indicator = DropIndicator(self._container)
         self._drag_autoscroller = DragAutoScroller(self)
         self._drag_autoscroller.set_scroll_callback(self._on_drag_autoscroll)
         self._drag_over_grid = False
@@ -694,6 +687,8 @@ class ThumbnailGrid(QScrollArea):
                     if 0 <= index < len(self._cards):
                         self._cards[index].refresh_thumbnail_display(fast=True)
         self._evict_thumbnails_outside_window()
+        if self._skeleton_pulse_active:
+            self._sync_skeleton_pulse(visible)
         if self._visible_pages_needing_render():
             self._scroll_render_timer.start()
 
@@ -1508,7 +1503,7 @@ class ThumbnailGrid(QScrollArea):
 
     def _hide_drop_indicator(self) -> None:
         self._drop_insertion_index = None
-        self._drop_indicator.hide()
+        self._drop_indicator.dismiss()
 
     def _update_drop_indicator(self, insertion_index: int) -> None:
         rect = drop_indicator_rect(
@@ -1519,9 +1514,7 @@ class ThumbnailGrid(QScrollArea):
             return
 
         self._drop_insertion_index = insertion_index
-        self._drop_indicator.setGeometry(rect)
-        self._drop_indicator.show()
-        self._drop_indicator.raise_()
+        self._drop_indicator.place(rect)
 
     def _new_selection_after_move(
         self, indices: list[int], to_index: int
@@ -2142,28 +2135,29 @@ class ThumbnailGrid(QScrollArea):
 
     def _start_skeleton_pulse(self) -> None:
         if prefers_reduce_motion():
+            self._skeleton_pulse_active = False
             return
         if self._skeleton_count <= 0:
             return
-        if not self._skeleton_pulse_timer.isActive():
-            self._skeleton_pulse_dim = False
-            self._skeleton_pulse_timer.start()
+        self._skeleton_pulse_active = True
+        self._sync_skeleton_pulse()
 
     def _stop_skeleton_pulse(self) -> None:
-        self._skeleton_pulse_timer.stop()
-        self._skeleton_pulse_dim = False
+        self._skeleton_pulse_active = False
+        for card in self._cards:
+            card.clear_skeleton_pulse()
 
-    def _pulse_skeleton_cards(self) -> None:
-        if self._skeleton_count <= 0:
+    def _sync_skeleton_pulse(self, visible: set[int] | None = None) -> None:
+        if not self._skeleton_pulse_active or self._skeleton_count <= 0:
             self._stop_skeleton_pulse()
             return
-        visible = set(self._get_visible_page_indices())
-        self._skeleton_pulse_dim = not self._skeleton_pulse_dim
+        if visible is None:
+            visible = set(self._get_visible_page_indices())
         for index, card in enumerate(self._cards):
             if not card._is_skeleton:
                 continue
             if index in visible:
-                card.set_skeleton_pulse(self._skeleton_pulse_dim)
+                card.start_skeleton_pulse()
             else:
                 card.clear_skeleton_pulse()
 

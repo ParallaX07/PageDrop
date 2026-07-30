@@ -23,13 +23,13 @@ def test_skeleton_cards_before_thumbnails(qtbot, five_page_pdf):
     assert not hasattr(grid, "_overlay")
     assert all(card._is_skeleton for card in grid._cards)
     assert all(not card._page_overlay.isHidden() for card in grid._cards)
-    assert grid._skeleton_pulse_timer.isActive()
+    assert grid._skeleton_pulse_active
 
     qtbot.waitUntil(
         lambda: all(not card._is_skeleton for card in grid._cards),
         timeout=15000,
     )
-    assert not grid._skeleton_pulse_timer.isActive()
+    assert not grid._skeleton_pulse_active
     loader.close()
 
 

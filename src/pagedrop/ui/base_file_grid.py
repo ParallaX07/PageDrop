@@ -21,7 +21,6 @@ from PyQt6.QtGui import (
     QResizeEvent,
 )
 from PyQt6.QtWidgets import (
-    QFrame,
     QGridLayout,
     QLabel,
     QScrollArea,
@@ -37,6 +36,7 @@ from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui import icons
 from pagedrop.ui.base_file_card import InternalReorderFileCard
 from pagedrop.ui.grid_helpers import (
+    DropIndicator,
     ctrl_wheel_zoom_step,
     drop_index_at_pos,
     drop_indicator_rect,
@@ -164,10 +164,7 @@ class BaseFileGrid(QScrollArea):
 
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
-        self._drop_indicator = QFrame(self._container)
-        self._drop_indicator.setObjectName("DropIndicator")
-        self._drop_indicator.setFixedWidth(3)
-        self._drop_indicator.hide()
+        self._drop_indicator = DropIndicator(self._container)
 
         self.setWidget(self._container)
 
@@ -484,7 +481,7 @@ class BaseFileGrid(QScrollArea):
 
     def _hide_drop_indicator(self) -> None:
         self._drop_insertion_index = None
-        self._drop_indicator.hide()
+        self._drop_indicator.dismiss()
 
     def _update_drop_indicator(self, insertion_index: int) -> None:
         rect = drop_indicator_rect(
@@ -495,9 +492,7 @@ class BaseFileGrid(QScrollArea):
             return
 
         self._drop_insertion_index = insertion_index
-        self._drop_indicator.setGeometry(rect)
-        self._drop_indicator.show()
-        self._drop_indicator.raise_()
+        self._drop_indicator.place(rect)
 
     def _reorder_by_drop(self, indices: list[int], to_index: int) -> bool:
         if not indices or not self._paths:

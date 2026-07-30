@@ -87,12 +87,13 @@ def test_skeleton_pulse_skipped_when_reduce_motion(qtbot, isolated_settings):
     qtbot.addWidget(grid)
     grid._skeleton_count = 1
     grid._start_skeleton_pulse()
-    assert not grid._skeleton_pulse_timer.isActive()
+    assert not grid._skeleton_pulse_active
 
     set_reduce_motion(False)
     grid._start_skeleton_pulse()
-    assert grid._skeleton_pulse_timer.isActive()
+    assert grid._skeleton_pulse_active
     grid._stop_skeleton_pulse()
+    assert not grid._skeleton_pulse_active
 
 
 def test_stylesheet_includes_focus_rings_for_controls():
@@ -853,7 +854,7 @@ def test_r10c_busy_overlay_no_refade_while_visible(qtbot, isolated_settings):
 
 
 def test_r7_feedback_motion_only_in_busy_overlay():
-    """R7: no QPropertyAnimation on tab switch / palette / grid keyboard paths."""
+    """R7/R10d: QPropertyAnimation only on allowlisted feedback surfaces."""
     from pathlib import Path
 
     ui_root = Path(__file__).resolve().parents[2] / "src" / "pagedrop" / "ui"
@@ -862,7 +863,88 @@ def test_r7_feedback_motion_only_in_busy_overlay():
         for path in ui_root.glob("*.py")
         if "QPropertyAnimation" in path.read_text(encoding="utf-8")
     )
-    assert animated == ["busy_overlay.py"]
+    # busy_overlay (toast/busy); grid_helpers (drop indicator); page_card (skeleton).
+    assert animated == ["busy_overlay.py", "grid_helpers.py", "page_card.py"]
+
+
+def test_r10d_drop_indicator_fade_show_hide_only(qtbot, five_page_pdf, isolated_settings):
+    """R10d: fade on first show / final hide; reposition while visible is instant."""
+    from PyQt6.QtCore import QAbstractAnimation
+
+    from pagedrop.core.pdf_loader import PdfLoader
+    from pagedrop.ui.settings import set_reduce_motion
+    from tests.conftest import wait_for_grid_loaded
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(900, 650)
+    grid.show()
+    loader = PdfLoader(str(five_page_pdf))
+    grid.load_pdf(loader)
+    wait_for_grid_loaded(qtbot, grid)
+    grid._reflow_grid(force=True)
+
+    set_reduce_motion(False)
+    indicator = grid._drop_indicator
+    grid._update_drop_indicator(1)
+    assert indicator.isVisible()
+    assert indicator._fade.state() == QAbstractAnimation.State.Running
+    qtbot.waitUntil(
+        lambda: indicator._fade.state() == QAbstractAnimation.State.Stopped,
+        timeout=1000,
+    )
+    assert indicator._opacity_effect is not None
+    assert indicator._opacity_effect.opacity() == 1.0
+    geo_a = indicator.geometry()
+
+    grid._update_drop_indicator(2)
+    assert indicator.isVisible()
+    assert indicator._fade.state() == QAbstractAnimation.State.Stopped
+    assert indicator._opacity_effect.opacity() == 1.0
+    assert indicator.geometry() != geo_a
+
+    grid._hide_drop_indicator()
+    assert indicator._hiding is True
+    assert indicator.isVisible()
+    qtbot.waitUntil(lambda: not indicator.isVisible(), timeout=1000)
+    assert indicator._opacity_effect is None
+
+    set_reduce_motion(True)
+    grid._update_drop_indicator(1)
+    assert indicator.isVisible()
+    assert indicator._fade.state() == QAbstractAnimation.State.Stopped
+    assert indicator._opacity_effect is None
+    grid._hide_drop_indicator()
+    assert not indicator.isVisible()
+    loader.close()
+
+
+def test_r10d_skeleton_opacity_loop_gated(qtbot, isolated_settings):
+    """R10d: skeleton uses InOutSine opacity loop; reduce-motion stays static."""
+    from PyQt6.QtCore import QAbstractAnimation, QEasingCurve
+
+    from pagedrop.ui.page_card import PageCard
+    from pagedrop.ui.settings import set_reduce_motion
+
+    set_reduce_motion(False)
+    card = PageCard(0)
+    qtbot.addWidget(card)
+    card.show()
+    card.start_skeleton_pulse()
+    assert card._skeleton_pulse_anim is not None
+    assert card._skeleton_pulse_anim.state() == QAbstractAnimation.State.Running
+    assert card._skeleton_pulse_effect is not None
+    up = card._skeleton_pulse_anim.animationAt(0)
+    assert up.easingCurve().type() == QEasingCurve.Type.InOutSine
+    assert 400 <= up.duration() <= 600
+    card.clear_skeleton_pulse()
+    assert card._skeleton_pulse_anim is None
+    assert card._skeleton_pulse_effect is None
+
+    set_reduce_motion(True)
+    card.start_skeleton_pulse()
+    assert card._skeleton_pulse_anim is None
+    assert card._skeleton_pulse_effect is None
 
 
 def test_r8_light_hc_parity_freeze(isolated_settings):

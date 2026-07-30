@@ -4,7 +4,18 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QMimeData, QPoint, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QMimeData,
+    QPoint,
+    QPropertyAnimation,
+    QSequentialAnimationGroup,
+    Qt,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -24,6 +35,7 @@ from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
 from pagedrop.ui.theme import CARD_PADDING, RADIUS_BADGE, SPACE_1, SPACE_2, accent_qcolor, on_accent_qcolor
 from pagedrop.utils.temp_manager import TempManager
@@ -32,6 +44,9 @@ from pagedrop.utils.temp_manager import TempManager
 _SKELETON_ASPECT = 1.414
 _SKELETON_PULSE_DIM = 0.55
 _SKELETON_PULSE_BRIGHT = 1.0
+# One-way leg of the opacity loop (~400–600ms InOutSine; R10d).
+_SKELETON_PULSE_MS = 500
+_SKELETON_PULSE_EASE = QEasingCurve.Type.InOutSine
 
 
 class PageCard(BaseFileCard):
@@ -49,6 +64,7 @@ class PageCard(BaseFileCard):
         self._size_provider: Callable[[], tuple[int, int]] | None = None
         self._size_cached: tuple[int, int] | None = None
         self._skeleton_pulse_effect: QGraphicsOpacityEffect | None = None
+        self._skeleton_pulse_anim: QSequentialAnimationGroup | None = None
 
         self.setObjectName("PageCard")
         self._thumbnail_label.setObjectName("PageCardThumbnail")
@@ -138,19 +154,45 @@ class PageCard(BaseFileCard):
         self._sync_page_overlay_visibility()
         return had_pixmap
 
-    def set_skeleton_pulse(self, dim: bool) -> None:
-        """Gentle opacity blink so placeholders read as loading, not blank."""
-        if not self._is_skeleton:
+    def start_skeleton_pulse(self) -> None:
+        """Looping opacity ease so placeholders read as loading, not blank."""
+        if not self._is_skeleton or prefers_reduce_motion():
+            return
+        if (
+            self._skeleton_pulse_anim is not None
+            and self._skeleton_pulse_anim.state()
+            == QAbstractAnimation.State.Running
+        ):
             return
         if self._skeleton_pulse_effect is None:
             effect = QGraphicsOpacityEffect(self._thumbnail_label)
             self._thumbnail_label.setGraphicsEffect(effect)
             self._skeleton_pulse_effect = effect
-        self._skeleton_pulse_effect.setOpacity(
-            _SKELETON_PULSE_DIM if dim else _SKELETON_PULSE_BRIGHT
-        )
+        effect = self._skeleton_pulse_effect
+        effect.setOpacity(_SKELETON_PULSE_DIM)
+        if self._skeleton_pulse_anim is None:
+            fade_up = QPropertyAnimation(effect, b"opacity")
+            fade_up.setDuration(_SKELETON_PULSE_MS)
+            fade_up.setStartValue(_SKELETON_PULSE_DIM)
+            fade_up.setEndValue(_SKELETON_PULSE_BRIGHT)
+            fade_up.setEasingCurve(_SKELETON_PULSE_EASE)
+            fade_down = QPropertyAnimation(effect, b"opacity")
+            fade_down.setDuration(_SKELETON_PULSE_MS)
+            fade_down.setStartValue(_SKELETON_PULSE_BRIGHT)
+            fade_down.setEndValue(_SKELETON_PULSE_DIM)
+            fade_down.setEasingCurve(_SKELETON_PULSE_EASE)
+            group = QSequentialAnimationGroup(self)
+            group.addAnimation(fade_up)
+            group.addAnimation(fade_down)
+            group.setLoopCount(-1)
+            self._skeleton_pulse_anim = group
+        self._skeleton_pulse_anim.start()
 
     def clear_skeleton_pulse(self) -> None:
+        if self._skeleton_pulse_anim is not None:
+            self._skeleton_pulse_anim.stop()
+            self._skeleton_pulse_anim.deleteLater()
+            self._skeleton_pulse_anim = None
         if self._skeleton_pulse_effect is None:
             return
         self._thumbnail_label.setGraphicsEffect(None)
