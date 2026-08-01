@@ -252,3 +252,15 @@ def test_request_close_while_comparing_explains_busy(qtbot, monkeypatch):
     assert window.request_close() is False
     assert "still running" in window.statusBar().currentMessage()
     assert toasts and toasts[-1] == ("Compare still running…", "info")
+
+
+def test_export_heatmap_ponytail_marker() -> None:
+    """O17-h: sync export freeze ceiling is named in source."""
+    import pagedrop.ui.compare_window as mod
+
+    text = Path(mod.__file__).read_text(encoding="utf-8")
+    idx = text.index("def _export_heatmap")
+    chunk = text[idx : idx + 1600]
+    assert "ponytail:" in chunk
+    assert "runner.run" in chunk or "processEvents" in chunk
+    assert "cancel" in chunk.lower()

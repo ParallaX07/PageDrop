@@ -731,6 +731,11 @@ class CompareWindow(JobChromeMixin, QWidget):
             self.statusBar().showMessage("Cancelled")
             return
 
+        # ponytail: sync runner.run on the GUI thread after processEvents — BusyOverlay
+        # has no CancelToken, so Escape/close cannot cooperatively abort. Ceiling:
+        # UI freezes for the whole compare/export job. Upgrade: enqueue via job-
+        # runner + cancel.check() (O13 patterns) so Cancel can land without a
+        # full algorithm rewrite.
         self.statusBar().showMessage("Exporting heatmap…")
         self._busy.show_message("Exporting…")
         QApplication.processEvents()
