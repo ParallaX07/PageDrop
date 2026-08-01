@@ -95,6 +95,8 @@ class BaseFileGrid(QScrollArea):
         self._render_width_by_path: dict[str, int] = {}
         self._failed_paths: set[str] = set()
         self._cards: list[InternalReorderFileCard] = []
+        # O(1) path→card for thumb ready / pixmap reuse (paths are unique).
+        self._cards_by_path: dict[str, InternalReorderFileCard] = {}
         self._grid_cols = 0
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
         self._card_width = CARD_WIDTH
@@ -239,6 +241,7 @@ class BaseFileGrid(QScrollArea):
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self._on_card_double_clicked)
             self._cards.append(card)
+            self._cards_by_path[path] = card
 
         self.selection_manager.set_page_count(len(paths))
         self.selection_manager.set_selection(selected_indices)
@@ -436,6 +439,7 @@ class BaseFileGrid(QScrollArea):
             card.setParent(None)
             card.deleteLater()
         self._cards.clear()
+        self._cards_by_path.clear()
         self._painted_selection.clear()
         self._focused_index = None
         while self._layout.count():
@@ -503,9 +507,8 @@ class BaseFileGrid(QScrollArea):
             return False
 
         ordered = sorted(set(indices))
-        path_to_card = {card.path: card for card in self._cards}
         self._paths = new_paths
-        self._cards = [path_to_card[path] for path in new_paths]
+        self._cards = [self._cards_by_path[path] for path in new_paths]
         for index, card in enumerate(self._cards):
             card.set_file_index(index)
         new_selection = set(range(adjusted, adjusted + len(ordered)))
@@ -519,9 +522,9 @@ class BaseFileGrid(QScrollArea):
         return True
 
     def _find_card_pixmap(self, path: str) -> QPixmap | None:
-        for card in self._cards:
-            if card.path == path and card._source_pixmap is not None:
-                return card._source_pixmap
+        card = self._cards_by_path.get(path)
+        if card is not None and card._source_pixmap is not None:
+            return card._source_pixmap
         return None
 
     def _is_cancelled(self, generation: int) -> bool:

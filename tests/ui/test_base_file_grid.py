@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import fitz
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QKeyEvent
 
@@ -9,6 +12,21 @@ from pagedrop.ui.base_file_grid import BaseFileGrid
 from pagedrop.ui.convert_file_grid import ConvertFileGrid
 from pagedrop.ui.merge_file_grid import MergeFileGrid
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+
+
+def _write_test_image(path: Path, width: int, height: int) -> None:
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=width, height=height)
+        page.draw_rect(
+            fitz.Rect(0, 0, width, height),
+            color=(0.4, 0.4, 0.4),
+            fill=(0.4, 0.4, 0.4),
+        )
+        pix = page.get_pixmap()
+        pix.save(str(path))
+    finally:
+        doc.close()
 
 
 def test_grid_inheritance():
@@ -50,10 +68,50 @@ def test_merge_reorder_by_drop(qtbot, one_page_pdf, five_page_pdf, tmp_path):
     paths = [str(one_page_pdf), str(five_page_pdf), str(third)]
     grid.set_files(paths, {paths[0]: 1, paths[1]: 5, paths[2]: 1})
 
+    assert grid._cards_by_path == {card.path: card for card in grid._cards}
+
     assert grid._reorder_by_drop([0], 3)
     assert grid.ordered_paths == [paths[1], paths[2], paths[0]]
     assert [card.path for card in grid._cards] == grid.ordered_paths
     assert [card.file_index for card in grid._cards] == [0, 1, 2]
+    assert grid._cards_by_path == {card.path: card for card in grid._cards}
+    assert grid._cards_by_path[paths[0]] is grid._cards[2]
+
+
+def test_merge_thumbnail_ready_uses_path_map(qtbot, one_page_pdf, five_page_pdf):
+    grid = MergeFileGrid()
+    qtbot.addWidget(grid)
+    paths = [str(one_page_pdf), str(five_page_pdf)]
+    grid.set_files(paths, {paths[0]: 1, paths[1]: 5})
+
+    for path in paths:
+        card = grid._cards_by_path[path]
+        assert card.path == path
+        assert card._source_pixmap is not None
+        assert not card._source_pixmap.isNull()
+
+
+def test_convert_thumbnail_ready_uses_path_map(qtbot, tmp_path):
+    alpha = tmp_path / "alpha.png"
+    bravo = tmp_path / "bravo.png"
+    _write_test_image(alpha, 100, 100)
+    _write_test_image(bravo, 120, 80)
+
+    grid = ConvertFileGrid()
+    qtbot.addWidget(grid)
+    paths = [str(alpha), str(bravo)]
+    grid.set_files(
+        paths,
+        {paths[0]: (100, 100), paths[1]: (120, 80)},
+    )
+
+    for path in paths:
+        card = grid._cards_by_path[path]
+        assert card.path == path
+        assert card._source_pixmap is not None
+        assert not card._source_pixmap.isNull()
+    grid.set_files([], {})
+    assert grid._cards_by_path == {}
 
 
 def test_merge_thumbnail_failure_emits_rendering_error(qtbot, corrupt_pdf):
