@@ -117,14 +117,18 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
         if b.objectName() == "WatermarkZoomButton"
     ]
     assert len(zoom_btns) == 2
-    shell.resize(900, 640)
+    # Options max is 460; shell must be wide enough that the stretch preview
+    # remainder exceeds that band (900 left preview ~396 on CI).
+    shell.resize(1200, 640)
     shell.show()
-    qtbot.wait(20)
-    # R12: options stay in the locked band; preview gets the horizontal remainder.
-    assert 400 <= options_col.width() <= 460
     preview = host.findChild(QFrame, "WatermarkPreviewCard")
     assert preview is not None
-    assert preview.width() > options_col.width()
+    # R12: options stay in the locked band; preview gets the horizontal remainder.
+    qtbot.waitUntil(
+        lambda: 400 <= options_col.width() <= 460
+        and preview.width() > options_col.width(),
+        timeout=3000,
+    )
     # Idle status placeholder must not reserve a full-width strip.
     assert not shell.statusBar().isVisible()
     assert shell.statusBar().currentMessage() == ""
