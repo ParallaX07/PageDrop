@@ -1,0 +1,35 @@
+# PageDrop CI — packaging gate + full pytest suite on Ubuntu and Windows.
+# Optional backends (Office COM, LibreOffice, tessdata) and PyInstaller are
+# intentionally unset; those tests skip without PAGEDROP_* env vars.
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Packaging check
+        run: uv run python scripts/check_packaging.py
+
+      - name: Full test suite
+        run: uv run python all_tests.py
