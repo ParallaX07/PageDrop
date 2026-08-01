@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.ui import icons
 from pagedrop.ui.theme import SPACE_1, SPACE_2
 
 
@@ -42,10 +43,11 @@ class ZoomControls(QWidget):
         layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
         layout.setSpacing(SPACE_1)
 
-        self._caption = QLabel("Zoom")
+        self._caption = QLabel("Rendering…")
         self._caption.setObjectName("ZoomCaption")
+        self._caption.setVisible(False)
 
-        self._zoom_out = QPushButton("−")
+        self._zoom_out = QPushButton()
         self._zoom_out.setObjectName("ZoomButton")
         self._zoom_out.setToolTip("Zoom out (−)")
         self._zoom_out.setAccessibleName("Zoom out")
@@ -61,7 +63,7 @@ class ZoomControls(QWidget):
         self._slider.valueChanged.connect(self._on_slider_changed)
         self._slider.installEventFilter(self)
 
-        self._zoom_in = QPushButton("+")
+        self._zoom_in = QPushButton()
         self._zoom_in.setObjectName("ZoomButton")
         self._zoom_in.setToolTip("Zoom in (+)")
         self._zoom_in.setAccessibleName("Zoom in")
@@ -81,12 +83,20 @@ class ZoomControls(QWidget):
         layout.addWidget(self._zoom_in)
         layout.addWidget(self._value_label)
 
+        def refresh_icons() -> None:
+            self._zoom_out.setIcon(icons.icon("minus"))
+            self._zoom_in.setIcon(icons.icon("plus"))
+
+        refresh_icons()
+        icons.register_refresh(refresh_icons)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_icons))
+
         self.set_value(initial)
         self.setEnabled(False)
 
     def set_rendering(self, pending: bool) -> None:
         """Light affordance while zoom debounce / re-render is pending."""
-        self._caption.setText("Rendering…" if pending else "Zoom")
+        self._caption.setVisible(pending)
 
     def eventFilter(self, obj, event) -> bool:
         if (

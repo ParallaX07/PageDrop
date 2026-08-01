@@ -358,9 +358,9 @@ def test_r3_zoom_controls_use_spacing_tokens(qtbot):
     assert zoom.layout().spacing() == SPACE_1
     sheet = app_stylesheet()
     assert "QWidget#ZoomControls" in sheet
-    assert "background-color: transparent" in sheet.split("QWidget#ZoomControls")[1].split(
-        "QLabel#ZoomCaption"
-    )[0]
+    zoom_block = sheet.split("QWidget#ZoomControls")[1].split("QLabel#ZoomCaption")[0]
+    assert "background-color:" in zoom_block
+    assert "transparent" not in zoom_block.split("background-color:")[1].split(";")[0]
 
 
 def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):

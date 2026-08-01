@@ -640,7 +640,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#ZoomControls {{
-        background-color: transparent;
+        background-color: {bg_surface};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         padding: {SPACE_1}px;
