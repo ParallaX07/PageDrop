@@ -258,6 +258,71 @@ def test_save_as_extract_compare_inspect_hold_fitz_lock(
     )
 
 
+def test_redact_edit_model_holds_fitz_lock_verify_outside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-a: redact_edit_model MuPDF opens own FITZ_LOCK; verify wait does not."""
+    import hashlib
+
+    from pagedrop.core import redact as redact_module
+    from pagedrop.core.pdf_editor import PdfEditModel
+    from pagedrop.core.redact import RedactionRegion, redact_edit_model
+
+    secret = "TOPSECRET_ZZ9"
+    pdf = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=400, height=300)
+        page.insert_text((40, 80), f"Hello {secret} world", fontsize=14)
+        doc.save(str(pdf))
+    finally:
+        doc.close()
+
+    before = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    rect_doc = fitz.open(str(pdf))
+    try:
+        hit = rect_doc[0].search_for(secret)[0]
+        rect = (float(hit.x0), float(hit.y0), float(hit.x1), float(hit.y1))
+    finally:
+        rect_doc.close()
+
+    held_at_open: list[bool] = []
+    verify_owned: list[bool] = []
+    real_open = fitz.open
+    real_verify = redact_module.verify_redacted_pdf_fresh_process
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    def tracking_verify(*args: object, **kwargs: object):
+        verify_owned.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_verify(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+    monkeypatch.setattr(
+        redact_module, "verify_redacted_pdf_fresh_process", tracking_verify
+    )
+
+    out = tmp_path / "redacted.pdf"
+    redact_edit_model(
+        PdfEditModel(str(pdf), 1),
+        out,
+        [RedactionRegion(0, rect)],
+        verify=True,
+    )
+
+    assert held_at_open, "expected at least one fitz.open during redact"
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
+    assert verify_owned == [False], (
+        f"verify must run outside FITZ_LOCK (owned flags={verify_owned})"
+    )
+    assert hashlib.sha256(pdf.read_bytes()).hexdigest() == before
+    assert out.is_file() and out.resolve() != pdf.resolve()
+
+
 def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     """Do not raise pool size to paper over MuPDF contention."""
     from pagedrop.ui.compare_window import _compare_text_pool
