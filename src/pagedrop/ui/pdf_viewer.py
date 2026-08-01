@@ -1515,6 +1515,10 @@ class PdfViewerWidget(QWidget):
 
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
+        # Separate max-1 pool so Find does not queue behind tile renders
+        # (and vice versa). Both still serialize via FITZ_LOCK; do not raise.
+        self._search_pool = QThreadPool(self)
+        self._search_pool.setMaxThreadCount(1)
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(RENDER_DEBOUNCE_MS)
@@ -1911,7 +1915,7 @@ class PdfViewerWidget(QWidget):
         )
         worker.signals.finished.connect(self._on_search_finished)
         worker.signals.error.connect(self._on_search_error)
-        self._pool.start(worker)
+        self._search_pool.start(worker)
 
     def find_next(self) -> None:
         if not self._hits:
@@ -3214,7 +3218,7 @@ class PdfViewerWidget(QWidget):
         if started:
             self._overlay.show_message("Rendering…")
             self.busy_changed.emit(True, "Rendering…")
-        else:
+        elif self._search_pool.activeThreadCount() == 0:
             self._overlay.hide_overlay()
             self.busy_changed.emit(False, "")
         self._apply_hits_to_tiles()
@@ -3289,14 +3293,22 @@ class PdfViewerWidget(QWidget):
         if tile is not None:
             tile.set_pixmap(pix)
         if self._pool.activeThreadCount() == 0:
-            self._overlay.hide_overlay()
-            self.busy_changed.emit(False, "")
+            if self._search_pool.activeThreadCount() == 0:
+                self._overlay.hide_overlay()
+                self.busy_changed.emit(False, "")
+            else:
+                self._overlay.show_message("Searching…")
+                self.busy_changed.emit(True, "Searching…")
 
     def _on_render_error(self, generation: int, logical: int, message: str) -> None:
         if self._is_cancelled(generation):
             return
-        self._overlay.hide_overlay()
-        self.busy_changed.emit(False, "")
+        if self._search_pool.activeThreadCount() == 0:
+            self._overlay.hide_overlay()
+            self.busy_changed.emit(False, "")
+        else:
+            self._overlay.show_message("Searching…")
+            self.busy_changed.emit(True, "Searching…")
         tile = self._tiles.get(logical)
         if tile is not None:
             tile.set_pixmap(None)
@@ -3323,8 +3335,12 @@ class PdfViewerWidget(QWidget):
     def _on_search_finished(self, generation: int, hits: object) -> None:
         if self._search_cancelled(generation):
             return
-        self._overlay.hide_overlay()
-        self.busy_changed.emit(False, "")
+        if self._pool.activeThreadCount() == 0:
+            self._overlay.hide_overlay()
+            self.busy_changed.emit(False, "")
+        else:
+            self._overlay.show_message("Rendering…")
+            self.busy_changed.emit(True, "Rendering…")
         self._hits = list(hits) if isinstance(hits, list) else []
         self._hit_index = 0 if self._hits else -1
         n = len(self._hits)
@@ -3339,8 +3355,12 @@ class PdfViewerWidget(QWidget):
     def _on_search_error(self, generation: int, message: str) -> None:
         if self._search_cancelled(generation):
             return
-        self._overlay.hide_overlay()
-        self.busy_changed.emit(False, "")
+        if self._pool.activeThreadCount() == 0:
+            self._overlay.hide_overlay()
+            self.busy_changed.emit(False, "")
+        else:
+            self._overlay.show_message("Rendering…")
+            self.busy_changed.emit(True, "Rendering…")
         self._hit_label.setText("Search failed")
         self.render_error.emit(message)
 

@@ -38,6 +38,7 @@ def test_worker_audit_covers_known_fitz_pools() -> None:
         "ThumbnailWorker",
         "PreviewRenderWorker",
         "ViewerRenderWorker",
+        "_ViewerSearchWorker",
         "_MergeThumbnailWorker",
         "_ConvertThumbnailWorker",
         "_MergeWorker",
@@ -408,6 +409,7 @@ def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     assert grid._render_pool.maxThreadCount() == 1
     assert preview._render_pool.maxThreadCount() == 1
     assert viewer._pool.maxThreadCount() == 1
+    assert viewer._search_pool.maxThreadCount() == 1
     assert _compare_text_pool().maxThreadCount() == 1
 
 
@@ -470,5 +472,84 @@ def test_thumbnail_worker_releases_lock_between_pages(
     # Remaining whole-batch would be ~9×25ms ≈ 225ms; per-page stays ~one page.
     assert waits[0] < 0.12, (
         f"viewer blocked {waits[0]:.3f}s behind thumb batch "
+        "(expected per-page interleave)"
+    )
+
+
+def test_search_model_releases_lock_between_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-d: per-page search lock so render_ref_png can interleave mid Find.
+
+    Whole-doc ``call(_body)`` made mid-search waits track remaining pages;
+    per-page ``call`` keeps wait near one page. Also asserts ``call`` acquire
+    count > 1 on a multi-page search (not one long hold).
+    """
+    import threading
+    import time
+
+    from pagedrop.core.pdf_editor import PdfEditModel
+    from pagedrop.core.pdf_service import render_ref_png, search_model
+
+    pdf = tmp_path / "search.pdf"
+    doc = fitz.open()
+    try:
+        for i in range(12):
+            page = doc.new_page(width=200, height=200)
+            page.insert_text((72, 72), f"token-{i}")
+        doc.save(str(pdf))
+    finally:
+        doc.close()
+
+    model = PdfEditModel(str(pdf), 12)
+    page_n = {"n": 0}
+    mid = threading.Event()
+    real_search = fitz.Page.search_for
+    search_tid = {"id": None}
+
+    def slow_search(self: fitz.Page, *args: object, **kwargs: object) -> list:
+        page_n["n"] += 1
+        if page_n["n"] == 3:
+            mid.set()
+        if threading.get_ident() == search_tid["id"]:
+            time.sleep(0.025)
+        return real_search(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Page, "search_for", slow_search)
+
+    from pagedrop.core import pdf_service as svc
+
+    acquires = {"n": 0}
+    real_call = svc.call
+
+    def counting_call(fn: object, *args: object, **kwargs: object) -> object:
+        acquires["n"] += 1
+        return real_call(fn, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(svc, "call", counting_call)
+
+    waits: list[float] = []
+
+    def viewer() -> None:
+        assert mid.wait(timeout=10), "search never reached mid page"
+        t0 = time.perf_counter()
+        assert render_ref_png(PageRef(str(pdf), 0), 64)
+        waits.append(time.perf_counter() - t0)
+
+    search_tid["id"] = threading.get_ident()
+    vt = threading.Thread(target=viewer)
+    vt.start()
+    hits = search_model(model, "token")
+    vt.join(timeout=30)
+
+    assert len(hits) == 12
+    # 12 page bodies + 1 render_ref_png (and possibly cache opens already done).
+    assert acquires["n"] > 1, (
+        f"expected per-page call() acquires, got {acquires['n']}"
+    )
+    assert waits, "viewer thread did not complete"
+    # Remaining whole-doc would be ~9×25ms ≈ 225ms; per-page stays ~one page.
+    assert waits[0] < 0.12, (
+        f"viewer blocked {waits[0]:.3f}s behind search "
         "(expected per-page interleave)"
     )

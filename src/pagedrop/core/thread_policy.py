@@ -59,6 +59,10 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "ui/pdf_viewer.py — via pdf_service.render_ref_png under FITZ_LOCK; pool max 1",
     ),
     (
+        "_ViewerSearchWorker",
+        "ui/pdf_viewer.py — search_model per-page under FITZ_LOCK; search pool max 1",
+    ),
+    (
         "_MergeThumbnailWorker",
         "ui/merge_file_grid.py — per-page via render_stacked_page_pngs → pdf_service.render_ref_png; pool max 1",
     ),

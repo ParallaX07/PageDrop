@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.utils.temp_manager import TempManager
-from tests.conftest import wait_for_grid_loaded
+from tests.conftest import RENDER_TIMEOUT_MS, wait_for_grid_loaded
 from tests.fixtures.generate_fixtures import generate_n_page
 
 
@@ -49,6 +49,12 @@ def test_smoke_inbound_drop_between_pages(qtbot, five_page_pdf, tmp_path):
 
     wait_for_grid_loaded(qtbot, grid)
     assert len(grid._cards) == 8
-    for card in grid._cards:
-        assert card._source_pixmap is not None
-        assert not card._source_pixmap.isNull()
+    # 8 pages fit the retain window on this fixture — wait for pixmaps, not
+    # only pool-idle (MetaCall can lag the worker return under xdist load).
+    qtbot.waitUntil(
+        lambda: all(
+            card._source_pixmap is not None and not card._source_pixmap.isNull()
+            for card in grid._cards
+        ),
+        timeout=RENDER_TIMEOUT_MS,
+    )

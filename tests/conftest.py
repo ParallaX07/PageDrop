@@ -81,12 +81,18 @@ def load_pdf_in_active_tab(window, path: str) -> None:
 
 
 def wait_for_grid_loaded(qtbot: QtBot, grid, *, timeout: int = RENDER_TIMEOUT_MS) -> None:
-    """Wait until a standalone ThumbnailGrid finishes its initial render."""
+    """Wait until a standalone ThumbnailGrid finishes its initial render.
+
+    Pool idle alone is not enough: the worker can return before queued
+    ``page_ready`` / ``finished`` MetaCalls run on the GUI thread. Also require
+    ``has_pending_work()`` false so thumbs are applied before callers assert.
+    """
     qtbot.waitUntil(
         lambda: (
             grid._model is not None
             and grid._last_rendered_width_px == grid._thumbnail_width_px
             and grid._render_pool.activeThreadCount() == 0
+            and not grid.has_pending_work()
         ),
         timeout=timeout,
     )
