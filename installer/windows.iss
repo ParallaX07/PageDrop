@@ -7,12 +7,12 @@
 ;
 ; Build installer (version from pyproject.toml via /DAppVersion=…):
 ;   .\scripts\build_windows_installer.ps1
-;   ; or: iscc /DAppVersion=0.5.0 installer/windows.iss
+;   ; or: iscc /DAppVersion=0.5.1 installer/windows.iss
 ;
 ; Output: installer/Output/PageDrop-<version>-Setup.exe
 
 #ifndef AppVersion
-  #define AppVersion "0.5.0"
+  #define AppVersion "0.5.1"
 #endif
 
 #define AppExeName "pagedrop.exe"

@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 _APP_NAME = "PageDrop"
 _ORG_NAME = "PageDrop"
 
-# Frozen: Office COM helper re-enters this exe before Qt starts.
+# Frozen: helpers re-enter this exe before Qt starts.
 _OFFICE_COM_WORKER_FLAG = "--pagedrop-office-com-worker"
 
 
@@ -21,6 +21,14 @@ def main() -> int:
 
         argv = [a for a in sys.argv[1:] if a != _OFFICE_COM_WORKER_FLAG]
         return worker_main(argv)
+
+    from pagedrop.core.redact import REDACT_VERIFY_FLAG
+
+    if REDACT_VERIFY_FLAG in sys.argv:
+        from pagedrop.core.redact import main as redact_main
+
+        argv = [a for a in sys.argv[1:] if a != REDACT_VERIFY_FLAG]
+        return redact_main(argv)
 
     from PyQt6.QtCore import QEvent
     from PyQt6.QtWidgets import QApplication

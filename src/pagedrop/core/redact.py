@@ -34,6 +34,9 @@ _IMAGES = fitz.PDF_REDACT_IMAGE_PIXELS
 _GRAPHICS = fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED
 _TEXT = fitz.PDF_REDACT_TEXT_REMOVE
 
+# Frozen: fresh-process verifier re-enters the exe before Qt starts (main.py).
+REDACT_VERIFY_FLAG = "--pagedrop-redact-verify"
+
 
 class RedactionError(JobError):
     """Raised when redaction cannot be applied or prepared."""
@@ -300,6 +303,13 @@ def inspect_redaction_result(
     return report
 
 
+def verify_argv() -> list[str]:
+    """Argv that starts the redaction verifier in a fresh interpreter / frozen exe."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, REDACT_VERIFY_FLAG, "--verify-json"]
+    return [sys.executable, "-m", "pagedrop.core.redact", "--verify-json"]
+
+
 def verify_redacted_pdf_fresh_process(
     path: str | Path,
     *,
@@ -321,27 +331,49 @@ def verify_redacted_pdf_fresh_process(
         "expect_no_attachments": expect_no_attachments,
         "forbidden_image_xrefs": list(forbidden_image_xrefs),
     }
-    # Use -m so the installed package path resolves the same as the app.
-    proc = subprocess.run(
-        [sys.executable, "-m", "pagedrop.core.redact", "--verify-json"],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            verify_argv(),
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return RedactionVerifyReport(
+            failures=[f"fresh-process verifier timed out after {timeout:.0f}s"]
+        )
     if proc.returncode not in (0, 2):
         detail = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier crashed: {detail}"]
         )
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        return RedactionVerifyReport(
+            failures=["fresh-process verifier returned empty stdout"]
+        )
     try:
-        data = json.loads(proc.stdout or "{}")
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier returned non-JSON: {proc.stdout!r}"]
         )
-    return RedactionVerifyReport(failures=list(data.get("failures") or []))
+    if not isinstance(data, dict) or "failures" not in data:
+        return RedactionVerifyReport(
+            failures=[
+                f"fresh-process verifier missing failures key: {proc.stdout!r}"
+            ]
+        )
+    failures = data["failures"]
+    if not isinstance(failures, list):
+        return RedactionVerifyReport(
+            failures=[
+                f"fresh-process verifier failures not a list: {proc.stdout!r}"
+            ]
+        )
+    return RedactionVerifyReport(failures=list(failures))
 
 
 def _delete_quiet(path: Path) -> None:

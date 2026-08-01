@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
+import sys
 import zlib
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.markup import MarkupSession
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.redact import (
+    REDACT_VERIFY_FLAG,
     RedactionError,
     RedactionRegion,
     RedactionScope,
@@ -21,6 +23,7 @@ from pagedrop.core.redact import (
     inspect_redaction_result,
     redact_edit_model,
     redact_pdf,
+    verify_argv,
     verify_redacted_pdf_fresh_process,
 )
 
@@ -435,3 +438,36 @@ def test_inspect_search_for_failure_fails_closed(
     report = inspect_redaction_result(str(src), absent_text=[SECRET])
     assert not report.ok
     assert any("search_for failed" in f for f in report.failures)
+
+
+def test_verify_argv_module_form() -> None:
+    assert verify_argv()[-3:] == ["-m", "pagedrop.core.redact", "--verify-json"]
+
+
+def test_verify_argv_frozen_form(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\PageDrop\pagedrop.exe")
+    assert verify_argv() == [
+        r"C:\PageDrop\pagedrop.exe",
+        REDACT_VERIFY_FLAG,
+        "--verify-json",
+    ]
+
+
+def test_verify_empty_stdout_is_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src = _text_pdf(tmp_path / "src.pdf")
+
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "pagedrop.core.redact.subprocess.run",
+        lambda *_a, **_k: _Proc(),
+    )
+    report = verify_redacted_pdf_fresh_process(src, absent_text=[SECRET])
+    assert not report.ok
+    assert any("empty stdout" in f for f in report.failures)

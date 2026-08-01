@@ -171,4 +171,6 @@ PageDrop source is MIT — see [`LICENSE`](LICENSE). Redistributing frozen binar
 
 ## Status
 
+**v0.5.1**: Patch over 0.5.0 — frozen builds re-enter redaction fresh-process verify via `--pagedrop-redact-verify` (same pattern as the Office COM worker) so Save with redaction no longer opens a second GUI or skips verification.
+
 **v0.5.0**: Builds on 0.4.0 with ToolShell layout/help polish, stronger annotations (freetext styling, markup colors, redaction confirm), blank-page detection, multi-page print with credentials, FITZ_LOCK thread-safety across PDF ops, thumbnail/file-grid performance work, zoom control icons, and a Windows PyInstaller onedir bundle + installer path. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
