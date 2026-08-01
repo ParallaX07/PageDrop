@@ -1,6 +1,6 @@
 [project]
 name = "pagedrop"
-version = "0.4.0"
+version = "0.5.0"
 description = "Grab PDF pages and drop them where they belong — folders, merges, multi-tab edits"
 requires-python = ">=3.11"
 dependencies = [
