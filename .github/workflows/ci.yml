@@ -20,6 +20,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # PyQt6 wheels dlopen libEGL/libGL/XCB at import time even with
+      # QT_QPA_PLATFORM=offscreen; ubuntu-latest does not ship them.
+      - name: Install Qt system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 \
+            libgl1 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0 \
+            libfontconfig1 \
+            libdbus-1-3 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-sync1 \
+            libxcb-xfixes0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
