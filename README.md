@@ -172,5 +172,3 @@ PageDrop source is MIT — see [`LICENSE`](LICENSE). Redistributing frozen binar
 ## Status
 
 **v0.5.0**: Builds on 0.4.0 with ToolShell layout/help polish, stronger annotations (freetext styling, markup colors, redaction confirm), blank-page detection, multi-page print with credentials, FITZ_LOCK thread-safety across PDF ops, thumbnail/file-grid performance work, zoom control icons, and a Windows PyInstaller onedir bundle + installer path. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
-
-**v0.4.0**: Windows Setup.exe is on [Releases](https://github.com/ParallaX07/PageDrop/releases). Modeless Tools hub — organize (split/extract/reorder), side-by-side compare, watermark, native import/export, Office/LibreOffice conversion, OCR, annotations/forms/markup, security-grade redaction, Optimize & Secure, attachment ZIP extract — plus cancellable jobs, document caching, and broader password/thread-safety hardening.
