@@ -214,6 +214,18 @@ def test_extract_page_refs_wrong_password_fails_clearly(tmp_path):
     assert list(output_dir.iterdir()) == []
 
 
+def test_extract_page_refs_to_files_ponytail_marker() -> None:
+    """O17-g: sync drag-out extract freeze ceiling is named in source."""
+    import pagedrop.core.page_extractor as mod
+
+    text = Path(mod.__file__).read_text(encoding="utf-8")
+    idx = text.index("def extract_page_refs_to_files")
+    chunk = text[idx : idx + 1600]
+    assert "ponytail:" in chunk
+    assert "QDrag" in chunk or "file://" in chunk
+    assert "FITZ_LOCK" in chunk
+
+
 def _write_distinct_pdf(path: Path, widths: list[int]) -> None:
     doc = fitz.open()
     try:

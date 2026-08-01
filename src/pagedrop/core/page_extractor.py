@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -48,14 +49,23 @@ def extract_page_refs_to_files(
     """Extract pages in *refs* order; output filenames use sequential 1-based indices.
 
     Each ref is its own single-page PDF (drag / export-to-folder contract). Source
-    docs are opened once per path and shared across the loop.
+    docs are opened once per path and shared across the loop; ``FITZ_LOCK`` is
+    taken per page so thumbs/viewer can interleave mid multi-page extract.
     """
-    with FITZ_LOCK:
-        docs: dict[str, fitz.Document] = {}
-        out_paths: list[Path] = []
-        try:
-            for seq, ref in enumerate(refs, start=1):
-                out_path = output_dir / f"{base_name}_page_{seq:04d}.pdf"
+    # ponytail: sync extract before QDrag.exec — file:// URLs need real paths on
+    # disk. Large multi-select freezes the GUI for N single-page saves (plus
+    # disk I/O). Per-page FITZ_LOCK (O15-style) lets other fitz waiters in
+    # between pages; sleep(0.001) after each so this thread does not reacquire
+    # before waiters run. Ceiling: still sync on the GUI thread before drag.
+    # Upgrade: not async after drag starts (breaks QDrag); if measured pain,
+    # stage extracts on a worker *before* starting drag — do not invent a
+    # parallel extract pipeline.
+    docs: dict[str, fitz.Document] = {}
+    out_paths: list[Path] = []
+    try:
+        for seq, ref in enumerate(refs, start=1):
+            out_path = output_dir / f"{base_name}_page_{seq:04d}.pdf"
+            with FITZ_LOCK:
                 out = fitz.open()
                 try:
                     # Single-page file — append_page_refs keeps rotation / password
@@ -65,7 +75,11 @@ def extract_page_refs_to_files(
                     out_paths.append(out_path)
                 finally:
                     out.close()
-        finally:
+            # Yield so FITZ_LOCK waiters (viewer / thumbs) can acquire between
+            # pages — sleep(0) is not enough on CPython.
+            time.sleep(0.001)
+    finally:
+        with FITZ_LOCK:
             for doc in docs.values():
                 doc.close()
     return out_paths

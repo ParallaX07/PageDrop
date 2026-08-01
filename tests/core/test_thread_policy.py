@@ -554,3 +554,66 @@ def test_search_model_releases_lock_between_pages(
         f"viewer blocked {waits[0]:.3f}s behind search "
         "(expected per-page interleave)"
     )
+
+
+def test_extract_page_refs_releases_lock_between_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-g: per-page extract lock so render can interleave mid multi-page save.
+
+    Whole-loop ``with FITZ_LOCK`` made mid-extract waits track remaining pages;
+    per-page hold keeps wait near one page save. Also asserts Document.save
+    runs under lock more than once (not one long hold).
+    """
+    import threading
+    import time
+
+    from pagedrop.core.page_extractor import extract_page_refs_to_files
+    from pagedrop.core.pdf_service import render_ref_png
+
+    pdf = tmp_path / "extract.pdf"
+    _write_pdf(pdf, pages=12)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    page_n = {"n": 0}
+    mid = threading.Event()
+    real_save = fitz.Document.save
+    extract_tid = {"id": None}
+    saves_owned: list[bool] = []
+
+    def slow_save(self: fitz.Document, *args: object, **kwargs: object) -> None:
+        page_n["n"] += 1
+        saves_owned.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        if page_n["n"] == 3:
+            mid.set()
+        if threading.get_ident() == extract_tid["id"]:
+            time.sleep(0.025)
+        return real_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Document, "save", slow_save)
+
+    waits: list[float] = []
+
+    def viewer() -> None:
+        assert mid.wait(timeout=10), "extract never reached mid page"
+        t0 = time.perf_counter()
+        assert render_ref_png(PageRef(str(pdf), 0), 64)
+        waits.append(time.perf_counter() - t0)
+
+    refs = [PageRef(str(pdf), i) for i in range(12)]
+    extract_tid["id"] = threading.get_ident()
+    vt = threading.Thread(target=viewer)
+    vt.start()
+    paths = extract_page_refs_to_files(refs, out_dir, "doc")
+    vt.join(timeout=30)
+
+    assert len(paths) == 12
+    assert len(saves_owned) >= 12
+    assert all(saves_owned), f"save without FITZ_LOCK (owned={saves_owned})"
+    assert waits, "viewer thread did not complete"
+    # Remaining whole-loop would be ~9×25ms ≈ 225ms; per-page stays ~one page.
+    assert waits[0] < 0.12, (
+        f"viewer blocked {waits[0]:.3f}s behind extract "
+        "(expected per-page interleave)"
+    )
