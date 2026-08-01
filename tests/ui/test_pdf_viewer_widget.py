@@ -8,11 +8,14 @@ import fitz
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import QMessageBox
 
+from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.pdf_service import (
+    MAX_PRINT_PAGES,
     extract_attachment,
     logical_index_for_source,
     outline_for_paths,
@@ -79,25 +82,43 @@ def linked_pdf(tmp_path: Path) -> Path:
     return path
 
 
-def _bind_viewer(qtbot, path: Path) -> tuple[PdfViewerWidget, PdfEditModel, PdfLoader]:
-    loader = PdfLoader(str(path))
+def _bind_viewer(
+    qtbot,
+    path: Path,
+    *,
+    credentials: RuntimeCredentials | None = None,
+    password: str | None = None,
+) -> tuple[PdfViewerWidget, PdfEditModel, PdfLoader]:
+    loader = PdfLoader(str(path), password=password)
     model = PdfEditModel(str(path), loader.page_count)
     cache = {loader.path: loader}
 
     def get_loader(p: str) -> PdfLoader:
         if p not in cache:
-            cache[p] = PdfLoader(p)
+            cache[p] = PdfLoader(p, password=password)
         return cache[p]
 
     viewer = PdfViewerWidget()
     qtbot.addWidget(viewer)
     viewer.resize(900, 700)
     viewer.show()
-    viewer.set_model(model, get_loader)
+    viewer.set_model(model, get_loader, credentials=credentials)
     qtbot.waitUntil(lambda: len(viewer._tiles) >= 1, timeout=5000)
     # Side panel (bookmarks/layers) is deferred off the set_model critical path.
     qtbot.waitUntil(lambda: not viewer._side_panel_dirty, timeout=5000)
     return viewer, model, loader
+
+
+def _accept_print_to_pdf(out: Path):
+    """Return a QPrintDialog.exec patch that prints to *out* without a UI dialog."""
+
+    def _exec(self: QPrintDialog) -> QPrintDialog.DialogCode:
+        printer = self.printer()
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(str(out))
+        return QPrintDialog.DialogCode.Accepted
+
+    return _exec
 
 
 def test_pdf_service_search_and_render(viewer_pdf: Path) -> None:
@@ -416,3 +437,109 @@ def test_large_doc_cache_and_tiles_bounded(qtbot, tmp_path: Path) -> None:
         assert viewer.cache_size == 0
     finally:
         loader.close()
+
+
+def test_print_document_multi_page_and_credentials(
+    qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-f: sync print still emits correct pages; passwords + OCG reach render."""
+    import pagedrop.ui.pdf_viewer as viewer_mod
+
+    path = tmp_path / "print_src.pdf"
+    _text_pdf(path, ["Print A", "Print B", "Print C"])
+    out = tmp_path / "printed.pdf"
+    before = path.read_bytes()
+
+    creds = RuntimeCredentials()
+    creds.set(str(path), "unused-but-must-pass")
+    ocg = frozenset({7})
+
+    calls: list[dict] = []
+    real_render = viewer_mod.render_ref_png
+
+    def spy_render(ref, width_px, *, passwords=None, ocg_on=None):
+        calls.append(
+            {
+                "path": ref.source_path,
+                "index": ref.source_index,
+                "width": width_px,
+                "passwords": passwords,
+                "ocg_on": ocg_on,
+            }
+        )
+        return real_render(
+            ref, width_px, passwords=passwords, ocg_on=ocg_on
+        )
+
+    monkeypatch.setattr(viewer_mod, "render_ref_png", spy_render)
+    monkeypatch.setattr(QPrintDialog, "exec", _accept_print_to_pdf(out))
+
+    viewer, model, loader = _bind_viewer(qtbot, path, credentials=creds)
+    try:
+        assert viewer._pool.maxThreadCount() == 1
+        viewer._ocg_on[str(path)] = ocg
+        assert viewer.print_document() is True
+        assert out.is_file() and out.stat().st_size > 0
+        printed = fitz.open(str(out))
+        try:
+            assert printed.page_count == model.logical_count() == 3
+        finally:
+            printed.close()
+        assert len(calls) == 3
+        assert all(c["width"] == 1200 for c in calls)
+        assert {c["index"] for c in calls} == {0, 1, 2}
+        key = RuntimeCredentials.path_key(str(path))
+        for c in calls:
+            assert c["passwords"] is not None
+            assert c["passwords"].get(key) == "unused-but-must-pass"
+            assert c["ocg_on"] == ocg
+        assert path.read_bytes() == before
+        assert viewer._pool.maxThreadCount() == 1
+    finally:
+        loader.close()
+
+
+def test_print_document_honors_page_ceiling(
+    qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-f: MAX_PRINT_PAGES still blocks oversized docs before the dialog."""
+    path = tmp_path / "too_many.pdf"
+    # Avoid creating MAX_PRINT_PAGES+1 real pages — stub logical_count only.
+    _text_pdf(path, ["one"])
+    viewer, model, loader = _bind_viewer(qtbot, path)
+    dialog_calls = {"n": 0}
+
+    def boom_exec(self: QPrintDialog) -> QPrintDialog.DialogCode:
+        dialog_calls["n"] += 1
+        return QPrintDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QPrintDialog, "exec", boom_exec)
+    monkeypatch.setattr(model, "logical_count", lambda: MAX_PRINT_PAGES + 1)
+    warned: list[str] = []
+
+    def fake_warning(parent, title, text, *args, **kwargs):
+        warned.append(f"{title}:{text}")
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+    try:
+        assert viewer.print_document() is False
+        assert dialog_calls["n"] == 0
+        assert warned and "Print limit" in warned[0]
+        assert str(MAX_PRINT_PAGES) in warned[0]
+    finally:
+        loader.close()
+
+
+def test_print_document_ponytail_marker() -> None:
+    """O17-f: sync-print freeze ceiling is named in source."""
+    from pathlib import Path as P
+
+    import pagedrop.ui.pdf_viewer as mod
+
+    text = P(mod.__file__).read_text(encoding="utf-8")
+    idx = text.index("def print_document")
+    chunk = text[idx : idx + 1200]
+    assert "ponytail:" in chunk
+    assert "freeze" in chunk.lower()
+    assert "MAX_PRINT_PAGES" in chunk

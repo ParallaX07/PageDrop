@@ -1970,6 +1970,15 @@ class PdfViewerWidget(QWidget):
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:
             return False
 
+        # ponytail: sync GUI-thread print — each page ``render_ref_png`` @≤1200px
+        # under FITZ_LOCK, then paint. Measured 2026-08-01 (6-page text fixture,
+        # offscreen): ~30ms render + ~16ms pixmap scale/draw per page; ahead-
+        # buffer on the max-1 viewer pool would overlap only the paint slice
+        # (~16ms/page) and needs a mid-QPainter wait loop. Ceiling: UI + all
+        # fitz consumers freeze for N×~page cost (capped by MAX_PRINT_PAGES).
+        # Upgrade: small path-only ahead-buffer on existing max-1 viewer pool
+        # (no live docs across threads; do not raise maxThreadCount) — not a
+        # new print framework.
         painter = QPainter(printer)
         try:
             for i, ref in enumerate(self._model.iter_pages()):
