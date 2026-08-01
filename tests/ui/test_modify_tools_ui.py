@@ -520,8 +520,116 @@ def test_blank_remove_requires_confirm(
     monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
 
     shell._run_btn.click()
-    assert confirmed == [(1, 2)]
+    # O17-e: detect is async — wait for confirm after BusyOverlay clears.
+    qtbot.waitUntil(lambda: confirmed == [(1, 2)], timeout=10000)
+    assert not shell.is_job_running()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=2000)
     assert save_called["n"] == 0
+    assert "1 blank of 2" in shell._blank_preview.text()  # type: ignore[attr-defined]
+    tools.close()
+
+
+def test_blank_detect_none_found(qtbot, tmp_path, monkeypatch, isolated_settings):
+    """O17-e: detect busy chrome then 'none found' when every page has content."""
+    import time
+
+    from pagedrop.core import modify_ops as ops
+
+    pdf = tmp_path / "full.pdf"
+    _write_pdf(pdf, text="keep", pages=2)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "blank_pages")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(pdf)])
+
+    infos: list[str] = []
+
+    def fake_info(parent, title, text):
+        infos.append(text)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", fake_info)
+
+    real_check = ops._check_cancel
+    checks = {"n": 0}
+
+    def slow_first_page(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            time.sleep(0.15)
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", slow_first_page)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: shell.is_job_running() and shell._busy_overlay.isVisible(),
+        timeout=5000,
+    )
+    qtbot.waitUntil(lambda: infos == ["No blank pages detected."], timeout=10000)
+    assert not shell.is_job_running()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=2000)
+    tools.close()
+
+
+def test_blank_detect_cancel_clears_busy_chrome(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    """O17-e: Cancel mid-detect → BusyOverlay clears; source untouched; no confirm."""
+    import time
+
+    from pagedrop.core import modify_ops as ops
+
+    pdf = tmp_path / "many.pdf"
+    _write_pdf(pdf, text="keep", pages=12)
+    source_hash = hashlib.sha256(pdf.read_bytes()).hexdigest()
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "blank_pages")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(pdf)])
+
+    confirmed: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "pagedrop.ui.modify_tools_shell.confirm_remove_blank_pages",
+        lambda *a, **k: confirmed.append((1, 1)) or False,
+    )
+
+    real_check = ops._check_cancel
+    checks = {"n": 0}
+
+    def wait_for_ui_cancel(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            deadline = time.time() + 5.0
+            while not cancel.is_cancelled() and time.time() < deadline:
+                time.sleep(0.01)
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", wait_for_ui_cancel)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: (
+            shell.is_job_running()
+            and checks["n"] >= 1
+            and shell._busy_overlay._cancel_btn.isVisible()
+        ),
+        timeout=5000,
+    )
+    assert shell._busy_overlay.isVisible()
+    shell._busy_overlay._cancel_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert confirmed == []
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
+    assert shell.statusBar().currentMessage() == "Cancelled"
+    assert hashlib.sha256(pdf.read_bytes()).hexdigest() == source_hash
     tools.close()
 
 

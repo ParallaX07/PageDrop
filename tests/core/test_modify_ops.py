@@ -346,6 +346,38 @@ def test_blank_heuristic_on_empty_page(tmp_path: Path) -> None:
         cleaned.close()
 
 
+def test_detect_blank_pages_holds_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-e: detect_blank_pages open/scan owns FITZ_LOCK."""
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
+    path = tmp_path / "mixed.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((20, 40), "content", fontsize=14)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+    report = ops.detect_blank_pages(str(path))
+    assert report.blank_indices == (0,)
+    assert held_at_open, "expected at least one fitz.open"
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
+
+
 def test_header_footer_and_bates_across_files(tmp_path: Path) -> None:
     a = _make_pdf(tmp_path / "a.pdf", text="A")
     b = _make_pdf(tmp_path / "b.pdf", pages=2, text="B")

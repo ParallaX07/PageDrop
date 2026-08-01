@@ -90,6 +90,10 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "CompareWindow",
         "ui/compare_window.py — pdf_service pane render on GUI; text-diff via _CompareTextWorker",
     ),
+    (
+        "_BlankDetectWorker",
+        "ui/modify_tools_shell.py — detect_blank_pages under FITZ_LOCK; tool job pool max 1",
+    ),
 )
 
 

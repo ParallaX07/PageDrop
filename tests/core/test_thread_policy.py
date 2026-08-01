@@ -45,6 +45,7 @@ def test_worker_audit_covers_known_fitz_pools() -> None:
         "_ConvertWorker",
         "WatermarkPageRenderWorker",
         "CompareWindow",
+        "_BlankDetectWorker",
     }
     for _name, note in WORKER_AUDIT:
         assert "FITZ_LOCK" in note or "pdf_service" in note

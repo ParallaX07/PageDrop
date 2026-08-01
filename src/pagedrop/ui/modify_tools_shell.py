@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, QRunnable, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -32,8 +32,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.core.jobs import CancelToken
+from pagedrop.core.jobs.errors import JobCancelledError
 from pagedrop.core.modify_ops import (
     BLANK_PAGE_HEURISTIC_HINT,
+    BlankPageReport,
     RASTER_EFFECT_WARNING,
     detect_blank_pages,
     get_bookmarks,
@@ -45,7 +48,12 @@ from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import (
+    ToolShellWindow,
+    _TOOL_JOB_SIGNAL_REFS,
+    _tool_job_pool,
+    run_tool_job,
+)
 from pagedrop.utils.page_jump import parse_page_ranges
 if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
@@ -1161,6 +1169,43 @@ def _configure_annotations(shell: ToolShellWindow) -> None:
     shell.set_run_handler(on_run)
 
 
+class _BlankDetectWorker(QRunnable):
+    """Run ``detect_blank_pages`` on the tool job pool (O17-e)."""
+
+    class Signals(QObject):
+        succeeded = pyqtSignal(object)
+        cancelled = pyqtSignal()
+        failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        source: str,
+        *,
+        ink_threshold: float,
+        cancel: CancelToken,
+    ) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._source = source
+        self._ink_threshold = ink_threshold
+        self._cancel = cancel
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            report = detect_blank_pages(
+                self._source,
+                ink_threshold=self._ink_threshold,
+                cancel=self._cancel,
+            )
+        except JobCancelledError:
+            self.signals.cancelled.emit()
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))
+        else:
+            self.signals.succeeded.emit(report)
+
+
 def _configure_blank_pages(shell: ToolShellWindow) -> None:
     options = QWidget()
     form = QFormLayout(options)
@@ -1187,42 +1232,91 @@ def _configure_blank_pages(shell: ToolShellWindow) -> None:
         if not paths:
             return
         source = paths[0]
-        try:
-            report = detect_blank_pages(
-                source, ink_threshold=threshold.value()
+        ink = threshold.value()
+        token = shell.begin_job("Detecting blank pages…")
+        worker = _BlankDetectWorker(source, ink_threshold=ink, cancel=token)
+        signals = worker.signals
+        _TOOL_JOB_SIGNAL_REFS.append(signals)
+
+        def _drop_ref() -> None:
+            try:
+                _TOOL_JOB_SIGNAL_REFS.remove(signals)
+            except ValueError:
+                pass
+
+        def on_detected(report: object) -> None:
+            _drop_ref()
+            if not shell.is_job_running():
+                return
+            if not isinstance(report, BlankPageReport):
+                shell.end_job(
+                    error="Blank-page detection returned an unexpected result.",
+                    toast="Detection failed",
+                    toast_kind="error",
+                )
+                return
+            shell.end_job(
+                status=(
+                    f"Detected {report.blank_count} blank of "
+                    f"{report.page_count} pages"
+                )
             )
-        except Exception as exc:
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
-            return
-        preview.setText(
-            f"Detected {report.blank_count} blank of {report.page_count} pages "
-            f"(indices {[i + 1 for i in report.blank_indices]})."
-        )
-        if report.blank_count == 0:
-            QMessageBox.information(
-                shell, shell.WINDOW_TITLE, "No blank pages detected."
+            preview.setText(
+                f"Detected {report.blank_count} blank of {report.page_count} pages "
+                f"(indices {[i + 1 for i in report.blank_indices]})."
             )
-            return
-        if not confirm_remove_blank_pages(
-            shell,
-            blank_count=report.blank_count,
-            page_count=report.page_count,
-            heuristic_hint=BLANK_PAGE_HEURISTIC_HINT,
-        ):
-            return
-        output = _pick_save_path(
-            shell, "Save PDF without blanks", _suggested_output(source, "blank_pages")
-        )
-        if not output:
-            return
-        run_tool_job(
-            shell,
-            job_type="blank_pages",
-            inputs=[source],
-            output=output,
-            options={"ink_threshold": threshold.value()},
-            progress_message="Removing blank pages…",
-        )
+            if report.blank_count == 0:
+                QMessageBox.information(
+                    shell, shell.WINDOW_TITLE, "No blank pages detected."
+                )
+                return
+            if not confirm_remove_blank_pages(
+                shell,
+                blank_count=report.blank_count,
+                page_count=report.page_count,
+                heuristic_hint=BLANK_PAGE_HEURISTIC_HINT,
+            ):
+                return
+            output = _pick_save_path(
+                shell,
+                "Save PDF without blanks",
+                _suggested_output(source, "blank_pages"),
+            )
+            if not output:
+                return
+            run_tool_job(
+                shell,
+                job_type="blank_pages",
+                inputs=[source],
+                output=output,
+                options={"ink_threshold": ink},
+                progress_message="Removing blank pages…",
+            )
+
+        def on_cancelled() -> None:
+            _drop_ref()
+            if not shell.is_job_running():
+                return
+            shell.end_job(
+                status="Cancelled",
+                toast="Detection cancelled",
+                toast_kind="info",
+            )
+
+        def on_failed(message: str) -> None:
+            _drop_ref()
+            if not shell.is_job_running():
+                return
+            shell.end_job(
+                error=message,
+                toast="Detection failed",
+                toast_kind="error",
+            )
+
+        signals.succeeded.connect(on_detected)
+        signals.cancelled.connect(on_cancelled)
+        signals.failed.connect(on_failed)
+        _tool_job_pool().start(worker)
 
     shell.set_run_handler(on_run)
 

@@ -767,23 +767,30 @@ def detect_blank_pages(
     password: str | None = None,
     cancel: CancelToken | None = None,
 ) -> BlankPageReport:
-    """Return pages that look blank (no text/images + low ink coverage)."""
+    """Return pages that look blank (no text/images + low ink coverage).
+
+    Holds ``FITZ_LOCK`` for open/scan/close (O17-e). Nested callers under the
+    job runner's lock are fine — ``FITZ_LOCK`` is re-entrant.
+    """
     if not 0.0 <= ink_threshold <= 1.0:
         raise ValueError("ink_threshold must be between 0 and 1")
-    doc = open_pdf(source_pdf, password=password)
-    try:
-        blanks: list[int] = []
-        for i, page in enumerate(doc):
-            _check_cancel(cancel)
-            if page_looks_blank(page, ink_threshold=ink_threshold):
-                blanks.append(i)
-        return BlankPageReport(
-            blank_indices=tuple(blanks),
-            page_count=doc.page_count,
-            ink_threshold=ink_threshold,
-        )
-    finally:
-        doc.close()
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
+    with FITZ_LOCK:
+        doc = open_pdf(source_pdf, password=password)
+        try:
+            blanks: list[int] = []
+            for i, page in enumerate(doc):
+                _check_cancel(cancel)
+                if page_looks_blank(page, ink_threshold=ink_threshold):
+                    blanks.append(i)
+            return BlankPageReport(
+                blank_indices=tuple(blanks),
+                page_count=doc.page_count,
+                ink_threshold=ink_threshold,
+            )
+        finally:
+            doc.close()
 
 
 def remove_blank_pages(
