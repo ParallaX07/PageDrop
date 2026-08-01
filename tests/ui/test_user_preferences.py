@@ -111,6 +111,11 @@ def test_preferences_safety_geometry_persist_same_keys(qtbot, isolated_settings)
 
     dialog = PreferencesDialog()
     qtbot.addWidget(dialog)
+    margins = dialog.layout().contentsMargins()
+    assert margins.left() >= 12
+    assert margins.top() >= 12
+    assert margins.right() >= 12
+    assert margins.bottom() >= 12
     assert dialog._confirm_delete.isChecked() is False
     assert dialog._confirm_close_dirty.isChecked() is False
     assert dialog._remember_geometry.isChecked() is False

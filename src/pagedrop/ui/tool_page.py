@@ -12,20 +12,25 @@ if TYPE_CHECKING:
 
 
 class StatusFooter(QLabel):
-    """QLabel stand-in for ``QMainWindow.statusBar()`` on tool tab pages."""
+    """QLabel stand-in for ``QMainWindow.statusBar()`` on tool tab pages.
+
+    Idle / empty messages stay hidden so the footer does not reserve a full-width
+    strip for placeholder copy like "Add a file to begin".
+    """
 
     def __init__(self, parent: QWidget | None = None, *, initial: str = "") -> None:
         super().__init__(parent)
         self.setObjectName("ToolPageStatus")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._message = initial
-        if initial:
-            self.setText(initial)
+        self._message = ""
+        self.showMessage(initial)
 
     def showMessage(self, message: str, msecs: int = 0) -> None:  # noqa: N802
         del msecs  # QStatusBar API compat; no timed clear for tab footers.
-        self._message = message
-        self.setText(message)
+        text = message or ""
+        self._message = text
+        self.setText(text)
+        self.setVisible(bool(text.strip()))
 
     def currentMessage(self) -> str:  # noqa: N802
         return self._message

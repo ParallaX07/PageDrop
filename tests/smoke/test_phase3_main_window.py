@@ -14,7 +14,7 @@ def test_smoke_main_window_open_pdf(qtbot, five_page_pdf):
 
     qtbot.waitUntil(
         lambda: window.windowTitle()
-        == f"PageDrop — {five_page_pdf.name} (5 pages)",
+        == f"PageDrop: {five_page_pdf.name} (5 pages)",
         timeout=5000,
     )
     qtbot.waitUntil(

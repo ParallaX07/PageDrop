@@ -53,7 +53,7 @@ def test_drop_indicator_index(qtbot, five_page_pdf):
 
     grid._hide_drop_indicator()
     assert grid._drop_insertion_index is None
-    assert not grid._drop_indicator.isVisible()
+    qtbot.waitUntil(lambda: not grid._drop_indicator.isVisible(), timeout=1000)
 
 
 def test_multi_select_internal_move(qtbot, five_page_pdf):

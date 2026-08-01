@@ -45,7 +45,16 @@ def test_modify_tiles_open_shells(qtbot, isolated_settings):
 
 
 def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_settings):
-    from PyQt6.QtWidgets import QCheckBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QToolButton
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QDoubleSpinBox,
+        QFrame,
+        QLabel,
+        QPushButton,
+        QToolBar,
+        QToolButton,
+        QWidget,
+    )
 
     from pagedrop.ui.watermark_preview import WatermarkPreviewCanvas
 
@@ -58,11 +67,31 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
 
     assert host.findChild(WatermarkPreviewCanvas, "WatermarkPreviewCanvas") is not None
     assert host.findChild(QFrame, "WatermarkPreviewCard") is not None
-    assert host.findChild(QFrame, "WatermarkOptionsCard") is not None
-    assert any(
+    options_card = host.findChild(QFrame, "WatermarkOptionsCard")
+    assert options_card is not None
+    # R11: Run docks in options column footer (outside scroll card); shell strip hidden.
+    assert host.isAncestorOf(shell._run_btn)
+    assert not options_card.isAncestorOf(shell._run_btn)
+    assert not shell._actions_host.isVisible()
+    assert shell.findChild(QToolBar, "ToolShellToolbar") is None
+    # R12: drag hint is a canvas tooltip, not a header QLabel.
+    canvas = host.findChild(WatermarkPreviewCanvas, "WatermarkPreviewCanvas")
+    assert canvas is not None
+    assert "Drag watermark" in canvas.toolTip()
+    assert not any(
         isinstance(lab, QLabel) and "Drag watermark" in lab.text()
         for lab in host.findChildren(QLabel)
     )
+    options_col = host.findChild(QWidget, "WatermarkOptionsColumn")
+    assert options_col is not None
+    assert options_col.minimumWidth() == 400
+    assert options_col.maximumWidth() == 460
+    # R18: tool title + ? dock in the options column (not shell root).
+    assert options_col.isAncestorOf(shell._header_host)
+    assert shell._title_label.text() == "Watermark"
+    assert shell._help_btn.isVisible()
+    assert shell.layout().indexOf(shell._header_host) < 0
+    assert shell.findChild(QLabel, "ToolShellDescription") is None
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)
     assert any(s.suffix() == "°" for s in spins)
@@ -89,7 +118,38 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     ]
     assert len(zoom_btns) == 2
     shell.resize(900, 640)
+    shell.show()
     qtbot.wait(20)
+    # R12: options stay in the locked band; preview gets the horizontal remainder.
+    assert 400 <= options_col.width() <= 460
+    preview = host.findChild(QFrame, "WatermarkPreviewCard")
+    assert preview is not None
+    assert preview.width() > options_col.width()
+    # Idle status placeholder must not reserve a full-width strip.
+    assert not shell.statusBar().isVisible()
+    assert shell.statusBar().currentMessage() == ""
+    tools.close()
+
+
+def test_r12_crop_margins_use_2x2_grid(qtbot, isolated_settings):
+    from PyQt6.QtWidgets import QDoubleSpinBox, QGridLayout, QWidget
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "crop")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    host = shell._options_host
+    margins = host.findChild(QWidget, "CropMarginsGrid")
+    assert margins is not None
+    grid = margins.layout()
+    assert isinstance(grid, QGridLayout)
+    assert grid.rowCount() == 2
+    assert grid.columnCount() == 2
+    # Four margin spins live in the grid (not four stacked QFormLayout rows).
+    spins = margins.findChildren(QDoubleSpinBox)
+    assert len(spins) == 4
+    assert all(s.suffix().strip() == "pt" for s in spins)
     tools.close()
 
 
@@ -121,6 +181,7 @@ def test_watermark_preview_after_pick_shows_change_file(qtbot, tmp_path, isolate
     qtbot.waitUntil(lambda: not shell.drop_zone.isVisible(), timeout=3000)
     chrome = shell._chrome_host
     assert chrome.isVisible()
+    # R18: title/desc live in the options column — no root spacing rhythm for that stack.
     change = chrome.findChild(QPushButton)
     assert change is not None and change.text() == "Change file"
     assert any("src.pdf" in lab.text() for lab in chrome.findChildren(QLabel))
@@ -252,6 +313,55 @@ def test_watermark_overlay_move_and_angle_sync_sidebar(qtbot, tmp_path, isolated
     tools.close()
 
 
+def test_watermark_image_overlay_size_reuses_cache(qtbot, tmp_path):
+    """O17-b: image _box_pts uses canvas _image_cache; no per-call disk decode."""
+    from PyQt6.QtGui import QImage, QPixmap
+
+    from pagedrop.ui.watermark_preview import (
+        WatermarkOverlayState,
+        WatermarkPreviewCanvas,
+        _overlay_size_pts,
+    )
+
+    img = QImage(80, 40, QImage.Format.Format_RGB32)
+    img.fill(0)
+    path = tmp_path / "mark.png"
+    assert img.save(str(path))
+
+    # Passed pixmap wins over a broken path (size path must not re-decode).
+    state = WatermarkOverlayState(
+        kind="image",
+        image_path="/no/such/watermark.png",
+        size_mode="diagonal",
+        diagonal_percent=50.0,
+    )
+    cached = QPixmap(str(path))
+    w, h = _overlay_size_pts(state, 400.0, 400.0, image_pix=cached)
+    diag = (400.0**2 + 400.0**2) ** 0.5
+    assert abs(w - diag * 0.5) < 0.5
+    assert abs(h / w - 0.5) < 0.01
+
+    canvas = WatermarkPreviewCanvas()
+    qtbot.addWidget(canvas)
+    canvas._page_w = 400.0
+    canvas._page_h = 400.0
+    canvas.set_state(
+        WatermarkOverlayState(
+            kind="image",
+            image_path=str(path),
+            size_mode="diagonal",
+            diagonal_percent=40.0,
+        )
+    )
+    canvas._box_pts()  # warm cache
+    assert not canvas._image_cache.isNull()
+    assert canvas._image_cache_path == str(path)
+    warm = canvas._image_cache
+    for _ in range(20):
+        canvas._box_pts()
+    assert canvas._image_cache is warm  # same QPixmap object — no reload
+
+
 def test_watermark_run_result_bar_no_auto_open(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):
@@ -360,7 +470,7 @@ def test_watermark_cancel_mid_run_clears_busy_chrome(
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
 
     assert not out.exists()
-    assert not shell._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert not shell._result_bar.isVisible()
     assert shell.statusBar().currentMessage() == "Cancelled"
     assert hashlib.sha256(src.read_bytes()).hexdigest() == source_hash
@@ -410,8 +520,116 @@ def test_blank_remove_requires_confirm(
     monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
 
     shell._run_btn.click()
-    assert confirmed == [(1, 2)]
+    # O17-e: detect is async — wait for confirm after BusyOverlay clears.
+    qtbot.waitUntil(lambda: confirmed == [(1, 2)], timeout=10000)
+    assert not shell.is_job_running()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=2000)
     assert save_called["n"] == 0
+    assert "1 blank of 2" in shell._blank_preview.text()  # type: ignore[attr-defined]
+    tools.close()
+
+
+def test_blank_detect_none_found(qtbot, tmp_path, monkeypatch, isolated_settings):
+    """O17-e: detect busy chrome then 'none found' when every page has content."""
+    import time
+
+    from pagedrop.core import modify_ops as ops
+
+    pdf = tmp_path / "full.pdf"
+    _write_pdf(pdf, text="keep", pages=2)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "blank_pages")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(pdf)])
+
+    infos: list[str] = []
+
+    def fake_info(parent, title, text):
+        infos.append(text)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", fake_info)
+
+    real_check = ops._check_cancel
+    checks = {"n": 0}
+
+    def slow_first_page(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            time.sleep(0.15)
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", slow_first_page)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: shell.is_job_running() and shell._busy_overlay.isVisible(),
+        timeout=5000,
+    )
+    qtbot.waitUntil(lambda: infos == ["No blank pages detected."], timeout=10000)
+    assert not shell.is_job_running()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=2000)
+    tools.close()
+
+
+def test_blank_detect_cancel_clears_busy_chrome(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    """O17-e: Cancel mid-detect → BusyOverlay clears; source untouched; no confirm."""
+    import time
+
+    from pagedrop.core import modify_ops as ops
+
+    pdf = tmp_path / "many.pdf"
+    _write_pdf(pdf, text="keep", pages=12)
+    source_hash = hashlib.sha256(pdf.read_bytes()).hexdigest()
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_modify_shell(tools, "blank_pages")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(pdf)])
+
+    confirmed: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "pagedrop.ui.modify_tools_shell.confirm_remove_blank_pages",
+        lambda *a, **k: confirmed.append((1, 1)) or False,
+    )
+
+    real_check = ops._check_cancel
+    checks = {"n": 0}
+
+    def wait_for_ui_cancel(cancel):
+        checks["n"] += 1
+        if checks["n"] == 1:
+            deadline = time.time() + 5.0
+            while not cancel.is_cancelled() and time.time() < deadline:
+                time.sleep(0.01)
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", wait_for_ui_cancel)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(
+        lambda: (
+            shell.is_job_running()
+            and checks["n"] >= 1
+            and shell._busy_overlay._cancel_btn.isVisible()
+        ),
+        timeout=5000,
+    )
+    assert shell._busy_overlay.isVisible()
+    shell._busy_overlay._cancel_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert confirmed == []
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
+    assert shell.statusBar().currentMessage() == "Cancelled"
+    assert hashlib.sha256(pdf.read_bytes()).hexdigest() == source_hash
     tools.close()
 
 

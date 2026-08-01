@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for PageDrop — onefile GUI executable."""
+"""PyInstaller spec for PageDrop — onedir GUI bundle (dist/pagedrop/)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ TESSDATA = SRC / "pagedrop" / "data" / "tessdata"
 
 datas: list[tuple[str, str]] = [
     (str(ASSETS / "logo.png"), "pagedrop/assets"),
-    # Licence notices must ship inside the onefile archive / installer.
+    # Phosphor toolbar SVGs (R4) — must resolve via importlib.resources when frozen.
+    (str(ASSETS / "icons"), "pagedrop/assets/icons"),
+    # Licence notices must ship beside the onedir exe.
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),
 ]
@@ -29,10 +31,18 @@ hiddenimports: list[str] = [
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
+    "PyQt6.QtSvg",
+    "PyQt6.QtPrintSupport",
 ]
 
 # PyQt6: widget stack only — skip WebEngine, Bluetooth, Multimedia, etc.
-for qt_mod in ("PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets"):
+for qt_mod in (
+    "PyQt6.QtCore",
+    "PyQt6.QtGui",
+    "PyQt6.QtWidgets",
+    "PyQt6.QtSvg",
+    "PyQt6.QtPrintSupport",
+):
     hiddenimports += collect_submodules(qt_mod)
 
 # Qt DLLs, plugins (platforms/styles/imageformats), and translations are
@@ -72,20 +82,17 @@ a = Analysis(
 pyz = PYZ(a.pure)
 
 _icon = ASSETS / "app-icon.ico"
+# Thin EXE + COLLECT → dist/pagedrop/pagedrop(.exe); Qt/plugins stay as loose files.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
-    a.zipfiles,
     [],
+    exclude_binaries=True,
     name="pagedrop",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -93,4 +100,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(_icon) if _icon.is_file() else None,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    name="pagedrop",
+    strip=False,
+    upx=False,
+    upx_exclude=[],
 )

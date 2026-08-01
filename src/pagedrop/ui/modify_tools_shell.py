@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, QRunnable, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -32,8 +32,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.core.jobs import CancelToken
+from pagedrop.core.jobs.errors import JobCancelledError
 from pagedrop.core.modify_ops import (
     BLANK_PAGE_HEURISTIC_HINT,
+    BlankPageReport,
     RASTER_EFFECT_WARNING,
     detect_blank_pages,
     get_bookmarks,
@@ -45,7 +48,12 @@ from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import (
+    ToolShellWindow,
+    _TOOL_JOB_SIGNAL_REFS,
+    _tool_job_pool,
+    run_tool_job,
+)
 from pagedrop.utils.page_jump import parse_page_ranges
 if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
@@ -136,10 +144,30 @@ def _configure_crop(shell: ToolShellWindow) -> None:
     mode = QComboBox()
     mode.addItem("CropBox (soft crop)", "cropbox")
     mode.addItem("Rebuild (hard clip)", "rebuild")
-    form.addRow("Left", left)
-    form.addRow("Right", right)
-    form.addRow("Top", top)
-    form.addRow("Bottom", bottom)
+    # R12: Left|Right / Top|Bottom in a 2×2 grid (not four stacked form rows).
+    margins_host = QWidget()
+    margins_host.setObjectName("CropMarginsGrid")
+    margins_grid = QGridLayout(margins_host)
+    margins_grid.setContentsMargins(0, 0, 0, 0)
+    margins_grid.setHorizontalSpacing(10)
+    margins_grid.setVerticalSpacing(8)
+
+    def _margin_cell(caption: str, spin: QDoubleSpinBox) -> QWidget:
+        cell = QWidget()
+        cell_lay = QVBoxLayout(cell)
+        cell_lay.setContentsMargins(0, 0, 0, 0)
+        cell_lay.setSpacing(2)
+        lab = QLabel(caption)
+        lab.setObjectName("ToolsHint")
+        cell_lay.addWidget(lab)
+        cell_lay.addWidget(spin)
+        return cell
+
+    margins_grid.addWidget(_margin_cell("Left", left), 0, 0)
+    margins_grid.addWidget(_margin_cell("Right", right), 0, 1)
+    margins_grid.addWidget(_margin_cell("Top", top), 1, 0)
+    margins_grid.addWidget(_margin_cell("Bottom", bottom), 1, 1)
+    form.addRow(margins_host)
     form.addRow("Mode", mode)
     hint = QLabel(
         "Margins in points. CropBox keeps page size metadata; "
@@ -219,9 +247,12 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
 
     preview_card = QFrame()
     preview_card.setObjectName("WatermarkPreviewCard")
+    preview_card.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
     preview_lay = QVBoxLayout(preview_card)
-    preview_lay.setContentsMargins(12, 12, 12, 12)
-    preview_lay.setSpacing(8)
+    preview_lay.setContentsMargins(10, 8, 10, 10)
+    preview_lay.setSpacing(6)
 
     header = QHBoxLayout()
     header.setSpacing(8)
@@ -253,9 +284,6 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     zoom_in.setToolTip("Zoom in (Ctrl+scroll)")
     zoom_in.setAccessibleName("Zoom in")
 
-    drag_hint = QLabel("Drag watermark to position")
-    drag_hint.setObjectName("ToolsHint")
-
     header.addWidget(preview_title)
     header.addStretch(1)
     header.addWidget(prev_btn)
@@ -265,19 +293,48 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     header.addWidget(zoom_out)
     header.addWidget(zoom_label)
     header.addWidget(zoom_in)
-    header.addSpacing(8)
-    header.addWidget(drag_hint)
     preview_lay.addLayout(header)
 
     canvas = WatermarkPreviewCanvas()
+    # R12: drag hint lives on the canvas (not an 11th header widget).
+    canvas.setToolTip("Drag watermark to position")
     preview_scroll = WatermarkPreviewScroll(canvas)
+    preview_scroll.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
     preview_lay.addWidget(preview_scroll, stretch=1)
-    body_row.addWidget(preview_card, stretch=3)
+    # R12: preview takes horizontal remainder; options fixed band (not stretch 3/2).
+    # Smoke: ≤380 still cramped for long labels / snap — keep ~400–460 readable.
+    body_row.addWidget(preview_card, stretch=1)
 
+    # Options column: scrollable card + sticky Run footer (R11 — no shell Run strip).
+    # Form stays on the styled QFrame (scroll widget) so light/dark QSS fills correctly;
+    # a plain QWidget inside the viewport would show the unthemed palette (dark blotch).
+    options_column = QWidget()
+    options_column.setObjectName("WatermarkOptionsColumn")
+    options_column.setMinimumWidth(400)
+    options_column.setMaximumWidth(460)
+    options_column.setSizePolicy(
+        QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+    )
+    options_col = QVBoxLayout(options_column)
+    options_col.setContentsMargins(0, 0, 0, 0)
+    options_col.setSpacing(8)
+    # R18: title + description sticky above the form card (before wipe deletes them).
+    shell.adopt_header(options_col)
+
+    # Border on the outer frame; scroll sits inside so the scrollbar does not
+    # eat the card's right edge (pre-fix: card-as-scroll-widget clipped the border).
     options_card = QFrame()
     options_card.setObjectName("WatermarkOptionsCard")
-    options_card.setMinimumWidth(280)
-    form = QFormLayout(options_card)
+    card_lay = QVBoxLayout(options_card)
+    card_lay.setContentsMargins(0, 0, 0, 0)
+    card_lay.setSpacing(0)
+
+    form_host = QWidget()
+    form_host.setObjectName("WatermarkOptionsForm")
+    form_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    form = QFormLayout(form_host)
     form.setContentsMargins(14, 14, 14, 14)
     form.setVerticalSpacing(10)
     form.setHorizontalSpacing(10)
@@ -482,21 +539,25 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     form.addRow("Opacity", opacity_host)
     form.addRow("Angle", angle_host)
     form.addRow("Snap", pos_host)
-    # Hidden spins keep range + test findability; sliders drive the UI.
-    opacity.setParent(options_card)
-    angle.setParent(options_card)
-    opacity.hide()
-    angle.hide()
     form.addRow("", flatten)
     form.addRow(flatten_hint)
+
+    # Hidden spins keep range + test findability; sliders drive the UI.
+    opacity.setParent(form_host)
+    angle.setParent(form_host)
+    opacity.hide()
+    angle.hide()
 
     options_scroll = QScrollArea()
     options_scroll.setObjectName("WatermarkOptionsScroll")
     options_scroll.setWidgetResizable(True)
     options_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
     options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    options_scroll.setWidget(options_card)
-    body_row.addWidget(options_scroll, stretch=2)
+    options_scroll.setWidget(form_host)
+    card_lay.addWidget(options_scroll)
+    options_col.addWidget(options_card, stretch=1)
+    shell.adopt_run_button(options_col)
+    body_row.addWidget(options_column, stretch=0)
 
     while shell._options_layout.count():
         item = shell._options_layout.takeAt(0)
@@ -801,9 +862,9 @@ def _configure_header_footer(shell: ToolShellWindow) -> None:
     form = QFormLayout(options)
     form.setContentsMargins(0, 0, 0, 0)
     header = QLineEdit()
-    header.setPlaceholderText("Optional — tokens {page} {total}")
+    header.setPlaceholderText("Optional: tokens {page} {total}")
     footer = QLineEdit()
-    footer.setPlaceholderText("Optional — tokens {page} {total}")
+    footer.setPlaceholderText("Optional: tokens {page} {total}")
     form.addRow("Header", header)
     form.addRow("Footer", footer)
     hint = QLabel("At least one of header or footer is required.")
@@ -988,7 +1049,7 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
     action.addItem("Generate TOC page", "toc_page")
     action.addItem("Clear bookmarks", "clear")
     editor = QPlainTextEdit()
-    editor.setPlaceholderText("level|title|page — one per line\n1|Introduction|1")
+    editor.setPlaceholderText("level|title|page; one per line\n1|Introduction|1")
     editor.setMaximumHeight(120)
     status = QLabel("Drop a PDF to inspect existing bookmarks.")
     status.setObjectName("ToolsHint")
@@ -1108,6 +1169,43 @@ def _configure_annotations(shell: ToolShellWindow) -> None:
     shell.set_run_handler(on_run)
 
 
+class _BlankDetectWorker(QRunnable):
+    """Run ``detect_blank_pages`` on the tool job pool (O17-e)."""
+
+    class Signals(QObject):
+        succeeded = pyqtSignal(object)
+        cancelled = pyqtSignal()
+        failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        source: str,
+        *,
+        ink_threshold: float,
+        cancel: CancelToken,
+    ) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._source = source
+        self._ink_threshold = ink_threshold
+        self._cancel = cancel
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            report = detect_blank_pages(
+                self._source,
+                ink_threshold=self._ink_threshold,
+                cancel=self._cancel,
+            )
+        except JobCancelledError:
+            self.signals.cancelled.emit()
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))
+        else:
+            self.signals.succeeded.emit(report)
+
+
 def _configure_blank_pages(shell: ToolShellWindow) -> None:
     options = QWidget()
     form = QFormLayout(options)
@@ -1134,42 +1232,91 @@ def _configure_blank_pages(shell: ToolShellWindow) -> None:
         if not paths:
             return
         source = paths[0]
-        try:
-            report = detect_blank_pages(
-                source, ink_threshold=threshold.value()
+        ink = threshold.value()
+        token = shell.begin_job("Detecting blank pages…")
+        worker = _BlankDetectWorker(source, ink_threshold=ink, cancel=token)
+        signals = worker.signals
+        _TOOL_JOB_SIGNAL_REFS.append(signals)
+
+        def _drop_ref() -> None:
+            try:
+                _TOOL_JOB_SIGNAL_REFS.remove(signals)
+            except ValueError:
+                pass
+
+        def on_detected(report: object) -> None:
+            _drop_ref()
+            if not shell.is_job_running():
+                return
+            if not isinstance(report, BlankPageReport):
+                shell.end_job(
+                    error="Blank-page detection returned an unexpected result.",
+                    toast="Detection failed",
+                    toast_kind="error",
+                )
+                return
+            shell.end_job(
+                status=(
+                    f"Detected {report.blank_count} blank of "
+                    f"{report.page_count} pages"
+                )
             )
-        except Exception as exc:
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
-            return
-        preview.setText(
-            f"Detected {report.blank_count} blank of {report.page_count} pages "
-            f"(indices {[i + 1 for i in report.blank_indices]})."
-        )
-        if report.blank_count == 0:
-            QMessageBox.information(
-                shell, shell.WINDOW_TITLE, "No blank pages detected."
+            preview.setText(
+                f"Detected {report.blank_count} blank of {report.page_count} pages "
+                f"(indices {[i + 1 for i in report.blank_indices]})."
             )
-            return
-        if not confirm_remove_blank_pages(
-            shell,
-            blank_count=report.blank_count,
-            page_count=report.page_count,
-            heuristic_hint=BLANK_PAGE_HEURISTIC_HINT,
-        ):
-            return
-        output = _pick_save_path(
-            shell, "Save PDF without blanks", _suggested_output(source, "blank_pages")
-        )
-        if not output:
-            return
-        run_tool_job(
-            shell,
-            job_type="blank_pages",
-            inputs=[source],
-            output=output,
-            options={"ink_threshold": threshold.value()},
-            progress_message="Removing blank pages…",
-        )
+            if report.blank_count == 0:
+                QMessageBox.information(
+                    shell, shell.WINDOW_TITLE, "No blank pages detected."
+                )
+                return
+            if not confirm_remove_blank_pages(
+                shell,
+                blank_count=report.blank_count,
+                page_count=report.page_count,
+                heuristic_hint=BLANK_PAGE_HEURISTIC_HINT,
+            ):
+                return
+            output = _pick_save_path(
+                shell,
+                "Save PDF without blanks",
+                _suggested_output(source, "blank_pages"),
+            )
+            if not output:
+                return
+            run_tool_job(
+                shell,
+                job_type="blank_pages",
+                inputs=[source],
+                output=output,
+                options={"ink_threshold": ink},
+                progress_message="Removing blank pages…",
+            )
+
+        def on_cancelled() -> None:
+            _drop_ref()
+            if not shell.is_job_running():
+                return
+            shell.end_job(
+                status="Cancelled",
+                toast="Detection cancelled",
+                toast_kind="info",
+            )
+
+        def on_failed(message: str) -> None:
+            _drop_ref()
+            if not shell.is_job_running():
+                return
+            shell.end_job(
+                error=message,
+                toast="Detection failed",
+                toast_kind="error",
+            )
+
+        signals.succeeded.connect(on_detected)
+        signals.cancelled.connect(on_cancelled)
+        signals.failed.connect(on_failed)
+        _tool_job_pool().start(worker)
 
     shell.set_run_handler(on_run)
 
@@ -1266,12 +1413,13 @@ def open_modify_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | Non
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=multi,
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
-            browse_title=f"Choose PDF — {entry.title}",
+            browse_title=f"Choose PDF: {entry.title}",
         )
         _CONFIGURERS[tool_id](shell)
         store[tool_id] = shell

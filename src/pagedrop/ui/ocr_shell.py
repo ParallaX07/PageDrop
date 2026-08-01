@@ -92,7 +92,7 @@ def _tessdata_status_line() -> str:
         lang_s = ", ".join(langs[:8])
         if len(langs) > 8:
             lang_s = f"{lang_s}, …"
-        return f"tessdata ready — {lang_s}\n{path}"
+        return f"tessdata ready: {lang_s}\n{path}"
     return status.detail or "No tessdata languages found"
 
 
@@ -106,7 +106,7 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
     hint = QLabel(
         "Creates a new searchable PDF (pages are rasterized with an OCR text "
         "layer). Source file is never overwritten. Requires tessdata language "
-        "files — not a separate Tesseract install."
+        "files, not a separate Tesseract install."
     )
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
@@ -173,7 +173,7 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
         if cap.available:
             shell.statusBar().showMessage("Ready")
         else:
-            shell.statusBar().showMessage("tessdata missing — Configure or Recheck")
+            shell.statusBar().showMessage("tessdata missing. Configure or Recheck")
 
     def on_configure() -> None:
         open_preferences(shell)
@@ -276,7 +276,7 @@ def _configure_extract_tables(
 
     hint = QLabel(
         "Uses PyMuPDF table detection (find_tables). Writes a new CSV, JSON, "
-        "or Excel file — source PDF unchanged. XLSX needs openpyxl."
+        "or Excel file. Source PDF unchanged. XLSX needs openpyxl."
     )
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
@@ -391,12 +391,13 @@ def open_ocr_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=False,
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
-            browse_title=f"Choose PDF — {entry.title}",
+            browse_title=f"Choose PDF: {entry.title}",
         )
         if tool_id == "ocr_pdf":
             _CONFIGURERS[tool_id](shell, range_prefill=range_prefill)

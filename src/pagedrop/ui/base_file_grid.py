@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, QThreadPool, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QSize, QThreadPool, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QDragEnterEvent,
     QDragMoveEvent,
@@ -21,7 +21,6 @@ from PyQt6.QtGui import (
     QResizeEvent,
 )
 from PyQt6.QtWidgets import (
-    QFrame,
     QGridLayout,
     QLabel,
     QScrollArea,
@@ -29,29 +28,39 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.assets import empty_state_logo_pixmap
 from pagedrop.core.drag_mime import (
     INTERNAL_MERGE_FILE_MIME,
     decode_page_indices,
 )
 from pagedrop.core.selection_manager import SelectionManager
+from pagedrop.ui import icons
 from pagedrop.ui.base_file_card import InternalReorderFileCard
 from pagedrop.ui.grid_helpers import (
+    DropIndicator,
     ctrl_wheel_zoom_step,
     drop_index_at_pos,
     drop_indicator_rect,
 )
+from pagedrop.ui.settings import light_theme
 from pagedrop.ui.theme import (
     CARD_PADDING,
     CARD_WIDTH,
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    SPACE_2,
+    SPACE_3,
+    SPACE_4,
+    SPACE_6,
+    SPACE_7,
+    TEXT_MUTED,
+    TEXT_MUTED_LIGHT,
 )
 from pagedrop.utils.list_utils import move_items
 
 ZOOM_RENDER_DEBOUNCE_MS = 200
 RENDER_POOL_DRAIN_MS = 2000
+_EMPTY_GLYPH_PX = 48
 
 
 class BaseFileGrid(QScrollArea):
@@ -77,9 +86,8 @@ class BaseFileGrid(QScrollArea):
         empty_kbd_object_name: str,
         empty_title: str,
         empty_hint: str,
-        empty_kbd: str = (
-            "← → ↑ ↓ navigate  ·  Space select  ·  Enter preview"
-        ),
+        empty_kbd: str,
+        empty_glyph: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -87,6 +95,8 @@ class BaseFileGrid(QScrollArea):
         self._render_width_by_path: dict[str, int] = {}
         self._failed_paths: set[str] = set()
         self._cards: list[InternalReorderFileCard] = []
+        # O(1) path→card for thumb ready / pixmap reuse (paths are unique).
+        self._cards_by_path: dict[str, InternalReorderFileCard] = {}
         self._grid_cols = 0
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
         self._card_width = CARD_WIDTH
@@ -113,8 +123,8 @@ class BaseFileGrid(QScrollArea):
         self._container = QWidget()
         self._container.setObjectName(container_object_name)
         self._layout = QGridLayout(self._container)
-        self._layout.setSpacing(12)
-        self._layout.setContentsMargins(16, 16, 16, 16)
+        self._layout.setSpacing(SPACE_3)
+        self._layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
         self._layout.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
@@ -125,14 +135,15 @@ class BaseFileGrid(QScrollArea):
         self._empty_state.setAccessibleDescription(empty_hint)
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setSpacing(8)
-        empty_layout.setContentsMargins(32, 48, 32, 48)
+        empty_layout.setSpacing(SPACE_2)
+        empty_layout.setContentsMargins(SPACE_6, SPACE_7, SPACE_6, SPACE_7)
 
+        self._empty_glyph_name = empty_glyph
         self._empty_logo = QLabel()
         self._empty_logo.setObjectName(empty_logo_object_name)
         self._empty_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_logo.setAccessibleName("PageDrop logo")
-        self._empty_logo.setPixmap(empty_state_logo_pixmap())
+        self._empty_logo.setAccessibleName(empty_title)
+        self._refresh_empty_glyph()
 
         self._empty_title = QLabel(empty_title)
         self._empty_title.setObjectName(empty_title_object_name)
@@ -155,10 +166,7 @@ class BaseFileGrid(QScrollArea):
 
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
-        self._drop_indicator = QFrame(self._container)
-        self._drop_indicator.setObjectName("DropIndicator")
-        self._drop_indicator.setFixedWidth(3)
-        self._drop_indicator.hide()
+        self._drop_indicator = DropIndicator(self._container)
 
         self.setWidget(self._container)
 
@@ -166,6 +174,17 @@ class BaseFileGrid(QScrollArea):
             on_selection_changed=self._on_selection_changed,
         )
         self._painted_selection: set[int] = set()
+
+        refresh_cb = self._refresh_empty_glyph
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
+
+    def _refresh_empty_glyph(self) -> None:
+        tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED
+        pix = icons.icon(self._empty_glyph_name, color=tint).pixmap(
+            QSize(_EMPTY_GLYPH_PX, _EMPTY_GLYPH_PX)
+        )
+        self._empty_logo.setPixmap(pix)
 
     def _create_card(self, index: int, path: str) -> InternalReorderFileCard:
         raise NotImplementedError
@@ -184,7 +203,7 @@ class BaseFileGrid(QScrollArea):
             return
         self._failed_paths.add(path)
         self.rendering_error.emit(
-            f"Could not preview {Path(path).name} — "
+            f"Could not preview {Path(path).name}: "
             "file may be corrupt or unreadable"
         )
 
@@ -222,6 +241,7 @@ class BaseFileGrid(QScrollArea):
             card.clicked.connect(self._on_card_clicked)
             card.double_clicked.connect(self._on_card_double_clicked)
             self._cards.append(card)
+            self._cards_by_path[path] = card
 
         self.selection_manager.set_page_count(len(paths))
         self.selection_manager.set_selection(selected_indices)
@@ -419,6 +439,7 @@ class BaseFileGrid(QScrollArea):
             card.setParent(None)
             card.deleteLater()
         self._cards.clear()
+        self._cards_by_path.clear()
         self._painted_selection.clear()
         self._focused_index = None
         while self._layout.count():
@@ -464,7 +485,7 @@ class BaseFileGrid(QScrollArea):
 
     def _hide_drop_indicator(self) -> None:
         self._drop_insertion_index = None
-        self._drop_indicator.hide()
+        self._drop_indicator.dismiss()
 
     def _update_drop_indicator(self, insertion_index: int) -> None:
         rect = drop_indicator_rect(
@@ -475,9 +496,7 @@ class BaseFileGrid(QScrollArea):
             return
 
         self._drop_insertion_index = insertion_index
-        self._drop_indicator.setGeometry(rect)
-        self._drop_indicator.show()
-        self._drop_indicator.raise_()
+        self._drop_indicator.place(rect)
 
     def _reorder_by_drop(self, indices: list[int], to_index: int) -> bool:
         if not indices or not self._paths:
@@ -488,9 +507,8 @@ class BaseFileGrid(QScrollArea):
             return False
 
         ordered = sorted(set(indices))
-        path_to_card = {card.path: card for card in self._cards}
         self._paths = new_paths
-        self._cards = [path_to_card[path] for path in new_paths]
+        self._cards = [self._cards_by_path[path] for path in new_paths]
         for index, card in enumerate(self._cards):
             card.set_file_index(index)
         new_selection = set(range(adjusted, adjusted + len(ordered)))
@@ -504,9 +522,9 @@ class BaseFileGrid(QScrollArea):
         return True
 
     def _find_card_pixmap(self, path: str) -> QPixmap | None:
-        for card in self._cards:
-            if card.path == path and card._source_pixmap is not None:
-                return card._source_pixmap
+        card = self._cards_by_path.get(path)
+        if card is not None and card._source_pixmap is not None:
+            return card._source_pixmap
         return None
 
     def _is_cancelled(self, generation: int) -> bool:

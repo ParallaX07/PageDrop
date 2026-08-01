@@ -16,21 +16,43 @@ BG_PREVIEW_FOOTER = "#1A1A1F"
 BORDER_SUBTLE = "#2E2E36"
 BORDER_DEFAULT = "#45454F"
 BORDER_HOVER = "#5C5C68"
+# Light chrome border — shared by app_stylesheet locals + paint helpers
+BORDER_HOVER_LIGHT = "#9CA3AF"
 
-ACCENT = "#2F9BE6"
-ACCENT_HOVER = "#4AADED"
-ACCENT_PRESSED = "#1F7FCC"
+# ponytail: darkened from #2F9BE6 so TEXT_ON_ACCENT meets WCAG AA ≥ 4.5 on
+# fill / hover / pressed; brighten only if labels move off the fill.
+ACCENT = "#1868AD"
+ACCENT_HOVER = "#1C74BC"
+ACCENT_PRESSED = "#13558E"
 
 TEXT_PRIMARY = "#F2F2F4"
 TEXT_SECONDARY = "#A8A8B3"
 TEXT_MUTED = "#82828E"
+# Ink on accent / filled interactive chrome (labels, selection text, focus rings)
+TEXT_ON_ACCENT = "#FFFFFF"
+
+# Light chrome mirrors — paint helpers + app_stylesheet(light=True) share these
+# so toggling light never leaves dark-only module hex on white surfaces.
+TEXT_PRIMARY_LIGHT = "#1A1A1F"
+TEXT_SECONDARY_LIGHT = "#4A4A55"
+TEXT_MUTED_LIGHT = "#5A5D68"
+BG_CARD_LIGHT = "#FFFFFF"
+BG_BASE_LIGHT = "#F7F8FA"
+BG_GRID_LIGHT = "#F0F1F4"
 
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
+CLOSE_TAB_PRESSED_BG = "#2A1519"
+CLOSE_TAB_LIGHT = "#D14343"
+CLOSE_TAB_HOVER_BG_LIGHT = "#F5D6D6"
+CLOSE_TAB_PRESSED_BG_LIGHT = "#E8B4B4"
 
-# Semantic status (compare diffs, validation errors)
+# Semantic status (compare diffs, validation errors, toast kinds)
 STATUS_SUCCESS = "#4CAF6E"
 STATUS_WARNING = "#F0B43C"
+# Darker status ink for light chrome text (toast / lists) — AA ≥ 4.5 on white
+STATUS_SUCCESS_LIGHT = "#1B7A3D"
+STATUS_WARNING_LIGHT = "#8A6200"
 
 # Viewer page paper — intentional light plane even under dark chrome
 VIEWER_PAGE_BG = "#FAFAFA"
@@ -45,6 +67,9 @@ COMMENT_PIN_EDGE = "#B48C00"
 
 # Tinted shadow (cool blue, not pure black)
 SHADOW_RGB = (14, 22, 38)
+SHADOW_RGB_LIGHT = (30, 40, 60)
+# R5: light hover needs a bit more depth than the old 40 cap; raise again if washout
+SHADOW_ALPHA_CAP_LIGHT = 48
 
 RADIUS_CARD = 12
 RADIUS_CONTROL = 8
@@ -53,7 +78,16 @@ RADIUS_BADGE = 6
 FONT_UI = '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
 FONT_MONO = '"Cascadia Mono", "Consolas", monospace'
 
-CARD_PADDING = 16
+# Spacing scale (4px steps) — toolbar / grid / empty-state rhythm
+SPACE_1 = 4
+SPACE_2 = 8
+SPACE_3 = 12
+SPACE_4 = 16
+SPACE_5 = 24
+SPACE_6 = 32
+SPACE_7 = 48
+
+CARD_PADDING = SPACE_4
 DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 80
 MAX_THUMBNAIL_WIDTH = 480
@@ -62,6 +96,8 @@ ZOOM_WHEEL_STEP = 16
 PAGE_NUMBER_OVERLAY_MIN_WIDTH = DEFAULT_THUMBNAIL_WIDTH + ZOOM_WHEEL_STEP * 5
 MIN_PREVIEW_RENDER_WIDTH = 400
 CARD_WIDTH = DEFAULT_THUMBNAIL_WIDTH + CARD_PADDING
+# Mid-toolbar PDF name cap — long names must not shove zoom off-screen (R14).
+TOOLBAR_FILENAME_MAX_WIDTH = 220
 
 
 def relative_luminance(hex_color: str) -> float:
@@ -80,25 +116,32 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Light / HC overrides under distinct locals so we never mutate module tokens.
     if light:
         # Cool off-white base; white cards; light borders (Bento light translation).
-        bg_base = "#F7F8FA"
-        bg_surface = "#FFFFFF"
-        bg_grid = "#F0F1F4"
-        bg_card = "#FFFFFF"
+        bg_base = BG_BASE_LIGHT
+        bg_surface = BG_CARD_LIGHT
+        bg_grid = BG_GRID_LIGHT
+        bg_card = BG_CARD_LIGHT
         bg_card_hover = "#EEF0F4"
         bg_thumb_empty = "#E2E4EA"
-        bg_toolbar = "#FFFFFF"
-        bg_status = "#FFFFFF"
-        bg_tab_bar = "#F7F8FA"
-        bg_preview_footer = "#FFFFFF"
+        bg_toolbar = BG_CARD_LIGHT
+        bg_status = BG_CARD_LIGHT
+        bg_tab_bar = BG_BASE_LIGHT
+        bg_preview_footer = BG_CARD_LIGHT
         border_subtle_tok = "#E5E7EB"
         border_default_tok = "#D1D5DB"
-        border_hover = "#9CA3AF"
-        text_primary = "#1A1A1F"
-        text_secondary = "#4A4A55"
-        text_muted_tok = "#5A5D68"
-        close_tab = "#D14343"
-        close_tab_hover_bg = "#F5D6D6"
+        border_hover = BORDER_HOVER_LIGHT
+        text_primary = TEXT_PRIMARY_LIGHT
+        text_secondary = TEXT_SECONDARY_LIGHT
+        text_muted_tok = TEXT_MUTED_LIGHT
+        close_tab = CLOSE_TAB_LIGHT
+        close_tab_hover_bg = CLOSE_TAB_HOVER_BG_LIGHT
+        close_tab_pressed_bg = CLOSE_TAB_PRESSED_BG_LIGHT
+        status_success = STATUS_SUCCESS_LIGHT
+        status_warning = STATUS_WARNING_LIGHT
         busy_overlay_bg = "rgba(247, 248, 250, 200)"
+        # Chips sit on page-paper thumbs (always light) — dark pill either chrome.
+        page_chip_bg = "rgba(26, 26, 31, 170)"
+        # R10c: one step deeper than bg_base for generic press fills.
+        bg_pressed = "#E2E4EA"
     else:
         bg_base = BG_BASE
         bg_surface = BG_SURFACE
@@ -118,12 +161,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         text_muted_tok = TEXT_MUTED
         close_tab = CLOSE_TAB
         close_tab_hover_bg = CLOSE_TAB_HOVER_BG
+        close_tab_pressed_bg = CLOSE_TAB_PRESSED_BG
+        status_success = STATUS_SUCCESS
+        status_warning = STATUS_WARNING
         busy_overlay_bg = "rgba(19, 19, 22, 180)"
+        page_chip_bg = "rgba(19, 19, 22, 160)"
+        bg_pressed = "#0E0E11"
 
     text_muted = text_secondary if high_contrast else text_muted_tok
     border_default = border_hover if high_contrast else border_default_tok
     border_subtle = border_default_tok if high_contrast else border_subtle_tok
     focus_width = 3 if high_contrast else 2
+    # Selection reads thicker than keyboard focus (multi-select still obvious in HC)
+    selected_width = focus_width + 1
     return f"""
     * {{
         font-family: {FONT_UI};
@@ -199,7 +249,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
         padding: 8px 10px;
         selection-background-color: {ACCENT};
-        selection-color: #FFFFFF;
+        selection-color: {TEXT_ON_ACCENT};
     }}
 
     QLineEdit:focus {{
@@ -226,7 +276,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
         background-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
     }}
 
     QListWidget::item:hover:!selected,
@@ -255,7 +305,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
     }}
 
     QPushButton:focus {{
@@ -271,6 +321,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QRadioButton {{
         color: {text_primary};
         spacing: 8px;
+        border: none;
+        background-color: transparent;
+        outline: none;
     }}
 
     QCheckBox::indicator,
@@ -298,6 +351,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QCheckBox:focus,
     QRadioButton:focus {{
         outline: none;
+        border: none;
+    }}
+
+    /* ::indicator:focus — NOT :focus::indicator. Fusion paints a full-widget
+       accent frame for the latter (Flatten watermark blue box). */
+    QCheckBox::indicator:focus,
+    QRadioButton::indicator:focus {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QComboBox {{
@@ -327,49 +388,97 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_subtle};
         selection-background-color: {ACCENT};
-        selection-color: #FFFFFF;
+        selection-color: {TEXT_ON_ACCENT};
     }}
 
-    QSpinBox {{
+    QSpinBox,
+    QDoubleSpinBox {{
         background-color: {bg_card};
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 8px;
+        selection-background-color: {ACCENT};
+        selection-color: {TEXT_ON_ACCENT};
     }}
 
-    QSpinBox:focus {{
+    QSpinBox:focus,
+    QDoubleSpinBox:focus {{
         border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPlainTextEdit,
+    QTextEdit {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 8px 10px;
+        selection-background-color: {ACCENT};
+        selection-color: {TEXT_ON_ACCENT};
+    }}
+
+    QPlainTextEdit:focus,
+    QTextEdit:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QGroupBox {{
+        color: {text_primary};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+        margin-top: 12px;
+        padding: 12px 10px 10px 10px;
+    }}
+
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 4px;
+        color: {text_secondary};
+    }}
+
+    /* Encrypt permissions — surface + card radius so it matches section language. */
+    QGroupBox#EncryptPermissions {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CARD}px;
+    }}
+
+    QGroupBox#EncryptPermissions::title {{
+        color: {text_secondary};
     }}
 
     QToolBar {{
         background-color: {bg_toolbar};
         border: none;
         border-bottom: 1px solid {border_subtle};
-        spacing: 8px;
-        padding: 8px 12px;
+        spacing: {SPACE_2}px;
+        padding: {SPACE_2}px {SPACE_3}px;
     }}
 
-    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
+    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync.
+       R3: default tools are flat/hairline; filled primary + outline secondary stay. */
     QToolButton,
     QToolBar QToolButton {{
-        background-color: {bg_card};
+        background-color: transparent;
         color: {text_primary};
-        border: 1px solid {border_default};
+        border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px 14px;
-        font-weight: 600;
+        padding: 6px 10px;
+        font-weight: 500;
     }}
 
     QToolButton:hover,
     QToolBar QToolButton:hover {{
         background-color: {bg_card_hover};
-        border-color: {border_hover};
+        border-color: {border_subtle};
     }}
 
     QToolButton:pressed,
     QToolBar QToolButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
+        border-color: {border_default};
     }}
 
     QToolButton:focus,
@@ -379,8 +488,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton:checked {{
         background-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         border: 1px solid {ACCENT_PRESSED};
+        font-weight: 600;
     }}
 
     QToolButton:checked:hover {{
@@ -391,15 +501,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton:disabled,
     QToolBar QToolButton:disabled {{
         color: {text_muted};
-        border-color: {border_subtle};
+        background-color: transparent;
+        border-color: transparent;
     }}
 
     QPushButton#ToolbarPrimary,
     QToolBar QToolButton#ToolbarPrimary {{
         background-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         border: 1px solid {ACCENT_PRESSED};
         font-weight: 600;
+        padding: 6px 14px;
     }}
 
     QPushButton#ToolbarPrimary:hover,
@@ -416,13 +528,47 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ToolbarPrimary:focus,
     QToolBar QToolButton#ToolbarPrimary:focus {{
-        border: {focus_width}px solid #FFFFFF;
+        border: {focus_width}px solid {TEXT_ON_ACCENT};
     }}
 
     QPushButton#ToolbarPrimary:disabled {{
         background-color: {bg_card_hover};
         color: {text_muted};
         border-color: {border_subtle};
+    }}
+
+    /* Ghost / outline secondary — quieter than default fill, not accent primary. */
+    QPushButton#ToolbarSecondary,
+    QToolBar QToolButton#ToolbarSecondary {{
+        background-color: transparent;
+        color: {text_secondary};
+        border: 1px solid {border_default};
+        font-weight: 600;
+    }}
+
+    QPushButton#ToolbarSecondary:hover,
+    QToolBar QToolButton#ToolbarSecondary:hover {{
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#ToolbarSecondary:pressed,
+    QToolBar QToolButton#ToolbarSecondary:pressed {{
+        background-color: {bg_pressed};
+        color: {text_primary};
+    }}
+
+    QPushButton#ToolbarSecondary:focus,
+    QToolBar QToolButton#ToolbarSecondary:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPushButton#ToolbarSecondary:disabled,
+    QToolBar QToolButton#ToolbarSecondary:disabled {{
+        color: {text_muted};
+        border-color: {border_subtle};
+        background-color: transparent;
     }}
 
     QToolButton#NewTabButton {{
@@ -446,7 +592,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#NewTabButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
     }}
 
     QToolButton#NewTabButton:focus {{
@@ -475,7 +621,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#ChromeToggleButton:pressed {{
-        background-color: {bg_base};
+        background-color: {bg_pressed};
     }}
 
     QToolButton#ChromeToggleButton:focus {{
@@ -494,22 +640,23 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#ZoomControls {{
-        background-color: {bg_card};
+        background-color: {bg_surface};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
+        padding: {SPACE_1}px;
     }}
 
     QLabel#ZoomCaption {{
         color: {text_muted};
         font-size: 11px;
         font-weight: 600;
-        padding: 0 2px 0 0;
+        padding: 0 {SPACE_1}px 0 0;
     }}
 
     QPushButton#ZoomButton {{
-        background-color: {bg_surface};
+        background-color: transparent;
         color: {text_primary};
-        border: 1px solid {border_default};
+        border: 1px solid transparent;
         border-radius: 6px;
         font-size: 15px;
         font-weight: 600;
@@ -518,12 +665,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ZoomButton:hover:enabled {{
         background-color: {bg_card_hover};
-        border-color: {border_hover};
+        border-color: {border_subtle};
         color: {text_primary};
     }}
 
     QPushButton#ZoomButton:pressed:enabled {{
-        background-color: {bg_base};
+        background-color: {bg_card};
+        border-color: {border_default};
     }}
 
     QPushButton#ZoomButton:focus {{
@@ -532,7 +680,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ZoomButton:disabled {{
         color: {text_muted};
-        border-color: {border_subtle};
+        background-color: transparent;
+        border-color: transparent;
     }}
 
     QSlider#ZoomSlider {{
@@ -570,7 +719,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::handle:horizontal:hover {{
-        background: #FFFFFF;
+        background: {TEXT_ON_ACCENT};
         border-color: {ACCENT_HOVER};
     }}
 
@@ -584,7 +733,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QSlider#ZoomSlider:focus::handle:horizontal {{
         background: {ACCENT};
-        border: 2px solid #FFFFFF;
+        border: 2px solid {TEXT_ON_ACCENT};
         width: 14px;
         height: 14px;
         margin: -6px 0;
@@ -619,6 +768,39 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    /* R10e: tool-tab footers mirror QStatusBar so Tools/editor chrome feel related. */
+    QLabel#ToolPageStatus {{
+        background-color: {bg_status};
+        color: {text_secondary};
+        border-top: 1px solid {border_subtle};
+        padding: {SPACE_1}px {SPACE_3}px;
+        min-height: 22px;
+    }}
+
+    QWidget#MoveUndoToast QLabel {{
+        color: {text_secondary};
+        font-weight: 600;
+    }}
+
+    QPushButton#MoveUndoButton {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 2px 10px;
+        font-weight: 600;
+    }}
+
+    QPushButton#MoveUndoButton:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#MoveUndoButton:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
     QProgressBar {{
         background-color: {bg_card};
         border: 1px solid {border_subtle};
@@ -643,14 +825,24 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_grid};
     }}
 
+    /* R10b: editor empty reads as a drop zone — same dashed language as Tools. */
     QWidget#EmptyStatePanel {{
         background-color: transparent;
+        border: 1px dashed {border_default};
+        border-radius: {RADIUS_CARD}px;
+        margin: {SPACE_4}px;
+    }}
+
+    QWidget#EmptyStatePanel[dropActive="true"] {{
+        border-color: {ACCENT};
+        border-style: dashed;
+        background-color: {bg_card_hover};
     }}
 
     QLabel#GridEmptyLogo {{
         background: transparent;
         border: none;
-        padding: 0 0 12px 0;
+        padding: 0 0 {SPACE_3}px 0;
     }}
 
     QLabel#GridEmptyState {{
@@ -674,9 +866,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         font-family: {FONT_MONO};
         font-size: 11px;
-        padding: 8px 0 0 0;
+        padding: {SPACE_2}px 0 0 0;
     }}
 
+    /* R6: flat tab strip — accent underline + muted inactive; no filled selected box. */
     QTabWidget#TabManager::pane {{
         border: none;
         background-color: {bg_base};
@@ -693,7 +886,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         border: none;
         border-bottom: 2px solid transparent;
-        padding: 8px 14px 7px 14px;
+        padding: {SPACE_2}px {SPACE_3}px {SPACE_2 - 1}px {SPACE_3}px;
         margin-right: 2px;
         min-width: 80px;
         max-width: 220px;
@@ -702,14 +895,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QTabWidget#TabManager > QTabBar::tab:selected {{
         color: {text_primary};
-        background-color: {bg_surface};
+        background-color: transparent;
         border-bottom: 2px solid {ACCENT};
         font-weight: 600;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:hover:!selected {{
         color: {text_secondary};
-        background-color: {bg_card};
+        background-color: transparent;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:selected:hover {{
@@ -719,7 +912,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QTabWidget#TabManager QTabBar QAbstractButton {{
         background-color: transparent;
         border: none;
-        border-radius: 4px;
+        border-radius: {SPACE_1}px;
         padding: 2px;
         min-width: 18px;
         max-width: 18px;
@@ -729,6 +922,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QTabWidget#TabManager QTabBar QAbstractButton:hover {{
         background-color: {close_tab_hover_bg};
+    }}
+
+    QTabWidget#TabManager QTabBar QAbstractButton:pressed {{
+        background-color: {close_tab_pressed_bg};
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton:focus {{
@@ -751,6 +948,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background: {border_hover};
     }}
 
+    QScrollBar::handle:vertical:pressed {{
+        background: {text_muted};
+    }}
+
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
     }}
@@ -771,8 +972,33 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background: {border_hover};
     }}
 
+    QScrollBar::handle:horizontal:pressed {{
+        background: {text_muted};
+    }}
+
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         width: 0;
+    }}
+
+    /* R10e: splitter grip press feedback (viewer / compare). */
+    QSplitter::handle {{
+        background-color: {border_subtle};
+    }}
+
+    QSplitter::handle:hover {{
+        background-color: {border_default};
+    }}
+
+    QSplitter::handle:pressed {{
+        background-color: {border_hover};
+    }}
+
+    QSplitter::handle:horizontal {{
+        height: 3px;
+    }}
+
+    QSplitter::handle:vertical {{
+        width: 3px;
     }}
 
     QMessageBox {{
@@ -803,7 +1029,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QMessageBox QPushButton:default {{
         background-color: {ACCENT};
         border-color: {ACCENT};
-        color: #FFFFFF;
+        color: {TEXT_ON_ACCENT};
         font-weight: 600;
     }}
 
@@ -822,7 +1048,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#PagePreviewImage {{
-        background-color: #FAFAFA;
+        background-color: {VIEWER_PAGE_BG};
         padding: 8px;
     }}
 
@@ -876,7 +1102,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QWidget#PdfViewerAnnotTools QToolButton {{
         text-align: left;
         padding: 5px 8px;
-        border: none;
+        border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
         color: {text_secondary};
         background-color: transparent;
@@ -887,16 +1113,27 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
     }}
 
+    QWidget#PdfViewerAnnotTools QToolButton:pressed {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
     QWidget#PdfViewerAnnotTools QToolButton:checked {{
         color: {text_primary};
         background-color: {bg_card};
         border: 1px solid {ACCENT};
     }}
 
+    QWidget#PdfViewerAnnotTools QToolButton:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
     QToolButton#PdfViewerAnnotCollapse,
     QToolButton#PdfViewerAnnotExpand {{
         color: {text_muted};
-        border: none;
+        border: 1px solid transparent;
+        border-radius: {RADIUS_CONTROL}px;
         padding: 4px;
         background-color: transparent;
     }}
@@ -905,7 +1142,131 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton#PdfViewerAnnotExpand:hover {{
         color: {text_primary};
         background-color: {bg_card_hover};
+    }}
+
+    QToolButton#PdfViewerAnnotCollapse:pressed,
+    QToolButton#PdfViewerAnnotExpand:pressed {{
+        color: {text_primary};
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QToolButton#PdfViewerAnnotCollapse:focus,
+    QToolButton#PdfViewerAnnotExpand:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QFrame#PdfViewerRedactConfirm {{
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn,
+    QToolButton#PdfViewerRedactCancelBtn {{
+        border: 1px solid transparent;
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 4px;
+        background-color: transparent;
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn:hover,
+    QToolButton#PdfViewerRedactCancelBtn:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn:pressed,
+    QToolButton#PdfViewerRedactCancelBtn:pressed {{
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QToolButton#PdfViewerRedactConfirmBtn:focus,
+    QToolButton#PdfViewerRedactCancelBtn:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QFrame#FreeTextFormatBar {{
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText {{
+        min-height: 24px;
+        padding: 2px 6px;
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        background-color: {bg_card};
+        color: {text_primary};
+    }}
+
+    QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont,
+    QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize {{
+        min-height: 24px;
+        padding: 2px 4px;
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        background-color: {bg_card};
+        color: {text_primary};
+    }}
+
+    QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont:focus,
+    QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QToolButton#FreeTextFormatBold,
+    QToolButton#FreeTextFormatItalic,
+    QToolButton#FreeTextFormatColor,
+    QToolButton#FreeTextFormatDelete {{
+        border: 1px solid transparent;
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 4px 6px;
+        background-color: transparent;
+        color: {text_primary};
+        min-width: 24px;
+    }}
+
+    QToolButton#FreeTextFormatBold {{
+        font-weight: 700;
+    }}
+
+    QToolButton#FreeTextFormatItalic {{
+        font-style: italic;
+    }}
+
+    QToolButton#FreeTextFormatBold:hover,
+    QToolButton#FreeTextFormatItalic:hover,
+    QToolButton#FreeTextFormatColor:hover,
+    QToolButton#FreeTextFormatDelete:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QToolButton#FreeTextFormatBold:pressed,
+    QToolButton#FreeTextFormatItalic:pressed,
+    QToolButton#FreeTextFormatColor:pressed,
+    QToolButton#FreeTextFormatDelete:pressed {{
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QToolButton#FreeTextFormatBold:checked,
+    QToolButton#FreeTextFormatItalic:checked {{
+        background-color: {bg_card};
+        border: 1px solid {ACCENT};
+        color: {ACCENT};
+    }}
+
+    QToolButton#FreeTextFormatBold:focus,
+    QToolButton#FreeTextFormatItalic:focus,
+    QToolButton#FreeTextFormatColor:focus,
+    QToolButton#FreeTextFormatDelete:focus {{
+        border: {focus_width}px solid {ACCENT};
     }}
 
     QTabWidget#PdfViewerSide {{
@@ -995,6 +1356,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
     }}
 
+    QPushButton#BusyOverlayCancel:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
     QWidget#ToastOverlay {{
         background-color: transparent;
     }}
@@ -1016,11 +1382,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToastOverlayMessage[kind="success"] {{
-        color: {ACCENT};
+        color: {status_success};
     }}
 
     QLabel#ToastOverlayMessage[kind="error"] {{
         color: {close_tab};
+    }}
+
+    QLabel#ToastOverlayMessage[kind="warning"] {{
+        color: {status_warning};
+    }}
+
+    QLabel#ToastOverlayMessage[kind="info"] {{
+        color: {text_secondary};
     }}
 
     QPushButton#ToastOverlayUndo {{
@@ -1035,6 +1409,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToastOverlayUndo:hover {{
         background-color: {bg_card_hover};
         border-color: {border_hover};
+    }}
+
+    QPushButton#ToastOverlayUndo:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
     }}
 
     QWidget#TipsOverlay {{
@@ -1092,7 +1471,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#MergeEmptyLogo {{
         background: transparent;
         border: none;
-        padding: 0 0 12px 0;
+        padding: 0 0 {SPACE_3}px 0;
     }}
 
     QLabel#MergeEmptyTitle {{
@@ -1124,7 +1503,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ConvertEmptyLogo {{
         background: transparent;
         border: none;
-        padding: 0 0 12px 0;
+        padding: 0 0 {SPACE_3}px 0;
     }}
 
     QLabel#ConvertEmptyTitle {{
@@ -1174,7 +1553,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 12px;
     }}
 
-    QWidget#ToolsCentral {{
+    QWidget#ToolsWindow {{
         background-color: {bg_base};
     }}
 
@@ -1185,6 +1564,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QScrollArea#ToolsScroll {{
         background-color: {bg_base};
         border: none;
+    }}
+
+    QScrollArea#ToolsScroll > QWidget {{
+        background-color: {bg_base};
     }}
 
     QLineEdit#ToolsSearch {{
@@ -1232,13 +1615,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    QLabel#ToolsEmptyGlyph {{
+        background: transparent;
+        border: none;
+        padding: 0;
+    }}
+
     QLabel#ToolsEmptyState {{
         color: {text_muted};
         font-size: 13px;
-        padding: 24px;
+        padding: 0;
     }}
 
-    QWidget#ToolShellCentral {{
+    QWidget#ToolShellWindow {{
         background-color: {bg_base};
     }}
 
@@ -1249,33 +1638,72 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         letter-spacing: -0.2px;
     }}
 
-    QLabel#ToolShellDescription {{
+    /* R19: ? nests beside the title as a filled chip (not far-right / transparent). */
+    QToolButton#ToolShellHelp {{
+        color: {text_primary};
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 700;
+        min-width: 22px;
+        max-width: 22px;
+        min-height: 22px;
+        max-height: 22px;
+        padding: 0;
+    }}
+
+    QToolButton#ToolShellHelp:hover {{
+        color: {TEXT_ON_ACCENT};
+        background-color: {ACCENT};
+        border-color: {ACCENT};
+    }}
+
+    QToolButton#ToolShellHelp:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QFrame#ToolShellHelpPopup {{
+        background-color: {bg_surface};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QLabel#ToolShellHelpBody {{
         color: {text_secondary};
         font-size: 13px;
     }}
 
+    /* Solid fill — transparent scroll + unthemed viewport reads charcoal under
+       light chrome (same class of bug as pre-fix Watermark options). */
     QScrollArea#ToolShellOptionsScroll {{
-        background-color: transparent;
+        background-color: {bg_base};
         border: none;
     }}
 
-    QWidget#ToolShellOptions {{
-        background-color: transparent;
+    QScrollArea#ToolShellOptionsScroll > QWidget {{
+        background-color: {bg_base};
     }}
 
+    QWidget#ToolShellOptions {{
+        background-color: {bg_base};
+    }}
+
+    /* R6: drop zone ghost/outline — same quiet language as #ToolbarSecondary. */
     QFrame#ToolShellDropZone {{
-        background-color: {bg_surface};
+        background-color: transparent;
         border: 1px dashed {border_default};
         border-radius: {RADIUS_CARD}px;
     }}
 
     QFrame#ToolShellDropZone[dropActive="true"] {{
         border-color: {ACCENT};
-        background-color: {bg_card};
+        border-style: dashed;
+        background-color: {bg_card_hover};
     }}
 
     QFrame#ToolShellDropZone:focus {{
-        border-color: {ACCENT};
+        border: {focus_width}px dashed {ACCENT};
     }}
 
     QLabel#ToolShellDropPrompt {{
@@ -1294,8 +1722,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 12px;
     }}
 
+    /* R6: result chrome hairline; action buttons mirror #ToolbarSecondary. */
     QWidget#ResultActionsBar {{
-        background-color: {bg_surface};
+        background-color: transparent;
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -1303,6 +1732,46 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ResultActionsLabel {{
         color: {text_secondary};
         font-size: 13px;
+    }}
+
+    QPushButton#ResultActionsPreview,
+    QPushButton#ResultActionsOpen,
+    QPushButton#ResultActionsFolder {{
+        background-color: transparent;
+        color: {text_secondary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        font-weight: 600;
+        padding: 6px 12px;
+    }}
+
+    QPushButton#ResultActionsPreview:hover,
+    QPushButton#ResultActionsOpen:hover,
+    QPushButton#ResultActionsFolder:hover {{
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
+    }}
+
+    QPushButton#ResultActionsPreview:pressed,
+    QPushButton#ResultActionsOpen:pressed,
+    QPushButton#ResultActionsFolder:pressed {{
+        background-color: {bg_pressed};
+        color: {text_primary};
+    }}
+
+    QPushButton#ResultActionsPreview:focus,
+    QPushButton#ResultActionsOpen:focus,
+    QPushButton#ResultActionsFolder:focus {{
+        border: {focus_width}px solid {ACCENT};
+    }}
+
+    QPushButton#ResultActionsPreview:disabled,
+    QPushButton#ResultActionsOpen:disabled,
+    QPushButton#ResultActionsFolder:disabled {{
+        color: {text_muted};
+        border-color: {border_subtle};
+        background-color: transparent;
     }}
 
     QLabel#ToolsHint {{
@@ -1349,6 +1818,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {border_hover};
     }}
 
+    QPushButton#WatermarkZoomButton:pressed:enabled {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
     QPushButton#WatermarkZoomButton:focus {{
         border: {focus_width}px solid {ACCENT};
     }}
@@ -1358,14 +1832,32 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-width: 64px;
     }}
 
+    /* Create PDF output mode — checkable peers beside toolbar actions. */
+    QWidget#OutputModeHost QToolButton {{
+        padding: 6px 12px;
+    }}
+
     QScrollArea#WatermarkPreviewScroll {{
-        background-color: transparent;
+        background-color: {bg_surface};
         border: none;
     }}
 
     QScrollArea#WatermarkOptionsScroll {{
         background-color: transparent;
         border: none;
+    }}
+
+    QScrollArea#WatermarkPreviewScroll > QWidget {{
+        background-color: {bg_surface};
+    }}
+
+    QScrollArea#WatermarkOptionsScroll > QWidget,
+    QWidget#WatermarkOptionsForm {{
+        background-color: {bg_surface};
+    }}
+
+    QWidget#WatermarkPreviewCanvas {{
+        background-color: {bg_surface};
     }}
 
     QSlider#WatermarkSlider::groove:horizontal {{
@@ -1397,7 +1889,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#MergeFileCard,
     QFrame#ConvertFileCard {{
         background-color: {bg_card};
-        border: 1px solid {border_default};
+        border: 1px solid {border_subtle};
         border-radius: {RADIUS_CARD}px;
     }}
     QFrame#PageCard:hover,
@@ -1409,12 +1901,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#PageCard[focused="true"],
     QFrame#MergeFileCard[focused="true"],
     QFrame#ConvertFileCard[focused="true"] {{
-        border: 2px solid {ACCENT};
+        border: {focus_width}px solid {ACCENT};
     }}
     QFrame#PageCard[selected="true"],
     QFrame#MergeFileCard[selected="true"],
     QFrame#ConvertFileCard[selected="true"] {{
-        border: 3px solid {ACCENT};
+        border: {selected_width}px solid {ACCENT};
     }}
     QFrame#PageCard[selected="true"]:hover,
     QFrame#MergeFileCard[selected="true"]:hover,
@@ -1423,7 +1915,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PageCardThumbnail {{
         background-color: {bg_thumb_empty};
-        border-radius: 6px;
+        border-radius: {RADIUS_BADGE}px;
     }}
     QLabel#PageCardLabel {{
         color: {text_secondary};
@@ -1435,21 +1927,36 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
     }}
     QLabel#PageCardPageOverlay {{
-        color: #FFFFFF;
-        background-color: rgba(19, 19, 22, 160);
+        color: {TEXT_ON_ACCENT};
+        background-color: {page_chip_bg};
         font-size: 11px;
         font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
+        padding: {SPACE_1}px {SPACE_2}px;
+        border-radius: {SPACE_1}px;
     }}
     QLabel#PageCardRotationOverlay {{
-        color: #FFFFFF;
-        background-color: rgba(19, 19, 22, 160);
+        color: {TEXT_ON_ACCENT};
+        background-color: {page_chip_bg};
         font-family: {FONT_MONO};
         font-size: 10px;
         font-weight: 600;
-        padding: 2px 5px;
-        border-radius: 4px;
+        padding: {SPACE_1}px {SPACE_1}px;
+        border-radius: {SPACE_1}px;
+    }}
+
+    QLabel#PreferencesSection {{
+        color: {text_muted};
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        padding-top: {SPACE_1}px;
+    }}
+
+    QFrame#PreferencesDivider {{
+        background-color: {border_subtle};
+        border: none;
+        max-height: 1px;
+        margin: {SPACE_2}px 0;
     }}
     QLabel#MergeFileCardThumbnail,
     QLabel#ConvertFileCardThumbnail {{
@@ -1473,22 +1980,40 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
     }}
 
+    /* R6: ToolTiles — quieter rest/hover; keep HC-aware focus rings. */
     QFrame#ToolTile {{
-        background-color: {bg_card};
-        border: 1px solid {border_subtle};
+        background-color: transparent;
+        border: 1px solid transparent;
         border-radius: {RADIUS_CARD}px;
     }}
     QFrame#ToolTile:hover {{
-        background-color: {bg_card_hover};
-        border-color: {border_hover};
-    }}
-    QFrame#ToolTile[blocked="true"]:hover {{
         background-color: {bg_card};
         border-color: {border_subtle};
     }}
+    QFrame#ToolTile[pressed="true"] {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+    QFrame#ToolTile[blocked="true"],
+    QFrame#ToolTile[comingSoon="true"] {{
+        background-color: transparent;
+        border-color: transparent;
+    }}
+    QFrame#ToolTile[blocked="true"]:hover,
+    QFrame#ToolTile[comingSoon="true"]:hover,
+    QFrame#ToolTile[blocked="true"][pressed="true"],
+    QFrame#ToolTile[comingSoon="true"][pressed="true"] {{
+        background-color: transparent;
+        border-color: transparent;
+    }}
     QFrame#ToolTile:focus {{
-        background-color: {bg_card_hover};
-        border: 2px solid {ACCENT};
+        background-color: {bg_card};
+        border: {focus_width}px solid {ACCENT};
+    }}
+    QFrame#ToolTile[blocked="true"]:focus,
+    QFrame#ToolTile[comingSoon="true"]:focus {{
+        background-color: transparent;
+        border: {focus_width}px solid {ACCENT};
     }}
     QFrame#ToolTile[compact="true"] {{
         border-radius: {max(6, RADIUS_CARD - 2)}px;
@@ -1534,19 +2059,18 @@ def accent_qcolor(*, alpha: int = 255) -> "QColor":
 
 def on_accent_qcolor() -> "QColor":
     """Ink color for text/icons drawn on top of the accent background."""
-    from PyQt6.QtGui import QColor
-
-    return QColor(255, 255, 255)
+    return token_qcolor(TEXT_ON_ACCENT)
 
 
 def shadow_qcolor(*, alpha: int = 55) -> "QColor":
-    """Tinted drop-shadow color."""
+    """Tinted drop-shadow color (pairs with light/dark chrome; not QSS)."""
     from PyQt6.QtGui import QColor
 
     from pagedrop.ui.settings import light_theme
 
     if light_theme():
-        return QColor(30, 40, 60, min(alpha, 40))
+        r, g, b = SHADOW_RGB_LIGHT
+        return QColor(r, g, b, min(alpha, SHADOW_ALPHA_CAP_LIGHT))
     r, g, b = SHADOW_RGB
     return QColor(r, g, b, alpha)
 
@@ -1554,35 +2078,53 @@ def shadow_qcolor(*, alpha: int = 55) -> "QColor":
 def border_hover_qcolor() -> "QColor":
     """Theme-aware hover/stack border for programmatic paint (not QSS).
 
-    Do not use ``token_qcolor(BORDER_HOVER)`` — that hex is dark-only and
-    stays stale after a light/dark toggle.
+    Do not use ``token_qcolor(BORDER_HOVER)`` alone — that hex is dark-only and
+    stays stale after a light/dark toggle. Light uses ``BORDER_HOVER_LIGHT``,
+    the same token as ``app_stylesheet(light=True)``.
     """
     from pagedrop.ui.settings import light_theme
 
-    if light_theme():
-        return token_qcolor("#9CA3AF")
-    return token_qcolor(BORDER_HOVER)
+    return token_qcolor(BORDER_HOVER_LIGHT if light_theme() else BORDER_HOVER)
 
 
-def tab_close_icon(*, color: str = CLOSE_TAB) -> "QIcon":
-    """Red × icon for tab close buttons."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+def chrome_card_qcolor() -> "QColor":
+    """Card/surface fill for programmatic paint (pairs with light/dark QSS)."""
+    from pagedrop.ui.settings import light_theme
 
-    size = 16
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    return token_qcolor(BG_CARD_LIGHT if light_theme() else BG_CARD)
 
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(QColor(color))
-    pen.setWidthF(2.0)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    painter.setPen(pen)
 
-    inset = 4
-    painter.drawLine(inset, inset, size - inset, size - inset)
-    painter.drawLine(size - inset, inset, inset, size - inset)
-    painter.end()
+def chrome_text_muted_qcolor() -> "QColor":
+    """Muted chrome ink for programmatic paint (pairs with light/dark QSS)."""
+    from pagedrop.ui.settings import light_theme
 
-    return QIcon(pixmap)
+    return token_qcolor(TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED)
+
+
+def status_success_hex() -> str:
+    """Success ink for toast/list text — darkened under light chrome for AA."""
+    from pagedrop.ui.settings import light_theme
+
+    return STATUS_SUCCESS_LIGHT if light_theme() else STATUS_SUCCESS
+
+
+def status_warning_hex() -> str:
+    """Warning ink for toast/list text — darkened under light chrome for AA."""
+    from pagedrop.ui.settings import light_theme
+
+    return STATUS_WARNING_LIGHT if light_theme() else STATUS_WARNING
+
+
+def close_tab_hex() -> str:
+    """Destructive / close-tab red (pairs with light/dark QSS)."""
+    from pagedrop.ui.settings import light_theme
+
+    return CLOSE_TAB_LIGHT if light_theme() else CLOSE_TAB
+
+
+def tab_close_icon(*, color: str | None = None) -> "QIcon":
+    """Red × icon for tab close buttons (Phosphor ``x``, destructive tint)."""
+    from pagedrop.ui import icons
+
+    ink = color if color is not None else close_tab_hex()
+    return icons.icon("x", color=ink)

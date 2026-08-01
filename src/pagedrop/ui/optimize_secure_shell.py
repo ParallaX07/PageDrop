@@ -137,7 +137,7 @@ def _configure_compress(shell: ToolShellWindow) -> None:
             lossy = ops.resolve_lossy_profile(name)
             hint.setText(
                 f"Downsamples images to about {lossy.dpi} DPI and re-encodes as "
-                f"JPEG (quality {lossy.jpeg_quality}). Writes a new copy — "
+                f"JPEG (quality {lossy.jpeg_quality}). Writes a new copy; "
                 "source is never overwritten. Does not linearize."
             )
             warning.show()
@@ -381,7 +381,7 @@ def _configure_sanitize(shell: ToolShellWindow) -> None:
     form.addRow(strip_annots)
     hint = QLabel(
         "Scrubs metadata into a new file. Annotation removal deletes existing "
-        "markup only — authoring and redaction are separate tools."
+        "markup only. Authoring and redaction are separate tools."
     )
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
@@ -455,12 +455,13 @@ def open_optimize_secure_shell(
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=False,
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
-            browse_title=f"Choose PDF — {entry.title}",
+            browse_title=f"Choose PDF: {entry.title}",
         )
         _CONFIGURERS[tool_id](shell)
         store[tool_id] = shell

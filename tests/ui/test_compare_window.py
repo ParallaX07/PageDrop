@@ -31,12 +31,43 @@ def test_tools_tile_opens_compare_window(qtbot):
     window = getattr(tools, "_compare_window", None)
     assert isinstance(window, CompareWindow)
     qtbot.waitUntil(lambda: window.isVisible(), timeout=3000)
-    # O14: Compare toolbar matches other toolbars for arrow-key nav.
+    # R13: empty state is path rows + primary only; mode toolbar stays hidden.
+    assert not window._toolbar.isVisible()
+    assert window._compare_btn.objectName() == "ToolbarPrimary"
+    assert window._row_b.isAncestorOf(window._compare_btn)
+    # O14: arrow-key nav is wired even while the toolbar is hidden.
     toolbars = window.findChildren(QToolBar)
     assert toolbars
     assert hasattr(toolbars[0], "_pagedrop_arrow_nav")
     window.close()
     tools.close()
+
+
+def test_compare_toolbar_visible_after_report(qtbot, tmp_path: Path):
+    """R13: mode/nav/zoom toolbar appears only after a successful compare."""
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    _write_line_pdf(a, "alpha")
+    _write_line_pdf(b, "beta")
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window.show()
+    assert not window._toolbar.isVisible()
+
+    window._row_a.set_text(str(a))
+    window._row_b.set_text(str(b))
+    window._run_compare()
+    qtbot.waitUntil(lambda: window._report is not None, timeout=5000)
+    qtbot.waitUntil(lambda: not window._comparing, timeout=5000)
+
+    assert window._toolbar.isVisible()
+    assert window._export_act.isEnabled()
+    # Path rows stay usable for another compare; keyboard nav remains installed.
+    assert window._row_a.isEnabled()
+    assert window._row_b.isEnabled()
+    assert hasattr(window._toolbar, "_pagedrop_arrow_nav")
+    window.close()
 
 
 def test_compare_window_lists_deleted_text(qtbot, tmp_path: Path):
@@ -221,3 +252,15 @@ def test_request_close_while_comparing_explains_busy(qtbot, monkeypatch):
     assert window.request_close() is False
     assert "still running" in window.statusBar().currentMessage()
     assert toasts and toasts[-1] == ("Compare still running…", "info")
+
+
+def test_export_heatmap_ponytail_marker() -> None:
+    """O17-h: sync export freeze ceiling is named in source."""
+    import pagedrop.ui.compare_window as mod
+
+    text = Path(mod.__file__).read_text(encoding="utf-8")
+    idx = text.index("def _export_heatmap")
+    chunk = text[idx : idx + 1600]
+    assert "ponytail:" in chunk
+    assert "runner.run" in chunk or "processEvents" in chunk
+    assert "cancel" in chunk.lower()

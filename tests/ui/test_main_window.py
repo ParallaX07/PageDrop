@@ -75,7 +75,7 @@ def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):
     main_window._open_pdf()
     qtbot.waitUntil(
         lambda: main_window.windowTitle()
-        == f"PageDrop — {five_page_pdf.name} (5 pages)",
+        == f"PageDrop: {five_page_pdf.name} (5 pages)",
         timeout=5000,
     )
 
@@ -132,3 +132,31 @@ def test_exit_action_closes(main_window, qtbot):
     exit_action = _find_action_by_text(_file_menu_actions(main_window), "E&xit", "Exit")
     exit_action.trigger()
     qtbot.waitUntil(lambda: not main_window.isVisible(), timeout=5000)
+
+
+def test_toolbar_filename_elides_with_full_path_tooltip(
+    main_window, tmp_path, qtbot
+):
+    """R14: long PDF names must not expand the mid-toolbar label."""
+    import fitz
+
+    from pagedrop.ui.theme import TOOLBAR_FILENAME_MAX_WIDTH
+
+    label = main_window._filename_label
+    assert label.objectName() == "ToolbarFilename"
+    assert label.maximumWidth() == TOOLBAR_FILENAME_MAX_WIDTH
+    assert not label.wordWrap()
+
+    long_name = "a" * 80 + ".pdf"
+    pdf = tmp_path / long_name
+    doc = fitz.open()
+    try:
+        doc.new_page()
+        doc.save(str(pdf))
+    finally:
+        doc.close()
+
+    main_window._load_pdf(str(pdf))
+    qtbot.waitUntil(lambda: label.toolTip() == str(pdf), timeout=15000)
+    assert len(label.text()) < len(long_name)
+    assert "…" in label.text()

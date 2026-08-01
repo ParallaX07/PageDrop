@@ -143,6 +143,22 @@ def test_search_filters_category_grid(qtbot):
     window.close()
 
 
+def test_density_toggle_sets_compact_property(qtbot):
+    """R6: Compact density toggle still flips tile compact state/property."""
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.show()
+
+    merge = next(t for t in window._tiles if t.entry.id == "merge")
+    assert merge.property("compact") is False
+    window._compact_btn.setChecked(True)
+    assert merge.property("compact") is True
+    assert all(t.property("compact") is True for t in window._tiles)
+    window._compact_btn.setChecked(False)
+    assert merge.property("compact") is False
+    window.close()
+
+
 def test_search_matches_multiple_words(qtbot):
     window = ToolsWindow()
     qtbot.addWidget(window)
@@ -186,7 +202,7 @@ def test_failed_job_shows_dialog_not_status_only(qtbot, monkeypatch):
 
     window.end_job(error="Something went wrong with the job.")
     assert shown == ["Something went wrong with the job."]
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert status.currentMessage() == "Job failed"
     assert window._toast.isVisible()
     window.close()
@@ -305,7 +321,7 @@ def test_protected_pdf_wrong_password_retries_and_cancel_aborts_job(
     assert prompts == [False, True]
     window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
     assert not window.is_job_running()
-    assert not window._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert window.statusBar().currentMessage() == "Cancelled"
     assert enc.read_bytes() == source_bytes
     window.close()

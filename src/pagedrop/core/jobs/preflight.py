@@ -13,11 +13,8 @@ from pathlib import Path
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.jobs.errors import JobCancelledError
-from pagedrop.core.pdf_loader import (
-    PdfLoader,
-    PdfPasswordError,
-    PdfPasswordRequiredError,
-)
+from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 
 PasswordPrompt = Callable[[str, bool], str | None]
 """``(filename, incorrect) -> password | None`` — ``None`` means user cancelled."""
@@ -32,7 +29,7 @@ def preflight_pdf_inputs(
 ) -> RuntimeCredentials:
     """Unlock each PDF input; one stored credential per path; retry / cancel cleanly.
 
-    Opens and closes loaders only to verify access — does not keep fitz docs alive.
+    Probes via locked ``pdf_service.page_count`` — no unlocked ephemeral opens.
     """
     creds = credentials or RuntimeCredentials()
     for raw in paths:
@@ -49,7 +46,7 @@ def preflight_pdf_inputs(
             if cancel is not None:
                 cancel.check()
             try:
-                loader = PdfLoader(path, password=password)
+                pdf_page_count(path, password=password)
             except PdfPasswordRequiredError:
                 password = prompt(filename, False)
                 if password is None:
@@ -65,7 +62,6 @@ def preflight_pdf_inputs(
                     ) from None
                 continue
             else:
-                loader.close()
                 if password is not None:
                     creds.set(path, password)
                 break

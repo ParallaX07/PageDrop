@@ -18,14 +18,12 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 
 - **Project:** [Qt](https://www.qt.io/)
 - **License:** LGPL-3.0 (community, as typically shipped in free PyQt6 wheels) / commercial Qt license
-- **Notes:** PageDrop’s published Windows build is a PyInstaller **onefile** executable
-  installed by Setup.exe. Qt shared libraries unpack to a PyInstaller runtime temporary
-  directory (`_MEIPASS`) when the app starts; they are **not** separate, replaceable
-  files under the install directory. Redistributors must still ship or offer
+- **Notes:** PageDrop’s published Windows build is a PyInstaller **onedir** bundle
+  installed by Setup.exe. Qt shared libraries ship as separate files under the
+  install directory beside `pagedrop.exe`. Redistributors must still ship or offer
   corresponding Qt source (or a written offer) and include LGPL licence texts. The
   installer places `LICENSE` and `THIRD_PARTY_NOTICES.md` next to `pagedrop.exe`.
-  If you need in-place Qt library replacement in the install tree, use commercial
-  Qt/PyQt (or another packaging layout). See `docs/licensing.md`.
+  See `docs/licensing.md`.
 
 ## PyMuPDF (fitz)
 
@@ -41,7 +39,7 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 
 - **Project:** [PyInstaller](https://pyinstaller.org/)
 - **License:** GPLv2 with a special exception for frozen applications (bootloader exception)
-- **Notes:** Used to produce the onefile executable; not a runtime dependency of the
+- **Notes:** Used to produce the onedir bundle; not a runtime dependency of the
   source tree beyond the frozen output.
 
 ## pywin32 (optional, Windows Office COM pack only)
@@ -51,3 +49,39 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 - **Notes:** Not part of the base install. Extra `office` / dependency group installs
   `pywin32` only when `sys_platform == 'win32'`. Linux and macOS wheels must not require
   it. Used solely for Microsoft Office → PDF via a dedicated helper process.
+
+## Phosphor Icons (vendored SVG subset)
+
+- **Project:** [Phosphor Icons](https://phosphoricons.com/) /
+  [phosphor-icons/core](https://github.com/phosphor-icons/core)
+- **License:** MIT
+- **Copyright:** Copyright (c) 2023 Phosphor Icons
+- **Notes:** PageDrop vendors a small regular-weight SVG subset under
+  `src/pagedrop/assets/icons/` for toolbar chrome and Tools hub tiles
+  (loaded/tinted by `pagedrop.ui.icons`). Not a PyPI icon package. The MIT
+  license text follows:
+
+```
+MIT License
+
+Copyright (c) 2023 Phosphor Icons
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+

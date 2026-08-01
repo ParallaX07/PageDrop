@@ -40,6 +40,22 @@ AnnotationAction = Literal["remove", "flatten"]
 _BLANK_WHITE = 250
 _BLANK_MATRIX = fitz.Matrix(0.25, 0.25)
 
+# Lazy helv for watermark metrics / TextWriter — one create (O17-b).
+_HELV_FONT: fitz.Font | None = None
+
+
+def _helv_font() -> fitz.Font:
+    """Cached ``fitz.Font("helv")``; construction under ``FITZ_LOCK`` once."""
+    global _HELV_FONT
+    if _HELV_FONT is not None:
+        return _HELV_FONT
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
+    with FITZ_LOCK:
+        if _HELV_FONT is None:
+            _HELV_FONT = fitz.Font("helv")
+    return _HELV_FONT
+
 
 @dataclass(frozen=True)
 class BlankPageReport:
@@ -225,7 +241,7 @@ def watermark_text_box(
 
     Shared by apply and live preview so placement/size stay aligned.
     """
-    font = fitz.Font("helv")
+    font = _helv_font()
     unit_w = max(font.text_length(text or " ", fontsize=1), 1e-6)
     if diagonal_percent is not None:
         target_w = _page_diagonal(fitz.Rect(0, 0, page_width, page_height)) * (
@@ -311,7 +327,7 @@ def add_text_watermark(
     if diagonal_percent is None and (fontsize is None or fontsize <= 0):
         raise ValueError("fontsize must be positive when diagonal_percent is unset")
 
-    font = fitz.Font("helv")
+    font = _helv_font()
     doc = open_pdf(source_pdf, password=password)
     try:
         targets = _normalize_page_indices(doc.page_count, pages)
@@ -751,23 +767,30 @@ def detect_blank_pages(
     password: str | None = None,
     cancel: CancelToken | None = None,
 ) -> BlankPageReport:
-    """Return pages that look blank (no text/images + low ink coverage)."""
+    """Return pages that look blank (no text/images + low ink coverage).
+
+    Holds ``FITZ_LOCK`` for open/scan/close (O17-e). Nested callers under the
+    job runner's lock are fine — ``FITZ_LOCK`` is re-entrant.
+    """
     if not 0.0 <= ink_threshold <= 1.0:
         raise ValueError("ink_threshold must be between 0 and 1")
-    doc = open_pdf(source_pdf, password=password)
-    try:
-        blanks: list[int] = []
-        for i, page in enumerate(doc):
-            _check_cancel(cancel)
-            if page_looks_blank(page, ink_threshold=ink_threshold):
-                blanks.append(i)
-        return BlankPageReport(
-            blank_indices=tuple(blanks),
-            page_count=doc.page_count,
-            ink_threshold=ink_threshold,
-        )
-    finally:
-        doc.close()
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
+    with FITZ_LOCK:
+        doc = open_pdf(source_pdf, password=password)
+        try:
+            blanks: list[int] = []
+            for i, page in enumerate(doc):
+                _check_cancel(cancel)
+                if page_looks_blank(page, ink_threshold=ink_threshold):
+                    blanks.append(i)
+            return BlankPageReport(
+                blank_indices=tuple(blanks),
+                page_count=doc.page_count,
+                ink_threshold=ink_threshold,
+            )
+        finally:
+            doc.close()
 
 
 def remove_blank_pages(
@@ -798,7 +821,7 @@ def remove_blank_pages(
             doc.close()
         return report
     if report.blank_count >= report.page_count:
-        raise ValueError("All pages look blank — refusing to write an empty PDF")
+        raise ValueError("All pages look blank; refusing to write an empty PDF")
 
     doc = open_pdf(source_pdf, password=password)
     try:
@@ -873,7 +896,7 @@ def apply_color_effect(
 
 # Documented warning for UI copy when raster effects are selected.
 RASTER_EFFECT_WARNING = (
-    "This effect rasterizes pages — vector text and sharp lines may be lost."
+    "This effect rasterizes pages. Vector text and sharp lines may be lost."
 )
 BLANK_PAGE_HEURISTIC_HINT = (
     "Blank detection skips pages with extractable text or images, then checks "

@@ -201,7 +201,7 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
         n = len(predicted)
         # ResultActionsBar binds to predicted[0]; say so when N>1 (O12).
         success = (
-            f"Saved {n} files — showing first" if n > 1 else None
+            f"Saved {n} files. Showing first" if n > 1 else None
         )
         run_tool_job(
             shell,
@@ -574,10 +574,13 @@ def _configure_metadata(shell: ToolShellWindow) -> None:
         for key, edit in fields.items():
             edit.setText(str(meta.get(key) or ""))
 
+    load_row = QHBoxLayout()
     load_btn = QPushButton("Load from file")
     load_btn.setObjectName("ToolbarSecondary")
     load_btn.clicked.connect(load_meta)
-    form.addRow("", load_btn)
+    load_row.addWidget(load_btn)
+    load_row.addStretch(1)
+    form.addRow(load_row)
     shell.set_options_widget(options)
 
     def on_files_changed() -> None:
@@ -798,11 +801,12 @@ def open_organize_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | N
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=multi,
             browse_title=(
-                "Choose PDFs" if multi else f"Choose PDF — {entry.title}"
+                "Choose PDFs" if multi else f"Choose PDF: {entry.title}"
             ),
         )
         configurer = _CONFIGURERS[tool_id]

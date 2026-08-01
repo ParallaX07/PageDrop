@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QPoint, QRunnable, QThreadPool, Qt, pyqtSignal
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -16,7 +17,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -36,11 +37,10 @@ from pagedrop.ui.dialogs import (
     prompt_pdf_password,
 )
 from pagedrop.ui.job_chrome import JobChromeMixin
-from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import StatusFooter
 
-_PRIVACY_LINE = "Files stay on this computer — nothing is uploaded."
+_PRIVACY_LINE = "Files stay on this computer. Nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
 
 # Canonical drop-zone prompts (O5). Prefer these over one-off wording.
@@ -155,7 +155,7 @@ class FileDropZone(QFrame):
         self._press_pos: QPoint | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
         # Do not setAlignment(AlignCenter) on the layout — that shrinks Preferred
         # children to sizeHint width, wraps the prompt, then clips it.
@@ -473,14 +473,41 @@ def run_tool_job(
     _tool_job_pool().start(worker)
 
 
+def _options_has_controls(widget: QWidget) -> bool:
+    """True when *widget* has a layout with rows/controls (not a bare QWidget())."""
+    lay = widget.layout()
+    if lay is not None:
+        return lay.count() > 0
+    return any(isinstance(c, QWidget) for c in widget.children())
+
+
+class _ToolHelpPopup(QFrame):
+    """Dismissible popup for tool help (R19). Qt.Popup handles outside click / Escape."""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setObjectName("ToolShellHelpPopup")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(0)
+        label = QLabel(text)
+        label.setObjectName("ToolShellHelpBody")
+        label.setWordWrap(True)
+        label.setMaximumWidth(320)
+        lay.addWidget(label)
+        self.adjustSize()
+
+
 class ToolShellWindow(JobChromeMixin, QWidget):
-    """Reusable tool chrome: title → drop → options → Run → results (editor tab)."""
+    """Reusable tool chrome: drop → options (title+?) → Run → results (editor tab)."""
 
     def __init__(
         self,
         *,
         title: str,
         description: str,
+        help_text: str | None = None,
         editor: QWidget | None = None,
         window_manager: object | None = None,
         multi: bool = False,
@@ -498,7 +525,9 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._init_job_chrome_state()
         self._run_handler: Callable[[], None] | None = None
         self._run_enabled_check: Callable[[], bool] | None = None
-        self._status = StatusFooter(initial="Add a file to begin")
+        self._help_text = (help_text or description).strip() or description
+        self._help_popup: _ToolHelpPopup | None = None
+        self._status = StatusFooter()
 
         self.setWindowTitle(title)
         self.setObjectName("ToolShellWindow")
@@ -507,15 +536,6 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
-
-        self._title_label = QLabel(title)
-        self._title_label.setObjectName("ToolShellTitle")
-        root.addWidget(self._title_label)
-
-        self._desc_label = QLabel(description)
-        self._desc_label.setObjectName("ToolShellDescription")
-        self._desc_label.setWordWrap(True)
-        root.addWidget(self._desc_label)
 
         # Optional chrome above the drop zone (e.g. Change File after pick).
         self._chrome_host = QWidget()
@@ -553,37 +573,54 @@ class ToolShellWindow(JobChromeMixin, QWidget):
 
         self._options_host = QWidget()
         self._options_host.setObjectName("ToolShellOptions")
+        self._options_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._options_layout = QVBoxLayout(self._options_host)
-        self._options_layout.setContentsMargins(0, 0, 8, 0)
+        self._options_layout.setContentsMargins(0, 0, 0, 0)
         self._options_layout.setSpacing(8)
+
+        # R18/R19: title + ? in the options region (no persistent description band).
+        self._header_host = QWidget()
+        self._header_host.setObjectName("ToolShellHeader")
+        header_lay = QHBoxLayout(self._header_host)
+        header_lay.setContentsMargins(0, 0, 0, 0)
+        header_lay.setSpacing(6)
+        self._title_label = QLabel(title)
+        self._title_label.setObjectName("ToolShellTitle")
+        header_lay.addWidget(self._title_label, stretch=0)
+        self._help_btn = QToolButton()
+        self._help_btn.setObjectName("ToolShellHelp")
+        self._help_btn.setText("?")
+        self._help_btn.setToolTip("About this tool")
+        self._help_btn.setAccessibleName("About this tool")
+        self._help_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._help_btn.setAutoRaise(True)
+        self._help_btn.clicked.connect(self._toggle_help_popup)
+        header_lay.addWidget(self._help_btn, stretch=0)
+        header_lay.addStretch(1)
+        self._options_layout.addWidget(self._header_host)
         self._options_layout.addStretch(1)
         self._options_scroll.setWidget(self._options_host)
         root.addWidget(self._options_scroll, stretch=1)
 
-        toolbar = QToolBar("Tool", self)
-        toolbar.setObjectName("ToolShellToolbar")
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        self._toolbar = toolbar
-
-        spacer = QWidget()
-        spacer.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        toolbar.addWidget(spacer)
+        # R11: compact actions row — never a one-button QToolBar.
+        self._actions_host = QWidget()
+        self._actions_host.setObjectName("ToolShellActions")
+        self._actions_layout = QHBoxLayout(self._actions_host)
+        self._actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._actions_layout.setSpacing(8)
+        self._actions_layout.addStretch(1)
 
         self._run_btn = QPushButton("Run")
         self._run_btn.setObjectName("ToolbarPrimary")
         self._run_btn.setDefault(True)
         self._run_btn.setEnabled(False)
+        self._run_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         # Match Merge/Create primary-action tips: short sentence-case what Run does.
         self._run_btn.setToolTip(description)
         self._run_btn.setStatusTip(description)
         self._run_btn.clicked.connect(self._on_run)
-        toolbar.addWidget(self._run_btn)
-
-        enable_toolbar_keyboard_navigation(toolbar)
-        root.addWidget(toolbar)
+        self._actions_layout.addWidget(self._run_btn)
+        root.addWidget(self._actions_host)
 
         self._make_job_chrome_widgets()
         self._wire_result_actions()
@@ -609,16 +646,41 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         return self._drop_zone
 
     def set_options_widget(self, widget: QWidget) -> None:
+        # Preserve R18 header when clearing form widgets / stretch.
         while self._options_layout.count():
             item = self._options_layout.takeAt(0)
             child = item.widget()
-            if child is not None:
-                child.deleteLater()
+            if child is None or child is self._header_host:
+                continue
+            child.deleteLater()
+
+        root = self.layout()
+        scroll_idx = root.indexOf(self._options_scroll) if root is not None else -1
+        header_in_options = self._header_host.parentWidget() is self._options_host
+
+        # R11: bare / empty host must not leave a dead expanding options band.
+        # R19: keep compact title+? header visible (help must stay reachable).
+        if not _options_has_controls(widget):
+            widget.deleteLater()
+            if header_in_options:
+                self._options_layout.addWidget(self._header_host)
+                self._header_host.show()
+            self._options_scroll.show()
+            if scroll_idx >= 0:
+                root.setStretch(scroll_idx, 0)
+            return
+
+        if header_in_options:
+            self._options_layout.addWidget(self._header_host)
+            self._header_host.show()
         widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
         self._options_layout.addWidget(widget)
         self._options_layout.addStretch(1)
+        self._options_scroll.show()
+        if scroll_idx >= 0:
+            root.setStretch(scroll_idx, 1)
 
     def set_chrome_widget(self, widget: QWidget | None) -> None:
         """Optional header above the drop zone (Change File, file meta, …)."""
@@ -643,6 +705,43 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         """Optional extra gate for Run (e.g. backend present). Re-evaluates now."""
         self._run_enabled_check = check
         self._update_run_enabled()
+
+    def adopt_header(self, parent_layout: QBoxLayout) -> None:
+        """Reparent title + help button into ``parent_layout`` (R18 / R19).
+
+        Preview/split shells dock the header in the options column so the drop
+        zone / preview reclaim the full-width title stack. Same header, one home.
+        """
+        self._options_layout.removeWidget(self._header_host)
+        parent_layout.insertWidget(0, self._header_host)
+        self._header_host.show()
+
+    def adopt_run_button(self, parent_layout: QBoxLayout) -> None:
+        """Reparent the single Run button into ``parent_layout``; hide shell actions.
+
+        Preview/split shells dock Run as an options-column footer so the body
+        reclaims the full-width actions strip. Enable/click wiring stays on
+        ``_run_btn`` — one button object, one enable path.
+        """
+        self._actions_layout.removeWidget(self._run_btn)
+        self._run_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        parent_layout.addWidget(self._run_btn)
+        self._actions_host.hide()
+
+    def _toggle_help_popup(self) -> None:
+        if self._help_popup is not None and self._help_popup.isVisible():
+            self._help_popup.close()
+            self._help_popup = None
+            return
+        popup = _ToolHelpPopup(self._help_text, parent=self)
+        self._help_popup = popup
+        # Anchor under the ? button (global coords).
+        origin = self._help_btn.mapToGlobal(QPoint(0, self._help_btn.height()))
+        popup.move(origin)
+        popup.show()
+        popup.raise_()
 
     def _set_job_controls_enabled(self, enabled: bool) -> None:
         self._drop_zone.setEnabled(enabled)

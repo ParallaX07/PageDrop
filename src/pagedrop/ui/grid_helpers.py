@@ -2,10 +2,102 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PyQt6.QtCore import QPoint, QRect, Qt
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt
+from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QWidget
 
+from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.theme import ZOOM_WHEEL_STEP
+
+# Show/hide only — reposition while visible stays instant (R10d / Emil).
+_DROP_FADE_MS = 120
+_DROP_EASE = QEasingCurve.Type.OutCubic
+
+
+class DropIndicator(QFrame):
+    """Vertical insertion bar; opacity fade on first show / final hide only."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("DropIndicator")
+        self.setFixedWidth(3)
+        # Lazy effect — permanent QGraphicsOpacityEffect can segfault on teardown.
+        self._opacity_effect: QGraphicsOpacityEffect | None = None
+        self._fade = QPropertyAnimation(self)
+        self._fade.setPropertyName(b"opacity")
+        self._fade.setDuration(_DROP_FADE_MS)
+        self._fade.setEasingCurve(_DROP_EASE)
+        self._fade.finished.connect(self._on_fade_finished)
+        self._hiding = False
+        self.hide()
+
+    def place(self, rect: QRect) -> None:
+        """Move to ``rect``; fade in only when becoming visible."""
+        self.setGeometry(rect)
+        if self.isVisible() and not self._hiding:
+            self.raise_()
+            return
+        was_hiding = self._hiding
+        self._hiding = False
+        self._fade.stop()
+        self.show()
+        self.raise_()
+        if prefers_reduce_motion():
+            self._clear_opacity_effect()
+            return
+        effect = self._ensure_opacity_effect()
+        if was_hiding:
+            start = float(effect.opacity())
+        else:
+            start = 0.0
+            effect.setOpacity(0.0)
+        self._fade.setTargetObject(effect)
+        self._fade.setStartValue(start)
+        self._fade.setEndValue(1.0)
+        self._fade.start()
+
+    def dismiss(self) -> None:
+        """Fade out then hide; instant under reduce-motion."""
+        if not self.isVisible() and not self._hiding:
+            return
+        self._fade.stop()
+        if prefers_reduce_motion() or self._opacity_effect is None:
+            self._finish_hide()
+            return
+        self._hiding = True
+        effect = self._opacity_effect
+        self._fade.setTargetObject(effect)
+        self._fade.setStartValue(float(effect.opacity()))
+        self._fade.setEndValue(0.0)
+        self._fade.start()
+
+    def _ensure_opacity_effect(self) -> QGraphicsOpacityEffect:
+        if self._opacity_effect is None:
+            effect = QGraphicsOpacityEffect()
+            self.setGraphicsEffect(effect)
+            self._opacity_effect = effect
+        return self._opacity_effect
+
+    def _clear_opacity_effect(self) -> None:
+        self._fade.stop()
+        if self._opacity_effect is None:
+            return
+        self.setGraphicsEffect(None)
+        self._opacity_effect = None
+
+    def _on_fade_finished(self) -> None:
+        if self._hiding:
+            self._finish_hide()
+
+    def _finish_hide(self) -> None:
+        self._hiding = False
+        self._clear_opacity_effect()
+        self.hide()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._hiding = False
+        if getattr(self, "_fade", None) is not None:
+            self._clear_opacity_effect()
+        super().hideEvent(event)
 
 
 def drop_index_at_pos(cards: Sequence[QWidget], pos: QPoint) -> int:

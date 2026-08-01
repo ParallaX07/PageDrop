@@ -46,19 +46,49 @@ def _assert_notices_in_spec(spec_text: str) -> None:
     )
 
 
-def _assert_notices_in_dist_if_present() -> None:
-    """Onefile embeds notices in the archive; optional loose copy beside the exe is fine.
+def _assert_icons_in_spec(spec_text: str) -> None:
+    assert "assets/icons" in spec_text or 'ASSETS / "icons"' in spec_text, (
+        "pagedrop.spec must bundle Phosphor SVG icons under pagedrop/assets/icons"
+    )
+    assert "PyQt6.QtSvg" in spec_text, (
+        "pagedrop.spec must collect PyQt6.QtSvg for SVG toolbar icons"
+    )
 
-    When a onefile binary exists under dist/, do not require an unpacked tree.
-    If a loose THIRD_PARTY_NOTICES.md sits next to the exe (installer staging), require it non-empty.
-    """
-    dist = ROOT / "dist"
-    onefile_candidates = [dist / "pagedrop", dist / "pagedrop.exe"]
-    if not any(p.is_file() for p in onefile_candidates):
+
+def _assert_onedir_spec(spec_text: str) -> None:
+    assert "exclude_binaries=True" in spec_text, (
+        "pagedrop.spec must use a thin EXE (exclude_binaries=True) for onedir"
+    )
+    assert "COLLECT(" in spec_text, "pagedrop.spec must COLLECT into dist/pagedrop/"
+    assert "PyQt6.QtPrintSupport" in spec_text, (
+        "pagedrop.spec must collect PyQt6.QtPrintSupport for frozen print"
+    )
+
+
+def _onedir_data_root(bundle: Path) -> Path:
+    """PyInstaller 6+ puts COLLECT datas under `_internal/`; older layouts use the bundle root."""
+    internal = bundle / "_internal"
+    return internal if internal.is_dir() else bundle
+
+
+def _assert_onedir_dist_if_present() -> None:
+    """When dist/pagedrop/ exists with an exe, require notices + Phosphor icons."""
+    bundle = ROOT / "dist" / "pagedrop"
+    if not bundle.is_dir():
         return
-    loose = dist / "THIRD_PARTY_NOTICES.md"
-    if loose.is_file():
-        assert loose.stat().st_size > 0, f"{loose} is empty"
+    exe_candidates = [bundle / "pagedrop.exe", bundle / "pagedrop"]
+    if not any(p.is_file() for p in exe_candidates):
+        return
+    data_root = _onedir_data_root(bundle)
+    notices = data_root / "THIRD_PARTY_NOTICES.md"
+    assert notices.is_file() and notices.stat().st_size > 0, (
+        f"onedir bundle must include non-empty {notices} "
+        f"(rebuild with current pagedrop.spec)"
+    )
+    icons = data_root / "pagedrop" / "assets" / "icons"
+    assert icons.is_dir() and any(icons.iterdir()), (
+        f"onedir bundle must include Phosphor icons under {icons}"
+    )
 
 
 def main() -> None:
@@ -73,14 +103,23 @@ def main() -> None:
     assert "pagedrop.exe" in iss_text
     assert "CurrentVersion\\Run" not in iss_text  # no autostart
     assert "AppVersion" in iss_text
+    assert "recursesubdirs" in iss_text.lower(), (
+        "windows.iss must install the onedir tree (recursesubdirs)"
+    )
+    assert "dist\\pagedrop" in iss_text or "dist/pagedrop" in iss_text, (
+        "windows.iss must source from dist/pagedrop/ onedir output"
+    )
 
     assert NOTICES.is_file() and NOTICES.stat().st_size > 0, f"missing {NOTICES}"
     notices_text = NOTICES.read_text(encoding="utf-8")
     _assert_notices_content(notices_text)
 
     assert SPEC.is_file(), f"missing {SPEC}"
-    _assert_notices_in_spec(SPEC.read_text(encoding="utf-8"))
-    _assert_notices_in_dist_if_present()
+    spec_text = SPEC.read_text(encoding="utf-8")
+    _assert_notices_in_spec(spec_text)
+    _assert_icons_in_spec(spec_text)
+    _assert_onedir_spec(spec_text)
+    _assert_onedir_dist_if_present()
 
     assert "THIRD_PARTY_NOTICES.md" in iss_text, (
         "windows.iss must install THIRD_PARTY_NOTICES.md beside the exe"

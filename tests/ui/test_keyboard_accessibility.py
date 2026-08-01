@@ -113,13 +113,23 @@ def test_tools_hub_toolbar_arrow_keys(qtbot):
     assert window._compact_btn in focusable_toolbar_widgets(toolbar)
 
 
-def test_tool_shell_toolbar_has_arrow_nav(qtbot):
+def test_tool_shell_run_lives_in_actions_row(qtbot):
+    """R11: Run sits in #ToolShellActions — not a one-button QToolBar."""
+    from PyQt6.QtWidgets import QPushButton, QToolBar
+
     shell = ToolShellWindow(title="Demo", description="Test shell")
     qtbot.addWidget(shell)
     shell.show()
     qtbot.waitExposed(shell, timeout=5000)
-    assert hasattr(shell._toolbar, "_pagedrop_arrow_nav")
+    assert shell._actions_host.objectName() == "ToolShellActions"
+    assert shell._actions_host.isVisible()
+    assert shell._run_btn.parentWidget() is shell._actions_host
     assert shell._run_btn.focusPolicy() == Qt.FocusPolicy.StrongFocus
-    # Run starts disabled until a file is present — enable for focusable list.
-    shell._run_btn.setEnabled(True)
-    assert shell._run_btn in focusable_toolbar_widgets(shell._toolbar)
+    assert shell.findChild(QToolBar, "ToolShellToolbar") is None
+    # Only one Run button on the shell.
+    runs = [
+        w
+        for w in shell.findChildren(QPushButton)
+        if w.objectName() == "ToolbarPrimary" and w.text() == "Run"
+    ]
+    assert runs == [shell._run_btn]

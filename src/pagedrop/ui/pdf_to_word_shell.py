@@ -59,7 +59,7 @@ def _configure_pdf_to_word(shell: ToolShellWindow) -> None:
 
     hint = QLabel(
         "Converts locally with LibreOffice. Layout is best-effort and often "
-        "lossy — complex pages may not match the PDF exactly. Source PDF is "
+        "lossy. Complex pages may not match the PDF exactly. Source PDF is "
         "never overwritten."
     )
     hint.setObjectName("ToolsHint")
@@ -91,13 +91,13 @@ def _configure_pdf_to_word(shell: ToolShellWindow) -> None:
         cap = probe(LIBREOFFICE)
         if cap.available:
             path = (cap.extras or {}).get("path") or "detected"
-            status.setText(f"LibreOffice ready — {path}")
-            shell.statusBar().showMessage("Ready — LibreOffice")
+            status.setText(f"LibreOffice ready: {path}")
+            shell.statusBar().showMessage("Ready: LibreOffice")
         else:
             detail = cap.detail or "LibreOffice (soffice) not found"
-            status.setText(f"LibreOffice missing — {detail}")
+            status.setText(f"LibreOffice missing: {detail}")
             shell.statusBar().showMessage(
-                "No LibreOffice — Configure or install LibreOffice"
+                "No LibreOffice. Configure or install LibreOffice"
             )
         shell._update_run_enabled()
 
@@ -181,12 +181,13 @@ def open_pdf_to_word_shell(tools: ToolsWindow) -> ToolShellWindow | None:
         shell = ToolShellWindow(
             title=entry.title,
             description=entry.description,
+            help_text=entry.help_text,
             editor=tools.editor,
             window_manager=getattr(tools, "_window_manager", None),
             multi=False,
             accept=is_pdf_path,
             dialog_filter=_PDF_FILTER,
-            browse_title=f"Choose PDF — {entry.title}",
+            browse_title=f"Choose PDF: {entry.title}",
         )
         _configure_pdf_to_word(shell)
         store[SHELL_PDF_TO_WORD_ID] = shell
@@ -198,10 +199,10 @@ def open_pdf_to_word_shell(tools: ToolsWindow) -> ToolShellWindow | None:
         if label is not None:
             if cap.available:
                 path = (cap.extras or {}).get("path") or "detected"
-                label.setText(f"LibreOffice ready — {path}")
+                label.setText(f"LibreOffice ready: {path}")
             else:
                 detail = cap.detail or "LibreOffice (soffice) not found"
-                label.setText(f"LibreOffice missing — {detail}")
+                label.setText(f"LibreOffice missing: {detail}")
             shell._update_run_enabled()
 
     present_tool_page(tools.editor, shell, page_id=f"tool:{SHELL_PDF_TO_WORD_ID}")

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.pdf_loader import PdfEmptyError, PdfLoadError, PdfLoader
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.page_preview import PagePreviewWidget
 
@@ -120,7 +121,9 @@ def preview_pdf(path: str | Path, parent: QWidget | None = None) -> bool:
     resolved = Path(path)
     filename = resolved.name
     try:
-        loader = PdfLoader(str(resolved))
+        # Initial open under FITZ_LOCK (O17-c); dialog keeps the long-lived loader.
+        with FITZ_LOCK:
+            loader = PdfLoader(str(resolved))
     except PdfEmptyError:
         QMessageBox.warning(
             parent,
@@ -138,7 +141,7 @@ def preview_pdf(path: str | Path, parent: QWidget | None = None) -> bool:
 
     dialog = QDialog(parent)
     dialog.setObjectName("ResultPreviewDialog")
-    dialog.setWindowTitle(f"Preview — {filename}")
+    dialog.setWindowTitle(f"Preview: {filename}")
     dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dialog.setWindowModality(Qt.WindowModality.NonModal)
     dialog.resize(720, 900)

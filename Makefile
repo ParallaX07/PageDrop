@@ -3,7 +3,7 @@
 .PHONY: test-phase1 test-phase2 test-phase3 test-phase4 test build-exe smoke-exe test-release generate-icons build-installer
 
 BUILD_EXE := uv run pyinstaller --noconfirm pagedrop.spec
-PAGEDROP_EXE ?= ./dist/pagedrop
+PAGEDROP_EXE ?= ./dist/pagedrop/pagedrop
 
 test-phase1:
 	uv run python scripts/test_phase.py 1

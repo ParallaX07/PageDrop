@@ -153,6 +153,65 @@ def test_underline_strikeout_color_and_freetext_border(tmp_path: Path) -> None:
         doc.close()
 
 
+def test_freetext_font_bold_italic_round_trip(tmp_path: Path) -> None:
+    """R17: family + bold/italic survive Save As (richtext style when weight/slant set)."""
+    from pagedrop.core.annotations import freetext_css_style, freetext_pdf_fontname
+
+    src = _make_pdf(tmp_path / "src.pdf")
+    source_hash = _file_hash(src)
+    out = tmp_path / "rich.pdf"
+    op = AnnotationOp(
+        kind="freetext",
+        page_index=0,
+        rects=((40, 200, 220, 250),),
+        text="Styled",
+        color=(0.1, 0.1, 0.1),
+        fontsize=16.0,
+        fontname="tiro",
+        bold=True,
+        italic=True,
+    )
+    assert freetext_pdf_fontname(op) == "tibi"
+    assert "Times" in freetext_css_style(op)
+    assert "bold" in freetext_css_style(op)
+    assert "italic" in freetext_css_style(op)
+    add_annotations(str(src), str(out), [op])
+    assert _file_hash(src) == source_hash
+    doc = fitz.open(str(out))
+    try:
+        annot = next(
+            a for a in doc[0].annots() or [] if a.type[0] == fitz.PDF_ANNOT_FREE_TEXT
+        )
+        assert (annot.info or {}).get("content") == "Styled"
+        ds = doc.xref_get_key(annot.xref, "DS")
+        assert ds[0] == "string"
+        assert "font-weight:bold" in ds[1]
+        assert "font-style:italic" in ds[1]
+        assert "Times" in ds[1]
+    finally:
+        doc.close()
+
+    plain_out = tmp_path / "plain.pdf"
+    plain = AnnotationOp(
+        kind="freetext",
+        page_index=0,
+        rects=((40, 200, 180, 240),),
+        text="Plain",
+        fontname="cour",
+    )
+    add_annotations(str(src), str(plain_out), [plain])
+    doc = fitz.open(str(plain_out))
+    try:
+        annot = next(
+            a for a in doc[0].annots() or [] if a.type[0] == fitz.PDF_ANNOT_FREE_TEXT
+        )
+        da = doc.xref_get_key(annot.xref, "DA")
+        assert da[0] == "string"
+        assert "/Cour" in da[1]
+    finally:
+        doc.close()
+
+
 def test_markup_session_replace_annotation() -> None:
     session = MarkupSession()
     old = AnnotationOp(

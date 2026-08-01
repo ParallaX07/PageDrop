@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QEvent, Qt, QObject, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QScrollArea,
@@ -27,11 +28,16 @@ from pagedrop.core.capabilities import (
     CapabilityStatus,
     probe,
 )
+from pagedrop.ui import icons
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import launch_organize_tool
+from pagedrop.ui.settings import light_theme
+from pagedrop.ui.theme import TEXT_MUTED, TEXT_MUTED_LIGHT
 from pagedrop.ui.tool_page import StatusFooter
+
+_EMPTY_GLYPH_PX = 32
 
 CATEGORIES: tuple[str, ...] = (
     "Organize",
@@ -58,6 +64,9 @@ class ToolEntry:
     capability_id: str | None = None
     coming_soon: bool = False
     action: str | None = None  # "merge" | "create_pdf" | "organize" | "convert_to_pdf" | "export_from_pdf" | "office_to_pdf" | "optimize_secure" | "modify" | "ocr" | "extract_tables"
+    icon: str | None = None  # Phosphor stem under assets/icons/
+    # R19: detailed shell help popup; None → shell falls back to description.
+    help_text: str | None = None
 
 
 # Shell catalogue: wired actions + placeholders later phases fill in.
@@ -69,6 +78,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("combine", "join"),
         action="merge",
+        icon="stack",
     ),
     ToolEntry(
         "split",
@@ -77,6 +87,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("extract", "ranges", "split"),
         action="organize",
+        icon="scissors",
+        help_text=(
+            "Break one PDF into several new files by page ranges (for example "
+            "1-3, 5, 8-10). Each range becomes its own PDF. Useful when you need "
+            "chapters, attachments, or a subset of pages without editing the "
+            "original. The source file is never overwritten."
+        ),
     ),
     ToolEntry(
         "alternate",
@@ -85,6 +102,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("interleave", "mix"),
         action="organize",
+        icon="arrows-left-right",
+        help_text=(
+            "Interleave pages from two PDFs into one new file: page 1 from A, "
+            "page 1 from B, page 2 from A, and so on. Handy for duplex scans "
+            "that came out as separate front/back files, or for merging two "
+            "related sequences. Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "reverse",
@@ -93,6 +117,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("flip", "blank"),
         action="organize",
+        icon="arrow-counter-clockwise",
+        help_text=(
+            "Flip the page order of a PDF (last page becomes first). Optionally "
+            "add a blank page when reversing odd-length documents for duplex "
+            "printing. Writes a new file; the original is unchanged."
+        ),
     ),
     ToolEntry(
         "n_up",
@@ -101,6 +131,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("impose", "grid", "2-up", "4-up"),
         action="organize",
+        icon="grid-four",
+        help_text=(
+            "N-up means putting several original pages onto each sheet of the "
+            "new PDF, for example 2-up (two pages side by side) or 4-up "
+            "(a 2×2 grid). Choose rows and columns; PageDrop scales pages to "
+            "fit the cells. Use it to save paper when printing handouts, or to "
+            "make a compact overview. Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "booklet",
@@ -109,6 +147,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("impose", "print"),
         action="organize",
+        icon="book-open",
+        help_text=(
+            "Rearranges pages so that when you print double-sided and fold the "
+            "stack in half, you get a simple booklet (like a folded pamphlet). "
+            "Each sheet holds two pages (2-up), ordered for saddle-style "
+            "folding. Print duplex, fold, and staple in the middle. Best for "
+            "short documents; output is a new PDF ready to print."
+        ),
     ),
     ToolEntry(
         "posterize",
@@ -117,6 +163,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("tiles", "poster"),
         action="organize",
+        icon="bounding-box",
+        help_text=(
+            "Slice each page into a grid of tiles (rows × columns). Each tile "
+            "becomes its own page in the new PDF so you can print a large page "
+            "across several sheets and tape them into a poster. Pick how many "
+            "rows and columns you need. The source file is not changed."
+        ),
     ),
     ToolEntry(
         "divide",
@@ -125,6 +178,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("halve", "cut"),
         action="organize",
+        icon="columns",
+        help_text=(
+            "Cut every page in half (horizontally or vertically) so each "
+            "half becomes its own page in a new PDF. Useful for scanned "
+            "spreads, booklets that were scanned as one page, or two-up "
+            "sheets you want to separate again."
+        ),
     ),
     ToolEntry(
         "combine",
@@ -133,6 +193,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("scroll", "strip"),
         action="organize",
+        icon="arrows-in-line-vertical",
+        help_text=(
+            "Stack every page of the PDF into one continuous tall (or wide) "
+            "page, like a long screenshot strip. Handy for sharing a full "
+            "document as a single scrollable page. Creates a new file."
+        ),
     ),
     ToolEntry(
         "normalize",
@@ -141,6 +207,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("resize", "paper", "a4", "letter"),
         action="organize",
+        icon="arrows-out",
+        help_text=(
+            "Make every page the same paper size (Letter, A4, and similar). "
+            "Choose fit (scale to fit inside, may letterbox) or fill (cover "
+            "the page, may crop). Useful before merging mixed-size scans or "
+            "sending to a printer that expects one size. Writes a new PDF."
+        ),
     ),
     ToolEntry(
         "attachments",
@@ -149,6 +222,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("embed", "embfile"),
         action="organize",
+        icon="paperclip",
+        help_text=(
+            "PDFs can carry embedded files (attachments) inside them. List "
+            "what is already embedded, add new files, extract copies to disk, "
+            "or remove attachments. Changes are written to a new PDF so the "
+            "original stays intact."
+        ),
     ),
     ToolEntry(
         "metadata",
@@ -157,6 +237,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("info", "xmp", "strip"),
         action="organize",
+        icon="info",
+        help_text=(
+            "Edit document properties such as title, author, subject, and "
+            "keywords, or strip metadata for privacy. Load values from the "
+            "current file, change them, and save a new PDF. The source file "
+            "is never overwritten."
+        ),
     ),
     ToolEntry(
         "page_labels",
@@ -165,6 +252,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("roman", "numbering"),
         action="organize",
+        icon="list-numbers",
+        help_text=(
+            "Page labels are how a PDF names pages in the viewer (i, ii, iii "
+            "for a preface, then 1, 2, 3 for the body). Set styles and ranges "
+            "so the sidebar and print dialogs show the labels you want. This "
+            "does not stamp numbers onto the page art; use Page numbers for "
+            "that. Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "zip",
@@ -173,6 +268,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("archive", "compress"),
         action="organize",
+        icon="file-zip",
+        help_text=(
+            "Put one or more PDFs into a ZIP archive for sharing or backup. "
+            "The PDFs themselves are not recompressed as PDF; they are packed "
+            "as files inside the zip. Originals are left alone."
+        ),
     ),
     ToolEntry(
         "compare",
@@ -181,6 +282,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Organize",
         keywords=("diff", "heatmap", "side-by-side", "compare"),
         action="organize",
+        icon="git-diff",
     ),
     ToolEntry(
         "create_pdf",
@@ -189,6 +291,7 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("images", "photos"),
         action="create_pdf",
+        icon="images",
     ),
     ToolEntry(
         "convert_to_pdf",
@@ -207,6 +310,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "excel",
         ),
         action="convert_to_pdf",
+        icon="file-arrow-down",
+        help_text=(
+            "Turn supported non-PDF files into a new PDF: SVG, XPS, ebooks, "
+            "Markdown, HTML, text, CBZ, CSV, Excel, and similar. Drop one or "
+            "more files and run. Layout fidelity depends on the format. The "
+            "originals are left alone."
+        ),
     ),
     ToolEntry(
         "export_from_pdf",
@@ -215,6 +325,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("export", "png", "jpeg", "webp", "svg", "csv"),
         action="export_from_pdf",
+        icon="export",
+        help_text=(
+            "Export pages or content out of a PDF into other formats: images "
+            "(PNG, JPEG, WebP), SVG, plain text, structured JSON/XML, CBZ, or "
+            "tables. Choose the format and options, then save new files. The "
+            "PDF itself is not modified."
+        ),
     ),
     ToolEntry(
         "office_to_pdf",
@@ -232,6 +349,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
             "libreoffice",
         ),
         action="office_to_pdf",
+        icon="file-doc",
+        help_text=(
+            "Convert Word, Excel, or PowerPoint documents to PDF using "
+            "Microsoft Office (Windows) or LibreOffice when available. The "
+            "status line names which engine ran. Output is a new PDF; the "
+            "Office file is unchanged."
+        ),
     ),
     ToolEntry(
         "pdf_to_word",
@@ -241,6 +365,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("word", "docx", "libreoffice", "export"),
         capability_id=LIBREOFFICE,
         action="pdf_to_word",
+        icon="file-doc",
+        help_text=(
+            "Convert a PDF to an editable Word (.docx) file via LibreOffice. "
+            "Complex layouts, columns, and graphics may not match the PDF "
+            "exactly. Treat the result as a starting point for editing. "
+            "Needs LibreOffice installed. Writes a new DOCX; the PDF is "
+            "unchanged."
+        ),
     ),
     ToolEntry(
         "ocr_pdf",
@@ -250,6 +382,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("ocr", "tesseract", "searchable", "scan", "tessdata"),
         capability_id=TESSDATA,
         action="ocr",
+        icon="scan",
+        help_text=(
+            "Optical character recognition (OCR) reads text from scanned or "
+            "image-only pages and adds a searchable text layer to a new PDF. "
+            "Needs tessdata language packs configured in settings. Pick "
+            "languages that match the document. The original file is never "
+            "overwritten."
+        ),
     ),
     ToolEntry(
         "extract_tables",
@@ -258,6 +398,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("tables", "csv", "json", "xlsx", "excel", "spreadsheet"),
         action="extract_tables",
+        icon="table",
+        help_text=(
+            "Find tables in a PDF and export them to CSV, JSON, or Excel. "
+            "Best on clear, grid-like tables; complex or scanned layouts may "
+            "need cleanup afterward. Creates new data files; the PDF stays "
+            "as-is."
+        ),
     ),
     ToolEntry(
         "pdf_to_csv",
@@ -266,6 +413,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Convert",
         keywords=("tables", "csv", "spreadsheet", "export"),
         action="pdf_to_csv",
+        icon="table",
+        help_text=(
+            "Extract tables from a PDF into CSV files you can open in a "
+            "spreadsheet. Works best with neat, text-based tables. Output is "
+            "new CSV files; the PDF is not modified."
+        ),
     ),
     ToolEntry(
         "pdf_to_excel",
@@ -275,6 +428,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         keywords=("tables", "xlsx", "excel", "spreadsheet", "export"),
         capability_id=OPENPYXL,
         action="pdf_to_excel",
+        icon="table",
+        help_text=(
+            "Extract tables from a PDF into an Excel workbook (.xlsx). Needs "
+            "the optional openpyxl capability. Best on clear text tables. "
+            "Writes a new spreadsheet; the PDF is unchanged."
+        ),
     ),
     ToolEntry(
         "crop",
@@ -283,6 +442,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("trim", "margins", "cropbox"),
         action="modify",
+        icon="crop",
+        help_text=(
+            "Trim margins from every page (or a page range). You can adjust "
+            "the CropBox (viewer crop) or rebuild pages to permanently remove "
+            "trimmed content. Use it to clean scanned borders or focus on the "
+            "content area. Saves a new PDF."
+        ),
     ),
     ToolEntry(
         "watermark",
@@ -291,6 +457,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("stamp", "overlay", "confidential"),
         action="modify",
+        icon="drop",
+        help_text=(
+            "Stamp text or an image onto chosen pages. Drag the overlay in the "
+            "preview to place it, or use the snap grid. Size is a percent of the "
+            "page diagonal; opacity and angle apply live. Flatten burns the "
+            "watermark into page content (harder to remove later). Output is "
+            "always a new PDF. The source file is never overwritten."
+        ),
     ),
     ToolEntry(
         "header_footer",
@@ -299,6 +473,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("header", "footer", "running"),
         action="modify",
+        icon="text-t",
+        help_text=(
+            "Add running header and/or footer text on each page. You can use "
+            "tokens for page numbers and similar fields. Position left, "
+            "center, or right. Writes a new PDF with the stamps applied."
+        ),
     ),
     ToolEntry(
         "page_numbers",
@@ -307,6 +487,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("numbering", "folio"),
         action="modify",
+        icon="hash",
+        help_text=(
+            "Draw page numbers onto the page (visible on the printed page), "
+            "with format and position options. Different from Page labels, "
+            "which only change how the viewer names pages in the sidebar. "
+            "Output is a new PDF."
+        ),
     ),
     ToolEntry(
         "bates",
@@ -315,6 +502,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("bates", "exhibit", "stamp"),
         action="modify",
+        icon="hash",
+        help_text=(
+            "Bates numbering stamps a unique sequential ID on each page "
+            "(often used in legal discovery), optionally with a prefix and "
+            "across multiple PDFs in one run. Numbers continue in order "
+            "through the batch. Each stamped file is saved as a new PDF."
+        ),
     ),
     ToolEntry(
         "bookmarks",
@@ -323,6 +517,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("outline", "toc", "contents"),
         action="modify",
+        icon="bookmarks",
+        help_text=(
+            "Edit the PDF outline (bookmarks that appear in the sidebar) and "
+            "optionally generate a table-of-contents page from them. Helps "
+            "readers jump to sections in long documents. Saves a new PDF."
+        ),
     ),
     ToolEntry(
         "annotations",
@@ -331,6 +531,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("flatten", "bake", "markup", "forms"),
         action="modify",
+        icon="note-pencil",
+        help_text=(
+            "Remove markup annotations, or flatten them (and form appearances) "
+            "so they become ordinary page content that cannot be edited as "
+            "comments. Use flatten before sharing a final copy; use remove to "
+            "strip review marks. Always writes a new file."
+        ),
     ),
     ToolEntry(
         "blank_pages",
@@ -339,6 +546,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("empty", "detect", "remove"),
         action="modify",
+        icon="file-dashed",
+        help_text=(
+            "Detect mostly blank pages (common after scanning) and remove them "
+            "after you confirm. Review the detection before running so "
+            "lightly marked pages are not dropped by mistake. Output is a new "
+            "PDF."
+        ),
     ),
     ToolEntry(
         "color_effects",
@@ -347,6 +561,14 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Modify",
         keywords=("greyscale", "grayscale", "invert", "scanner"),
         action="modify",
+        icon="palette",
+        help_text=(
+            "Apply whole-page color effects: greyscale, invert, or a "
+            "background tint. Some effects rasterize pages (turn them into "
+            "images), which can increase file size and reduce text "
+            "selectability; the tool warns when that applies. Saves a new "
+            "PDF."
+        ),
     ),
     ToolEntry(
         "compress",
@@ -355,6 +577,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Optimize",
         keywords=("shrink", "optimize"),
         action="optimize_secure",
+        icon="file-zip",
+        help_text=(
+            "Create a smaller copy of the PDF by recompressing images and "
+            "cleaning structure where possible. Quality vs size is a tradeoff; "
+            "try it when emailing or uploading large scans. The original file "
+            "is left unchanged."
+        ),
     ),
     ToolEntry(
         "repair",
@@ -363,6 +592,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Optimize",
         keywords=("fix", "rewrite", "recover"),
         action="optimize_secure",
+        icon="wrench",
+        help_text=(
+            "Rewrite the PDF into a clean new file. Can help when a document "
+            "opens with errors, has odd structure, or fails in other tools. "
+            "Not a guarantee for severely corrupt files. Source is never "
+            "overwritten."
+        ),
     ),
     ToolEntry(
         "encrypt",
@@ -371,6 +607,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Secure",
         keywords=("password", "protect", "permissions"),
         action="optimize_secure",
+        icon="lock",
+        help_text=(
+            "Password-protect a new copy of the PDF and optionally restrict "
+            "printing, copying, or editing. You choose open and/or permissions "
+            "passwords. Keep passwords somewhere safe; PageDrop cannot recover "
+            "them. The unlocked original is not changed."
+        ),
     ),
     ToolEntry(
         "decrypt",
@@ -379,6 +622,12 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Secure",
         keywords=("password", "unlock", "remove password"),
         action="optimize_secure",
+        icon="lock-open",
+        help_text=(
+            "Remove password protection by writing an unlocked copy. You must "
+            "know the current password. Use this when you own the file and "
+            "need an unprotected version for editing or archiving."
+        ),
     ),
     ToolEntry(
         "sanitize",
@@ -387,6 +636,13 @@ TOOL_CATALOGUE: tuple[ToolEntry, ...] = (
         "Secure",
         keywords=("scrub", "metadata", "privacy", "annotations"),
         action="optimize_secure",
+        icon="broom",
+        help_text=(
+            "Scrub privacy-sensitive extras before sharing: strip document "
+            "metadata and optionally remove annotations. Produces a cleaner "
+            "copy for distribution. Does not replace redaction for sensitive "
+            "content on the page; use redaction in the viewer for that."
+        ),
     ),
 )
 
@@ -422,6 +678,7 @@ class ToolTile(QFrame):
         self.entry = entry
         self._compact = False
         self.setObjectName("ToolTile")
+        self.setProperty("pressed", False)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -436,9 +693,18 @@ class ToolTile(QFrame):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
 
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._icon_label: QLabel | None = None
+        if entry.icon:
+            self._icon_label = QLabel()
+            self._icon_label.setObjectName("ToolTileIcon")
+            self._icon_label.setFixedSize(20, 20)
+            title_row.addWidget(self._icon_label, 0, Qt.AlignmentFlag.AlignTop)
         self._title = QLabel(entry.title)
         self._title.setObjectName("ToolTileTitle")
-        layout.addWidget(self._title)
+        title_row.addWidget(self._title, 1)
+        layout.addLayout(title_row)
 
         self._subtitle = QLabel(self._subtitle_text())
         self._subtitle.setObjectName("ToolTileSubtitle")
@@ -446,12 +712,13 @@ class ToolTile(QFrame):
         layout.addWidget(self._subtitle)
 
         self._refresh_chrome()
+        self.refresh_icon()
 
     def _subtitle_text(self) -> str:
         if self._capability is not None and not self._capability.available:
-            return f"{_absence_subtitle(self._capability)} — {self.entry.description}"
+            return f"{_absence_subtitle(self._capability)}: {self.entry.description}"
         if self.entry.coming_soon and self.entry.action is None:
-            return f"Coming soon — {self.entry.description}"
+            return f"Coming soon: {self.entry.description}"
         return self.entry.description
 
     def is_blocked(self) -> bool:
@@ -469,7 +736,11 @@ class ToolTile(QFrame):
         if isinstance(layout, QVBoxLayout):
             layout.setContentsMargins(*margins)
             layout.setSpacing(2 if compact else 4)
+        if self._icon_label is not None:
+            size = 16 if compact else 20
+            self._icon_label.setFixedSize(size, size)
         self._refresh_chrome()
+        self.refresh_icon()
 
     def refresh_capability(self) -> None:
         if self.entry.capability_id is None:
@@ -477,6 +748,13 @@ class ToolTile(QFrame):
         self._capability = probe(self.entry.capability_id, refresh=False)
         self._subtitle.setText(self._subtitle_text())
         self._refresh_chrome()
+
+    def refresh_icon(self) -> None:
+        if self._icon_label is None or not self.entry.icon:
+            return
+        size = 16 if self._compact else 20
+        pix = icons.icon(self.entry.icon).pixmap(QSize(size, size))
+        self._icon_label.setPixmap(pix)
 
     def _refresh_chrome(self) -> None:
         """Sync rare state properties; hover/focus come from shared app QSS."""
@@ -491,12 +769,34 @@ class ToolTile(QFrame):
         style.polish(self)
         self.update()
 
+    def _set_pressed(self, pressed: bool) -> None:
+        if bool(self.property("pressed")) == pressed:
+            return
+        self.setProperty("pressed", pressed)
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
+        self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and not self.is_blocked():
+            self._set_pressed(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
+        was_pressed = bool(self.property("pressed"))
+        self._set_pressed(False)
+        if event.button() == Qt.MouseButton.LeftButton and was_pressed:
             self.activated.emit(self.entry.id)
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._set_pressed(False)
+        super().leaveEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
@@ -577,7 +877,7 @@ class ToolsWindow(QWidget):
         self._show_upcoming = False
         self._compact = False
         self._grid_columns = _GRID_COLUMNS
-        self._status = StatusFooter(initial="Choose a tool")
+        self._status = StatusFooter()
         self._toast = ToastOverlay(self)
 
         self.setWindowTitle(self.WINDOW_TITLE)
@@ -588,6 +888,23 @@ class ToolsWindow(QWidget):
         self._build_ui()
         self.installEventFilter(self._nav_filter)
         self._apply_filter("")
+
+        refresh_cb = self._refresh_tile_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
+
+    def _refresh_tile_icons(self) -> None:
+        """Re-tint catalogue glyph pixmaps after a light/dark swap."""
+        for tile in self._tiles:
+            tile.refresh_icon()
+        self._refresh_empty_glyph()
+
+    def _refresh_empty_glyph(self) -> None:
+        tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED
+        pix = icons.icon("wrench", color=tint).pixmap(
+            QSize(_EMPTY_GLYPH_PX, _EMPTY_GLYPH_PX)
+        )
+        self._empty_glyph.setPixmap(pix)
 
     @property
     def tab_title(self) -> str:
@@ -701,11 +1018,24 @@ class ToolsWindow(QWidget):
                 tile.installEventFilter(self._nav_filter)
                 self._tiles.append(tile)
 
+        self._empty_state = QWidget()
+        self._empty_state.setObjectName("ToolsEmptyPanel")
+        empty_layout = QVBoxLayout(self._empty_state)
+        empty_layout.setContentsMargins(0, 24, 0, 24)
+        empty_layout.setSpacing(8)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_glyph = QLabel()
+        self._empty_glyph.setObjectName("ToolsEmptyGlyph")
+        self._empty_glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_glyph.setAccessibleName("Tools")
+        self._refresh_empty_glyph()
         self._empty_label = QLabel("No tools match your search.")
         self._empty_label.setObjectName("ToolsEmptyState")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.hide()
-        self._catalogue_layout.addWidget(self._empty_label)
+        empty_layout.addWidget(self._empty_glyph)
+        empty_layout.addWidget(self._empty_label)
+        self._empty_state.hide()
+        self._catalogue_layout.addWidget(self._empty_state)
 
         self._upcoming_btn = QToolButton()
         self._upcoming_btn.setObjectName("ToolsUpcomingToggle")
@@ -827,7 +1157,7 @@ class ToolsWindow(QWidget):
             any_visible = any_visible or section_visible
             match_count += shown
 
-        self._empty_label.setVisible(not any_visible)
+        self._empty_state.setVisible(not any_visible)
 
         if query:
             noun = "tool" if match_count == 1 else "tools"

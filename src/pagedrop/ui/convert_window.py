@@ -7,14 +7,14 @@ from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEven
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
-        QMessageBox,
-    QRadioButton,
+    QMessageBox,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QStyle,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +38,7 @@ from pagedrop.core.supported_formats import (
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
 from pagedrop.ui.dialogs import confirm_overwrite, prompt_discard_file_list
+from pagedrop.ui import icons
 from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
@@ -351,6 +352,9 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._root.addWidget(self._result_bar)
         self._root.addWidget(self._status)
         self._toast = ToastOverlay(self)
+        refresh_cb = self._refresh_toolbar_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
         self._connect_signals()
         self._update_actions()
         self._update_status()
@@ -392,7 +396,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
             action.setStatusTip(text)
 
         self._back_to_list_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
+            icons.icon("arrow-left"),
             "Back to grid",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
@@ -400,28 +404,31 @@ class ConvertWindow(JobChromeMixin, QWidget):
         tip(self._back_to_list_action, "Return to image grid (Esc)")
 
         self._add_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            icons.icon("folder-open"),
             "Add images…",
         )
         self._add_action.triggered.connect(self._add_images)
         tip(self._add_action, "Add images to convert")
+        add_button = toolbar.widgetForAction(self._add_action)
+        if add_button is not None:
+            add_button.setObjectName("ToolbarSecondary")
 
         self._remove_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            icons.icon("trash"),
             "Remove",
         )
         self._remove_action.triggered.connect(self._remove_selected)
         tip(self._remove_action, "Remove selected images")
 
         self._move_up_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            icons.icon("arrow-up"),
             "Move up",
         )
         self._move_up_action.triggered.connect(self._move_up)
         tip(self._move_up_action, "Move selected images up")
 
         self._move_down_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+            icons.icon("arrow-down"),
             "Move down",
         )
         self._move_down_action.triggered.connect(self._move_down)
@@ -444,7 +451,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         toolbar.addWidget(self._zoom_controls)
 
         self._create_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
+            icons.icon("floppy-disk"),
             "Save PDF…",
         )
         self._create_action.triggered.connect(self._create_pdfs)
@@ -453,18 +460,49 @@ class ConvertWindow(JobChromeMixin, QWidget):
         if create_button is not None:
             create_button.setObjectName("ToolbarPrimary")
 
-        self._single_mode_action = QRadioButton("One PDF")
+        mode_host = QWidget()
+        mode_host.setObjectName("OutputModeHost")
+        mode_row = QHBoxLayout(mode_host)
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(0)
+        self._single_mode_action = QToolButton()
+        self._single_mode_action.setText("One PDF")
+        self._single_mode_action.setCheckable(True)
         self._single_mode_action.setChecked(True)
-        self._separate_mode_action = QRadioButton("Separate PDFs")
-        mode_group = QButtonGroup(self)
+        self._single_mode_action.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self._single_mode_action.setToolTip("Combine all images into one PDF")
+        self._single_mode_action.setStatusTip("Combine all images into one PDF")
+        self._separate_mode_action = QToolButton()
+        self._separate_mode_action.setText("Separate PDFs")
+        self._separate_mode_action.setCheckable(True)
+        self._separate_mode_action.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self._separate_mode_action.setToolTip("Save each image as its own PDF")
+        self._separate_mode_action.setStatusTip("Save each image as its own PDF")
+        mode_group = QButtonGroup(mode_host)
+        mode_group.setExclusive(True)
         mode_group.addButton(self._single_mode_action)
         mode_group.addButton(self._separate_mode_action)
-        toolbar.addWidget(self._single_mode_action)
-        toolbar.addWidget(self._separate_mode_action)
+        mode_row.addWidget(self._single_mode_action)
+        mode_row.addWidget(self._separate_mode_action)
+        toolbar.addWidget(mode_host)
+        self._output_mode_host = mode_host
 
         enable_toolbar_keyboard_navigation(toolbar)
         set_content_tab_order(toolbar, self._stack, status_bar=self.statusBar())
         self._toolbar = toolbar
+
+    def _refresh_toolbar_icons(self) -> None:
+        """Re-tint Phosphor toolbar icons after a light/dark swap."""
+        self._back_to_list_action.setIcon(icons.icon("arrow-left"))
+        self._add_action.setIcon(icons.icon("folder-open"))
+        self._remove_action.setIcon(icons.icon("trash"))
+        self._move_up_action.setIcon(icons.icon("arrow-up"))
+        self._move_down_action.setIcon(icons.icon("arrow-down"))
+        self._create_action.setIcon(icons.icon("floppy-disk"))
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)
@@ -520,8 +558,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._remove_action.setVisible(not in_preview)
         self._move_up_action.setVisible(not in_preview)
         self._move_down_action.setVisible(not in_preview)
-        self._single_mode_action.setVisible(not in_preview)
-        self._separate_mode_action.setVisible(not in_preview)
+        self._output_mode_host.setVisible(not in_preview)
         self._create_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
@@ -532,8 +569,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
         self._create_action.setEnabled(has_files and not self._converting)
         self._zoom_controls.setEnabled(has_files and not in_preview and not self._converting)
-        self._single_mode_action.setEnabled(toolbar_enabled)
-        self._separate_mode_action.setEnabled(toolbar_enabled)
+        self._output_mode_host.setEnabled(toolbar_enabled)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -844,7 +880,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         status = f"Created {len(written)} PDF {file_noun} from {count} {noun}"
         # ResultActionsBar still binds to the first path only (O12 — no multi-file API).
         if len(written) > 1:
-            status = f"{status} — showing first"
+            status = f"{status}. Showing first"
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         if written:

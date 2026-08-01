@@ -10,10 +10,11 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
 )
-from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QWidget
+from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QToolButton, QWidget
 
 from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, decode_page_refs
 from pagedrop.core.pdf_loader import PdfLoadError
+from pagedrop.ui import icons
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.theme import accent_qcolor, tab_close_icon
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -291,6 +292,10 @@ class TabManager(QTabWidget):
         self.tabCloseRequested.connect(self.close_tab)
         self.currentChanged.connect(self._on_current_changed)
 
+        refresh_cb = self._refresh_close_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
+
     @property
     def detachable_tab_bar(self) -> DetachableTabBar:
         return self._detachable_tab_bar
@@ -395,10 +400,31 @@ class TabManager(QTabWidget):
             self.active_tab_changed.emit(widget)
 
     def _style_close_button(self, index: int) -> None:
-        btn = self.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide)
-        if btn is None:
-            return
+        # Qt's default CloseButton paints PE_IndicatorTabClose and ignores setIcon.
+        bar = self.tabBar()
+        btn = bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+        if not isinstance(btn, QToolButton) or btn.objectName() != "TabCloseButton":
+            btn = QToolButton(bar)
+            btn.setObjectName("TabCloseButton")
+            btn.setAutoRaise(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip("Close tab")
+            btn.setAccessibleName("Close tab")
+            btn.clicked.connect(self._on_tab_close_button_clicked)
+            bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, btn)
         btn.setIcon(tab_close_icon())
         btn.setIconSize(QSize(14, 14))
-        btn.setToolTip("Close tab")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _on_tab_close_button_clicked(self) -> None:
+        btn = self.sender()
+        if btn is None:
+            return
+        for index in range(self.count()):
+            if self.tabBar().tabButton(index, QTabBar.ButtonPosition.RightSide) is btn:
+                self.tabCloseRequested.emit(index)
+                return
+
+    def _refresh_close_icons(self) -> None:
+        """Re-tint tab close × after a light/dark swap."""
+        for index in range(self.count()):
+            self._style_close_button(index)

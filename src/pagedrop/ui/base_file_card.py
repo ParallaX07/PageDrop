@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.drag_mime import INTERNAL_MERGE_FILE_MIME, encode_page_indices
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.accessibility import prefers_reduce_motion
-from pagedrop.ui.theme import CARD_PADDING, CARD_WIDTH, shadow_qcolor
+from pagedrop.ui.theme import CARD_PADDING, CARD_WIDTH, SPACE_1, SPACE_2, shadow_qcolor
 
 
 def _repolish(widget: QFrame) -> None:
@@ -69,9 +69,10 @@ class BaseFileCard(QFrame):
     def _ensure_shadow(self) -> QGraphicsDropShadowEffect:
         if self._shadow is None:
             shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(14)
-            shadow.setOffset(0, 3)
-            shadow.setColor(shadow_qcolor(alpha=55))
+            # R5: soft cool lift on hover only (resting cards stay flat)
+            shadow.setBlurRadius(20)
+            shadow.setOffset(0, 4)
+            shadow.setColor(shadow_qcolor(alpha=64))
             self.setGraphicsEffect(shadow)
             self._shadow = shadow
         return self._shadow
@@ -121,10 +122,7 @@ class BaseFileCard(QFrame):
 
     def enterEvent(self, event: QEnterEvent) -> None:
         if not prefers_reduce_motion():
-            shadow = self._ensure_shadow()
-            shadow.setBlurRadius(18)
-            shadow.setOffset(0, 4)
-            shadow.setColor(shadow_qcolor(alpha=72))
+            self._ensure_shadow()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
@@ -194,12 +192,14 @@ class InternalReorderFileCard(BaseFileCard):
         self._thumbnail_label.setObjectName(f"{object_name}Thumbnail")
 
         filename = Path(path).name
-        self._title_label = QLabel(filename)
+        self._title_full = filename
+        self._title_label = QLabel()
         self._title_label.setObjectName(f"{object_name}Title")
         self._title_label.setAlignment(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
-        self._title_label.setWordWrap(True)
+        self._title_label.setWordWrap(False)
+        self._refresh_title_elide()
 
         self._subtitle_label = QLabel(subtitle)
         self._subtitle_label.setObjectName(f"{object_name}Subtitle")
@@ -209,13 +209,25 @@ class InternalReorderFileCard(BaseFileCard):
         self.setAccessibleDescription(subtitle)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        layout.setSpacing(SPACE_1)
         layout.addWidget(self._thumbnail_label)
         layout.addWidget(self._title_label)
         layout.addWidget(self._subtitle_label)
 
         self._apply_visual_state()
+
+    def _refresh_title_elide(self) -> None:
+        """Single-line elide — wrapped titles rag the Merge/Convert grid (R14)."""
+        avail = max(1, self._card_width - 2 * SPACE_2)
+        self._title_label.setMaximumWidth(avail)
+        self._title_label.setText(
+            self._title_label.fontMetrics().elidedText(
+                self._title_full,
+                Qt.TextElideMode.ElideRight,
+                avail,
+            )
+        )
 
     def _item_index(self) -> int:
         return self.file_index
@@ -235,6 +247,7 @@ class InternalReorderFileCard(BaseFileCard):
     ) -> None:
         self._card_width = width
         self.setFixedWidth(width)
+        self._refresh_title_elide()
         if refresh_thumbnail:
             self._refresh_thumbnail_display(fast=fast)
 

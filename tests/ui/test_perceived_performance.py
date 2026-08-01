@@ -23,13 +23,13 @@ def test_skeleton_cards_before_thumbnails(qtbot, five_page_pdf):
     assert not hasattr(grid, "_overlay")
     assert all(card._is_skeleton for card in grid._cards)
     assert all(not card._page_overlay.isHidden() for card in grid._cards)
-    assert grid._skeleton_pulse_timer.isActive()
+    assert grid._skeleton_pulse_active
 
     qtbot.waitUntil(
         lambda: all(not card._is_skeleton for card in grid._cards),
         timeout=15000,
     )
-    assert not grid._skeleton_pulse_timer.isActive()
+    assert not grid._skeleton_pulse_active
     loader.close()
 
 
@@ -72,13 +72,14 @@ def test_zoom_debounce_shows_rendering_affordance(main_window, five_page_pdf, qt
     grid = main_window._thumbnail_grid
     zoom = main_window.findChild(ZoomControls)
     assert zoom is not None
-    assert zoom._caption.text() == "Zoom"
+    assert zoom._caption.isHidden()
 
     grid.set_thumbnail_zoom(grid.thumbnail_width_px + ZOOM_WHEEL_STEP)
+    assert not zoom._caption.isHidden()
     assert zoom._caption.text() == "Rendering…"
     assert zoom._value_label.text() == f"{grid.thumbnail_width_px}px"
 
-    qtbot.waitUntil(lambda: zoom._caption.text() == "Zoom", timeout=2000)
+    qtbot.waitUntil(lambda: zoom._caption.isHidden(), timeout=2000)
 
 
 def test_page_size_deferred_until_tooltip(qtbot, five_page_pdf):

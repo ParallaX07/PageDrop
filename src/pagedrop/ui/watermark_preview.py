@@ -25,7 +25,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
-from pagedrop.ui.theme import accent_qcolor
+from pagedrop.ui.theme import accent_qcolor, on_accent_qcolor
 from pagedrop.core.modify_ops import watermark_text_box
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
@@ -108,11 +108,23 @@ class WatermarkPageRenderWorker(QRunnable):
                 self.signals.error.emit(self._generation, str(exc))
 
 
-def _overlay_size_pts(state: WatermarkOverlayState, page_w: float, page_h: float) -> tuple[float, float]:
-    """Unrotated watermark width/height in PDF points (matches apply path)."""
+def _overlay_size_pts(
+    state: WatermarkOverlayState,
+    page_w: float,
+    page_h: float,
+    *,
+    image_pix: QPixmap | None = None,
+) -> tuple[float, float]:
+    """Unrotated watermark width/height in PDF points (matches apply path).
+
+    Pass *image_pix* from the canvas ``_image_cache`` so image mode does not
+    re-decode from disk on every hit-test / paint size query (O17-b).
+    """
     diag = math.hypot(page_w, page_h)
     if state.kind == "image":
-        pix = QPixmap(state.image_path) if state.image_path else QPixmap()
+        pix = image_pix if image_pix is not None else (
+            QPixmap(state.image_path) if state.image_path else QPixmap()
+        )
         aspect = (pix.height() / max(pix.width(), 1)) if not pix.isNull() else 1.0
         if state.size_mode == "diagonal":
             w = diag * (state.diagonal_percent / 100.0)
@@ -178,6 +190,7 @@ class WatermarkPreviewCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("WatermarkPreviewCanvas")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMinimumSize(240, 280)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
@@ -369,7 +382,8 @@ class WatermarkPreviewCanvas(QWidget):
     def _fit_scale(self) -> float:
         if self._page_pix.isNull():
             return 1.0
-        margin = 8.0
+        # R12: keep a thin gutter; extra host height/width should grow the page.
+        margin = 4.0
         avail_w = max(1.0, self._host_w - 2 * margin)
         avail_h = max(1.0, self._host_h - 2 * margin)
         pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
@@ -379,7 +393,7 @@ class WatermarkPreviewCanvas(QWidget):
         if self._page_pix.isNull():
             self.setMinimumSize(max(240, self._host_w), max(280, self._host_h))
             return
-        margin = 8.0
+        margin = 4.0
         pw, ph = float(self._page_pix.width()), float(self._page_pix.height())
         scale = self._fit_scale() * self._zoom
         need_w = int(math.ceil(pw * scale + 2 * margin))
@@ -387,6 +401,7 @@ class WatermarkPreviewCanvas(QWidget):
         if self._zoom > 1.0 + 1e-6:
             self.setMinimumSize(max(self._host_w, need_w), max(self._host_h, need_h))
         else:
+            # Fill the scroll viewport so fit-scale tracks reclaimed window height.
             self.setMinimumSize(self._host_w, self._host_h)
 
     def _page_display_rect(self) -> QRectF:
@@ -416,9 +431,20 @@ class WatermarkPreviewCanvas(QWidget):
         ny = (pt.y() - dr.y()) / max(dr.height(), 1e-6)
         return nx * self._page_w, ny * self._page_h
 
+    def _ensure_image_cache(self) -> QPixmap:
+        """Load watermark image once per path; shared by size queries and paint."""
+        path = self._state.image_path if self._state.kind == "image" else ""
+        if path != self._image_cache_path:
+            self._image_cache = QPixmap(path) if path else QPixmap()
+            self._image_cache_path = path
+        return self._image_cache
+
     def _box_pts(self) -> tuple[float, float, float, float]:
         """Unrotated box center + size in PDF points → (cx, cy, w, h)."""
-        w, h = _overlay_size_pts(self._state, self._page_w, self._page_h)
+        image_pix = self._ensure_image_cache() if self._state.kind == "image" else None
+        w, h = _overlay_size_pts(
+            self._state, self._page_w, self._page_h, image_pix=image_pix
+        )
         cx = self._state.center_x * self._page_w
         cy = self._state.center_y * self._page_h
         return cx, cy, max(w, 4.0), max(h, 4.0)
@@ -488,12 +514,10 @@ class WatermarkPreviewCanvas(QWidget):
         painter.setOpacity(opacity)
 
         if self._state.kind == "image" and self._state.image_path:
-            if self._image_cache_path != self._state.image_path:
-                self._image_cache = QPixmap(self._state.image_path)
-                self._image_cache_path = self._state.image_path
-            if not self._image_cache.isNull():
+            cached = self._ensure_image_cache()
+            if not cached.isNull():
                 target = QRectF(-ww / 2, -wh / 2, ww, wh)
-                painter.drawPixmap(target.toRect(), self._image_cache)
+                painter.drawPixmap(target.toRect(), cached)
         else:
             r, g, b = self._state.color
             color = QColor(int(r * 255), int(g * 255), int(b * 255))
@@ -530,7 +554,7 @@ class WatermarkPreviewCanvas(QWidget):
         rh = QPointF(0.0, -wh / 2 - _ROTATE_OFFSET)
         painter.setPen(QPen(accent_qcolor(), 1, Qt.PenStyle.DashLine))
         painter.drawLine(top, rh)
-        painter.setBrush(QColor(255, 255, 255))
+        painter.setBrush(on_accent_qcolor())
         painter.setPen(QPen(accent_qcolor(), 1))
         painter.drawEllipse(rh, _HANDLE_PX / 2, _HANDLE_PX / 2)
         painter.restore()
@@ -698,7 +722,7 @@ def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
         (wr.left(), wr.bottom()),
         (wr.left(), mid_y),
     )
-    painter.setBrush(QColor(255, 255, 255))
+    painter.setBrush(on_accent_qcolor())
     painter.setPen(QPen(accent_qcolor(), 1))
     for px, py in points:
         painter.drawRect(QRectF(px - hs / 2, py - hs / 2, hs, hs))

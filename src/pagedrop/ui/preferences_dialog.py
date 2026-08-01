@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -51,6 +52,7 @@ class PreferencesDialog(QDialog):
         self.setMinimumWidth(480)
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
         safety_heading = QLabel("Safety")
@@ -73,6 +75,8 @@ class PreferencesDialog(QDialog):
         self._confirm_close_dirty.setChecked(confirm_before_closing_dirty_tabs())
         root.addWidget(self._confirm_close_dirty)
 
+        root.addWidget(self._prefs_divider())
+
         window_heading = QLabel("Window")
         window_heading.setObjectName("PreferencesSection")
         root.addWidget(window_heading)
@@ -85,6 +89,8 @@ class PreferencesDialog(QDialog):
         self._remember_geometry.setChecked(remember_window_geometry())
         root.addWidget(self._remember_geometry)
 
+        root.addWidget(self._prefs_divider())
+
         a11y_heading = QLabel("Accessibility")
         a11y_heading.setObjectName("PreferencesSection")
         root.addWidget(a11y_heading)
@@ -92,11 +98,14 @@ class PreferencesDialog(QDialog):
         self._reduce_motion = QCheckBox("Reduce motion")
         self._reduce_motion.setObjectName("PreferencesReduceMotion")
         self._reduce_motion.setToolTip(
-            "Minimize non-essential animation (skeleton pulse, hover shadows). "
+            "Minimize non-essential animation (toasts, busy overlay, "
+            "skeleton pulse, hover shadows). "
             "Platform reduce-motion settings are still honored when available."
         )
         self._reduce_motion.setChecked(reduce_motion())
         root.addWidget(self._reduce_motion)
+
+        root.addWidget(self._prefs_divider())
 
         heading = QLabel("Office to PDF")
         heading.setObjectName("PreferencesSection")
@@ -131,6 +140,8 @@ class PreferencesDialog(QDialog):
         self._status.setObjectName("ToolsHint")
         self._status.setWordWrap(True)
         root.addWidget(self._status)
+
+        root.addWidget(self._prefs_divider())
 
         ocr_heading = QLabel("OCR (tessdata)")
         ocr_heading.setObjectName("PreferencesSection")
@@ -181,6 +192,14 @@ class PreferencesDialog(QDialog):
 
         self._refresh_status()
 
+    @staticmethod
+    def _prefs_divider() -> QFrame:
+        line = QFrame()
+        line.setObjectName("PreferencesDivider")
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFixedHeight(1)
+        return line
+
     def _browse_soffice(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -208,7 +227,7 @@ class PreferencesDialog(QDialog):
         confirm.setText("Download English (tessdata_fast) language data?")
         confirm.setInformativeText(
             f"Saves eng.traineddata to:\n{dest}\n\n"
-            "PageDrop never downloads language data silently — only when you ask."
+            "PageDrop never downloads language data silently, only when you ask."
         )
         download_btn = confirm.addButton(
             "Download", QMessageBox.ButtonRole.AcceptRole

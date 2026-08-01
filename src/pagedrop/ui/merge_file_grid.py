@@ -84,6 +84,8 @@ class MergeFileGrid(BaseFileGrid):
             empty_kbd_object_name="MergeEmptyKbd",
             empty_title="Add PDFs to merge",
             empty_hint="Use Add PDFs or drop files here",
+            empty_kbd="Drop PDFs here  ·  or use Add PDFs",
+            empty_glyph="stack",
             parent=parent,
         )
 
@@ -187,7 +189,6 @@ class MergeFileGrid(BaseFileGrid):
         if pixmap.isNull():
             return
         self._render_width_by_path[path] = width_px
-        for card in self._cards:
-            if card.path == path:
-                card.set_thumbnail(pixmap)
-                break
+        card = self._cards_by_path.get(path)
+        if card is not None:
+            card.set_thumbnail(pixmap)

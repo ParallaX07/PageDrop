@@ -87,6 +87,8 @@ class ConvertFileGrid(BaseFileGrid):
             empty_kbd_object_name="ConvertEmptyKbd",
             empty_title="Add images to create PDF",
             empty_hint="Use Add images or drop files here",
+            empty_kbd="Drop images here  ·  or use Add images",
+            empty_glyph="images",
             parent=parent,
         )
 
@@ -164,7 +166,6 @@ class ConvertFileGrid(BaseFileGrid):
         if not pixmap.loadFromData(png, "PNG") or pixmap.isNull():
             return
         self._render_width_by_path[path] = width_px
-        for card in self._cards:
-            if card.path == path:
-                card.set_thumbnail(pixmap)
-                break
+        card = self._cards_by_path.get(path)
+        if card is not None:
+            card.set_thumbnail(pixmap)

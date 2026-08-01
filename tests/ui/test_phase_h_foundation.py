@@ -67,7 +67,6 @@ def test_toast_announces_message_to_assistive_tech(qtbot):
     parent = QWidget()
     qtbot.addWidget(parent)
     toast = ToastOverlay(parent)
-    qtbot.addWidget(toast)
 
     toast.show_toast("Job failed", kind="error")
     assert toast._message.accessibleName() == "Job failed"

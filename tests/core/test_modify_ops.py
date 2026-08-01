@@ -227,6 +227,36 @@ def test_watermark_text_box_shared_with_preview() -> None:
     assert h > fs  # visual height includes ascender+descender span
 
 
+def test_watermark_text_box_caches_helv_font(monkeypatch) -> None:
+    """O17-b: many watermark_text_box calls create ≤1 fitz.Font('helv')."""
+    ops._HELV_FONT = None
+    creates: list[object] = []
+    real_font = fitz.Font
+
+    def counting_font(*args, **kwargs):
+        creates.append(args[0] if args else kwargs.get("fontname"))
+        return real_font(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "Font", counting_font)
+    for _ in range(100):
+        ops.watermark_text_box(
+            "CONFIDENTIAL",
+            page_width=400,
+            page_height=400,
+            diagonal_percent=50.0,
+        )
+    helv_creates = [c for c in creates if c == "helv"]
+    assert len(helv_creates) <= 1, f"expected ≤1 helv Font, got {len(helv_creates)}"
+    # Geometry still matches uncached math.
+    w, _h, _fs = ops.watermark_text_box(
+        "CONFIDENTIAL",
+        page_width=400,
+        page_height=400,
+        diagonal_percent=50.0,
+    )
+    assert abs(w - (400**2 + 400**2) ** 0.5 * 0.5) < 0.5
+
+
 def test_page_numbers_present(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", pages=2)
     source_hash = _file_hash(src)
@@ -314,6 +344,38 @@ def test_blank_heuristic_on_empty_page(tmp_path: Path) -> None:
         assert "content" in cleaned[0].get_text()
     finally:
         cleaned.close()
+
+
+def test_detect_blank_pages_holds_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O17-e: detect_blank_pages open/scan owns FITZ_LOCK."""
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
+    path = tmp_path / "mixed.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((20, 40), "content", fontsize=14)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+    report = ops.detect_blank_pages(str(path))
+    assert report.blank_indices == (0,)
+    assert held_at_open, "expected at least one fitz.open"
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
 
 
 def test_header_footer_and_bates_across_files(tmp_path: Path) -> None:

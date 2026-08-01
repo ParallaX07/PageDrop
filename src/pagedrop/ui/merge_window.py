@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QMessageBox,
-    QProgressDialog,
     QStackedWidget,
-    QStyle,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -25,11 +23,12 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_merge import PdfMergeModel
-from pagedrop.core.pdf_service import FITZ_LOCK
+from pagedrop.core.pdf_service import FITZ_LOCK, page_count as pdf_page_count
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import prompt_discard_file_list, prompt_pdf_password
+from pagedrop.ui import icons
 from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
@@ -110,6 +109,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._credentials = RuntimeCredentials()
         self._preview_loader: PdfLoader | None = None
         self._merging = False
+        self._folder_checking = False
         self._merge_pool = QThreadPool(self)
         self._merge_pool.setMaxThreadCount(1)
         self._status = StatusFooter()
@@ -129,6 +129,9 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._root.addWidget(self._result_bar)
         self._root.addWidget(self._status)
         self._toast = ToastOverlay(self)
+        refresh_cb = self._refresh_toolbar_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
         self._connect_signals()
         self._update_actions()
         self._update_status()
@@ -171,7 +174,7 @@ class MergeWindow(JobChromeMixin, QWidget):
             action.setStatusTip(text)
 
         self._back_to_list_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack),
+            icons.icon("arrow-left"),
             "Back to grid",
         )
         self._back_to_list_action.triggered.connect(self._close_preview)
@@ -179,35 +182,41 @@ class MergeWindow(JobChromeMixin, QWidget):
         tip(self._back_to_list_action, "Return to file grid (Esc)")
 
         self._add_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            icons.icon("folder-open"),
             "Add PDFs",
         )
         self._add_action.triggered.connect(self._add_pdfs)
         tip(self._add_action, "Add PDF files to merge")
+        add_button = toolbar.widgetForAction(self._add_action)
+        if add_button is not None:
+            add_button.setObjectName("ToolbarSecondary")
 
         self._add_folder_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            icons.icon("folder"),
             "Add folder…",
         )
         self._add_folder_action.triggered.connect(self._add_folder)
         tip(self._add_folder_action, "Add all PDFs from a folder")
+        add_folder_button = toolbar.widgetForAction(self._add_folder_action)
+        if add_folder_button is not None:
+            add_folder_button.setObjectName("ToolbarSecondary")
 
         self._remove_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            icons.icon("trash"),
             "Remove",
         )
         self._remove_action.triggered.connect(self._remove_selected)
         tip(self._remove_action, "Remove selected files")
 
         self._move_up_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            icons.icon("arrow-up"),
             "Move up",
         )
         self._move_up_action.triggered.connect(self._move_up)
         tip(self._move_up_action, "Move selected files up")
 
         self._move_down_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+            icons.icon("arrow-down"),
             "Move down",
         )
         self._move_down_action.triggered.connect(self._move_down)
@@ -231,7 +240,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         toolbar.addWidget(self._zoom_controls)
 
         self._merge_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
+            icons.icon("floppy-disk"),
             "Merge",
         )
         self._merge_action.triggered.connect(self._merge_pdfs)
@@ -242,6 +251,16 @@ class MergeWindow(JobChromeMixin, QWidget):
 
         enable_toolbar_keyboard_navigation(toolbar)
         set_content_tab_order(toolbar, self._stack, status_bar=self.statusBar())
+
+    def _refresh_toolbar_icons(self) -> None:
+        """Re-tint Phosphor toolbar icons after a light/dark swap."""
+        self._back_to_list_action.setIcon(icons.icon("arrow-left"))
+        self._add_action.setIcon(icons.icon("folder-open"))
+        self._add_folder_action.setIcon(icons.icon("folder"))
+        self._remove_action.setIcon(icons.icon("trash"))
+        self._move_up_action.setIcon(icons.icon("arrow-up"))
+        self._move_down_action.setIcon(icons.icon("arrow-down"))
+        self._merge_action.setIcon(icons.icon("floppy-disk"))
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)
@@ -287,14 +306,16 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._merge_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
-        toolbar_enabled = not self._merging
+        toolbar_enabled = not self._merging and not self._folder_checking
         self._add_action.setEnabled(toolbar_enabled)
         self._add_folder_action.setEnabled(toolbar_enabled)
         self._remove_action.setEnabled(has_selection and toolbar_enabled)
         self._move_up_action.setEnabled(self._can_move_up() and toolbar_enabled)
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
-        self._merge_action.setEnabled(has_files and not self._merging)
-        self._zoom_controls.setEnabled(has_files and not in_preview and not self._merging)
+        self._merge_action.setEnabled(has_files and not self._merging and not self._folder_checking)
+        self._zoom_controls.setEnabled(
+            has_files and not in_preview and not self._merging and not self._folder_checking
+        )
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -436,11 +457,8 @@ class MergeWindow(JobChromeMixin, QWidget):
 
     @staticmethod
     def _page_count(path: str, *, password: str | None = None) -> int:
-        loader = PdfLoader(path, password=password)
-        try:
-            return loader.page_count
-        finally:
-            loader.close()
+        # Locked probe (O17-c); long-lived Merge preview loader stays separate.
+        return pdf_page_count(path, password=password)
 
     def _add_paths(self, paths: list[str]) -> None:
         accepted: list[str] = []
@@ -542,69 +560,76 @@ class MergeWindow(JobChromeMixin, QWidget):
         accepted: list[str] = []
         skipped: list[tuple[str, str]] = []
         total = len(paths)
-        progress: QProgressDialog | None = None
-        if total >= _FOLDER_PROGRESS_THRESHOLD:
-            progress = QProgressDialog(
-                "Checking PDFs…",
-                "Cancel",
-                0,
-                total,
-                self,
-            )
-            progress.setWindowTitle("Add folder")
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setMinimumDuration(0)
-            progress.setValue(0)
-
+        show_busy = total >= _FOLDER_PROGRESS_THRESHOLD
         cancelled = False
-        for index, path in enumerate(paths):
-            if progress is not None:
-                progress.setValue(index)
-                progress.setLabelText(f"Checking {Path(path).name}…")
-                QApplication.processEvents()
-                if progress.wasCanceled():
-                    cancelled = True
-                    break
 
-            password = self._credentials.get(path)
-            while True:
-                try:
-                    page_count = self._page_count(path, password=password)
-                    break
-                except PdfPasswordRequiredError:
-                    password = prompt_pdf_password(self, Path(path).name)
-                    if password is None:
-                        skipped.append((path, "password cancelled"))
-                        page_count = None
-                        break
-                except PdfPasswordError:
-                    password = prompt_pdf_password(
-                        self, Path(path).name, incorrect=True
+        def _on_folder_cancel() -> None:
+            nonlocal cancelled
+            cancelled = True
+
+        if show_busy:
+            self._folder_checking = True
+            self._update_actions()
+            self._busy_overlay.set_cancellable(True)
+            self._busy_overlay.cancelled.connect(_on_folder_cancel)
+            self._busy_overlay.show_message("Checking PDFs…")
+            self.statusBar().showMessage("Checking PDFs…")
+
+        try:
+            for path in paths:
+                if show_busy:
+                    self._busy_overlay.show_message(
+                        f"Checking {Path(path).name}…"
                     )
-                    if password is None:
-                        skipped.append((path, "password cancelled"))
+                    self.statusBar().showMessage(
+                        f"Checking {Path(path).name}…"
+                    )
+                    QApplication.processEvents()
+                    if cancelled:
+                        break
+
+                password = self._credentials.get(path)
+                while True:
+                    try:
+                        page_count = self._page_count(path, password=password)
+                        break
+                    except PdfPasswordRequiredError:
+                        password = prompt_pdf_password(self, Path(path).name)
+                        if password is None:
+                            skipped.append((path, "password cancelled"))
+                            page_count = None
+                            break
+                    except PdfPasswordError:
+                        password = prompt_pdf_password(
+                            self, Path(path).name, incorrect=True
+                        )
+                        if password is None:
+                            skipped.append((path, "password cancelled"))
+                            page_count = None
+                            break
+                    except PdfEmptyError:
+                        skipped.append((path, "no pages"))
                         page_count = None
                         break
-                except PdfEmptyError:
-                    skipped.append((path, "no pages"))
-                    page_count = None
-                    break
-                except PdfLoadError as exc:
-                    skipped.append((path, str(exc)))
-                    page_count = None
-                    break
-            if page_count is None:
-                continue
+                    except PdfLoadError as exc:
+                        skipped.append((path, str(exc)))
+                        page_count = None
+                        break
+                if page_count is None:
+                    continue
 
-            resolved = str(Path(path).resolve())
-            if password is not None:
-                self._credentials.set(resolved, password)
-            self._page_counts[resolved] = page_count
-            accepted.append(resolved)
-
-        if progress is not None:
-            progress.setValue(total if not cancelled else progress.value())
-            progress.close()
+                resolved = str(Path(path).resolve())
+                if password is not None:
+                    self._credentials.set(resolved, password)
+                self._page_counts[resolved] = page_count
+                accepted.append(resolved)
+        finally:
+            if show_busy:
+                self._busy_overlay.cancelled.disconnect(_on_folder_cancel)
+                self._busy_overlay.set_cancellable(False)
+                self._busy_overlay.hide_overlay()
+                self._folder_checking = False
+                self._update_actions()
 
         return accepted, skipped, cancelled
 

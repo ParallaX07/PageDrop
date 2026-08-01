@@ -59,14 +59,18 @@ from pagedrop.ui.tool_page import StatusFooter, present_tool_page
 from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
-    BG_CARD,
     CLOSE_TAB,
     STATUS_SUCCESS,
     STATUS_WARNING,
-    TEXT_MUTED,
+    chrome_card_qcolor,
+    chrome_text_muted_qcolor,
+    close_tab_hex,
+    status_success_hex,
+    status_warning_hex,
     token_qcolor,
 )
 
+# Diff highlight washes on page paper (content plane — not chrome ink).
 _DELETED = token_qcolor(CLOSE_TAB, 90)
 _ADDED = token_qcolor(STATUS_SUCCESS, 90)
 _MODIFIED = token_qcolor(STATUS_WARNING, 90)
@@ -203,9 +207,9 @@ class _ComparePageCanvas(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.fillRect(self.rect(), token_qcolor(BG_CARD))
+        painter.fillRect(self.rect(), chrome_card_qcolor())
         if self._pixmap.isNull():
-            painter.setPen(token_qcolor(TEXT_MUTED))
+            painter.setPen(chrome_text_muted_qcolor())
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No page")
             return
         painter.drawPixmap(0, 0, self._pixmap)
@@ -267,7 +271,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         super().__init__(parent)
         self.tool_page_id = self.PAGE_ID
         self._editor = editor
-        self._status = StatusFooter(initial="Choose two PDFs and click Compare")
+        self._status = StatusFooter()
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("CompareWindow")
         self.setMinimumSize(960, 640)
@@ -322,21 +326,24 @@ class CompareWindow(JobChromeMixin, QWidget):
         paths.setSpacing(6)
         self._row_a = _PathBrowseRow(self, label="PDF A", browse_title="Choose first PDF")
         self._row_b = _PathBrowseRow(self, label="PDF B", browse_title="Choose second PDF")
+        self._compare_btn = QPushButton("Compare")
+        self._compare_btn.setObjectName("ToolbarPrimary")
+        self._compare_btn.setDefault(True)
+        # R13: primary trails the last browse row — not a solo stretch row.
+        row_b_layout = self._row_b.layout()
+        assert isinstance(row_b_layout, QHBoxLayout)
+        row_b_layout.addWidget(self._compare_btn)
         paths.addWidget(self._row_a)
         paths.addWidget(self._row_b)
         root.addLayout(paths)
 
-        actions = QHBoxLayout()
-        self._compare_btn = QPushButton("Compare")
-        self._compare_btn.setObjectName("ToolbarPrimary")
-        self._compare_btn.setDefault(True)
-        actions.addWidget(self._compare_btn)
-        actions.addStretch(1)
-        root.addLayout(actions)
-
         toolbar = QToolBar("Compare", self)
+        toolbar.setObjectName("CompareToolbar")
         toolbar.setMovable(False)
+        # R13: mode/nav/zoom/sync/export stay hidden until a report exists.
+        toolbar.setVisible(False)
         root.addWidget(toolbar)
+        self._toolbar = toolbar
         self._mode_label = QLabel("  Side-by-side  ")
         self._mode_label.setObjectName("CompareModeLabel")
         toolbar.addWidget(self._mode_label)
@@ -344,7 +351,7 @@ class CompareWindow(JobChromeMixin, QWidget):
 
         self._prev_act = toolbar.addAction("Previous page")
         self._next_act = toolbar.addAction("Next page")
-        self._page_label = QLabel("Page —")
+        self._page_label = QLabel("Page:")
         toolbar.addWidget(self._page_label)
         toolbar.addSeparator()
 
@@ -542,11 +549,12 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._report = report
         self._page_index = 0
         self._selected_change = None
+        self._toolbar.setVisible(True)
         self._export_act.setEnabled(True)
         self._result_bar.clear()
         self._populate_changes()
-        self._pane_a.set_title(f"PDF A — {Path(path_a).name}")
-        self._pane_b.set_title(f"PDF B — {Path(path_b).name}")
+        self._pane_a.set_title(f"PDF A: {Path(path_a).name}")
+        self._pane_b.set_title(f"PDF B: {Path(path_b).name}")
         self._fit_width()
         total = max(report.page_count_a, report.page_count_b, 1)
         n = len(report.changes)
@@ -569,13 +577,13 @@ class CompareWindow(JobChromeMixin, QWidget):
         for change in r.changes:
             if change.kind == "deleted":
                 prefix = "Removed"
-                color = CLOSE_TAB
+                color = close_tab_hex()
             elif change.kind == "added":
                 prefix = "Added"
-                color = STATUS_SUCCESS
+                color = status_success_hex()
             else:
                 prefix = "Changed"
-                color = STATUS_WARNING
+                color = status_warning_hex()
             page = (change.page_a if change.page_a is not None else change.page_b) or 0
             label = f"{prefix} “{_truncate(change.text, 72)}”  ·  p.{page + 1}"
             item = QListWidgetItem(label)
@@ -696,7 +704,7 @@ class CompareWindow(JobChromeMixin, QWidget):
 
         if errors:
             detail = "; ".join(errors)
-            self.statusBar().showMessage(f"Could not render page — {detail}")
+            self.statusBar().showMessage(f"Could not render page: {detail}")
             self._toast.show_toast("Could not render compare page", kind="error")
 
     def _export_heatmap(self) -> None:
@@ -723,6 +731,11 @@ class CompareWindow(JobChromeMixin, QWidget):
             self.statusBar().showMessage("Cancelled")
             return
 
+        # ponytail: sync runner.run on the GUI thread after processEvents — BusyOverlay
+        # has no CancelToken, so Escape/close cannot cooperatively abort. Ceiling:
+        # UI freezes for the whole compare/export job. Upgrade: enqueue via job-
+        # runner + cancel.check() (O13 patterns) so Cancel can land without a
+        # full algorithm rewrite.
         self.statusBar().showMessage("Exporting heatmap…")
         self._busy.show_message("Exporting…")
         QApplication.processEvents()

@@ -21,6 +21,7 @@ import fitz
 from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
+from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS
 
 if TYPE_CHECKING:
@@ -364,9 +365,10 @@ def redact_pdf(
 ) -> Path:
     """Apply *regions*, GC-rewrite to *output_path*, optionally verify.
 
-    On verification failure the output file is deleted and
-    ``RedactionVerifyError`` is raised — no promoted redacted copy remains.
-    The source file is never modified.
+    In-process open/apply/GC-save/close holds ``FITZ_LOCK``. Fresh-process
+    verification runs outside the lock. On verification failure the output
+    file is deleted and ``RedactionVerifyError`` is raised — no promoted
+    redacted copy remains. The source file is never modified.
     """
     source = Path(source_pdf)
     output = Path(output_path)
@@ -375,22 +377,24 @@ def redact_pdf(
         raise RedactionError("No redaction regions to apply")
 
     effective_scope = scope or RedactionScope()
-    doc = open_pdf(str(source), password=password)
     secrets: list[str] = []
-    try:
-        secrets = _secrets_under_regions(doc, regions)
-        for raw in extra_absent:
-            secret = _normalize_secret(raw)
-            if secret and secret not in secrets:
-                secrets.append(secret)
-        _apply_regions(doc, regions)
-        _apply_scope(doc, effective_scope)
-        _gc_save(doc, output)
-    except Exception:
-        _delete_quiet(output)
-        raise
-    finally:
-        doc.close()
+    # In-process MuPDF only — fresh-process verify stays outside the lock.
+    with FITZ_LOCK:
+        doc = open_pdf(str(source), password=password)
+        try:
+            secrets = _secrets_under_regions(doc, regions)
+            for raw in extra_absent:
+                secret = _normalize_secret(raw)
+                if secret and secret not in secrets:
+                    secrets.append(secret)
+            _apply_regions(doc, regions)
+            _apply_scope(doc, effective_scope)
+            _gc_save(doc, output)
+        except Exception:
+            _delete_quiet(output)
+            raise
+        finally:
+            doc.close()
 
     if not verify:
         return output

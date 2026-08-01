@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
-    QStyle,
     QToolBar,
     QToolButton,
     QWidget,
@@ -31,12 +30,18 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_writer import write_pdf
+from pagedrop.core.redact import (
+    RedactionError,
+    RedactionVerifyError,
+    redact_edit_model,
+)
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import CommandPalette, action_label
 from pagedrop.ui.dialogs import (
     fit_message_box_buttons,
     prompt_pdf_password,
+    prompt_redaction_scope,
     prompt_unsaved_changes,
 )
 from pagedrop.ui.keyboard_nav import (
@@ -46,6 +51,7 @@ from pagedrop.ui.keyboard_nav import (
 from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
+from pagedrop.ui import icons
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
@@ -69,6 +75,7 @@ from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    TOOLBAR_FILENAME_MAX_WIDTH,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
@@ -126,6 +133,9 @@ class MainWindow(QMainWindow):
         self._build_status_widgets()
         self._build_central_widget()
         self._set_chrome_visible(chrome_visible(), persist=False)
+        refresh_cb = self._refresh_action_icons
+        icons.register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
         QApplication.instance().installEventFilter(self)
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
@@ -161,14 +171,13 @@ class MainWindow(QMainWindow):
         """Create the single action catalogue used by menu, toolbar, and shortcuts."""
         actions = ActionRegistry(self)
         self._actions = actions
-        style = self.style()
 
         actions.register(
             "open",
             "&Open PDF",
             slot=self._open_pdf,
             shortcut=QKeySequence.StandardKey.Open,
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            icon=icons.icon("folder-open"),
             tip="Open a PDF (Ctrl+O)",
         )
         self._close_action = actions.register(
@@ -286,9 +295,7 @@ class MainWindow(QMainWindow):
             "preview",
             "Preview",
             slot=self._open_preview,
-            icon=style.standardIcon(
-                QStyle.StandardPixmap.SP_FileDialogDetailedView
-            ),
+            icon=icons.icon("list"),
             tip="Preview selected page (Enter or double-click a card)",
             enabled=False,
         )
@@ -297,6 +304,7 @@ class MainWindow(QMainWindow):
             "Select all",
             slot=self._select_all_pages,
             shortcut=QKeySequence.StandardKey.SelectAll,
+            icon=icons.icon("selection-all"),
             tip="Select all pages (Ctrl+A)",
             enabled=False,
         )
@@ -304,6 +312,7 @@ class MainWindow(QMainWindow):
             "deselect_all",
             "Deselect all",
             slot=self._clear_selection,
+            icon=icons.icon("selection-slash"),
             tip="Clear selection (Esc)",
             enabled=False,
         )
@@ -321,7 +330,7 @@ class MainWindow(QMainWindow):
             "Move up",
             slot=self._move_selected_pages_up,
             shortcut="Ctrl+Up",
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            icon=icons.icon("arrow-up"),
             tip="Move selected pages up (Ctrl+↑)",
             enabled=False,
         )
@@ -330,7 +339,7 @@ class MainWindow(QMainWindow):
             "Move down",
             slot=self._move_selected_pages_down,
             shortcut="Ctrl+Down",
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+            icon=icons.icon("arrow-down"),
             tip="Move selected pages down (Ctrl+↓)",
             enabled=False,
         )
@@ -339,6 +348,7 @@ class MainWindow(QMainWindow):
             "Move to…",
             slot=self._move_selected_pages_to,
             shortcut="Ctrl+Shift+M",
+            icon=icons.icon("arrows-down-up"),
             tip="Move selected pages to a page number (Ctrl+Shift+M)",
             enabled=False,
         )
@@ -347,7 +357,7 @@ class MainWindow(QMainWindow):
             "Delete page(s)",
             slot=self._delete_selected_pages,
             shortcut=QKeySequence(Qt.Key.Key_Delete),
-            icon=style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            icon=icons.icon("trash"),
             tip="Delete selected pages (Delete)",
             enabled=False,
         )
@@ -356,6 +366,7 @@ class MainWindow(QMainWindow):
             "Duplicate",
             slot=self._duplicate_selected_pages,
             shortcut="Ctrl+D",
+            icon=icons.icon("copy"),
             tip="Duplicate selected pages (Ctrl+D)",
             enabled=False,
         )
@@ -363,6 +374,7 @@ class MainWindow(QMainWindow):
             "rotate_cw",
             "Rotate CW",
             slot=lambda: self._rotate_selected_pages(90),
+            icon=icons.icon("arrow-clockwise"),
             tip="Rotate selected pages clockwise",
             enabled=False,
         )
@@ -370,6 +382,7 @@ class MainWindow(QMainWindow):
             "rotate_ccw",
             "Rotate CCW",
             slot=lambda: self._rotate_selected_pages(-90),
+            icon=icons.icon("arrow-counter-clockwise"),
             tip="Rotate selected pages counter-clockwise",
             enabled=False,
         )
@@ -416,6 +429,21 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+0",
             add_to_window=True,
         )
+
+    def _refresh_action_icons(self) -> None:
+        """Re-tint Phosphor toolbar icons after a light/dark swap."""
+        a = self._actions
+        a["open"].setIcon(icons.icon("folder-open"))
+        a["preview"].setIcon(icons.icon("list"))
+        a["select_all"].setIcon(icons.icon("selection-all"))
+        a["deselect_all"].setIcon(icons.icon("selection-slash"))
+        a["move_up"].setIcon(icons.icon("arrow-up"))
+        a["move_down"].setIcon(icons.icon("arrow-down"))
+        a["move_to"].setIcon(icons.icon("arrows-down-up"))
+        a["delete_pages"].setIcon(icons.icon("trash"))
+        a["duplicate_pages"].setIcon(icons.icon("copy"))
+        a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
+        a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -493,6 +521,8 @@ class MainWindow(QMainWindow):
         self._filename_label.setObjectName("ToolbarFilename")
         self._filename_label.setProperty("active", False)
         self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self._filename_label.setWordWrap(False)
+        self._filename_label.setMaximumWidth(TOOLBAR_FILENAME_MAX_WIDTH)
         toolbar.addWidget(self._filename_label)
 
         spacer = QWidget()
@@ -903,9 +933,10 @@ class MainWindow(QMainWindow):
             self._reset_toolbar_for_blank_tab()
             return
 
-        filename = Path(tab.pdf_path).name if tab.pdf_path else "No file open"
+        pdf_path = tab.pdf_path or ""
+        filename = Path(pdf_path).name if pdf_path else "No file open"
         self._update_window_title()
-        self._filename_label.setText(filename)
+        self._set_toolbar_filename(filename, tooltip=pdf_path)
         self._filename_label.setProperty("active", True)
         self._filename_label.style().unpolish(self._filename_label)
         self._filename_label.style().polish(self._filename_label)
@@ -932,10 +963,22 @@ class MainWindow(QMainWindow):
         )
         self._update_selection_status(selection)
 
+    def _set_toolbar_filename(self, filename: str, *, tooltip: str = "") -> None:
+        """Show a single-line elided name; full path stays on the tooltip (R14)."""
+        metrics = self._filename_label.fontMetrics()
+        self._filename_label.setText(
+            metrics.elidedText(
+                filename,
+                Qt.TextElideMode.ElideRight,
+                TOOLBAR_FILENAME_MAX_WIDTH,
+            )
+        )
+        self._filename_label.setToolTip(tooltip)
+
     def _reset_toolbar_for_blank_tab(self) -> None:
         tab = self._active_tab()
         self._update_window_title()
-        self._filename_label.setText("No file open")
+        self._set_toolbar_filename("No file open")
         self._filename_label.setProperty("active", False)
         self._filename_label.style().unpolish(self._filename_label)
         self._filename_label.style().polish(self._filename_label)
@@ -1572,7 +1615,7 @@ class MainWindow(QMainWindow):
         count = tab.edit_model.logical_count()
         noun = "page" if count == 1 else "pages"
         self.setWindowTitle(
-            f"{self.APP_TITLE} — {tab.tab_title} ({count} {noun})"
+            f"{self.APP_TITLE}: {tab.tab_title} ({count} {noun})"
         )
 
     def _extract_selected_to_folder(self) -> None:
@@ -2130,14 +2173,43 @@ class MainWindow(QMainWindow):
             )
             return False
 
+        regions = target.markup_session.redaction_regions()
+        passwords = target.credentials.snapshot()
+        non_redact = target.markup_session.non_redaction_ops() or None
+
         try:
-            write_pdf(
-                model,
-                path,
-                markup=target.markup_session.non_redaction_ops() or None,
-                passwords=target.credentials.snapshot(),
+            if regions:
+                scope = prompt_redaction_scope(self)
+                if scope is None:
+                    return False
+                redact_edit_model(
+                    model,
+                    path,
+                    regions,
+                    markup=non_redact,
+                    passwords=passwords,
+                    scope=scope,
+                    verify=True,
+                )
+            else:
+                write_pdf(
+                    model,
+                    path,
+                    markup=non_redact,
+                    passwords=passwords,
+                )
+        except RedactionVerifyError as exc:
+            QMessageBox.critical(
+                self,
+                "Redaction verification failed",
+                f"{exc}\n\nNo redacted copy was produced.",
             )
-        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            if target is self._active_tab():
+                self._transient_status(
+                    "Redaction verification failed. Output discarded"
+                )
+            return False
+        except (PdfPasswordRequiredError, PdfPasswordError, RedactionError) as exc:
             QMessageBox.critical(
                 self,
                 "Save as",
@@ -2161,19 +2233,15 @@ class MainWindow(QMainWindow):
 
         remember_directory(path)
         model.mark_saved(path)
-        had_redactions = bool(target.markup_session.redaction_regions())
         target.clear_markup_after_save()
+        if regions:
+            target.clear_redactions_after_apply()
         target.clear_custom_tab_title()
         target._sync_dirty_from_model()
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()
-            if had_redactions:
-                self._transient_status(
-                    f"Saved to {Path(path).name} — redaction marks kept; use Apply redaction"
-                )
-            else:
-                self._transient_status(f"Saved to {Path(path).name}")
+            self._transient_status(f"Saved to {Path(path).name}")
             self._show_toast(f"Saved to {Path(path).name}", kind="success")
         return True
 

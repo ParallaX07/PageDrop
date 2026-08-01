@@ -105,6 +105,31 @@ def test_search_respects_logical_order(tmp_path: Path) -> None:
     assert hits[0].logical_page == 0
 
 
+def test_search_model_cancel_stops_mid_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """is_cancelled checked between pages; partial hits returned."""
+    path = tmp_path / "cancel.pdf"
+    _text_pdf(path, ["a", "b", "c", "d"])
+    model = PdfEditModel(str(path), 4)
+    seen = {"n": 0}
+    real_search = fitz.Page.search_for
+
+    def counting_search(self: fitz.Page, *args: object, **kwargs: object) -> list:
+        seen["n"] += 1
+        return real_search(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Page, "search_for", counting_search)
+    hits = search_model(
+        model, "a", is_cancelled=lambda: seen["n"] >= 2
+    )
+
+    # Pages 0–1 run; cancel before page 2. "a" only on page 0.
+    assert seen["n"] == 2
+    assert len(hits) == 1
+    assert hits[0].logical_page == 0
+
+
 def test_doc_cache_reuses_open_across_helpers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

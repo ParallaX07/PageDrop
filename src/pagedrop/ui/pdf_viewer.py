@@ -15,14 +15,15 @@ from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 from pathlib import Path
-from typing import Literal
 
 from PyQt6.QtCore import (
     QEvent,
     QObject,
+    QPoint,
     QPointF,
     QRectF,
     QRunnable,
+    QSize,
     QThreadPool,
     QTimer,
     Qt,
@@ -48,11 +49,9 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QColorDialog,
-    QDialog,
-    QDialogButtonBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -62,7 +61,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -76,6 +74,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.annotations import (
+    FREETEXT_FONT_FAMILIES,
     MOVABLE_ANNOT_KINDS,
     AnnotationOp,
     STAMP_APPROVED,
@@ -84,12 +83,8 @@ from pagedrop.core.forms import FormCreateOp
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.redact import (
-    RedactionRegion,
-    RedactionScope,
-    RedactionVerifyError,
-    redact_edit_model,
-)
+from pagedrop.core.redact import RedactionRegion
+from pagedrop.ui.icons import icon, register_refresh, unregister_refresh
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
 from pagedrop.core.pdf_service import (
     MAX_PRINT_PAGES,
@@ -109,6 +104,7 @@ from pagedrop.core.pdf_service import (
     render_ref_png,
     search_model,
 )
+from pagedrop.utils.safe_url import is_allowed_open_scheme
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.theme import (
@@ -126,6 +122,8 @@ from pagedrop.ui.theme import (
     VIEWER_PAGE_BG,
     ZOOM_WHEEL_STEP,
     accent_qcolor,
+    close_tab_hex,
+    status_success_hex,
     token_qcolor,
 )
 
@@ -180,6 +178,8 @@ class AnnotTool(str, Enum):
 
 
 # Shared by the right rail and the page context menu.
+# ponytail: Stamp / Field / Check stay in AnnotTool + core for writer compatibility;
+# rail/menu hide them until a real stamp picker / form-author UX exists (R15).
 ANNOT_TOOL_ITEMS: tuple[tuple[str, AnnotTool], ...] = (
     ("Select", AnnotTool.SELECT),
     ("Highlight", AnnotTool.HIGHLIGHT),
@@ -189,18 +189,27 @@ ANNOT_TOOL_ITEMS: tuple[tuple[str, AnnotTool], ...] = (
     ("Rect", AnnotTool.RECT),
     ("Circle", AnnotTool.CIRCLE),
     ("Line", AnnotTool.LINE),
-    ("Stamp", AnnotTool.STAMP),
     ("Text", AnnotTool.FREETEXT),
     ("Image", AnnotTool.IMAGE),
     ("Comment", AnnotTool.COMMENT),
     ("Redact", AnnotTool.REDACT),
     ("Fill", AnnotTool.FORM_FILL),
-    ("Field", AnnotTool.FORM_TEXT),
-    ("Check", AnnotTool.FORM_CHECK),
 )
 
 _TEXT_MARKUP_TOOLS = frozenset(
     {AnnotTool.HIGHLIGHT, AnnotTool.UNDERLINE, AnnotTool.STRIKEOUT}
+)
+# Color chosen on enter (R15); session keeps last pick in ``_markup_color``.
+_COLOR_CAPABLE_TOOLS = frozenset(
+    {
+        AnnotTool.HIGHLIGHT,
+        AnnotTool.UNDERLINE,
+        AnnotTool.STRIKEOUT,
+        AnnotTool.INK,
+        AnnotTool.RECT,
+        AnnotTool.CIRCLE,
+        AnnotTool.LINE,
+    }
 )
 
 _HANDLE_CURSORS: dict[str, Qt.CursorShape] = {
@@ -214,84 +223,6 @@ _HANDLE_CURSORS: dict[str, Qt.CursorShape] = {
     "w": Qt.CursorShape.SizeHorCursor,
     "move": Qt.CursorShape.SizeAllCursor,
 }
-
-
-def _prompt_freetext(
-    parent: QWidget,
-    *,
-    text: str = "",
-    fontsize: float = _DEFAULT_FREETEXT_SIZE,
-    color: tuple[float, float, float] = _DEFAULT_FREETEXT_COLOR,
-    border: bool = False,
-    title: str = "Free text",
-    allow_delete: bool = False,
-) -> tuple[str, float, tuple[float, float, float], bool] | Literal["delete"] | None:
-    """Edit free-text content, size, color, border. Returns None on cancel."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle(title)
-    layout = QVBoxLayout(dialog)
-    form = QFormLayout()
-    edit = QPlainTextEdit()
-    edit.setPlainText(text)
-    edit.setMinimumHeight(80)
-    form.addRow("Text", edit)
-    size = QDoubleSpinBox()
-    size.setRange(6.0, 96.0)
-    size.setDecimals(1)
-    size.setValue(fontsize)
-    form.addRow("Font size", size)
-    rgb = [max(0, min(255, int(c * 255))) for c in color]
-    color_btn = QPushButton()
-    color_btn.setObjectName("FreeTextColorButton")
-
-    def _apply_swatch() -> None:
-        color_btn.setStyleSheet(
-            f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); min-width: 48px;"
-        )
-
-    def _pick_color() -> None:
-        chosen = QColorDialog.getColor(QColor(*rgb), dialog, "Text color")
-        if chosen.isValid():
-            rgb[0], rgb[1], rgb[2] = chosen.red(), chosen.green(), chosen.blue()
-            _apply_swatch()
-
-    _apply_swatch()
-    color_btn.clicked.connect(_pick_color)
-    form.addRow("Color", color_btn)
-    border_cb = QCheckBox("Show border")
-    border_cb.setChecked(border)
-    form.addRow("", border_cb)
-    layout.addLayout(form)
-    buttons = QDialogButtonBox(
-        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-    )
-    deleted = {"value": False}
-
-    def _on_delete() -> None:
-        deleted["value"] = True
-        dialog.accept()
-
-    if allow_delete:
-        delete_btn = buttons.addButton(
-            "Delete", QDialogButtonBox.ButtonRole.DestructiveRole
-        )
-        delete_btn.clicked.connect(_on_delete)
-    buttons.accepted.connect(dialog.accept)
-    buttons.rejected.connect(dialog.reject)
-    layout.addWidget(buttons)
-    if dialog.exec() != QDialog.DialogCode.Accepted:
-        return None
-    if deleted["value"]:
-        return "delete"
-    body = edit.toPlainText().strip()
-    if not body:
-        return None
-    return (
-        body,
-        float(size.value()),
-        (rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0),
-        border_cb.isChecked(),
-    )
 
 
 def _apply_box_transform(
@@ -601,6 +532,7 @@ class _PageTile(QWidget):
         self._text_failed = False
         self._tool = AnnotTool.SELECT
         self._overlay_entries: list[MarkupEntry] = []
+        self._pending_redact: RedactionRegion | None = None
         self._markup_color = _DEFAULT_MARKUP_COLOR
         self._selected_op: AnnotationOp | None = None
         self._transform_mode: str | None = None
@@ -647,6 +579,13 @@ class _PageTile(QWidget):
                 for e in entries
             ):
                 self._selected_op = None
+        self.update()
+
+    def set_pending_redaction(self, region: RedactionRegion | None) -> None:
+        """Show an unconfirmed redact mark (Confirm/Cancel chrome owns commit)."""
+        if region is not None and region.page_index != self.logical_page:
+            region = None
+        self._pending_redact = region
         self.update()
 
     def set_page_meta(
@@ -861,6 +800,20 @@ class _PageTile(QWidget):
             painter.fillRect(wr, color)
 
     def _paint_markup_overlays(self, painter: QPainter) -> None:
+        if self._pending_redact is not None:
+            wr = _map_pdf_rect_to_widget(
+                self._pending_redact.rect,
+                self._page_w,
+                self._page_h,
+                self.width(),
+                self.height(),
+                self._rotation,
+            )
+            painter.fillRect(wr, token_qcolor(PAGE_INK, 140))
+            pen = QPen(token_qcolor(CLOSE_TAB), 2)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(wr)
         for entry in self._overlay_entries:
             if entry.kind == "redaction" and entry.redaction is not None:
                 region = entry.redaction
@@ -937,6 +890,14 @@ class _PageTile(QWidget):
                                 int(op.fontsize * (self.height() / max(self._page_h, 1.0))),
                             )
                             font.setPointSizeF(float(px))
+                            font.setBold(bool(op.bold))
+                            font.setItalic(bool(op.italic))
+                            family = {
+                                "helv": "Helvetica",
+                                "tiro": "Times New Roman",
+                                "cour": "Courier New",
+                            }.get(op.fontname, "Helvetica")
+                            font.setFamily(family)
                             painter.setFont(font)
                             painter.drawText(
                                 wr,
@@ -1534,6 +1495,7 @@ class PdfViewerWidget(QWidget):
         self._tool = AnnotTool.SELECT
         self._markup_color = _DEFAULT_MARKUP_COLOR
         self._selected_overlay: AnnotationOp | None = None
+        self._pending_redact: RedactionRegion | None = None
         self._layout = ViewerLayout.CONTINUOUS
         self._zoom_mode = ZoomMode.FIT_WIDTH
         self._zoom_percent = DEFAULT_ZOOM_PERCENT
@@ -1554,6 +1516,10 @@ class PdfViewerWidget(QWidget):
 
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
+        # Separate max-1 pool so Find does not queue behind tile renders
+        # (and vice versa). Both still serialize via FITZ_LOCK; do not raise.
+        self._search_pool = QThreadPool(self)
+        self._search_pool.setMaxThreadCount(1)
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(RENDER_DEBOUNCE_MS)
@@ -1585,6 +1551,9 @@ class PdfViewerWidget(QWidget):
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self._scroll.horizontalScrollBar().valueChanged.connect(
+            self._sync_floating_chrome
+        )
         # Scrollbar show/hide changes viewport size without resizing this widget.
         self._scroll.viewport().installEventFilter(self)
 
@@ -1614,6 +1583,16 @@ class PdfViewerWidget(QWidget):
         self._splitter.setStretchFactor(2, 0)
         self._splitter.setSizes([SIDE_PANEL_WIDTH, 800, ANNOT_RAIL_WIDTH])
         root.addWidget(self._splitter, stretch=1)
+
+        self._redact_confirm = self._build_redact_confirm_chrome()
+        # ponytail: lazy — QComboBox/spinbox in an unshown tree segfault on
+        # interpreter teardown (smoke: MainWindow() without show()). Build on
+        # first free-text selection instead.
+        self._freetext_format: QFrame | None = None
+        self._freetext_format_syncing = False
+        refresh_cb = self._refresh_chrome_icons
+        register_refresh(refresh_cb)
+        self.destroyed.connect(lambda *_: unregister_refresh(refresh_cb))
 
     # --- public API ---------------------------------------------------------
 
@@ -1652,6 +1631,8 @@ class PdfViewerWidget(QWidget):
         self._markup = markup
         self._tool = AnnotTool.SELECT
         self._sync_annot_tool_ui()
+        self._cancel_pending_redact(status=False)
+        self._set_selected_overlay(None)
         self._current_page = 0
         self._hits = []
         self._hit_index = -1
@@ -1700,30 +1681,51 @@ class PdfViewerWidget(QWidget):
         return self._tool
 
     def set_annot_tool(self, tool: AnnotTool) -> None:
+        # Same-tool click: keep tool + color; re-prompt only on enter from another tool.
+        if tool == self._tool:
+            return
+        if tool in _COLOR_CAPABLE_TOOLS and not self._prompt_markup_color():
+            self._sync_annot_tool_ui()
+            return
         self._tool = tool
         self._sync_annot_tool_ui()
         for tile in self._tiles.values():
             tile.set_tool(tool)
             tile.clear_selection()
         labels = {
-            AnnotTool.SELECT: "Select text — click boxes to move or resize",
-            AnnotTool.HIGHLIGHT: "Highlight — drag over text (color from Markup color)",
-            AnnotTool.UNDERLINE: "Underline — drag over text (color from Markup color)",
-            AnnotTool.STRIKEOUT: "Strikeout — drag over text (color from Markup color)",
-            AnnotTool.INK: "Ink — draw freehand",
-            AnnotTool.RECT: "Rectangle — drag",
-            AnnotTool.CIRCLE: "Circle — drag",
-            AnnotTool.LINE: "Line — drag",
-            AnnotTool.STAMP: "Stamp — click to place",
-            AnnotTool.FREETEXT: "Free text — click to place; drag handles to resize",
-            AnnotTool.IMAGE: "Image — drag a box, then choose a file",
-            AnnotTool.COMMENT: "Comment — click to place",
-            AnnotTool.REDACT: "Redact — drag a region; Apply redaction exports a verified copy",
-            AnnotTool.FORM_FILL: "Fill form — click a field",
-            AnnotTool.FORM_TEXT: "Add text field — drag",
-            AnnotTool.FORM_CHECK: "Add checkbox — drag",
+            AnnotTool.SELECT: "Select text: click boxes to move or resize",
+            AnnotTool.HIGHLIGHT: "Highlight: drag over text",
+            AnnotTool.UNDERLINE: "Underline: drag over text",
+            AnnotTool.STRIKEOUT: "Strikeout: drag over text",
+            AnnotTool.INK: "Ink: draw freehand",
+            AnnotTool.RECT: "Rectangle: drag",
+            AnnotTool.CIRCLE: "Circle: drag",
+            AnnotTool.LINE: "Line: drag",
+            AnnotTool.STAMP: "Stamp: click to place",
+            AnnotTool.FREETEXT: "Free text: click to place; select to format",
+            AnnotTool.IMAGE: "Image: drag a box, then choose a file",
+            AnnotTool.COMMENT: "Comment: click to place",
+            AnnotTool.REDACT: "Redact: drag a region, then Confirm or Cancel",
+            AnnotTool.FORM_FILL: "Fill form: click a field",
+            AnnotTool.FORM_TEXT: "Add text field: drag",
+            AnnotTool.FORM_CHECK: "Add checkbox: drag",
         }
         self.status_message.emit(labels.get(tool, tool.value))
+
+    def _prompt_markup_color(self) -> bool:
+        """Ask for markup color; return False if cancelled (caller keeps prior tool)."""
+        r, g, b = (
+            int(self._markup_color[0] * 255),
+            int(self._markup_color[1] * 255),
+            int(self._markup_color[2] * 255),
+        )
+        chosen = QColorDialog.getColor(QColor(r, g, b), self, "Markup color")
+        if not chosen.isValid():
+            return False
+        self._markup_color = (chosen.redF(), chosen.greenF(), chosen.blueF())
+        for tile in self._tiles.values():
+            tile.set_markup_color(self._markup_color)
+        return True
 
     def _sync_annot_tool_ui(self) -> None:
         if not hasattr(self, "_annot_group"):
@@ -1738,12 +1740,15 @@ class PdfViewerWidget(QWidget):
         for tile in self._tiles.values():
             tile.set_overlay_entries(entries)
             tile.set_markup_color(self._markup_color)
+            tile.set_pending_redaction(self._pending_redact)
             tile.set_selected_op(
                 self._selected_overlay
                 if self._selected_overlay is not None
                 and self._selected_overlay.page_index == tile.logical_page
                 else None
             )
+        self._sync_floating_chrome()
+        self._sync_freetext_format_bar()
 
     def _set_selected_overlay(self, op: AnnotationOp | None) -> None:
         self._selected_overlay = op
@@ -1751,6 +1756,7 @@ class PdfViewerWidget(QWidget):
             tile.set_selected_op(
                 op if op is not None and op.page_index == tile.logical_page else None
             )
+        self._sync_freetext_format_bar()
 
     def _delete_overlay(self, op: AnnotationOp | None = None) -> bool:
         if self._markup is None:
@@ -1766,25 +1772,6 @@ class PdfViewerWidget(QWidget):
         label = "Image" if target.kind == "image" else "Text"
         self.status_message.emit(f"{label} removed")
         return True
-
-    def _pick_markup_color(self) -> None:
-        rgb = [int(c * 255) for c in self._markup_color]
-        chosen = QColorDialog.getColor(QColor(*rgb), self, "Markup color")
-        if not chosen.isValid():
-            return
-        self._markup_color = (chosen.red() / 255.0, chosen.green() / 255.0, chosen.blue() / 255.0)
-        self._sync_markup_color_button()
-        for tile in self._tiles.values():
-            tile.set_markup_color(self._markup_color)
-        self.status_message.emit("Markup color updated")
-
-    def _sync_markup_color_button(self) -> None:
-        if not hasattr(self, "_markup_color_btn"):
-            return
-        r, g, b = (int(c * 255) for c in self._markup_color)
-        self._markup_color_btn.setStyleSheet(
-            f"background-color: rgb({r}, {g}, {b}); min-height: 22px;"
-        )
 
     def set_layout_mode(self, mode: ViewerLayout) -> None:
         if mode == self._layout:
@@ -1929,7 +1916,7 @@ class PdfViewerWidget(QWidget):
         )
         worker.signals.finished.connect(self._on_search_finished)
         worker.signals.error.connect(self._on_search_error)
-        self._pool.start(worker)
+        self._search_pool.start(worker)
 
     def find_next(self) -> None:
         if not self._hits:
@@ -1984,6 +1971,15 @@ class PdfViewerWidget(QWidget):
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:
             return False
 
+        # ponytail: sync GUI-thread print — each page ``render_ref_png`` @≤1200px
+        # under FITZ_LOCK, then paint. Measured 2026-08-01 (6-page text fixture,
+        # offscreen): ~30ms render + ~16ms pixmap scale/draw per page; ahead-
+        # buffer on the max-1 viewer pool would overlap only the paint slice
+        # (~16ms/page) and needs a mid-QPainter wait loop. Ceiling: UI + all
+        # fitz consumers freeze for N×~page cost (capped by MAX_PRINT_PAGES).
+        # Upgrade: small path-only ahead-buffer on existing max-1 viewer pool
+        # (no live docs across threads; do not raise maxThreadCount) — not a
+        # new print framework.
         painter = QPainter(printer)
         try:
             for i, ref in enumerate(self._model.iter_pages()):
@@ -2143,18 +2139,6 @@ class PdfViewerWidget(QWidget):
             btn.clicked.connect(lambda _checked=False, t=tool: self.set_annot_tool(t))
             tools_layout.addWidget(btn)
 
-        self._markup_color_btn = QToolButton()
-        self._markup_color_btn.setText("Color")
-        self._markup_color_btn.setObjectName("PdfViewerMarkupColor")
-        self._markup_color_btn.setAccessibleName("Markup color")
-        self._markup_color_btn.setToolTip("Color for highlight, underline, and strikeout")
-        self._markup_color_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._markup_color_btn.clicked.connect(self._pick_markup_color)
-        self._sync_markup_color_button()
-        tools_layout.addWidget(self._markup_color_btn)
-
         flatten_btn = QToolButton()
         flatten_btn.setText("Flatten forms")
         flatten_btn.setAccessibleName("Flatten forms")
@@ -2162,18 +2146,6 @@ class PdfViewerWidget(QWidget):
         flatten_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         flatten_btn.clicked.connect(self._on_flatten_forms)
         tools_layout.addWidget(flatten_btn)
-
-        apply_redact_btn = QToolButton()
-        apply_redact_btn.setText("Apply redaction")
-        apply_redact_btn.setAccessibleName("Apply redaction")
-        apply_redact_btn.setToolTip(
-            "Write a new PDF with marked regions permanently removed and verified"
-        )
-        apply_redact_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        apply_redact_btn.clicked.connect(self._on_apply_redaction)
-        tools_layout.addWidget(apply_redact_btn)
         tools_layout.addStretch(1)
         outer.addWidget(self._annot_tools_host, stretch=1)
 
@@ -2269,7 +2241,7 @@ class PdfViewerWidget(QWidget):
             return
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Markup added — Save As to keep")
+        self.status_message.emit("Markup added. Save As to keep")
 
     def _on_flatten_forms(self) -> None:
         if self._markup is None:
@@ -2285,110 +2257,302 @@ class PdfViewerWidget(QWidget):
         self._markup.push_form_flatten()
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Flatten forms queued — Save As to apply")
+        self.status_message.emit("Flatten forms queued. Save As to apply")
 
-    def _on_apply_redaction(self) -> None:
-        """Export a GC-rewritten copy with marked regions permanently removed."""
-        if self._markup is None or self._model is None:
-            return
-        regions = self._markup.redaction_regions()
-        if not regions:
-            QMessageBox.information(
-                self,
-                "Apply redaction",
-                "Mark one or more regions with the Redact tool first.",
-            )
-            return
+    def _build_redact_confirm_chrome(self) -> QFrame:
+        bar = QFrame(self)
+        bar.setObjectName("PdfViewerRedactConfirm")
+        bar.setAccessibleName("Confirm or cancel redaction")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Apply redaction")
-        form = QFormLayout(dialog)
-        strip_meta = QCheckBox("Strip document metadata")
-        strip_meta.setChecked(True)
-        strip_xmp = QCheckBox("Strip XMP metadata")
-        strip_xmp.setChecked(True)
-        remove_att = QCheckBox("Remove embedded attachments")
-        remove_att.setChecked(False)
-        form.addRow(strip_meta)
-        form.addRow(strip_xmp)
-        form.addRow(remove_att)
-        note = QLabel(
-            "Writes a new PDF with marked content permanently removed, then "
-            "verifies extraction in a fresh process. The original file is never "
-            "modified. Failed verification deletes the output."
-        )
-        note.setWordWrap(True)
-        form.addRow(note)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        form.addRow(buttons)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
+        confirm = QToolButton()
+        confirm.setObjectName("PdfViewerRedactConfirmBtn")
+        confirm.setIconSize(QSize(16, 16))
+        confirm.setToolTip("Confirm redaction mark")
+        confirm.setAccessibleName("Confirm redaction")
+        confirm.clicked.connect(self._confirm_pending_redact)
+        self._redact_confirm_btn = confirm
+        layout.addWidget(confirm)
 
-        stem = Path(self._model.original_path).stem if self._model.original_path else "document"
-        suggested = str(Path(self._model.original_path).with_name(f"{stem}-redacted.pdf"))
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save redacted PDF",
-            suggested,
-            "PDF files (*.pdf);;All files (*)",
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".pdf"):
-            path = f"{path}.pdf"
+        cancel = QToolButton()
+        cancel.setObjectName("PdfViewerRedactCancelBtn")
+        cancel.setIconSize(QSize(16, 16))
+        cancel.setToolTip("Cancel redaction mark")
+        cancel.setAccessibleName("Cancel redaction")
+        cancel.clicked.connect(lambda: self._cancel_pending_redact(status=True))
+        self._redact_cancel_btn = cancel
+        layout.addWidget(cancel)
 
-        scope = RedactionScope(
-            strip_metadata=strip_meta.isChecked(),
-            strip_xmp=strip_xmp.isChecked(),
-            remove_attachments=remove_att.isChecked(),
-        )
+        self._refresh_redact_confirm_icons()
+        bar.hide()
+        return bar
+
+    def _refresh_redact_confirm_icons(self) -> None:
+        if not hasattr(self, "_redact_confirm_btn"):
+            return
+        self._redact_confirm_btn.setIcon(icon("check", color=status_success_hex()))
+        self._redact_cancel_btn.setIcon(icon("x", color=close_tab_hex()))
+
+    def _refresh_chrome_icons(self) -> None:
+        self._refresh_redact_confirm_icons()
+        self._refresh_freetext_format_icons()
+
+    def _sync_floating_chrome(self) -> None:
+        self._sync_redact_confirm_geometry()
+        self._sync_freetext_format_bar()
+
+    def _build_freetext_format_bar(self) -> QFrame:
+        bar = QFrame(self)
+        bar.setObjectName("FreeTextFormatBar")
+        bar.setAccessibleName("Free text format")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        text = QLineEdit()
+        text.setObjectName("FreeTextFormatText")
+        text.setPlaceholderText("Text")
+        text.setMinimumWidth(96)
+        text.setMaximumWidth(180)
+        text.setToolTip("Text")
+        text.setAccessibleName("Free text content")
+        text.editingFinished.connect(self._on_freetext_text_finished)
+        self._ft_text = text
+        layout.addWidget(text)
+
+        bold = QToolButton()
+        bold.setObjectName("FreeTextFormatBold")
+        bold.setCheckable(True)
+        bold.setText("B")
+        bold.setToolTip("Bold")
+        bold.setAccessibleName("Bold")
+        bold.toggled.connect(lambda checked: self._apply_freetext_format(bold=checked))
+        self._ft_bold = bold
+        layout.addWidget(bold)
+
+        italic = QToolButton()
+        italic.setObjectName("FreeTextFormatItalic")
+        italic.setCheckable(True)
+        italic.setText("I")
+        italic.setToolTip("Italic")
+        italic.setAccessibleName("Italic")
+        italic.toggled.connect(lambda checked: self._apply_freetext_format(italic=checked))
+        self._ft_italic = italic
+        layout.addWidget(italic)
+
+        font = QComboBox()
+        font.setObjectName("FreeTextFormatFont")
+        font.setToolTip("Font")
+        font.setAccessibleName("Font")
+        for key, label in FREETEXT_FONT_FAMILIES:
+            font.addItem(label, key)
+        font.currentIndexChanged.connect(self._on_freetext_font_changed)
+        self._ft_font = font
+        layout.addWidget(font)
+
+        size = QDoubleSpinBox()
+        size.setObjectName("FreeTextFormatSize")
+        size.setRange(6.0, 96.0)
+        size.setDecimals(1)
+        size.setSingleStep(1.0)
+        size.setSuffix(" pt")
+        size.setToolTip("Font size")
+        size.setAccessibleName("Font size")
+        size.valueChanged.connect(lambda v: self._apply_freetext_format(fontsize=float(v)))
+        self._ft_size = size
+        layout.addWidget(size)
+
+        color = QToolButton()
+        color.setObjectName("FreeTextFormatColor")
+        color.setIconSize(QSize(16, 16))
+        color.setToolTip("Text color")
+        color.setAccessibleName("Text color")
+        color.clicked.connect(self._on_freetext_pick_color)
+        self._ft_color = color
+        layout.addWidget(color)
+
+        delete = QToolButton()
+        delete.setObjectName("FreeTextFormatDelete")
+        delete.setIconSize(QSize(16, 16))
+        delete.setToolTip("Delete")
+        delete.setAccessibleName("Delete free text")
+        delete.clicked.connect(lambda: self._delete_overlay())
+        self._ft_delete = delete
+        layout.addWidget(delete)
+
+        self._refresh_freetext_format_icons()
+        bar.hide()
+        return bar
+
+    def _refresh_freetext_format_icons(self) -> None:
+        if not hasattr(self, "_ft_color"):
+            return
+        self._ft_color.setIcon(icon("palette"))
+        self._ft_delete.setIcon(icon("trash", color=close_tab_hex()))
+
+    def _sync_freetext_format_bar(self, *, focus_text: bool = False) -> None:
+        op = self._selected_overlay
+        if op is None or op.kind != "freetext":
+            if self._freetext_format is not None:
+                self._freetext_format.hide()
+            return
+        if self._freetext_format is None:
+            self._freetext_format = self._build_freetext_format_bar()
+        self._freetext_format_syncing = True
         try:
-            redact_edit_model(
-                self._model,
-                path,
-                regions,
-                markup=self._markup.non_redaction_ops(),
-                passwords=self._passwords(),
-                scope=scope,
-                verify=True,
-            )
-        except RedactionVerifyError as exc:
-            QMessageBox.critical(
-                self,
-                "Redaction verification failed",
-                f"{exc}\n\nNo redacted copy was produced.",
-            )
-            self.status_message.emit("Redaction verification failed — output discarded")
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Apply redaction",
-                f"Could not write redacted PDF:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Apply redaction",
-                f"Could not apply redaction:\n{exc}",
-            )
-            return
+            if self._ft_text.text() != op.text:
+                self._ft_text.setText(op.text)
+            self._ft_bold.setChecked(bool(op.bold))
+            self._ft_italic.setChecked(bool(op.italic))
+            idx = self._ft_font.findData(op.fontname)
+            self._ft_font.setCurrentIndex(idx if idx >= 0 else 0)
+            if abs(self._ft_size.value() - float(op.fontsize)) > 0.05:
+                self._ft_size.setValue(float(op.fontsize))
+        finally:
+            self._freetext_format_syncing = False
 
-        self._markup.clear_redactions()
+        hint = self._freetext_format.sizeHint()
+        bar_w = max(hint.width(), 320)
+        bar_h = max(hint.height(), 32)
+        tile = self._tiles.get(op.page_index)
+        rect = op.rects[0] if op.rects else None
+        if (
+            tile is not None
+            and rect is not None
+            and tile.isVisible()
+            and tile.width() > 0
+            and tile.height() > 0
+        ):
+            wr = _map_pdf_rect_to_widget(
+                rect,
+                tile._page_w,
+                tile._page_h,
+                tile.width(),
+                tile.height(),
+                tile._rotation,
+            )
+            anchor = tile.mapTo(self, QPoint(int(wr.left()), int(wr.bottom()) + 6))
+            x = min(max(0, anchor.x()), max(0, self.width() - bar_w))
+            y = min(max(0, anchor.y()), max(0, self.height() - bar_h))
+        else:
+            x = max(0, (self.width() - bar_w) // 2)
+            y = max(0, self.height() - bar_h - 12)
+        self._freetext_format.setGeometry(x, y, bar_w, bar_h)
+        self._freetext_format.raise_()
+        self._freetext_format.show()
+        if focus_text:
+            self._ft_text.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._ft_text.selectAll()
+
+    def _apply_freetext_format(self, **changes: object) -> None:
+        if self._freetext_format_syncing or self._markup is None:
+            return
+        old = self._selected_overlay
+        if old is None or old.kind != "freetext":
+            return
+        new = replace(old, **changes)  # type: ignore[arg-type]
+        if new == old:
+            return
+        if not self._markup.replace_annotation(old, new):
+            return
+        self._selected_overlay = new
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        name = Path(path).name
-        self.status_message.emit(f"Redacted copy saved as {name}")
-        QMessageBox.information(
-            self,
-            "Redaction complete",
-            f"Verified redacted copy saved as:\n{path}",
+        self.status_message.emit("Free text updated. Save As to keep")
+
+    def _on_freetext_text_finished(self) -> None:
+        if self._freetext_format_syncing:
+            return
+        body = self._ft_text.text()
+        old = self._selected_overlay
+        if old is None or old.kind != "freetext":
+            return
+        if body == old.text:
+            return
+        self._apply_freetext_format(text=body)
+
+    def _on_freetext_font_changed(self, _index: int) -> None:
+        if self._freetext_format_syncing:
+            return
+        key = self._ft_font.currentData()
+        if isinstance(key, str):
+            self._apply_freetext_format(fontname=key)
+
+    def _on_freetext_pick_color(self) -> None:
+        old = self._selected_overlay
+        if old is None or old.kind != "freetext":
+            return
+        r, g, b = (int(c * 255) for c in old.color)
+        chosen = QColorDialog.getColor(QColor(r, g, b), self, "Text color")
+        if not chosen.isValid():
+            return
+        self._apply_freetext_format(
+            color=(chosen.red() / 255.0, chosen.green() / 255.0, chosen.blue() / 255.0)
         )
+
+    def _begin_pending_redact(self, region: RedactionRegion) -> None:
+        self._pending_redact = region
+        self.refresh_markup_overlays()
+        self.status_message.emit("Confirm or cancel the redaction mark")
+
+    def _confirm_pending_redact(self) -> None:
+        if self._markup is None or self._pending_redact is None:
+            return
+        self._markup.push_redaction(self._pending_redact)
+        self._pending_redact = None
+        self.refresh_markup_overlays()
+        self.markup_changed.emit()
+        self.status_message.emit(
+            "Redaction marked. Save As to permanently remove"
+        )
+
+    def _cancel_pending_redact(self, *, status: bool = False) -> None:
+        if self._pending_redact is None and (
+            not hasattr(self, "_redact_confirm") or self._redact_confirm.isHidden()
+        ):
+            return
+        self._pending_redact = None
+        self.refresh_markup_overlays()
+        if status:
+            self.status_message.emit("Redaction cancelled")
+
+    def _sync_redact_confirm_geometry(self) -> None:
+        if not hasattr(self, "_redact_confirm"):
+            return
+        region = self._pending_redact
+        if region is None:
+            self._redact_confirm.hide()
+            return
+        hint = self._redact_confirm.sizeHint()
+        bar_w = max(hint.width(), 56)
+        bar_h = max(hint.height(), 28)
+        tile = self._tiles.get(region.page_index)
+        if (
+            tile is not None
+            and tile.isVisible()
+            and tile.width() > 0
+            and tile.height() > 0
+        ):
+            wr = _map_pdf_rect_to_widget(
+                region.rect,
+                tile._page_w,
+                tile._page_h,
+                tile.width(),
+                tile.height(),
+                tile._rotation,
+            )
+            anchor = tile.mapTo(self, QPoint(int(wr.right()), int(wr.bottom()) + 6))
+            x = min(max(0, anchor.x() - bar_w), max(0, self.width() - bar_w))
+            y = min(max(0, anchor.y()), max(0, self.height() - bar_h))
+        else:
+            # Tile not laid out yet — keep Confirm/Cancel visible at a fallback.
+            x = max(0, (self.width() - bar_w) // 2)
+            y = max(0, self.height() - bar_h - 12)
+        self._redact_confirm.setGeometry(x, y, bar_w, bar_h)
+        self._redact_confirm.raise_()
+        self._redact_confirm.show()
 
     def _on_markup_gesture(self, logical: int, tool_value: str, payload: object) -> None:
         if self._markup is None or not isinstance(payload, dict):
@@ -2408,45 +2572,14 @@ class PdfViewerWidget(QWidget):
             self._set_selected_overlay(new)
             self.refresh_markup_overlays()
             self.markup_changed.emit()
-            self.status_message.emit("Moved — Save As to keep")
+            self.status_message.emit("Moved. Save As to keep")
             return
         if tool_value == "edit_freetext":
             old = payload.get("annotation")
-            if not isinstance(old, AnnotationOp):
+            if not isinstance(old, AnnotationOp) or old.kind != "freetext":
                 return
-            result = _prompt_freetext(
-                self,
-                text=old.text,
-                fontsize=old.fontsize,
-                color=old.color,
-                border=old.border,
-                title="Edit free text",
-                allow_delete=True,
-            )
-            if result is None:
-                return
-            if result == "delete":
-                self._delete_overlay(old)
-                return
-            text, fontsize, color, border = result
-            x0, y0, x1, y1 = old.rects[0] if old.rects else (0.0, 0.0, 160.0, 40.0)
-            width = max(x1 - x0, 40.0 + fontsize * max(len(text), 1) * 0.45)
-            height = max(y1 - y0, fontsize * (1.6 + text.count("\n")))
-            new = AnnotationOp(
-                kind="freetext",
-                page_index=old.page_index,
-                rects=((x0, y0, x0 + width, y0 + height),),
-                text=text,
-                color=color,
-                fontsize=fontsize,
-                border=border,
-            )
-            if not self._markup.replace_annotation(old, new):
-                return
-            self._set_selected_overlay(new)
-            self.refresh_markup_overlays()
-            self.markup_changed.emit()
-            self.status_message.emit("Free text updated — Save As to keep")
+            self._set_selected_overlay(old)
+            self._sync_freetext_format_bar(focus_text=True)
             return
 
         tool = AnnotTool(tool_value)
@@ -2517,25 +2650,30 @@ class PdfViewerWidget(QWidget):
             point = payload.get("point")
             if not point:
                 return
-            result = _prompt_freetext(self)
-            if result is None:
-                return
-            text, fontsize, color, border = result
             x, y = point
-            width = max(120.0, fontsize * max(len(text), 1) * 0.45)
-            height = max(fontsize * 1.8, fontsize * (1.6 + text.count("\n")))
+            fontsize = _DEFAULT_FREETEXT_SIZE
+            width = max(120.0, fontsize * 4.5)
+            height = max(fontsize * 1.8, 24.0)
             rect = (x, y, x + width, y + height)
             created = AnnotationOp(
                 kind="freetext",
                 page_index=logical,
                 rects=(rect,),
-                text=text,
-                color=color,
+                text="Text",
+                color=_DEFAULT_FREETEXT_COLOR,
                 fontsize=fontsize,
-                border=border,
+                fontname="helv",
+                bold=False,
+                italic=False,
+                border=False,
             )
             self._markup.push_annotation(created)
             self._set_selected_overlay(created)
+            self.refresh_markup_overlays()
+            self.markup_changed.emit()
+            self.status_message.emit("Markup added. Save As to keep")
+            self._sync_freetext_format_bar(focus_text=True)
+            return
         elif tool == AnnotTool.IMAGE:
             rect = payload.get("rect")
             if not rect:
@@ -2572,12 +2710,7 @@ class PdfViewerWidget(QWidget):
             if not rect:
                 return
             region = RedactionRegion(page_index=logical, rect=tuple(rect))  # type: ignore[arg-type]
-            self._markup.push_redaction(region)
-            self.refresh_markup_overlays()
-            self.markup_changed.emit()
-            self.status_message.emit(
-                "Redaction marked — Apply redaction to export a verified copy"
-            )
+            self._begin_pending_redact(region)
             return
         elif tool in (AnnotTool.FORM_TEXT, AnnotTool.FORM_CHECK):
             rect = payload.get("rect")
@@ -2598,7 +2731,7 @@ class PdfViewerWidget(QWidget):
             return
         self.refresh_markup_overlays()
         self.markup_changed.emit()
-        self.status_message.emit("Markup added — Save As to keep")
+        self.status_message.emit("Markup added. Save As to keep")
 
     def _on_form_field_activated(self, logical: int, widget: object) -> None:
         if self._markup is None or not isinstance(widget, WidgetInfo):
@@ -2616,7 +2749,7 @@ class PdfViewerWidget(QWidget):
             return
         self._markup.push_form_fill({widget.name: text})
         self.markup_changed.emit()
-        self.status_message.emit(f"Queued fill for “{widget.name}” — Save As to keep")
+        self.status_message.emit(f"Queued fill for “{widget.name}”. Save As to keep")
 
     def _build_side_panel(self) -> QTabWidget:
         tabs = QTabWidget()
@@ -2815,42 +2948,45 @@ class PdfViewerWidget(QWidget):
 
     def _rebuild_canvas(self) -> None:
         self._clear_tiles()
-        if self._model is None:
-            self._canvas.setMinimumSize(0, 0)
-            self._canvas.resize(0, 0)
-            return
-        if self._layout == ViewerLayout.CONTINUOUS:
-            width = self._render_width_px + 2 * PAGE_GAP_PX
-            height = self._continuous_canvas_height()
-            self._canvas.setMinimumSize(width, height)
-            self._canvas.resize(width, height)
-            self._sync_continuous_tiles()
-            return
-        pages = self._pages_to_show()
-        if self._layout == ViewerLayout.SPREAD and len(pages) == 2:
-            sizes = [self._display_size_for(p) for p in pages]
-            total_w = sizes[0][0] + sizes[1][0] + 3 * PAGE_GAP_PX
-            total_h = max(sizes[0][1], sizes[1][1]) + 2 * PAGE_GAP_PX
+        try:
+            if self._model is None:
+                self._canvas.setMinimumSize(0, 0)
+                self._canvas.resize(0, 0)
+                return
+            if self._layout == ViewerLayout.CONTINUOUS:
+                width = self._render_width_px + 2 * PAGE_GAP_PX
+                height = self._continuous_canvas_height()
+                self._canvas.setMinimumSize(width, height)
+                self._canvas.resize(width, height)
+                self._sync_continuous_tiles()
+                return
+            pages = self._pages_to_show()
+            if self._layout == ViewerLayout.SPREAD and len(pages) == 2:
+                sizes = [self._display_size_for(p) for p in pages]
+                total_w = sizes[0][0] + sizes[1][0] + 3 * PAGE_GAP_PX
+                total_h = max(sizes[0][1], sizes[1][1]) + 2 * PAGE_GAP_PX
+                self._canvas.setMinimumSize(total_w, total_h)
+                self._canvas.resize(total_w, total_h)
+                x = PAGE_GAP_PX
+                for p, (w, h) in zip(pages, sizes):
+                    tile = self._make_tile(p)
+                    tile.setParent(self._canvas)
+                    tile.setGeometry(x, PAGE_GAP_PX, w, h)
+                    tile.show()
+                    x += w + PAGE_GAP_PX
+                return
+            # single
+            w, h = self._display_size_for(pages[0])
+            total_w = w + 2 * PAGE_GAP_PX
+            total_h = h + 2 * PAGE_GAP_PX
             self._canvas.setMinimumSize(total_w, total_h)
             self._canvas.resize(total_w, total_h)
-            x = PAGE_GAP_PX
-            for p, (w, h) in zip(pages, sizes):
-                tile = self._make_tile(p)
-                tile.setParent(self._canvas)
-                tile.setGeometry(x, PAGE_GAP_PX, w, h)
-                tile.show()
-                x += w + PAGE_GAP_PX
-            return
-        # single
-        w, h = self._display_size_for(pages[0])
-        total_w = w + 2 * PAGE_GAP_PX
-        total_h = h + 2 * PAGE_GAP_PX
-        self._canvas.setMinimumSize(total_w, total_h)
-        self._canvas.resize(total_w, total_h)
-        tile = self._make_tile(pages[0])
-        tile.setParent(self._canvas)
-        tile.setGeometry(PAGE_GAP_PX, PAGE_GAP_PX, w, h)
-        tile.show()
+            tile = self._make_tile(pages[0])
+            tile.setParent(self._canvas)
+            tile.setGeometry(PAGE_GAP_PX, PAGE_GAP_PX, w, h)
+            tile.show()
+        finally:
+            self._sync_floating_chrome()
 
     def _sync_continuous_tiles(self) -> None:
         """Create/destroy continuous-mode tiles for the visible band (+ prefetch)."""
@@ -2914,6 +3050,7 @@ class PdfViewerWidget(QWidget):
         tile.set_markup_color(self._markup_color)
         if self._markup is not None:
             tile.set_overlay_entries(self._markup.ops())
+        tile.set_pending_redaction(self._pending_redact)
         if (
             self._selected_overlay is not None
             and self._selected_overlay.page_index == logical
@@ -3091,7 +3228,7 @@ class PdfViewerWidget(QWidget):
         if started:
             self._overlay.show_message("Rendering…")
             self.busy_changed.emit(True, "Rendering…")
-        else:
+        elif self._search_pool.activeThreadCount() == 0:
             self._overlay.hide_overlay()
             self.busy_changed.emit(False, "")
         self._apply_hits_to_tiles()
@@ -3166,14 +3303,22 @@ class PdfViewerWidget(QWidget):
         if tile is not None:
             tile.set_pixmap(pix)
         if self._pool.activeThreadCount() == 0:
-            self._overlay.hide_overlay()
-            self.busy_changed.emit(False, "")
+            if self._search_pool.activeThreadCount() == 0:
+                self._overlay.hide_overlay()
+                self.busy_changed.emit(False, "")
+            else:
+                self._overlay.show_message("Searching…")
+                self.busy_changed.emit(True, "Searching…")
 
     def _on_render_error(self, generation: int, logical: int, message: str) -> None:
         if self._is_cancelled(generation):
             return
-        self._overlay.hide_overlay()
-        self.busy_changed.emit(False, "")
+        if self._search_pool.activeThreadCount() == 0:
+            self._overlay.hide_overlay()
+            self.busy_changed.emit(False, "")
+        else:
+            self._overlay.show_message("Searching…")
+            self.busy_changed.emit(True, "Searching…")
         tile = self._tiles.get(logical)
         if tile is not None:
             tile.set_pixmap(None)
@@ -3200,8 +3345,12 @@ class PdfViewerWidget(QWidget):
     def _on_search_finished(self, generation: int, hits: object) -> None:
         if self._search_cancelled(generation):
             return
-        self._overlay.hide_overlay()
-        self.busy_changed.emit(False, "")
+        if self._pool.activeThreadCount() == 0:
+            self._overlay.hide_overlay()
+            self.busy_changed.emit(False, "")
+        else:
+            self._overlay.show_message("Rendering…")
+            self.busy_changed.emit(True, "Rendering…")
         self._hits = list(hits) if isinstance(hits, list) else []
         self._hit_index = 0 if self._hits else -1
         n = len(self._hits)
@@ -3216,8 +3365,12 @@ class PdfViewerWidget(QWidget):
     def _on_search_error(self, generation: int, message: str) -> None:
         if self._search_cancelled(generation):
             return
-        self._overlay.hide_overlay()
-        self.busy_changed.emit(False, "")
+        if self._pool.activeThreadCount() == 0:
+            self._overlay.hide_overlay()
+            self.busy_changed.emit(False, "")
+        else:
+            self._overlay.show_message("Rendering…")
+            self.busy_changed.emit(True, "Rendering…")
         self._hit_label.setText("Search failed")
         self.render_error.emit(message)
 
@@ -3271,6 +3424,16 @@ class PdfViewerWidget(QWidget):
                 self.go_to_page(logical)
             return
         if link.kind == "uri" and link.uri:
+            url = QUrl(link.uri)
+            if not is_allowed_open_scheme(url.scheme()):
+                scheme = url.scheme() or "unknown"
+                QMessageBox.warning(
+                    self,
+                    "Open link",
+                    f"This link uses a scheme PageDrop will not open "
+                    f"({scheme}):\n\n{link.uri}",
+                )
+                return
             reply = QMessageBox.question(
                 self,
                 "Open link",
@@ -3279,7 +3442,7 @@ class PdfViewerWidget(QWidget):
                 QMessageBox.StandardButton.Cancel,
             )
             if reply == QMessageBox.StandardButton.Open:
-                QDesktopServices.openUrl(QUrl(link.uri))
+                QDesktopServices.openUrl(url)
 
     def _extract_selected_attachment(self) -> None:
         if self._model is None:
@@ -3307,6 +3470,7 @@ class PdfViewerWidget(QWidget):
         self.status_message.emit(f"Saved {out.name}")
 
     def _on_scroll(self, _value: int = 0) -> None:
+        self._sync_floating_chrome()
         if self._layout != ViewerLayout.CONTINUOUS or self._model is None:
             return
         self._sync_continuous_tiles()
@@ -3378,6 +3542,10 @@ class PdfViewerWidget(QWidget):
         key = event.key()
         mods = event.modifiers()
         if key == Qt.Key.Key_Escape:
+            if self._pending_redact is not None:
+                self._cancel_pending_redact(status=True)
+                event.accept()
+                return
             if self._selected_overlay is not None:
                 self._set_selected_overlay(None)
                 event.accept()

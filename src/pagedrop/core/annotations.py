@@ -53,6 +53,28 @@ STAMP_FINAL = 6
 
 MOVABLE_ANNOT_KINDS = frozenset({"freetext", "image"})
 
+# Base-14 family keys for free text (format bar + Save As). Bold/italic map to
+# Helvetica / Times / Courier variants PyMuPDF accepts as ``fontname``.
+FREETEXT_FONT_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("helv", "Helvetica"),
+    ("tiro", "Times"),
+    ("cour", "Courier"),
+)
+_FREETEXT_PDF_FONT: dict[tuple[str, bool, bool], str] = {
+    ("helv", False, False): "helv",
+    ("helv", True, False): "HeBo",
+    ("helv", False, True): "HeIt",
+    ("helv", True, True): "HeBI",
+    ("tiro", False, False): "tiro",
+    ("tiro", True, False): "tibo",
+    ("tiro", False, True): "tiit",
+    ("tiro", True, True): "tibi",
+    ("cour", False, False): "cour",
+    ("cour", True, False): "CoBo",
+    ("cour", False, True): "CoIt",
+    ("cour", True, True): "CoBI",
+}
+
 
 class AnnotationError(JobError):
     """Raised when an annotation op cannot be applied."""
@@ -72,10 +94,36 @@ class AnnotationOp:
     stamp_id: int = STAMP_APPROVED
     color: tuple[float, float, float] = (1.0, 0.92, 0.23)
     fontsize: float = 11.0
+    # Free-text: base-14 family key (``helv`` / ``tiro`` / ``cour``) + weight/style.
+    fontname: str = "helv"
+    bold: bool = False
+    italic: bool = False
     # Free-text border (PDF appearance + viewer chrome).
     border: bool = False
     # Absolute path for kind == "image" (copied into the output PDF on Save As).
     image_path: str = ""
+
+
+def freetext_pdf_fontname(op: AnnotationOp) -> str:
+    """Resolve ``fontname`` + bold/italic to a PyMuPDF base-14 ``fontname``."""
+    family = op.fontname if op.fontname in {k for k, _ in FREETEXT_FONT_FAMILIES} else "helv"
+    return _FREETEXT_PDF_FONT.get((family, bool(op.bold), bool(op.italic)), "helv")
+
+
+def freetext_css_style(op: AnnotationOp) -> str:
+    """CSS ``style`` for rich FreeText (bold/italic round-trip via PyMuPDF)."""
+    family = {
+        "helv": "Helvetica",
+        "tiro": "Times",
+        "cour": "Courier",
+    }.get(op.fontname if op.fontname in {k for k, _ in FREETEXT_FONT_FAMILIES} else "helv", "Helvetica")
+    size = max(4.0, float(op.fontsize) or 11.0)
+    weight = "bold" if op.bold else "normal"
+    slant = "italic" if op.italic else "normal"
+    return (
+        f"font-family:{family};font-weight:{weight};"
+        f"font-style:{slant};font-size:{size}pt;"
+    )
 
 
 def _save(doc: fitz.Document, output_path: str) -> None:
@@ -123,13 +171,32 @@ def apply_annotation_op(page: fitz.Page, op: AnnotationOp) -> fitz.Annot | None:
         annot = page.add_stamp_annot(_rect(op), stamp=int(op.stamp_id))
     elif op.kind == "freetext":
         # border_color requires richtext; width alone is enough for a plain border.
-        annot = page.add_freetext_annot(
-            _rect(op),
-            op.text or " ",
-            fontsize=max(4.0, float(op.fontsize) or 11.0),
-            text_color=op.color,
-            border_width=1.0 if op.border else 0.0,
-        )
+        # ponytail: plain fontname HeBo/HeIt is a no-op in PyMuPDF 1.27 — richtext
+        # ``style`` is the working bold/italic path; keep plain path when neither is set
+        # so Contents stays populated without a set_info round-trip.
+        fontsize = max(4.0, float(op.fontsize) or 11.0)
+        text = op.text or " "
+        if op.bold or op.italic:
+            annot = page.add_freetext_annot(
+                _rect(op),
+                text,
+                fontsize=fontsize,
+                fontname=freetext_pdf_fontname(op),
+                text_color=op.color,
+                border_width=1.0 if op.border else 0.0,
+                richtext=True,
+                style=freetext_css_style(op),
+            )
+            annot.set_info(content=text)
+        else:
+            annot = page.add_freetext_annot(
+                _rect(op),
+                text,
+                fontsize=fontsize,
+                fontname=freetext_pdf_fontname(op),
+                text_color=op.color,
+                border_width=1.0 if op.border else 0.0,
+            )
     elif op.kind == "comment":
         if op.points:
             point = fitz.Point(*op.points[0])

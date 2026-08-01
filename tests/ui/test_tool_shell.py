@@ -313,7 +313,7 @@ def test_split_multi_file_success_copy_mentions_showing_first(
     status = shell.statusBar().currentMessage()
     toast = shell._toast._message.text()
     bar = shell._result_bar._label.text()
-    assert status == "Saved 3 files — showing first"
+    assert status == "Saved 3 files. Showing first"
     assert status == toast == bar
     assert shell._result_bar._path == str(first)
     assert shell.editor is None
@@ -562,7 +562,7 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
 
     assert not out.exists()
-    assert not shell._busy_overlay.isVisible()
+    qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert not shell._result_bar.isVisible()
     assert shell.statusBar().currentMessage() == "Cancelled"
     assert _file_hash(src) == source_hash
@@ -570,3 +570,198 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
 
     shell.close()
     tools.close()
+
+
+# --- R11: Run host + vertical rhythm -----------------------------------------
+
+
+def test_r11_drop_zone_and_options_margins(qtbot):
+    """R11: drop-zone (16,12,16,12); options layout symmetric (no P9 8px right)."""
+    zone = FileDropZone()
+    qtbot.addWidget(zone)
+    m = zone.layout().contentsMargins()
+    assert (m.left(), m.top(), m.right(), m.bottom()) == (16, 12, 16, 12)
+
+    shell = ToolShellWindow(title="Demo", description="Margins")
+    qtbot.addWidget(shell)
+    om = shell._options_layout.contentsMargins()
+    assert (om.left(), om.top(), om.right(), om.bottom()) == (0, 0, 0, 0)
+
+
+def test_r11_standard_shell_run_enabled_after_file_pick(qtbot, tmp_path):
+    """R11: standard shell keeps one Run in #ToolShellActions; enables after pick."""
+    from PyQt6.QtWidgets import QPushButton, QToolBar
+
+    src = tmp_path / "doc.pdf"
+    _write_pdf(src, pages=1)
+
+    shell = ToolShellWindow(title="Reverse", description="Reverse pages")
+    qtbot.addWidget(shell)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    assert shell._actions_host.isVisible()
+    assert shell._run_btn.parentWidget() is shell._actions_host
+    assert not shell._run_btn.isEnabled()
+    assert shell.findChild(QToolBar, "ToolShellToolbar") is None
+
+    shell.drop_zone.set_paths([str(src)])
+    assert shell._run_btn.isEnabled()
+    runs = [
+        w
+        for w in shell.findChildren(QPushButton)
+        if w.objectName() == "ToolbarPrimary" and w.text() == "Run"
+    ]
+    assert runs == [shell._run_btn]
+
+
+def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
+    """R11: empty options must not expand a blank form band.
+
+    R19: compact title+? header stays visible (help reachable); stretch stays 0.
+    """
+    from PyQt6.QtWidgets import QFormLayout, QLabel, QWidget
+
+    shell = ToolShellWindow(title="Booklet", description="No options")
+    qtbot.addWidget(shell)
+    shell.set_options_widget(QWidget())
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    assert shell._options_scroll.isVisible()
+    assert shell._header_host.isVisible()
+    assert shell._help_btn.isVisible()
+    root = shell.layout()
+    assert root.stretch(root.indexOf(shell._options_scroll)) == 0
+
+    # Real controls restore the scroll stretch.
+    opts = QWidget()
+    form = QFormLayout(opts)
+    form.addRow("Hint", QLabel("x"))
+    shell.set_options_widget(opts)
+    assert shell._options_scroll.isVisible()
+    assert shell._header_host.isVisible()
+    assert shell._options_host.isAncestorOf(shell._header_host)
+    assert root.stretch(root.indexOf(shell._options_scroll)) == 1
+
+
+def test_r18_header_lives_in_options_not_root(qtbot):
+    """R18/R19: title + ? are under options, not above the drop zone."""
+    from PyQt6.QtWidgets import QFormLayout, QLabel, QVBoxLayout, QWidget
+
+    shell = ToolShellWindow(title="Demo", description="In options")
+    qtbot.addWidget(shell)
+    opts = QWidget()
+    form = QFormLayout(opts)
+    form.addRow("Hint", QLabel("x"))
+    shell.set_options_widget(opts)
+
+    root = shell.layout()
+    assert root.indexOf(shell._header_host) < 0
+    assert root.indexOf(shell._title_label) < 0
+    assert shell._options_host.isAncestorOf(shell._title_label)
+    assert shell._title_label.text() == "Demo"
+    assert shell.findChild(QLabel, "ToolShellDescription") is None
+    assert shell._help_btn.text() == "?"
+
+    # adopt_header docks into an external column (Watermark pattern).
+    col = QWidget()
+    col_lay = QVBoxLayout(col)
+    shell.adopt_header(col_lay)
+    assert col.isAncestorOf(shell._header_host)
+    assert not shell._options_host.isAncestorOf(shell._header_host)
+
+
+def test_r19_help_popup_shows_help_text(qtbot):
+    """R19: ? opens a popup with help_text (falls back to description)."""
+    from PyQt6.QtWidgets import QFormLayout, QLabel, QWidget
+
+    from pagedrop.ui.tool_shell import _ToolHelpPopup
+
+    shell = ToolShellWindow(
+        title="Demo",
+        description="Short line",
+        help_text="Detailed help about this tool for the popup.",
+    )
+    qtbot.addWidget(shell)
+    opts = QWidget()
+    form = QFormLayout(opts)
+    form.addRow("Hint", QLabel("x"))
+    shell.set_options_widget(opts)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    assert shell.findChild(QLabel, "ToolShellDescription") is None
+    shell._help_btn.click()
+    qtbot.waitUntil(
+        lambda: shell._help_popup is not None and shell._help_popup.isVisible(),
+        timeout=2000,
+    )
+    assert isinstance(shell._help_popup, _ToolHelpPopup)
+    body = shell._help_popup.findChild(QLabel, "ToolShellHelpBody")
+    assert body is not None
+    assert "Detailed help" in body.text()
+    shell._help_btn.click()
+    qtbot.waitUntil(
+        lambda: shell._help_popup is None or not shell._help_popup.isVisible(),
+        timeout=2000,
+    )
+
+
+def test_r11_booklet_shell_hides_empty_options(qtbot, isolated_settings):
+    """R11/R19: booklet empty form — no expand; title+? header still visible."""
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_organize_shell(tools, "booklet")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    assert shell._options_scroll.isVisible()
+    assert shell._header_host.isVisible()
+    assert shell._help_btn.isVisible()
+    root = shell.layout()
+    assert root.stretch(root.indexOf(shell._options_scroll)) == 0
+    assert shell._actions_host.isVisible()
+    assert shell._run_btn.parentWidget() is shell._actions_host
+    shell.close()
+    tools.close()
+
+
+def test_r11_metadata_load_from_file_left_aligned(qtbot, isolated_settings):
+    """R11: Load from file is compact/left — not a full-width form-spanning primary."""
+    from PyQt6.QtWidgets import QPushButton
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_organize_shell(tools, "metadata")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.resize(640, 520)
+    shell.show()
+    qtbot.waitExposed(shell, timeout=5000)
+
+    load_btn = next(
+        b
+        for b in shell._options_host.findChildren(QPushButton)
+        if b.text() == "Load from file"
+    )
+    assert load_btn.objectName() == "ToolbarSecondary"
+    # Must not stretch across the options host (old form.addRow("", btn) look).
+    assert load_btn.width() < shell._options_host.width() * 0.6
+    shell.close()
+    tools.close()
+
+
+def test_tool_shell_hides_idle_status_footer(qtbot):
+    """Placeholder idle status must not reserve a full-width strip."""
+    shell = ToolShellWindow(title="Demo", description="Demo tool")
+    qtbot.addWidget(shell)
+    shell.show()
+    status = shell.statusBar()
+    assert status.currentMessage() == ""
+    assert status.isHidden()
+    status.showMessage("Working…")
+    assert not status.isHidden()
+    assert status.isVisible()
+    assert status.currentMessage() == "Working…"
+    status.showMessage("")
+    assert status.isHidden()

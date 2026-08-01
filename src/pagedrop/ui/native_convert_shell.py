@@ -159,7 +159,7 @@ def _build_export_options() -> tuple[QWidget, QComboBox, QLineEdit, QDoubleSpinB
     form.addRow("Format", fmt)
 
     ranges = QLineEdit()
-    ranges.setPlaceholderText("e.g. 1-3,5 — leave blank for all pages")
+    ranges.setPlaceholderText("e.g. 1-3,5; leave blank for all pages")
     form.addRow("Pages", ranges)
     hint = QLabel("1-based ranges; selection from the editor is used when possible.")
     hint.setObjectName("ToolsHint")
@@ -320,12 +320,13 @@ def open_conversion_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow |
             shell = ToolShellWindow(
                 title=entry.title,
                 description=entry.description,
+                help_text=entry.help_text,
                 editor=tools.editor,
                 window_manager=getattr(tools, "_window_manager", None),
                 multi=True,
                 accept=lambda p: is_native_import_path(p),
                 dialog_filter=import_to_pdf_dialog_filter(available_only=True),
-                browse_title=f"Choose files — {entry.title}",
+                browse_title=f"Choose files: {entry.title}",
                 empty_prompt=EMPTY_PROMPT_DOCUMENTS,
             )
             _configure_convert_to_pdf(shell)
@@ -333,12 +334,13 @@ def open_conversion_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow |
             shell = ToolShellWindow(
                 title=entry.title,
                 description=entry.description,
+                help_text=entry.help_text,
                 editor=tools.editor,
                 window_manager=getattr(tools, "_window_manager", None),
                 multi=False,
                 accept=is_pdf_path,
                 dialog_filter=_PDF_FILTER,
-                browse_title=f"Choose PDF — {entry.title}",
+                browse_title=f"Choose PDF: {entry.title}",
             )
             _configure_export_from_pdf(
                 shell,

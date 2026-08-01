@@ -125,11 +125,13 @@ class PdfTab(QWidget):
         return self._markup.ops()
 
     def clear_markup_after_save(self) -> None:
-        # Keep pending redaction marks — they need Apply redaction, not Save As.
+        # Ordinary Save As applies annotation/form ops only. Pending redaction
+        # marks stay until a verified redaction Save As clears them.
         self._markup.clear_non_redactions()
         self._preview_widget.refresh_markup_overlays()
 
     def clear_redactions_after_apply(self) -> None:
+        """Drop redaction marks after verified Save As (output already written)."""
         self._markup.clear_redactions()
         self._preview_widget.refresh_markup_overlays()
 
@@ -491,11 +493,11 @@ class PdfTab(QWidget):
         self._quality_guidance_shown = True
         if thumbnail_quality() == "low":
             return (
-                "Large document at high zoom — try a smaller thumbnail size "
+                "Large document at high zoom. Try a smaller thumbnail size "
                 "for smoother scrolling"
             )
         return (
-            "Large document at high zoom — try a smaller thumbnail size, "
+            "Large document at high zoom. Try a smaller thumbnail size, "
             "or View → Thumbnail quality"
         )
 

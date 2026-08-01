@@ -304,29 +304,44 @@ def search_model(
     passwords: Mapping[str, str] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> list[SearchHit]:
-    """Document-wide search over logical page order."""
+    """Document-wide search over logical page order.
+
+    Per-page ``call()`` so thumbs/viewer can acquire ``FITZ_LOCK`` mid-search
+    (O17-d). Cache access stays inside each locked body only.
+    """
     if not query:
         return []
 
-    def _body() -> list[SearchHit]:
-        hits: list[SearchHit] = []
-        for logical, ref in enumerate(model.iter_pages()):
-            if is_cancelled is not None and is_cancelled():
-                return hits
+    # ponytail: per-page FITZ_LOCK (not whole-doc hold). Baseline 2026-08-01:
+    # whole-doc blocked mid-search render ~255ms on a 12-page fixture with
+    # ~25ms/page search (remaining ~9 pages); per-page keeps wait near one
+    # page. After each page, sleep(0.001) so lock waiters can acquire
+    # (sleep(0) still let this thread reacquire). Ceiling: still one
+    # global lock — do not raise UI pool maxThreadCount. Upgrade: O10
+    # process service if measured overlap still stalls interactive work.
+    hits: list[SearchHit] = []
+    for logical, ref in enumerate(model.iter_pages()):
+        if is_cancelled is not None and is_cancelled():
+            return hits
+
+        def _page(
+            logical: int = logical,
+            ref: PageRef = ref,
+        ) -> list[SearchHit]:
             doc = _cache_get(
                 ref.source_path, _password_for(passwords, ref.source_path)
             )
             page = doc[ref.source_index]
-            for rect in page.search_for(query):
-                hits.append(
-                    SearchHit(
-                        logical,
-                        (rect.x0, rect.y0, rect.x1, rect.y1),
-                    )
-                )
-        return hits
+            return [
+                SearchHit(logical, (rect.x0, rect.y0, rect.x1, rect.y1))
+                for rect in page.search_for(query)
+            ]
 
-    return call(_body)
+        hits.extend(call(_page))
+        # Yield so FITZ_LOCK waiters (viewer tiles / thumbs) can acquire
+        # between pages — sleep(0) is not enough on CPython.
+        time.sleep(0.001)
+    return hits
 
 
 def page_text_dict(

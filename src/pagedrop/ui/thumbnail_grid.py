@@ -31,7 +31,6 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QFrame,
     QGridLayout,
     QLabel,
     QMenu,
@@ -56,6 +55,7 @@ from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.drag_autoscroll import DragAutoScroller
 from pagedrop.ui.grid_helpers import (
+    DropIndicator,
     ctrl_wheel_zoom_step,
     drop_index_at_pos as insertion_index_at_pos,
     drop_indicator_rect,
@@ -68,6 +68,11 @@ from pagedrop.ui.theme import (
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
     PAGE_NUMBER_OVERLAY_MIN_WIDTH,
+    SPACE_2,
+    SPACE_3,
+    SPACE_4,
+    SPACE_6,
+    SPACE_7,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.utils.list_utils import move_items, to_index_for_start
@@ -88,7 +93,6 @@ CARD_CREATE_YIELD_MS = 1
 # Legacy alias for tests that still patch the old name.
 CARD_CREATE_BATCH = CARD_CREATE_MAX
 DEFERRED_LAYOUT_BATCH = 48
-SKELETON_PULSE_MS = 550
 POOL_DRAIN_POLL_MS = 16
 
 
@@ -247,8 +251,8 @@ class ThumbnailGrid(QScrollArea):
         self._container = QWidget()
         self._container.setObjectName("ThumbnailContainer")
         self._layout = QGridLayout(self._container)
-        self._layout.setSpacing(12)
-        self._layout.setContentsMargins(16, 16, 16, 16)
+        self._layout.setSpacing(SPACE_3)
+        self._layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
         self._layout.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
@@ -261,8 +265,8 @@ class ThumbnailGrid(QScrollArea):
         )
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setSpacing(6)
-        empty_layout.setContentsMargins(32, 48, 32, 48)
+        empty_layout.setSpacing(SPACE_2)
+        empty_layout.setContentsMargins(SPACE_6, SPACE_7, SPACE_6, SPACE_7)
 
         self._empty_logo = QLabel()
         self._empty_logo.setObjectName("GridEmptyLogo")
@@ -347,19 +351,15 @@ class ThumbnailGrid(QScrollArea):
         self._busy_message = ""
         self._busy_render_generation = -1
         self._busy_render_width = 0
-        self._skeleton_pulse_dim = False
-        self._skeleton_pulse_timer = QTimer(self)
-        self._skeleton_pulse_timer.setInterval(SKELETON_PULSE_MS)
-        self._skeleton_pulse_timer.timeout.connect(self._pulse_skeleton_cards)
+        self._skeleton_pulse_active = False
+        # O17-i: skip full-card eviction until scroll moves ≥ one row.
+        self._last_evict_scroll_y: int | None = None
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
         self._focused_index: int | None = None
         self._drop_insertion_index: int | None = None
-        self._drop_indicator = QFrame(self._container)
-        self._drop_indicator.setObjectName("DropIndicator")
-        self._drop_indicator.setFixedWidth(3)
-        self._drop_indicator.hide()
+        self._drop_indicator = DropIndicator(self._container)
         self._drag_autoscroller = DragAutoScroller(self)
         self._drag_autoscroller.set_scroll_callback(self._on_drag_autoscroll)
         self._drag_over_grid = False
@@ -688,9 +688,28 @@ class ThumbnailGrid(QScrollArea):
                 for index in pending_thumbs:
                     if 0 <= index < len(self._cards):
                         self._cards[index].refresh_thumbnail_display(fast=True)
-        self._evict_thumbnails_outside_window()
+        if self._scroll_evict_due():
+            self._evict_thumbnails_outside_window()
+        if self._skeleton_pulse_active:
+            self._sync_skeleton_pulse(visible)
         if self._visible_pages_needing_render():
             self._scroll_render_timer.start()
+
+    def _row_stride_px(self) -> int:
+        if not self._cards:
+            return 1
+        return max(self._cards[0].height() + self._layout.spacing(), 1)
+
+    def _scroll_evict_due(self) -> bool:
+        """True when vertical scroll moved ≥ one row since the last eviction.
+
+        Measured hot on 2k-page grids (~0.5–0.8ms steady O(N) walk per tick).
+        Retain already buffers several rows, so skipping sub-row ticks is safe.
+        """
+        y = self.verticalScrollBar().value()
+        if self._last_evict_scroll_y is None:
+            return True
+        return abs(y - self._last_evict_scroll_y) >= self._row_stride_px()
 
     def _render_window_indices(
         self, *, buffer_rows: int = RENDER_WINDOW_ROWS
@@ -701,8 +720,7 @@ class ThumbnailGrid(QScrollArea):
         visible = self._get_visible_page_indices(buffer_rows=buffer_rows)
         if not visible:
             cols = max(self._grid_cols, 1)
-            sample = self._cards[0]
-            row_stride = max(sample.height() + self._layout.spacing(), 1)
+            row_stride = self._row_stride_px()
             rows = max(1, self.viewport().height() // row_stride) + buffer_rows
             visible = list(range(min(len(self._cards), cols * rows)))
         # Always keep page 1 in the window so open-priority stays predictable.
@@ -727,6 +745,7 @@ class ThumbnailGrid(QScrollArea):
                 self._skeleton_count += 1
             if index < len(self._page_render_width):
                 self._page_render_width[index] = 0
+        self._last_evict_scroll_y = self.verticalScrollBar().value()
         if self._skeleton_count > 0:
             self._start_skeleton_pulse()
 
@@ -1503,7 +1522,7 @@ class ThumbnailGrid(QScrollArea):
 
     def _hide_drop_indicator(self) -> None:
         self._drop_insertion_index = None
-        self._drop_indicator.hide()
+        self._drop_indicator.dismiss()
 
     def _update_drop_indicator(self, insertion_index: int) -> None:
         rect = drop_indicator_rect(
@@ -1514,9 +1533,7 @@ class ThumbnailGrid(QScrollArea):
             return
 
         self._drop_insertion_index = insertion_index
-        self._drop_indicator.setGeometry(rect)
-        self._drop_indicator.show()
-        self._drop_indicator.raise_()
+        self._drop_indicator.place(rect)
 
     def _new_selection_after_move(
         self, indices: list[int], to_index: int
@@ -1609,6 +1626,7 @@ class ThumbnailGrid(QScrollArea):
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._accept_drag_over_grid(event):
             self._start_drag_autoscroll_tracking()
+            self._set_empty_drop_active(True)
             self._handle_drag_over_grid(event)
             return
         event.ignore()
@@ -1623,12 +1641,14 @@ class ThumbnailGrid(QScrollArea):
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
+        self._set_empty_drop_active(False)
         self._restore_status_after_drag()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:
         self._stop_drag_autoscroll()
         self._hide_drop_indicator()
+        self._set_empty_drop_active(False)
         self._restore_status_after_drag()
         mime = event.mimeData()
         source_grid = self._grid_for_widget(event.source())
@@ -2025,6 +2045,7 @@ class ThumbnailGrid(QScrollArea):
         self._painted_selection.clear()
         self._skeleton_count = 0
         self._grid_cols = 0
+        self._last_evict_scroll_y = None
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
@@ -2032,8 +2053,18 @@ class ThumbnailGrid(QScrollArea):
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
         self._empty_state.show()
 
+    def _set_empty_drop_active(self, active: bool) -> None:
+        """Toggle dashed-panel dropActive chrome while the empty state is visible."""
+        if not self._empty_state.isVisibleTo(self):
+            active = False
+        self._empty_state.setProperty("dropActive", active)
+        style = self._empty_state.style()
+        style.unpolish(self._empty_state)
+        style.polish(self._empty_state)
+
     def _update_empty_state(self) -> None:
         if self._cards:
+            self._set_empty_drop_active(False)
             self._empty_state.hide()
         else:
             self._empty_state.show()
@@ -2124,28 +2155,29 @@ class ThumbnailGrid(QScrollArea):
 
     def _start_skeleton_pulse(self) -> None:
         if prefers_reduce_motion():
+            self._skeleton_pulse_active = False
             return
         if self._skeleton_count <= 0:
             return
-        if not self._skeleton_pulse_timer.isActive():
-            self._skeleton_pulse_dim = False
-            self._skeleton_pulse_timer.start()
+        self._skeleton_pulse_active = True
+        self._sync_skeleton_pulse()
 
     def _stop_skeleton_pulse(self) -> None:
-        self._skeleton_pulse_timer.stop()
-        self._skeleton_pulse_dim = False
+        self._skeleton_pulse_active = False
+        for card in self._cards:
+            card.clear_skeleton_pulse()
 
-    def _pulse_skeleton_cards(self) -> None:
-        if self._skeleton_count <= 0:
+    def _sync_skeleton_pulse(self, visible: set[int] | None = None) -> None:
+        if not self._skeleton_pulse_active or self._skeleton_count <= 0:
             self._stop_skeleton_pulse()
             return
-        visible = set(self._get_visible_page_indices())
-        self._skeleton_pulse_dim = not self._skeleton_pulse_dim
+        if visible is None:
+            visible = set(self._get_visible_page_indices())
         for index, card in enumerate(self._cards):
             if not card._is_skeleton:
                 continue
             if index in visible:
-                card.set_skeleton_pulse(self._skeleton_pulse_dim)
+                card.start_skeleton_pulse()
             else:
                 card.clear_skeleton_pulse()
 

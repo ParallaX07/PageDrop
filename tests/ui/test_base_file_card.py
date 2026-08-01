@@ -37,3 +37,21 @@ def test_file_cards_have_accessible_names(qtbot):
     assert "3 pages" in merge.accessibleDescription()
     assert convert.accessibleName() == "photo.png"
     assert "100 × 200" in convert.accessibleDescription()
+
+
+def test_file_card_title_single_line_elide(qtbot):
+    """R14: Merge/Convert titles stay one line — no wrap that rags the grid."""
+    long_name = "very-long-merge-filename-" + ("x" * 60) + ".pdf"
+    card = MergeFileCard(0, f"/tmp/{long_name}", 2)
+    qtbot.addWidget(card)
+
+    assert not card._title_label.wordWrap()
+    assert card._title_label.maximumWidth() > 0
+    assert card._title_label.text() != long_name
+    assert "…" in card._title_label.text()
+    assert card.toolTip() == f"/tmp/{long_name}"
+    assert card.accessibleName() == long_name
+
+    card.set_card_width(120, refresh_thumbnail=False)
+    assert card._title_label.maximumWidth() <= 120
+    assert "…" in card._title_label.text()

@@ -7,6 +7,7 @@ live next to the app or in the user data directory; never required at startup.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import urllib.error
@@ -16,6 +17,10 @@ from pathlib import Path
 # tessdata_fast eng — small enough for an optional download (~4 MB).
 ENG_FAST_URL = (
     "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+)
+# SHA256 of tessdata_fast eng.traineddata at ENG_FAST_URL (pinned for WC3).
+ENG_FAST_SHA256 = (
+    "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
 )
 ENG_LANG = "eng"
 
@@ -71,7 +76,8 @@ def download_eng_fast(
     """Download tessdata_fast ``eng.traineddata`` into *dest_dir*.
 
     Explicit user action only — never called at first launch. Writes via a
-    temporary sibling then renames. Returns the final ``.traineddata`` path.
+    temporary sibling then renames. Verifies SHA256 before replace; fails
+    closed on mismatch. Returns the final ``.traineddata`` path.
     """
     directory = dest_dir or ensure_user_tessdata_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -80,6 +86,13 @@ def download_eng_fast(
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
             staging.write_bytes(response.read())
+        digest = hashlib.sha256(staging.read_bytes()).hexdigest()
+        if digest != ENG_FAST_SHA256:
+            staging.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"eng tessdata hash mismatch (got {digest}, "
+                f"expected {ENG_FAST_SHA256})"
+            )
         staging.replace(target)
     except urllib.error.URLError as exc:
         staging.unlink(missing_ok=True)

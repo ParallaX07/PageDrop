@@ -1,4 +1,4 @@
-"""Phase 18 UI tests — tab tear-off and Move to New Window."""
+"""WC4 / Phase 18 — tab tear-off and Move to New Window (minimal smoke)."""
 
 from __future__ import annotations
 
@@ -80,32 +80,6 @@ def test_detach_tab_creates_new_window_with_same_pdf(
     assert detached_tab.thumbnail_grid.selection_manager.selection == set()
 
 
-def test_detach_last_tab_spawns_blank_in_source_window(
-    one_page_pdf,
-    qtbot,
-    qapp,
-):
-    manager = _ensure_window_manager(qapp)
-    source = manager.open_new_window()
-    qtbot.addWidget(source)
-    source.showMinimized()
-
-    tab = _tab_at(source, 0)
-    source._load_pdf(str(one_page_pdf), tab=tab)
-    _wait_for_tab_loaded(qtbot, tab)
-
-    initial_count = len(manager.windows)
-    source._detach_tab_to_new_window(0)
-    qtbot.waitUntil(
-        lambda: len(manager.windows) == initial_count + 1,
-        timeout=5000,
-    )
-    qtbot.waitUntil(
-        lambda: source._tab_manager.count() == 1 and _tab_at(source, 0).is_blank,
-        timeout=5000,
-    )
-
-
 def test_move_to_new_window_context_menu(
     one_page_pdf,
     qtbot,
@@ -127,6 +101,9 @@ def test_move_to_new_window_context_menu(
         lambda: len(manager.windows) == initial_count + 1,
         timeout=5000,
     )
+
+    assert source._tab_manager.count() == 1
+    assert _tab_at(source, 0).is_blank
 
     detached = _windows_added(manager, windows_before)[0]
     assert _tab_at(detached, 0).pdf_path == str(one_page_pdf)

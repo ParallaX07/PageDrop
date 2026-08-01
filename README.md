@@ -36,7 +36,9 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-**Microsoft Store**: install from the [Microsoft Store listing](https://apps.microsoft.com/detail/9PBS1QFP36C0).
+<a href="https://get.microsoft.com/installer/download/9pbs1qfp36c0?referrer=appbadge" target="_self">
+  <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft Store" width="200">
+</a>
 
 > Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
 
@@ -156,7 +158,7 @@ Deeper setup, layout, and tests: [docs/development.md](docs/development.md).
 
 ```bash
 make test          # full suite via all_tests.py
-make build-exe     # PyInstaller onefile → dist/pagedrop(.exe)
+make build-exe     # PyInstaller onedir → dist/pagedrop/pagedrop(.exe)
 make smoke-exe     # build + Unix exe smoke
 make test-release  # full pytest gate + executable smoke
 ```
@@ -169,4 +171,4 @@ PageDrop source is MIT — see [`LICENSE`](LICENSE). Redistributing frozen binar
 
 ## Status
 
-**v0.4.0**: Windows Setup.exe is on [Releases](https://github.com/ParallaX07/PageDrop/releases). Builds on 0.3.0 with a modeless Tools hub — organize (split/extract/reorder), side-by-side compare, watermark, native import/export, Office/LibreOffice conversion, OCR, annotations/forms/markup, security-grade redaction, Optimize & Secure, attachment ZIP extract — plus cancellable jobs, document caching, and broader password/thread-safety hardening. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
+**v0.5.0**: Builds on 0.4.0 with ToolShell layout/help polish, stronger annotations (freetext styling, markup colors, redaction confirm), blank-page detection, multi-page print with credentials, FITZ_LOCK thread-safety across PDF ops, thumbnail/file-grid performance work, zoom control icons, and a Windows PyInstaller onedir bundle + installer path. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.
