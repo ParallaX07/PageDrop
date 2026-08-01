@@ -64,6 +64,19 @@ make test        # all tests via all_tests.py
 
 For packaging and executable smoke checks, see [Building](building.md).
 
+## CI
+
+GitHub Actions runs on every `pull_request` and `push` to `master` via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Two jobs — `test (ubuntu-latest)` and `test (windows-latest)` — each run:
+
+```bash
+uv run python scripts/check_packaging.py
+uv run python all_tests.py
+```
+
+Optional backends (Office COM, LibreOffice, tessdata) and a frozen exe are unset on CI; those tests skip without `PAGEDROP_*` env vars. Plan and phase history: [`ci.md`](../ci.md).
+
+To require both jobs before merge: GitHub → **Settings → Branches** → branch protection for `master` → enable **Require status checks to pass**, and select `test (ubuntu-latest)` and `test (windows-latest)`. That setting is manual; the workflow does not configure it.
+
 ## Product constraints
 
 Keep these when changing behaviour:
@@ -85,4 +98,5 @@ Sentence-case toolbar/menu labels (`Move up`, not `Move Up`). Status: progress e
 
 - [Architecture](architecture.md) — layers, edit model, jobs, locking
 - [Building](building.md) — PyInstaller and release packaging
+- [CI](../ci.md) — GitHub Actions workflow and phase plan
 - [Licensing](licensing.md) — redistribution policy for binaries
