@@ -73,7 +73,7 @@ uv run python scripts/check_packaging.py
 uv run python all_tests.py
 ```
 
-Optional backends (Office COM, LibreOffice, tessdata) and a frozen exe are unset on CI; those tests skip without `PAGEDROP_*` env vars. Plan and phase history: [`ci.md`](../ci.md).
+Optional backends (Office COM, LibreOffice, tessdata) and a frozen exe are unset on CI; those tests skip without `PAGEDROP_*` env vars.
 
 To require both jobs before merge: GitHub → **Settings → Branches** → branch protection for `master` → enable **Require status checks to pass**, and select `test (ubuntu-latest)` and `test (windows-latest)`. That setting is manual; the workflow does not configure it.
 
