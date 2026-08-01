@@ -104,6 +104,7 @@ from pagedrop.core.pdf_service import (
     render_ref_png,
     search_model,
 )
+from pagedrop.utils.safe_url import is_allowed_open_scheme
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.theme import (
@@ -3423,6 +3424,16 @@ class PdfViewerWidget(QWidget):
                 self.go_to_page(logical)
             return
         if link.kind == "uri" and link.uri:
+            url = QUrl(link.uri)
+            if not is_allowed_open_scheme(url.scheme()):
+                scheme = url.scheme() or "unknown"
+                QMessageBox.warning(
+                    self,
+                    "Open link",
+                    f"This link uses a scheme PageDrop will not open "
+                    f"({scheme}):\n\n{link.uri}",
+                )
+                return
             reply = QMessageBox.question(
                 self,
                 "Open link",
@@ -3431,7 +3442,7 @@ class PdfViewerWidget(QWidget):
                 QMessageBox.StandardButton.Cancel,
             )
             if reply == QMessageBox.StandardButton.Open:
-                QDesktopServices.openUrl(QUrl(link.uri))
+                QDesktopServices.openUrl(url)
 
     def _extract_selected_attachment(self) -> None:
         if self._model is None:

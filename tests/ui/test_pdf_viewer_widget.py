@@ -16,6 +16,7 @@ from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.pdf_service import (
     MAX_PRINT_PAGES,
+    LinkInfo,
     extract_attachment,
     logical_index_for_source,
     outline_for_paths,
@@ -291,6 +292,104 @@ def test_external_link_confirms(qtbot, linked_pdf: Path, monkeypatch) -> None:
         assert uris
         viewer._on_link(0, uris[0])
         assert opened == []
+    finally:
+        loader.close()
+
+
+def test_https_link_opens_after_confirm(
+    qtbot, linked_pdf: Path, monkeypatch
+) -> None:
+    viewer, model, loader = _bind_viewer(qtbot, linked_pdf)
+    opened: list[str] = []
+    warned: list[str] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_a, **_k: QMessageBox.StandardButton.Open,
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *_a, **_k: warned.append("warned"),
+    )
+    monkeypatch.setattr(
+        "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
+        lambda url: opened.append(url.toString()),
+    )
+    try:
+        links = page_links(model.page_at(0))
+        uris = [link for link in links if link.kind == "uri"]
+        assert uris
+        viewer._on_link(0, uris[0])
+        assert warned == []
+        assert any(u.startswith("https://example.com/") for u in opened)
+    finally:
+        loader.close()
+
+
+def test_file_scheme_link_rejected(qtbot, viewer_pdf: Path, monkeypatch) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    opened: list[str] = []
+    warned: list[str] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *_a, **_k: warned.append("warned"),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_a, **_k: QMessageBox.StandardButton.Open,
+    )
+    monkeypatch.setattr(
+        "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
+        lambda url: opened.append(url.toString()),
+    )
+    try:
+        link = LinkInfo(
+            "uri",
+            (0.0, 0.0, 1.0, 1.0),
+            uri="file:///C:/Windows/System32/notepad.exe",
+        )
+        viewer._on_link(0, link)
+        assert opened == []
+        assert warned == ["warned"]
+    finally:
+        loader.close()
+
+
+def test_unknown_scheme_link_rejected(
+    qtbot, viewer_pdf: Path, monkeypatch
+) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    opened: list[str] = []
+    warned: list[str] = []
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *_a, **_k: warned.append("warned"),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_a, **_k: QMessageBox.StandardButton.Open,
+    )
+    monkeypatch.setattr(
+        "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
+        lambda url: opened.append(url.toString()),
+    )
+    try:
+        link = LinkInfo(
+            "uri",
+            (0.0, 0.0, 1.0, 1.0),
+            uri="javascript:alert(1)",
+        )
+        viewer._on_link(0, link)
+        assert opened == []
+        assert warned == ["warned"]
     finally:
         loader.close()
 
