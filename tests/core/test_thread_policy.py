@@ -193,6 +193,63 @@ def test_tool_page_count_concurrent_with_thumb_holds_fitz_lock(
     )
 
 
+def test_merge_validate_and_preflight_concurrent_with_thumb_holds_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot
+) -> None:
+    """O17-c: Merge page-count + job preflight + preview open own FITZ_LOCK.
+
+    Concurrent with a thumb worker so unlocked GUI probes would race.
+    """
+    import threading
+
+    from pagedrop.core.jobs.preflight import preflight_pdf_inputs
+    from pagedrop.core.pdf_service import invalidate_doc_cache
+    from pagedrop.ui.merge_window import MergeWindow
+    from pagedrop.ui.result_actions import preview_pdf
+
+    pdf = tmp_path / "probe.pdf"
+    _write_pdf(pdf, pages=4)
+    invalidate_doc_cache()
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+
+    err: list[BaseException] = []
+
+    def run_thumbs() -> None:
+        try:
+            ThumbnailWorker(
+                [(i, PageRef(str(pdf), i)) for i in range(4)],
+                generation=1,
+                width_px=48,
+                is_cancelled=lambda _g: False,
+            ).run()
+        except BaseException as exc:  # pragma: no cover
+            err.append(exc)
+
+    def prompt(_filename: str, _incorrect: bool) -> str | None:
+        raise AssertionError("plain PDF must not prompt")
+
+    t = threading.Thread(target=run_thumbs, daemon=True)
+    t.start()
+    assert MergeWindow._page_count(str(pdf)) == 4
+    preflight_pdf_inputs([pdf], prompt=prompt)
+    assert preview_pdf(pdf) is True
+    t.join(timeout=30)
+    assert not t.is_alive()
+    assert not err
+    assert held_at_open, "expected at least one fitz.open"
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
+
+
 def test_unlocked_fitz_open_fails_lock_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -23,7 +23,7 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_merge import PdfMergeModel
-from pagedrop.core.pdf_service import FITZ_LOCK
+from pagedrop.core.pdf_service import FITZ_LOCK, page_count as pdf_page_count
 from pagedrop.core.pdf_writer import merge_pdf_files
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
@@ -457,11 +457,8 @@ class MergeWindow(JobChromeMixin, QWidget):
 
     @staticmethod
     def _page_count(path: str, *, password: str | None = None) -> int:
-        loader = PdfLoader(path, password=password)
-        try:
-            return loader.page_count
-        finally:
-            loader.close()
+        # Locked probe (O17-c); long-lived Merge preview loader stays separate.
+        return pdf_page_count(path, password=password)
 
     def _add_paths(self, paths: list[str]) -> None:
         accepted: list[str] = []
