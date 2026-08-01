@@ -40,6 +40,22 @@ AnnotationAction = Literal["remove", "flatten"]
 _BLANK_WHITE = 250
 _BLANK_MATRIX = fitz.Matrix(0.25, 0.25)
 
+# Lazy helv for watermark metrics / TextWriter — one create (O17-b).
+_HELV_FONT: fitz.Font | None = None
+
+
+def _helv_font() -> fitz.Font:
+    """Cached ``fitz.Font("helv")``; construction under ``FITZ_LOCK`` once."""
+    global _HELV_FONT
+    if _HELV_FONT is not None:
+        return _HELV_FONT
+    from pagedrop.core.pdf_service import FITZ_LOCK
+
+    with FITZ_LOCK:
+        if _HELV_FONT is None:
+            _HELV_FONT = fitz.Font("helv")
+    return _HELV_FONT
+
 
 @dataclass(frozen=True)
 class BlankPageReport:
@@ -225,7 +241,7 @@ def watermark_text_box(
 
     Shared by apply and live preview so placement/size stay aligned.
     """
-    font = fitz.Font("helv")
+    font = _helv_font()
     unit_w = max(font.text_length(text or " ", fontsize=1), 1e-6)
     if diagonal_percent is not None:
         target_w = _page_diagonal(fitz.Rect(0, 0, page_width, page_height)) * (
@@ -311,7 +327,7 @@ def add_text_watermark(
     if diagonal_percent is None and (fontsize is None or fontsize <= 0):
         raise ValueError("fontsize must be positive when diagonal_percent is unset")
 
-    font = fitz.Font("helv")
+    font = _helv_font()
     doc = open_pdf(source_pdf, password=password)
     try:
         targets = _normalize_page_indices(doc.page_count, pages)

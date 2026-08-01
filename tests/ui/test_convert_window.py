@@ -115,7 +115,7 @@ def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):
     assert window._toast.isVisible()
     assert window._toast._message.accessibleName()
     assert "Created 1 PDF file" in window._toast._message.text()
-    assert "showing first" not in window._toast._message.text()
+    assert "Showing first" not in window._toast._message.text()
 
 
 def test_separate_mode_multi_file_copy_mentions_showing_first(
@@ -149,7 +149,7 @@ def test_separate_mode_multi_file_copy_mentions_showing_first(
     toast = window._toast._message.text()
     bar = window._result_bar._label.text()
     assert "Created 2 PDF files" in status
-    assert "showing first" in status
+    assert "Showing first" in status
     assert status == toast == bar
     assert window._result_bar._path == str(out_dir / "alpha.pdf")
     assert window.editor is None

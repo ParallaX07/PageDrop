@@ -313,6 +313,55 @@ def test_watermark_overlay_move_and_angle_sync_sidebar(qtbot, tmp_path, isolated
     tools.close()
 
 
+def test_watermark_image_overlay_size_reuses_cache(qtbot, tmp_path):
+    """O17-b: image _box_pts uses canvas _image_cache; no per-call disk decode."""
+    from PyQt6.QtGui import QImage, QPixmap
+
+    from pagedrop.ui.watermark_preview import (
+        WatermarkOverlayState,
+        WatermarkPreviewCanvas,
+        _overlay_size_pts,
+    )
+
+    img = QImage(80, 40, QImage.Format.Format_RGB32)
+    img.fill(0)
+    path = tmp_path / "mark.png"
+    assert img.save(str(path))
+
+    # Passed pixmap wins over a broken path (size path must not re-decode).
+    state = WatermarkOverlayState(
+        kind="image",
+        image_path="/no/such/watermark.png",
+        size_mode="diagonal",
+        diagonal_percent=50.0,
+    )
+    cached = QPixmap(str(path))
+    w, h = _overlay_size_pts(state, 400.0, 400.0, image_pix=cached)
+    diag = (400.0**2 + 400.0**2) ** 0.5
+    assert abs(w - diag * 0.5) < 0.5
+    assert abs(h / w - 0.5) < 0.01
+
+    canvas = WatermarkPreviewCanvas()
+    qtbot.addWidget(canvas)
+    canvas._page_w = 400.0
+    canvas._page_h = 400.0
+    canvas.set_state(
+        WatermarkOverlayState(
+            kind="image",
+            image_path=str(path),
+            size_mode="diagonal",
+            diagonal_percent=40.0,
+        )
+    )
+    canvas._box_pts()  # warm cache
+    assert not canvas._image_cache.isNull()
+    assert canvas._image_cache_path == str(path)
+    warm = canvas._image_cache
+    for _ in range(20):
+        canvas._box_pts()
+    assert canvas._image_cache is warm  # same QPixmap object — no reload
+
+
 def test_watermark_run_result_bar_no_auto_open(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):

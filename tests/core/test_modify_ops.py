@@ -227,6 +227,36 @@ def test_watermark_text_box_shared_with_preview() -> None:
     assert h > fs  # visual height includes ascender+descender span
 
 
+def test_watermark_text_box_caches_helv_font(monkeypatch) -> None:
+    """O17-b: many watermark_text_box calls create ≤1 fitz.Font('helv')."""
+    ops._HELV_FONT = None
+    creates: list[object] = []
+    real_font = fitz.Font
+
+    def counting_font(*args, **kwargs):
+        creates.append(args[0] if args else kwargs.get("fontname"))
+        return real_font(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "Font", counting_font)
+    for _ in range(100):
+        ops.watermark_text_box(
+            "CONFIDENTIAL",
+            page_width=400,
+            page_height=400,
+            diagonal_percent=50.0,
+        )
+    helv_creates = [c for c in creates if c == "helv"]
+    assert len(helv_creates) <= 1, f"expected ≤1 helv Font, got {len(helv_creates)}"
+    # Geometry still matches uncached math.
+    w, _h, _fs = ops.watermark_text_box(
+        "CONFIDENTIAL",
+        page_width=400,
+        page_height=400,
+        diagonal_percent=50.0,
+    )
+    assert abs(w - (400**2 + 400**2) ** 0.5 * 0.5) < 0.5
+
+
 def test_page_numbers_present(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", pages=2)
     source_hash = _file_hash(src)

@@ -108,11 +108,23 @@ class WatermarkPageRenderWorker(QRunnable):
                 self.signals.error.emit(self._generation, str(exc))
 
 
-def _overlay_size_pts(state: WatermarkOverlayState, page_w: float, page_h: float) -> tuple[float, float]:
-    """Unrotated watermark width/height in PDF points (matches apply path)."""
+def _overlay_size_pts(
+    state: WatermarkOverlayState,
+    page_w: float,
+    page_h: float,
+    *,
+    image_pix: QPixmap | None = None,
+) -> tuple[float, float]:
+    """Unrotated watermark width/height in PDF points (matches apply path).
+
+    Pass *image_pix* from the canvas ``_image_cache`` so image mode does not
+    re-decode from disk on every hit-test / paint size query (O17-b).
+    """
     diag = math.hypot(page_w, page_h)
     if state.kind == "image":
-        pix = QPixmap(state.image_path) if state.image_path else QPixmap()
+        pix = image_pix if image_pix is not None else (
+            QPixmap(state.image_path) if state.image_path else QPixmap()
+        )
         aspect = (pix.height() / max(pix.width(), 1)) if not pix.isNull() else 1.0
         if state.size_mode == "diagonal":
             w = diag * (state.diagonal_percent / 100.0)
@@ -419,9 +431,20 @@ class WatermarkPreviewCanvas(QWidget):
         ny = (pt.y() - dr.y()) / max(dr.height(), 1e-6)
         return nx * self._page_w, ny * self._page_h
 
+    def _ensure_image_cache(self) -> QPixmap:
+        """Load watermark image once per path; shared by size queries and paint."""
+        path = self._state.image_path if self._state.kind == "image" else ""
+        if path != self._image_cache_path:
+            self._image_cache = QPixmap(path) if path else QPixmap()
+            self._image_cache_path = path
+        return self._image_cache
+
     def _box_pts(self) -> tuple[float, float, float, float]:
         """Unrotated box center + size in PDF points → (cx, cy, w, h)."""
-        w, h = _overlay_size_pts(self._state, self._page_w, self._page_h)
+        image_pix = self._ensure_image_cache() if self._state.kind == "image" else None
+        w, h = _overlay_size_pts(
+            self._state, self._page_w, self._page_h, image_pix=image_pix
+        )
         cx = self._state.center_x * self._page_w
         cy = self._state.center_y * self._page_h
         return cx, cy, max(w, 4.0), max(h, 4.0)
@@ -491,12 +514,10 @@ class WatermarkPreviewCanvas(QWidget):
         painter.setOpacity(opacity)
 
         if self._state.kind == "image" and self._state.image_path:
-            if self._image_cache_path != self._state.image_path:
-                self._image_cache = QPixmap(self._state.image_path)
-                self._image_cache_path = self._state.image_path
-            if not self._image_cache.isNull():
+            cached = self._ensure_image_cache()
+            if not cached.isNull():
                 target = QRectF(-ww / 2, -wh / 2, ww, wh)
-                painter.drawPixmap(target.toRect(), self._image_cache)
+                painter.drawPixmap(target.toRect(), cached)
         else:
             r, g, b = self._state.color
             color = QColor(int(r * 255), int(g * 255), int(b * 255))
