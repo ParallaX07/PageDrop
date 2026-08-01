@@ -149,7 +149,7 @@ Deeper setup, layout, and tests: [docs/development.md](docs/development.md).
 | [docs/README.md](docs/README.md) | Docs index |
 | [User guide](docs/user-guide.md) | Workflows, preferences, shortcuts |
 | [Tools](docs/tools.md) | Tools hub catalogue and backends |
-| [Development](docs/development.md) | Source layout, stack, tests |
+| [Development](docs/development.md) | Source layout, stack, tests, CI |
 | [Building](docs/building.md) | PyInstaller, smoke checks, Windows installer |
 | [Architecture](docs/architecture.md) | Layers, edit model, jobs, locking |
 | [Licensing](docs/licensing.md) | Binary redistribution policy |
