@@ -158,7 +158,7 @@ Deeper setup, layout, and tests: [docs/development.md](docs/development.md).
 
 ```bash
 make test          # full suite via all_tests.py
-make build-exe     # PyInstaller onefile → dist/pagedrop(.exe)
+make build-exe     # PyInstaller onedir → dist/pagedrop/pagedrop(.exe)
 make smoke-exe     # build + Unix exe smoke
 make test-release  # full pytest gate + executable smoke
 ```

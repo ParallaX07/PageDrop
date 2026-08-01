@@ -28,7 +28,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   (cd "$ROOT" && uv run pyinstaller --noconfirm pagedrop.spec)
 fi
 
-EXE="$ROOT/dist/pagedrop"
+EXE="$ROOT/dist/pagedrop/pagedrop"
 
 if [[ ! -x "$EXE" && ! -f "$EXE" ]]; then
   echo "Expected executable not found: $EXE" >&2

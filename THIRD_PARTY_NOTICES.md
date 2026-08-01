@@ -18,14 +18,12 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 
 - **Project:** [Qt](https://www.qt.io/)
 - **License:** LGPL-3.0 (community, as typically shipped in free PyQt6 wheels) / commercial Qt license
-- **Notes:** PageDrop’s published Windows build is a PyInstaller **onefile** executable
-  installed by Setup.exe. Qt shared libraries unpack to a PyInstaller runtime temporary
-  directory (`_MEIPASS`) when the app starts; they are **not** separate, replaceable
-  files under the install directory. Redistributors must still ship or offer
+- **Notes:** PageDrop’s published Windows build is a PyInstaller **onedir** bundle
+  installed by Setup.exe. Qt shared libraries ship as separate files under the
+  install directory beside `pagedrop.exe`. Redistributors must still ship or offer
   corresponding Qt source (or a written offer) and include LGPL licence texts. The
   installer places `LICENSE` and `THIRD_PARTY_NOTICES.md` next to `pagedrop.exe`.
-  If you need in-place Qt library replacement in the install tree, use commercial
-  Qt/PyQt (or another packaging layout). See `docs/licensing.md`.
+  See `docs/licensing.md`.
 
 ## PyMuPDF (fitz)
 
@@ -41,7 +39,7 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 
 - **Project:** [PyInstaller](https://pyinstaller.org/)
 - **License:** GPLv2 with a special exception for frozen applications (bootloader exception)
-- **Notes:** Used to produce the onefile executable; not a runtime dependency of the
+- **Notes:** Used to produce the onedir bundle; not a runtime dependency of the
   source tree beyond the frozen output.
 
 ## pywin32 (optional, Windows Office COM pack only)

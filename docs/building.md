@@ -1,6 +1,9 @@
 # Building and packaging
 
-PageDrop ships as a PyInstaller **onefile** executable (`pagedrop.spec`). Windows releases are distributed only via the Inno Setup installer — not as a portable zip.
+PageDrop ships as a PyInstaller **onedir** bundle (`pagedrop.spec` → `COLLECT` →
+`dist/pagedrop/`). Windows releases are distributed only via the Inno Setup
+installer — not as a portable zip. Onefile is no longer the primary Windows
+artifact.
 
 ## Build the executable
 
@@ -17,12 +20,14 @@ Equivalent:
 uv run pyinstaller --noconfirm pagedrop.spec
 ```
 
-Output:
+Output (onedir folder):
 
-- Linux/macOS: `dist/pagedrop`
-- Windows: `dist/pagedrop.exe`
+- Linux/macOS: `dist/pagedrop/pagedrop`
+- Windows: `dist/pagedrop/pagedrop.exe`
 
-You can launch that binary for local smoke testing. Published Windows builds go through the installer below.
+Qt plugins, icons, `LICENSE`, and `THIRD_PARTY_NOTICES.md` live beside the exe
+inside that folder. You can launch the binary for local smoke testing. Published
+Windows builds go through the installer below.
 
 ## Smoke the build
 
@@ -44,10 +49,10 @@ Executable smoke tests live under `tests/smoke/`. Point them at a built binary w
 
 ```bash
 # Linux/macOS
-PAGEDROP_EXE=./dist/pagedrop uv run pytest tests/smoke/ -v -k executable
+PAGEDROP_EXE=./dist/pagedrop/pagedrop uv run pytest tests/smoke/ -v -k executable
 
 # Windows PowerShell
-$env:PAGEDROP_EXE = ".\dist\pagedrop.exe"
+$env:PAGEDROP_EXE = ".\dist\pagedrop\pagedrop.exe"
 uv run pytest tests/smoke/ -v -k executable
 ```
 
@@ -59,9 +64,9 @@ Full pytest suite plus executable smoke (set `PAGEDROP_EXE` if the binary is not
 make test-release
 ```
 
-Default executable path for the Makefile is `./dist/pagedrop`. Override with `PAGEDROP_EXE=…`.
+Default executable path for the Makefile is `./dist/pagedrop/pagedrop`. Override with `PAGEDROP_EXE=…`.
 
-Before tagging a release, also verify manually on a machine without Python: install Setup.exe, open a PDF, drag a page into the file manager, and confirm the extracted files appear.
+Before tagging a release, also verify manually on a machine without Python: install Setup.exe, open a PDF, drag a page into the file manager, and confirm the extracted files appear. On a frozen onedir build, also confirm toolbar icons, Print dialog, and Show in folder.
 
 ## Windows installer (GitHub Releases)
 
@@ -74,7 +79,7 @@ uv run --with pillow python scripts/generate_icons.py   # or: make generate-icon
 uv run python scripts/check_packaging.py
 ```
 
-Output lands at `installer/Output/PageDrop-<version>-Setup.exe` (gitignored — do not commit binaries). The installer places `pagedrop.exe`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` under Program Files.
+Output lands at `installer/Output/PageDrop-<version>-Setup.exe` (gitignored — do not commit binaries). The installer copies the whole `dist/pagedrop/` onedir tree plus `LICENSE` and `THIRD_PARTY_NOTICES.md` under Program Files.
 
 Publish to GitHub Releases (replace `X.Y.Z` with the `pyproject.toml` version):
 
@@ -91,7 +96,7 @@ gh release create "vX.Y.Z" `
 Before a tagged binary or Store package:
 
 1. Run `make test-release` (or equivalent full suite + executable smoke)
-2. Run `uv run python scripts/check_packaging.py` — asserts notices exist, are referenced from `pagedrop.spec` and `windows.iss`, and state PyQt6 as GPLv3
+2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, and `QtPrintSupport`
 3. Confirm release notes / About / installer materials match the redistribution policy in [Licensing](licensing.md)
 4. Confirm Qt LGPL obligations (licence texts + source/offer) for that release
 

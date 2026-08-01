@@ -22,7 +22,7 @@ if (-not $SkipBuild) {
     }
 }
 
-$Exe = Join-Path $Root "dist\pagedrop.exe"
+$Exe = Join-Path $Root "dist\pagedrop\pagedrop.exe"
 if (-not (Test-Path $Exe)) {
     throw "Expected executable not found: $Exe"
 }

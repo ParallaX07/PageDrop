@@ -6,7 +6,7 @@
 #
 # Usage:
 #   .\scripts\build_windows_installer.ps1
-#   .\scripts\build_windows_installer.ps1 -SkipBuild   # reuse existing dist/pagedrop.exe
+#   .\scripts\build_windows_installer.ps1 -SkipBuild   # reuse existing dist/pagedrop/
 
 [CmdletBinding()]
 param(
@@ -50,12 +50,12 @@ if (-not (Test-Path -LiteralPath $Ico)) {
 }
 
 if (-not $SkipBuild) {
-    Write-Host "Building PyInstaller onefile..."
+    Write-Host "Building PyInstaller onedir..."
     & uv sync --group dev
     & uv run pyinstaller --noconfirm pagedrop.spec
 }
 
-$Exe = Join-Path $Root "dist\pagedrop.exe"
+$Exe = Join-Path $Root "dist\pagedrop\pagedrop.exe"
 if (-not (Test-Path -LiteralPath $Exe)) {
     throw "Missing $Exe - run without -SkipBuild or build with pyinstaller first."
 }
