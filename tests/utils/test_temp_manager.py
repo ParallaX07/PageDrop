@@ -8,9 +8,20 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-from pagedrop.utils.temp_manager import TempManager, _pid_alive
+from pagedrop.utils.temp_manager import (
+    TempManager,
+    _ORPHAN_NO_OWNER_GRACE_SEC,
+    _pid_alive,
+)
+
+
+def _age_past_orphan_grace(path: Path) -> None:
+    """Make *path* look older than the no-owner scrub grace window."""
+    past = time.time() - (_ORPHAN_NO_OWNER_GRACE_SEC + 5.0)
+    os.utime(path, (past, past))
 
 
 def test_pid_alive_self_and_bogus():
@@ -167,10 +178,11 @@ def test_enforce_max_size_evicts_oldest_across_drag_and_job():
 
 
 def test_init_scrubs_orphan_pagedrop_dirs():
-    """Dirs with no owner file (pre-pid leftovers) are still scrubbed."""
+    """Dirs with no owner file (pre-pid leftovers) are scrubbed once past grace."""
     orphan = Path(tempfile.mkdtemp(prefix="pagedrop_"))
     marker = orphan / "leftover.bin"
     marker.write_bytes(b"orphan")
+    _age_past_orphan_grace(orphan)
     assert orphan.exists()
 
     tm = TempManager()
@@ -180,6 +192,21 @@ def test_init_scrubs_orphan_pagedrop_dirs():
         assert (tm.get_dir() / ".pagedrop_owner").is_file()
     finally:
         tm.cleanup()
+
+
+def test_init_preserves_young_no_owner_dirs():
+    """Fresh mkdtemp (mid-claim window) must survive a parallel TempManager scrub."""
+    young = Path(tempfile.mkdtemp(prefix="pagedrop_office_stage_"))
+    (young / "staged.pdf").write_bytes(b"%PDF")
+    try:
+        tm = TempManager()
+        try:
+            assert young.exists()
+            assert (young / "staged.pdf").is_file()
+        finally:
+            tm.cleanup()
+    finally:
+        shutil.rmtree(young, ignore_errors=True)
 
 
 def test_init_scrubs_dead_owner_pid():
@@ -244,6 +271,8 @@ def test_init_scrubs_orphan_backend_temp_prefixes():
     lo = Path(tempfile.mkdtemp(prefix="pagedrop_lo_profile_"))
     (office / "leftover.bin").write_bytes(b"orphan")
     (lo / "leftover.bin").write_bytes(b"orphan")
+    _age_past_orphan_grace(office)
+    _age_past_orphan_grace(lo)
     assert office.exists() and lo.exists()
 
     tm = TempManager()

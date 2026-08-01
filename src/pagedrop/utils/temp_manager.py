@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # ponytail: 512 MiB session quota for drag_* + job_* dirs; raise only with a
@@ -12,6 +13,10 @@ from pathlib import Path
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024  # 512 MiB
 
 _OWNER_FILE = ".pagedrop_owner"
+
+# mkdtemp → owner-file window is open to parallel TempManager scrubs (xdist).
+# Skip no-owner trees younger than this; dead-owner trees scrub immediately.
+_ORPHAN_NO_OWNER_GRACE_SEC = 60.0
 
 # Live session roots in this process — multi-window must not scrub each other.
 _live_dirs: set[Path] = set()
@@ -181,13 +186,15 @@ class TempManager:
         """Remove crashed-run ``pagedrop_*`` session and backend dirs; never live ones.
 
         Skips trees owned by a still-running process (other PageDrop instances /
-        pytest-xdist workers) via ``.pagedrop_owner``.
+        pytest-xdist workers) via ``.pagedrop_owner``. Fresh dirs with no owner
+        yet (mid ``mkdtemp`` → claim) are left alone until past the grace window.
         """
         temp_root = Path(tempfile.gettempdir())
         try:
             entries = list(temp_root.iterdir())
         except OSError:
             return
+        now = time.time()
         for entry in entries:
             try:
                 if not entry.is_dir() or not entry.name.startswith("pagedrop_"):
@@ -195,8 +202,15 @@ class TempManager:
                 resolved = entry.resolve()
                 if resolved in _live_dirs or resolved in _live_backend_dirs:
                     continue
-                if _owner_process_alive(resolved):
-                    continue
+                owner_file = entry / _OWNER_FILE
+                if owner_file.exists():
+                    if _owner_process_alive(resolved):
+                        continue
+                else:
+                    # No owner: could be mid-claim on another worker — don't race it.
+                    age = now - entry.stat().st_mtime
+                    if age < _ORPHAN_NO_OWNER_GRACE_SEC:
+                        continue
                 shutil.rmtree(entry, ignore_errors=True)
             except OSError:
                 continue
