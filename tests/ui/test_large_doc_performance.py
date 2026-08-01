@@ -232,6 +232,65 @@ def test_grid_windowed_render_and_retain_bound(qtbot, large_pdf: Path) -> None:
     loader.close()
 
 
+def test_scroll_skips_eviction_within_row_stride(qtbot, large_pdf: Path) -> None:
+    """O17-i: sub-row scroll ticks must not re-walk all cards for eviction.
+
+    Measured 2026-08-01 on a 2k-page blank fixture (offscreen, 500×400):
+    steady ``_evict_thumbnails_outside_window`` ~0.5–0.8ms/tick; full
+    ``_on_scroll_changed`` ~1.6ms mean across synthetic ticks. Skip when
+    |Δy| < row_stride cuts scroll-path mean ~3× while retain still bounds
+    pixmap memory after a ≥1-row move.
+    """
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+
+    loader = PdfLoader(str(large_pdf))
+    grid.load_pdf(loader)
+    qtbot.waitUntil(lambda: len(grid._cards) == 800, timeout=60000)
+    qtbot.waitUntil(lambda: not grid._pending_card_indices, timeout=5000)
+
+    calls = {"n": 0}
+    real_evict = grid._evict_thumbnails_outside_window
+
+    def counting_evict() -> None:
+        calls["n"] += 1
+        real_evict()
+
+    grid._evict_thumbnails_outside_window = counting_evict  # type: ignore[method-assign]
+
+    bar = grid.verticalScrollBar()
+    assert bar.maximum() > 0
+    # Establish baseline eviction at the current scroll position.
+    grid._last_evict_scroll_y = None
+    grid._on_scroll_changed(bar.value())
+    assert calls["n"] == 1
+    assert grid._last_evict_scroll_y == bar.value()
+
+    row_stride = grid._row_stride_px()
+    start = bar.value()
+    # Stay within one row of the last eviction — must not re-evict.
+    micro = max(1, row_stride // 4)
+    for delta in range(micro, row_stride, micro):
+        bar.setValue(start + delta)
+    assert calls["n"] == 1
+
+    # Crossing one row from the last eviction must run eviction again.
+    bar.setValue(start + row_stride)
+    assert calls["n"] == 2
+
+    # Memory still bounded after the stride-triggered eviction.
+    cols = max(grid._grid_cols, 1)
+    with_pixmap = sum(
+        1 for card in grid._cards if card._source_pixmap is not None
+    )
+    assert with_pixmap <= cols * (RETAIN_WINDOW_ROWS + 6) + cols
+
+    loader.close()
+
+
 def test_loader_page_size_pt_uses_open_doc(large_pdf: Path, monkeypatch) -> None:
     open_calls = {"n": 0}
     real_open = fitz.open

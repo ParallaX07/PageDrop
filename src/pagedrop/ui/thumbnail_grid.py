@@ -352,6 +352,8 @@ class ThumbnailGrid(QScrollArea):
         self._busy_render_generation = -1
         self._busy_render_width = 0
         self._skeleton_pulse_active = False
+        # O17-i: skip full-card eviction until scroll moves ≥ one row.
+        self._last_evict_scroll_y: int | None = None
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
         self._last_clicked_index: int | None = None
@@ -686,11 +688,28 @@ class ThumbnailGrid(QScrollArea):
                 for index in pending_thumbs:
                     if 0 <= index < len(self._cards):
                         self._cards[index].refresh_thumbnail_display(fast=True)
-        self._evict_thumbnails_outside_window()
+        if self._scroll_evict_due():
+            self._evict_thumbnails_outside_window()
         if self._skeleton_pulse_active:
             self._sync_skeleton_pulse(visible)
         if self._visible_pages_needing_render():
             self._scroll_render_timer.start()
+
+    def _row_stride_px(self) -> int:
+        if not self._cards:
+            return 1
+        return max(self._cards[0].height() + self._layout.spacing(), 1)
+
+    def _scroll_evict_due(self) -> bool:
+        """True when vertical scroll moved ≥ one row since the last eviction.
+
+        Measured hot on 2k-page grids (~0.5–0.8ms steady O(N) walk per tick).
+        Retain already buffers several rows, so skipping sub-row ticks is safe.
+        """
+        y = self.verticalScrollBar().value()
+        if self._last_evict_scroll_y is None:
+            return True
+        return abs(y - self._last_evict_scroll_y) >= self._row_stride_px()
 
     def _render_window_indices(
         self, *, buffer_rows: int = RENDER_WINDOW_ROWS
@@ -701,8 +720,7 @@ class ThumbnailGrid(QScrollArea):
         visible = self._get_visible_page_indices(buffer_rows=buffer_rows)
         if not visible:
             cols = max(self._grid_cols, 1)
-            sample = self._cards[0]
-            row_stride = max(sample.height() + self._layout.spacing(), 1)
+            row_stride = self._row_stride_px()
             rows = max(1, self.viewport().height() // row_stride) + buffer_rows
             visible = list(range(min(len(self._cards), cols * rows)))
         # Always keep page 1 in the window so open-priority stays predictable.
@@ -727,6 +745,7 @@ class ThumbnailGrid(QScrollArea):
                 self._skeleton_count += 1
             if index < len(self._page_render_width):
                 self._page_render_width[index] = 0
+        self._last_evict_scroll_y = self.verticalScrollBar().value()
         if self._skeleton_count > 0:
             self._start_skeleton_pulse()
 
@@ -2026,6 +2045,7 @@ class ThumbnailGrid(QScrollArea):
         self._painted_selection.clear()
         self._skeleton_count = 0
         self._grid_cols = 0
+        self._last_evict_scroll_y = None
         while self._layout.count():
             item = self._layout.takeAt(0)
             if item.widget():
