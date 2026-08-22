@@ -344,14 +344,43 @@ def add_text_watermark(
                 fontsize=fontsize,
             )
             anchor = _resolve_anchor(r, position, center_x=center_x, center_y=center_y)
-            # Baseline so glyph visual center sits on *anchor* (matches preview box center).
-            baseline_y = anchor.y + (font.ascender + font.descender) / 2 * fs
-            pos = fitz.Point(anchor.x - text_w / 2, baseline_y)
-            # ponytail: negate rotate to match Qt preview (Y-down vs PDF Y-up)
-            morph = (anchor, fitz.Matrix(1, 1).prerotate(-rotate))
-            tw = fitz.TextWriter(page.rect, color=color, opacity=opacity)
-            tw.append(pos, text, fontsize=fs, font=font)
-            tw.write_text(page, morph=morph, overlay=True)
+            if abs(float(rotate)) < 0.01:
+                baseline_y = anchor.y + (font.ascender + font.descender) / 2 * fs
+                pos = fitz.Point(anchor.x - text_w / 2, baseline_y)
+                morph = (anchor, fitz.Matrix(1, 1).prerotate(rotate))
+                tw = fitz.TextWriter(page.rect, color=color, opacity=opacity)
+                tw.append(pos, text, fontsize=fs, font=font)
+                tw.write_text(page, morph=morph, overlay=True)
+            else:
+                # Rotated text is rasterized via stamp to avoid mirrored glyphs
+                # and keep preview/save orientation consistent.
+                w = max(text_w, 1.0)
+                h = max((font.ascender - font.descender) * fs, 1.0)
+                pad = 4.0
+                w_pad = w + pad * 2
+                h_pad = h + pad * 2
+                stamp = fitz.open()
+                try:
+                    spage = stamp.new_page(width=w_pad, height=h_pad)
+                    baseline_y_s = h_pad / 2 + (font.ascender + font.descender) / 2 * fs
+                    pos_s = fitz.Point((w_pad - text_w) / 2, baseline_y_s)
+                    tw_s = fitz.TextWriter(spage.rect, color=color, opacity=opacity)
+                    tw_s.append(pos_s, text, fontsize=fs, font=font)
+                    tw_s.write_text(spage, overlay=True)
+                    cx_s, cy_s = w_pad / 2, h_pad / 2
+                    rad = math.radians(float(rotate))
+                    cos_a, sin_a = math.cos(rad), math.sin(rad)
+                    mat = fitz.Matrix(
+                        cos_a, sin_a, -sin_a, cos_a,
+                        cx_s - cx_s * cos_a + cy_s * sin_a,
+                        cy_s - cx_s * sin_a - cy_s * cos_a,
+                    )
+                    pix_rot = spage.get_pixmap(matrix=mat, alpha=True)
+                    rw, rh = float(pix_rot.width), float(pix_rot.height)
+                    nrect = fitz.Rect(anchor.x - rw / 2, anchor.y - rh / 2, anchor.x + rw / 2, anchor.y + rh / 2)
+                    page.insert_image(nrect, pixmap=pix_rot, overlay=True, keep_proportion=False)
+                finally:
+                    stamp.close()
         if flatten:
             _flatten_pages(doc, targets, dpi=flatten_dpi, cancel=cancel)
         _save(doc, output_path)
@@ -424,7 +453,6 @@ def add_image_watermark(
             else:
                 w, h = r.width * float(scale), r.height * float(scale)
             anchor = _resolve_anchor(r, position, center_x=center_x, center_y=center_y)
-            # ponytail: arbitrary rotate via stamp pixmap (insert_image only does 90° steps)
             if abs(float(rotate)) < 0.01:
                 box = fitz.Rect(
                     anchor.x - w / 2,
@@ -434,13 +462,12 @@ def add_image_watermark(
                 )
                 page.insert_image(box, pixmap=wm, keep_proportion=True, overlay=True)
             else:
-                # render w×h stamp then rotate around its center with negated angle to match Qt preview
                 stamp = fitz.open()
                 try:
                     spage = stamp.new_page(width=w, height=h)
                     spage.insert_image(spage.rect, pixmap=wm, keep_proportion=True, overlay=True)
                     cx_s, cy_s = w / 2, h / 2
-                    rad = math.radians(-float(rotate))
+                    rad = math.radians(float(rotate))
                     cos_a, sin_a = math.cos(rad), math.sin(rad)
                     mat = fitz.Matrix(
                         cos_a, sin_a, -sin_a, cos_a,

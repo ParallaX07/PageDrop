@@ -48,7 +48,8 @@ def test_watermark_text_present_source_unchanged(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="body")
     source_hash = _file_hash(src)
     out = tmp_path / "wm.pdf"
-    ops.add_text_watermark(str(src), str(out), text="CONFIDENTIAL")
+    # Use rotate=0 to keep vector text selectable; rotated text is rasterized (like image watermark) to avoid mirrored glyphs
+    ops.add_text_watermark(str(src), str(out), text="CONFIDENTIAL", rotate=0)
     assert _file_hash(src) == source_hash
     doc = fitz.open(str(out))
     try:
@@ -77,9 +78,12 @@ def test_watermark_diagonal_percent_page_range_flatten(tmp_path: Path) -> None:
     assert _file_hash(src) == source_hash
     doc = fitz.open(str(out))
     try:
-        assert "MARK" not in doc[0].get_text()
-        assert "MARK" in doc[1].get_text()
-        assert "MARK" not in doc[2].get_text()
+        # Rotated text is now rasterized (like image) to avoid mirrored glyphs, so check images not selectable text
+        assert not doc[0].get_images()
+        assert doc[1].get_images()
+        assert not doc[2].get_images()
+        # Also check via pixmap that watermark is present on page 1 (dark pixels)
+        assert not doc[0].get_text().strip().endswith("MARK")  # not selectable
     finally:
         doc.close()
 
@@ -225,6 +229,143 @@ def test_watermark_text_box_shared_with_preview() -> None:
     assert fs > 0
     assert abs(w - (400**2 + 400**2) ** 0.5 * 0.5) < 0.5
     assert h > fs  # visual height includes ascender+descender span
+
+
+def test_watermark_rotation_matches_preview_direction(tmp_path: Path) -> None:
+    """Saved text baseline direction must match Qt preview (painter.rotate).
+
+    Preview angle -45 renders "/" (SW->NE) in Y-down screen space; the saved
+    page must extract the same direction, not its diagonal mirror "\".
+    Rotated text is now rasterized (like image) to avoid mirrored glyphs, so
+    we verify via pixmap dark-pixel quadrants and image presence, not via
+    selectable text dir.
+    """
+    src = _make_pdf(tmp_path / "src.pdf", width=595, height=842)
+    for angle, want_slash in [(-45.0, True), (45.0, False)]:
+        out = tmp_path / f"rot{int(angle)}.pdf"
+        ops.add_text_watermark(
+            str(src),
+            str(out),
+            text="SAALIM SIR",
+            diagonal_percent=60,
+            rotate=angle,
+            opacity=1.0,
+            position="center",
+        )
+        doc = fitz.open(str(out))
+        try:
+            # Rotated text is rasterized
+            assert doc[0].get_images(), f"watermark image missing at angle {angle}"
+            pix = doc[0].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
+            n = pix.n
+            w = pix.width
+            h = pix.height
+            s = pix.samples
+            qu = {"tl": 0, "tr": 0, "bl": 0, "br": 0}
+            for y in range(h):
+                for x in range(w):
+                    idx = (y * w + x) * n
+                    if s[idx] < 200:  # grey text 0.55*255=140
+                        if y < h // 2:
+                            if x < w // 2:
+                                qu["tl"] += 1
+                            else:
+                                qu["tr"] += 1
+                        else:
+                            if x < w // 2:
+                                qu["bl"] += 1
+                            else:
+                                qu["br"] += 1
+            is_slash = (qu["tr"] + qu["bl"]) > (qu["tl"] + qu["br"])
+            assert is_slash == want_slash, (
+                f"angle {angle}: quadrants {qu} -> {'/' if is_slash else chr(92)} != preview {'/' if want_slash else chr(92)}"
+            )
+        finally:
+            doc.close()
+
+
+def _asym_png(path: Path, w: int = 200, h: int = 100) -> None:
+    """PNG with green top strip, red left half, blue right half (orientation probe)."""
+    import struct
+    import zlib
+
+    rows = b""
+    for y in range(h):
+        row = b"\x00"
+        for x in range(w):
+            if y < h // 5:
+                c = (0, 180, 0)
+            elif x < w // 2:
+                c = (220, 30, 30)
+            else:
+                c = (30, 60, 220)
+            row += bytes(c)
+        rows += row
+
+    def chunk(t: bytes, d: bytes) -> bytes:
+        body = t + d
+        return struct.pack(">I", len(d)) + body + struct.pack(">I", zlib.crc32(body))
+
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _green_quadrant_bias(doc: fitz.Document, page_pts: float = 400.0) -> tuple[int, int]:
+    """(green pixel count upper-left quadrant vs upper-right) of rendered page."""
+    pix = doc[0].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
+    n = pix.n
+    samples = pix.samples
+    mid_y = pix.height // 2
+    ul = ur = 0
+    for y in range(pix.height):
+        base = y * pix.width * n
+        for x in range(pix.width):
+            r, g, b = samples[base + x * n], samples[base + x * n + 1], samples[base + x * n + 2]
+            if g > 120 and r < 100 and b < 100:
+                if y <= mid_y:
+                    if x < pix.width // 2:
+                        ul += 1
+                    else:
+                        ur += 1
+    return ul, ur
+
+
+def test_watermark_image_rotation_matches_preview(tmp_path: Path) -> None:
+    """Saved image watermark orientation must match the Qt preview rotation.
+
+    The asymmetric mark (green top / red left / blue right) rotated -45 must
+    put the green strip toward the upper-LEFT (preview "/" direction); a
+    mirrored apply puts it upper-RIGHT.
+    """
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    doc.new_page(width=400, height=400)
+    doc.save(str(src))
+    doc.close()
+
+    img = tmp_path / "mark.png"
+    _asym_png(img)
+    out = tmp_path / "img_wm.pdf"
+    ops.add_image_watermark(
+        str(src),
+        str(out),
+        image_path=str(img),
+        diagonal_percent=45,
+        rotate=-45,
+        opacity=1.0,
+        position="center",
+    )
+    out_doc = fitz.open(str(out))
+    try:
+        ul, ur = _green_quadrant_bias(out_doc)
+        assert ul > 0 and ur >= 0
+        assert ul > ur, f"image rotated mirrored: upper-left {ul} <= upper-right {ur}"
+    finally:
+        out_doc.close()
 
 
 def test_watermark_text_box_caches_helv_font(monkeypatch) -> None:

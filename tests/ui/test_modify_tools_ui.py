@@ -413,7 +413,8 @@ def test_watermark_run_result_bar_no_auto_open(
 
     doc = fitz.open(str(out))
     try:
-        assert "CONFIDENTIAL" in doc[0].get_text()
+        # Rotated text watermark is rasterized to match preview orientation
+        assert doc[0].get_images()
         assert "body" in doc[0].get_text()
     finally:
         doc.close()

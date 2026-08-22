@@ -50,7 +50,8 @@ def test_smoke_watermark_and_page_numbers(tmp_path: Path) -> None:
         assert doc.page_count == 2
         t0 = doc[0].get_text()
         t1 = doc[1].get_text()
-        assert "DRAFT" in t0
+        # DRAFT is rasterized for rotated watermark (avoids mirrored glyphs)
+        assert doc[0].get_images()
         assert "1/2" in t0
         assert "2/2" in t1
         assert "phase28 body" in t0
