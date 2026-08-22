@@ -10,6 +10,7 @@ heuristic; never silent mass-delete without UI confirm.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence
@@ -346,7 +347,8 @@ def add_text_watermark(
             # Baseline so glyph visual center sits on *anchor* (matches preview box center).
             baseline_y = anchor.y + (font.ascender + font.descender) / 2 * fs
             pos = fitz.Point(anchor.x - text_w / 2, baseline_y)
-            morph = (anchor, fitz.Matrix(1, 1).prerotate(rotate))
+            # ponytail: negate rotate to match Qt preview (Y-down vs PDF Y-up)
+            morph = (anchor, fitz.Matrix(1, 1).prerotate(-rotate))
             tw = fitz.TextWriter(page.rect, color=color, opacity=opacity)
             tw.append(pos, text, fontsize=fs, font=font)
             tw.write_text(page, morph=morph, overlay=True)
@@ -422,18 +424,35 @@ def add_image_watermark(
             else:
                 w, h = r.width * float(scale), r.height * float(scale)
             anchor = _resolve_anchor(r, position, center_x=center_x, center_y=center_y)
-            box = fitz.Rect(
-                anchor.x - w / 2,
-                anchor.y - h / 2,
-                anchor.x + w / 2,
-                anchor.y + h / 2,
-            )
-            page.insert_image(
-                box,
-                pixmap=wm,
-                keep_proportion=True,
-                rotate=int(round(rotate)) % 360,
-            )
+            # ponytail: arbitrary rotate via stamp pixmap (insert_image only does 90° steps)
+            if abs(float(rotate)) < 0.01:
+                box = fitz.Rect(
+                    anchor.x - w / 2,
+                    anchor.y - h / 2,
+                    anchor.x + w / 2,
+                    anchor.y + h / 2,
+                )
+                page.insert_image(box, pixmap=wm, keep_proportion=True, overlay=True)
+            else:
+                # render w×h stamp then rotate around its center with negated angle to match Qt preview
+                stamp = fitz.open()
+                try:
+                    spage = stamp.new_page(width=w, height=h)
+                    spage.insert_image(spage.rect, pixmap=wm, keep_proportion=True, overlay=True)
+                    cx_s, cy_s = w / 2, h / 2
+                    rad = math.radians(-float(rotate))
+                    cos_a, sin_a = math.cos(rad), math.sin(rad)
+                    mat = fitz.Matrix(
+                        cos_a, sin_a, -sin_a, cos_a,
+                        cx_s - cx_s * cos_a - cy_s * (-sin_a),
+                        cy_s - cx_s * sin_a - cy_s * cos_a,
+                    )
+                    pix_rot = spage.get_pixmap(matrix=mat, alpha=True)
+                    rw, rh = float(pix_rot.width), float(pix_rot.height)
+                    nrect = fitz.Rect(anchor.x - rw / 2, anchor.y - rh / 2, anchor.x + rw / 2, anchor.y + rh / 2)
+                    page.insert_image(nrect, pixmap=pix_rot, overlay=True, keep_proportion=False)
+                finally:
+                    stamp.close()
         if flatten:
             _flatten_pages(doc, targets, dpi=flatten_dpi, cancel=cancel)
         _save(doc, output_path)
