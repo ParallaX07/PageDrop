@@ -646,13 +646,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_1}px;
     }}
 
-    QLabel#ZoomCaption {{
-        color: {text_muted};
-        font-size: 11px;
-        font-weight: 600;
-        padding: 0 {SPACE_1}px 0 0;
-    }}
-
     QPushButton#ZoomButton {{
         background-color: transparent;
         color: {text_primary};

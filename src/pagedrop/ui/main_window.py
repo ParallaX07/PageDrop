@@ -952,7 +952,6 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
-        self._zoom_controls.set_rendering(False)
         self._update_preview_mode_ui()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -1000,7 +999,6 @@ class MainWindow(QMainWindow):
         self._zoom_controls.set_value(
             tab.zoom_level if tab is not None else thumbnail_zoom()
         )
-        self._zoom_controls.set_rendering(False)
         self._progress_bar.hide()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -1484,7 +1482,13 @@ class MainWindow(QMainWindow):
     def _on_zoom_render_pending(self, pending: bool) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
-        self._zoom_controls.set_rendering(pending)
+        if pending:
+            self._transient_status("Rendering thumbnails…")
+            return
+        if self.statusBar().currentMessage() == "Rendering thumbnails…":
+            tab = self._active_tab()
+            if tab is not None:
+                self._transient_status(f"Thumbnail size: {tab.zoom_level} px")
 
     def _on_light_theme_toggled(self, enabled: bool) -> None:
         set_light_theme(enabled)

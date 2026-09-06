@@ -43,10 +43,6 @@ class ZoomControls(QWidget):
         layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
         layout.setSpacing(SPACE_1)
 
-        self._caption = QLabel("Rendering…")
-        self._caption.setObjectName("ZoomCaption")
-        self._caption.setVisible(False)
-
         self._zoom_out = QPushButton()
         self._zoom_out.setObjectName("ZoomButton")
         self._zoom_out.setToolTip("Zoom out (−)")
@@ -77,7 +73,6 @@ class ZoomControls(QWidget):
         )
         self._value_label.setFixedWidth(44)
 
-        layout.addWidget(self._caption)
         layout.addWidget(self._zoom_out)
         layout.addWidget(self._slider)
         layout.addWidget(self._zoom_in)
@@ -93,10 +88,6 @@ class ZoomControls(QWidget):
 
         self.set_value(initial)
         self.setEnabled(False)
-
-    def set_rendering(self, pending: bool) -> None:
-        """Light affordance while zoom debounce / re-render is pending."""
-        self._caption.setVisible(pending)
 
     def eventFilter(self, obj, event) -> bool:
         if (
