@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QFileDialog, QToolBar
 
 from pagedrop.ui.main_window import MainWindow
@@ -26,6 +28,53 @@ def _find_action_by_text(actions, *candidates: str):
 
 def test_window_title_default(main_window):
     assert main_window.windowTitle() == "PageDrop"
+
+
+def test_custom_title_controls_are_in_the_menu_bar(main_window, qtbot):
+    assert main_window.windowFlags() & Qt.WindowType.FramelessWindowHint
+    title = main_window.findChild(type(main_window._title_label), "WindowTitle")
+    assert title.text() == "PageDrop"
+    maximize = main_window.findChild(type(main_window._maximize_button), "WindowMaximize")
+    maximize.click()
+    qtbot.waitUntil(main_window.isMaximized)
+    assert maximize.toolTip() == "Restore window"
+    maximize.click()
+    qtbot.waitUntil(lambda: not main_window.isMaximized())
+
+
+def test_custom_title_drag_falls_back_when_system_move_is_unavailable(main_window):
+    main_window.move(100, 100)
+    title = main_window._title_label
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(10, 10),
+        QPointF(110, 110),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(110, 120),
+        QPointF(210, 220),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(110, 120),
+        QPointF(210, 220),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    assert main_window.eventFilter(title, press)
+    assert main_window.eventFilter(title, move)
+    assert main_window.pos().x() == 200
+    assert main_window.pos().y() == 210
+    assert main_window.eventFilter(title, release)
 
 
 def test_menu_actions_exist(main_window):

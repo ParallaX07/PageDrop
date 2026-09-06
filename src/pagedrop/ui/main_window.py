@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QTimer
-from PyQt6.QtGui import QAction, QActionGroup, QCloseEvent, QKeyEvent, QKeySequence
+from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QKeyEvent,
+    QKeySequence,
+    QMouseEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -124,6 +131,7 @@ class MainWindow(QMainWindow):
         self._selection_coalesce_timer.timeout.connect(self._flush_selection_toolbar)
 
         self.setWindowTitle(self.APP_TITLE)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(720, 480)
         self.resize(960, 680)
 
@@ -483,6 +491,33 @@ class MainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
         help_menu.addAction(a["tips"])
+
+        window_controls = QWidget(menubar)
+        window_controls.setObjectName("WindowControls")
+        layout = QHBoxLayout(window_controls)
+        layout.setContentsMargins(8, 0, 4, 0)
+        layout.setSpacing(2)
+        self._title_label = QLabel(self.windowTitle(), window_controls)
+        self._title_label.setObjectName("WindowTitle")
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self._title_label)
+        for text, name, slot, label in (
+            ("−", "WindowMinimize", self.showMinimized, "Minimize window"),
+            ("□", "WindowMaximize", self._toggle_maximized, "Maximize window"),
+            ("×", "WindowClose", self.close, "Close window"),
+        ):
+            button = QToolButton(window_controls)
+            button.setObjectName(name)
+            button.setText(text)
+            button.setToolTip(label)
+            button.setAccessibleName(label)
+            button.clicked.connect(slot)
+            layout.addWidget(button)
+            if name == "WindowMaximize":
+                self._maximize_button = button
+        menubar.setCornerWidget(window_controls, Qt.Corner.TopRightCorner)
+        self._menu_bar = menubar
+        self._title_drag_widgets = (window_controls, self._title_label)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
@@ -1587,6 +1622,30 @@ class MainWindow(QMainWindow):
         open_preferences(self)
 
     def eventFilter(self, obj, event) -> bool:
+        is_title_area = obj in getattr(self, "_title_drag_widgets", ())
+        if obj is getattr(self, "_menu_bar", None) and isinstance(event, QMouseEvent):
+            is_title_area = self._menu_bar.actionAt(event.position().toPoint()) is None
+        if is_title_area and isinstance(event, QMouseEvent):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() != Qt.MouseButton.LeftButton:
+                    return super().eventFilter(obj, event)
+                system_move = (
+                    self.windowHandle() is not None
+                    and self.windowHandle().startSystemMove()
+                )
+                if not system_move:
+                    self._window_drag_offset = (
+                        event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                    )
+                return True
+            if event.type() == QEvent.Type.MouseMove:
+                offset = getattr(self, "_window_drag_offset", None)
+                if offset is not None:
+                    self.move(event.globalPosition().toPoint() - offset)
+                    return True
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self._window_drag_offset = None
+                return True
         if (
             event.type() != QEvent.Type.KeyPress
             or not isinstance(event, QKeyEvent)
@@ -1614,6 +1673,7 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         if tab is None or tab.edit_model is None or tab.pdf_path is None:
             self.setWindowTitle(self.APP_TITLE)
+            self._sync_custom_title()
             return
         # tab.tab_title already includes dirty * and save-path / custom names.
         count = tab.edit_model.logical_count()
@@ -1621,6 +1681,28 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             f"{self.APP_TITLE}: {tab.tab_title} ({count} {noun})"
         )
+        self._sync_custom_title()
+
+    def _sync_custom_title(self) -> None:
+        title_label = getattr(self, "_title_label", None)
+        if title_label is not None:
+            title_label.setText(self.windowTitle())
+
+    def _toggle_maximized(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def changeEvent(self, event: QEvent) -> None:
+        if event.type() == QEvent.Type.WindowStateChange:
+            button = getattr(self, "_maximize_button", None)
+            if button is not None:
+                maximized = self.isMaximized()
+                button.setText("❐" if maximized else "□")
+                button.setToolTip("Restore window" if maximized else "Maximize window")
+                button.setAccessibleName(button.toolTip())
+        super().changeEvent(event)
 
     def _extract_selected_to_folder(self) -> None:
         tab = self._active_tab()

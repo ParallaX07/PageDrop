@@ -212,6 +212,40 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {ACCENT};
     }}
 
+    QWidget#WindowControls {{
+        background: transparent;
+    }}
+
+    QLabel#WindowTitle {{
+        color: {text_secondary};
+        font-weight: 600;
+        padding: 0 8px;
+    }}
+
+    QToolButton#WindowMinimize,
+    QToolButton#WindowMaximize,
+    QToolButton#WindowClose {{
+        min-width: 30px;
+        max-width: 30px;
+        min-height: 26px;
+        max-height: 26px;
+        padding: 0;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: {text_primary};
+    }}
+
+    QToolButton#WindowMinimize:hover,
+    QToolButton#WindowMaximize:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QToolButton#WindowClose:hover {{
+        background-color: {CLOSE_TAB_HOVER_BG if not light else CLOSE_TAB_HOVER_BG_LIGHT};
+        color: {CLOSE_TAB if not light else CLOSE_TAB_LIGHT};
+    }}
+
     QMenu {{
         background-color: {bg_surface};
         color: {text_primary};
