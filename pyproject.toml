@@ -3,6 +3,7 @@ name = "pagedrop"
 version = "0.5.1"
 description = "Grab PDF pages and drop them where they belong — folders, merges, multi-tab edits"
 requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
 dependencies = [
     "PyQt6>=6.6.0",
     "PyMuPDF>=1.24.0",

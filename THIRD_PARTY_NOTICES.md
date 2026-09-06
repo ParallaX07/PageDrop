@@ -1,9 +1,10 @@
 # Third-party notices
 
 PageDrop bundles or depends on the following third-party software.
-The repository `LICENSE` (MIT) covers PageDrop’s own source only — it does **not**
-by itself authorize redistribution of a frozen binary that includes the free PyQt6
-and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
+The repository `LICENSE` (AGPL-3.0-or-later) covers PageDrop’s own source. Every
+published binary that includes the free PyQt6 and PyMuPDF wheels must have matching
+corresponding source available from its release page. See `docs/licensing.md` for
+the distribution policy.
 
 ## PyQt6
 
@@ -29,11 +30,10 @@ and PyMuPDF wheels. See `docs/licensing.md` for the distribution policy.
 
 - **Project:** [Artifex Software — PyMuPDF](https://pymupdf.readthedocs.io/)
 - **License:** Dual — AGPL-3.0 by default, or a commercial license from Artifex
-- **Notes:** The default PyPI package is AGPL. Distributing PageDrop binaries
-  (including Microsoft Store packages) under a proprietary or non-AGPL license
-  requires a commercial PyMuPDF license from Artifex, or releasing the Combined Work
-  under AGPL-compatible terms. Confirm coverage before Store submission or the next
-  tagged binary.
+- **Notes:** The default PyPI package is AGPL. Distributing PageDrop binaries under
+  a proprietary or non-AGPL license requires a commercial PyMuPDF license from
+  Artifex. Free-wheel builds are distributed under AGPL-3.0-or-later with matching
+  corresponding source for each release.
 
 ## PyInstaller (build-time only)
 
@@ -84,4 +84,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-

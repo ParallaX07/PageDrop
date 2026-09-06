@@ -93,7 +93,7 @@ gh release create "vX.Y.Z" `
 
 ## Packaging checklist
 
-Before a tagged binary or Store package:
+Before a tagged binary package:
 
 1. Run `make test-release` (or equivalent full suite + executable smoke)
 2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, and `QtPrintSupport`

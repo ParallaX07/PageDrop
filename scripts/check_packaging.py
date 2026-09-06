@@ -16,6 +16,7 @@ from read_version import read_version  # noqa: E402
 
 NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 SPEC = ROOT / "pagedrop.spec"
+LICENSE = ROOT / "LICENSE"
 
 
 def _assert_notices_content(text: str) -> None:
@@ -111,6 +112,10 @@ def main() -> None:
     )
 
     assert NOTICES.is_file() and NOTICES.stat().st_size > 0, f"missing {NOTICES}"
+    license_text = LICENSE.read_text(encoding="utf-8")
+    assert "GNU AFFERO GENERAL PUBLIC LICENSE" in license_text, (
+        "PageDrop source must be licensed under AGPL-3.0-or-later"
+    )
     notices_text = NOTICES.read_text(encoding="utf-8")
     _assert_notices_content(notices_text)
 

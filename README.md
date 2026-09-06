@@ -36,10 +36,6 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-<a href="https://get.microsoft.com/installer/download/9pbs1qfp36c0?referrer=appbadge" target="_self">
-  <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft Store" width="200">
-</a>
-
 > Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
 
 **Windows (GitHub Releases)**, no Python required:
@@ -167,7 +163,7 @@ Windows installer and packaging checklist: [docs/building.md](docs/building.md).
 
 ## License
 
-PageDrop source is MIT — see [`LICENSE`](LICENSE). Redistributing frozen binaries that include free PyQt6 and PyMuPDF wheels is a Combined Work under stricter terms; see [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+PageDrop is licensed under the GNU Affero General Public License v3.0 or later — see [`LICENSE`](LICENSE). Source and build instructions for every published binary are available in the corresponding source release. See [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Status
 
