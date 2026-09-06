@@ -114,6 +114,26 @@ def test_convert_thumbnail_ready_uses_path_map(qtbot, tmp_path):
     assert grid._cards_by_path == {}
 
 
+def test_convert_zoom_reflow_keeps_card_parents(qtbot, tmp_path):
+    paths = []
+    for index in range(4):
+        path = tmp_path / f"image-{index}.png"
+        _write_test_image(path, 100, 100)
+        paths.append(str(path))
+
+    grid = ConvertFileGrid()
+    qtbot.addWidget(grid)
+    grid.resize(900, 650)
+    grid.set_files(paths, {path: (100, 100) for path in paths})
+    cards = list(grid._cards)
+    container = grid._container
+
+    for width in (96, 280, 128, 320, 160):
+        grid.set_thumbnail_zoom(width)
+        assert grid._cards == cards
+        assert all(card.parentWidget() is container for card in cards)
+
+
 def test_merge_thumbnail_failure_emits_rendering_error(qtbot, corrupt_pdf):
     grid = MergeFileGrid()
     qtbot.addWidget(grid)

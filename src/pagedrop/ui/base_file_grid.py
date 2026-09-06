@@ -470,10 +470,7 @@ class BaseFileGrid(QScrollArea):
 
         self._grid_cols = cols
         while self._layout.count():
-            item = self._layout.takeAt(0)
-            widget = item.widget()
-            if widget and widget is not self._empty_state:
-                widget.setParent(None)
+            self._layout.takeAt(0)
 
         for index, card in enumerate(self._cards):
             self._layout.addWidget(card, index // cols, index % cols)
