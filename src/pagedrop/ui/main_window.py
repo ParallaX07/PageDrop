@@ -131,7 +131,10 @@ class MainWindow(QMainWindow):
         self._selection_coalesce_timer.timeout.connect(self._flush_selection_toolbar)
 
         self.setWindowTitle(self.APP_TITLE)
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        # Offscreen Qt has no window manager and is prone to teardown crashes
+        # for frameless windows; desktop Windows/Linux use custom chrome.
+        if QApplication.platformName() != "offscreen":
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(720, 480)
         self.resize(960, 680)
 
@@ -1518,6 +1521,12 @@ class MainWindow(QMainWindow):
         if not self._grid_belongs_to_active_tab(self.sender()):
             return
         if pending:
+            # zoom_changed may just have surfaced the one-shot large-document
+            # guidance; don't immediately replace it with render progress.
+            if self.statusBar().currentMessage().startswith(
+                "Large document at high zoom"
+            ):
+                return
             self._transient_status("Rendering thumbnails…")
             return
         if self.statusBar().currentMessage() == "Rendering thumbnails…":

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QFileDialog, QToolBar
+from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar
 
 from pagedrop.ui.main_window import MainWindow
 
@@ -31,7 +31,10 @@ def test_window_title_default(main_window):
 
 
 def test_custom_title_controls_are_in_the_menu_bar(main_window, qtbot):
-    assert main_window.windowFlags() & Qt.WindowType.FramelessWindowHint
+    if QApplication.platformName() == "offscreen":
+        assert not main_window.windowFlags() & Qt.WindowType.FramelessWindowHint
+    else:
+        assert main_window.windowFlags() & Qt.WindowType.FramelessWindowHint
     title = main_window.findChild(type(main_window._title_label), "WindowTitle")
     assert title.text() == "PageDrop"
     maximize = main_window.findChild(type(main_window._maximize_button), "WindowMaximize")
