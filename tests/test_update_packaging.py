@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_packaging
+import publish_windows_release
 from publish_windows_release import GhReleaseOperations, Release, ReleaseError, publish_tested_pair
 
 
@@ -138,6 +139,19 @@ def test_github_draft_release_is_found_when_tag_endpoint_returns_not_found(monke
     monkeypatch.setattr(operations, "_run", run)
 
     assert operations.get("v1.2.3") == Release("v1.2.3", True, frozenset())
+
+
+def test_gh_release_operations_decodes_github_output_as_utf8(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def run(*args, **kwargs):
+        captured.update(kwargs)
+        return type("Result", (), {"stdout": "[]"})()
+
+    monkeypatch.setattr(publish_windows_release.subprocess, "run", run)
+
+    assert GhReleaseOperations("ParallaX07/PageDrop")._run("api", "releases") == "[]"
+    assert captured["encoding"] == "utf-8"
 
 
 def test_published_release_and_failed_upload_never_reach_publication(tmp_path):

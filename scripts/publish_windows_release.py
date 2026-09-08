@@ -51,7 +51,11 @@ class GhReleaseOperations:
     def _run(self, *args: str) -> str:
         try:
             result = subprocess.run(
-                ["gh", *args], text=True, capture_output=True, check=True
+                ["gh", *args],
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=True,
             )
         except subprocess.CalledProcessError as exc:
             raise ReleaseError(exc.stderr.strip() or "gh command failed") from exc

@@ -22,7 +22,6 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: "3.11"
-          architecture: x64
 
       - name: Install dependencies
         run: uv sync --locked --group dev
@@ -94,7 +93,6 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: "3.11"
-          architecture: x64
 
       - name: Download tested release artifacts
         uses: actions/download-artifact@v4
