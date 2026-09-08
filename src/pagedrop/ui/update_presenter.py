@@ -27,9 +27,10 @@ _RELEASE_PAGE = QUrl(f"https://github.com/{REPOSITORY}/releases")
 class UpdateDialog(QDialog):
     """A small stateful dialog; its owner keeps exactly one instance alive."""
 
-    def __init__(self, parent, coordinator: UpdateCoordinator) -> None:
+    def __init__(self, parent, coordinator: UpdateCoordinator, manager) -> None:
         super().__init__(parent)
         self._coordinator = coordinator
+        self._manager = manager
         self.setWindowTitle("PageDrop updates")
         self.setObjectName("UpdateDialog")
         self.setMinimumWidth(460)
@@ -112,7 +113,7 @@ class UpdateDialog(QDialog):
 
     def _install_later_phase(self) -> None:
         if self._manager.prepare_for_installation(self):
-            self.show_message("PageDrop is ready to close for installation.")
+            self._manager.handoff_update_installer(self)
 
 
 class UpdatePresenter(QObject):
@@ -239,7 +240,7 @@ class UpdatePresenter(QObject):
 
     def _ensure_dialog(self, parent) -> UpdateDialog:
         if self._dialog is None:
-            self._dialog = UpdateDialog(parent, self._coordinator)
+            self._dialog = UpdateDialog(parent, self._coordinator, self._manager)
             self._dialog.finished.connect(lambda _: setattr(self, "_dialog", None))
         elif self._dialog.parentWidget() is not parent and parent is not None:
             self._dialog.setParent(parent)

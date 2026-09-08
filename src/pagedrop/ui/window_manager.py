@@ -24,13 +24,15 @@ class WindowManager(QObject):
 
     last_window_closing = pyqtSignal()
 
-    def __init__(self, app: QApplication) -> None:
+    def __init__(self, app: QApplication, *, update_mutex=None, update_mutex_error: str = "") -> None:
         super().__init__()
         self._app = app
         self._windows: set[MainWindow] = set()
         self._primary: MainWindow | None = None
         self._preparing_installation = False
         self._prepared_shutdown = False
+        self._update_mutex = update_mutex
+        self._update_mutex_error = update_mutex_error
         self.update_coordinator = UpdateCoordinator(app)
         self.update_presenter = UpdatePresenter(self)
 
@@ -108,6 +110,21 @@ class WindowManager(QObject):
             self.update_coordinator.handoff_failed()
         else:
             self.update_coordinator.preparation_failed()
+
+    def handoff_update_installer(self, parent: QWidget | None = None) -> bool:
+        """Launch only after U5 preparation, then perform the one-shot close."""
+        if self._update_mutex_error or (self.update_coordinator.supported and self._update_mutex is None):
+            self._preparation_failed(parent, self._update_mutex_error or "Installer coordination is unavailable")
+            return False
+        if not self.update_coordinator.begin_handoff() or not self.update_coordinator.launch_ready_installer():
+            self.cancel_installation_preparation()
+            if self.update_coordinator.handoff_error:
+                QMessageBox.information(parent or self._primary, "PageDrop updates", self.update_coordinator.handoff_error)
+            return False
+        self.allow_prepared_shutdown()
+        for window in tuple(self._windows):
+            window.close()
+        return True
 
     def _dirty_tabs(self):
         windows = [self._primary] if self._primary in self._windows else []

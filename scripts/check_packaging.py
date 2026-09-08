@@ -19,6 +19,7 @@ NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 SPEC = ROOT / "pagedrop.spec"
 LICENSE = ROOT / "LICENSE"
 APP_ID = "{{A7C3E91F-2B4D-4F8A-9E1C-6D5B0A8F3C21}}"
+APP_MUTEX = r"Global\PageDropInstallerMutex"
 
 
 def _assert_notices_content(text: str) -> None:
@@ -131,6 +132,10 @@ def main() -> None:
     assert "CurrentVersion\\Run" not in iss_text  # no autostart
     assert "AppVersion" in iss_text
     assert f"AppId={APP_ID}" in iss_text, "windows.iss AppId must stay fixed"
+    assert f"AppMutex={APP_MUTEX}" in iss_text, "windows.iss must use the updater mutex"
+    assert "CloseApplications=no" in iss_text and "RestartApplications=no" in iss_text, (
+        "windows.iss must not close or restart PageDrop automatically"
+    )
     assert "OutputBaseFilename=PageDrop-{#AppVersion}-Setup" in iss_text, (
         "windows.iss must use the exact release installer name"
     )

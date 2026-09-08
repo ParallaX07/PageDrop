@@ -36,6 +36,7 @@ def main() -> int:
     from pagedrop.assets import app_icon
     from pagedrop.ui.accessibility import install_accessibility
     from pagedrop.ui.window_manager import WindowManager
+    from pagedrop.utils.update_windows import UpdateMutex, WindowsUpdateError
 
     app = QApplication(sys.argv)
     app.setOrganizationName(_ORG_NAME)
@@ -49,7 +50,14 @@ def main() -> int:
     apply_optional_settings_to_capabilities()
     icon = app_icon()
     app.setWindowIcon(icon)
-    manager = WindowManager(app)
+    mutex = None
+    mutex_error = ""
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        try:
+            mutex = UpdateMutex.acquire()
+        except WindowsUpdateError as exc:
+            mutex_error = str(exc)
+    manager = WindowManager(app, update_mutex=mutex, update_mutex_error=mutex_error)
     win = manager.open_new_window()
     win.restore_saved_geometry()
     win.setWindowIcon(icon)
@@ -60,6 +68,8 @@ def main() -> int:
     for widget in app.topLevelWidgets():
         widget.deleteLater()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    if mutex is not None:
+        mutex.close()
     return exit_code
 
 

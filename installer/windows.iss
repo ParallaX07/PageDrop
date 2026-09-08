@@ -22,6 +22,7 @@
 
 [Setup]
 AppId={{A7C3E91F-2B4D-4F8A-9E1C-6D5B0A8F3C21}}
+AppMutex=Global\PageDropInstallerMutex
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
@@ -33,6 +34,8 @@ OutputBaseFilename=PageDrop-{#AppVersion}-Setup
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin
+CloseApplications=no
+RestartApplications=no
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}

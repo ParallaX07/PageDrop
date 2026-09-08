@@ -16,11 +16,14 @@ from pagedrop.ui import settings
 from pagedrop.ui.update_storage import UpdateStorage
 from pagedrop.utils.update_checker import (
     RateLimitedError,
+    ReleaseDataError,
     ReleaseInfo,
     ReleaseNotFoundError,
     check_for_update,
     download_installer,
+    parse_version,
 )
+from pagedrop.utils.update_windows import WindowsUpdateError, launch_installer
 
 _STARTUP_DELAY_MS = 5_000
 _SUCCESS_INTERVAL = timedelta(hours=24)
@@ -118,6 +121,7 @@ class UpdateCoordinator(QObject):
         monotonic: Callable[[], float] = time.monotonic,
         supported: bool | None = None,
         storage: UpdateStorage | None = None,
+        launch=None,
     ) -> None:
         super().__init__(app)
         self._app = app
@@ -129,6 +133,7 @@ class UpdateCoordinator(QObject):
         self._monotonic = monotonic
         self._supported = sys.platform == "win32" if supported is None else supported
         self.storage = storage or (UpdateStorage() if self._supported else None)
+        self._launch = launch or launch_installer
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._pool.setObjectName("PageDropUpdatePool")
@@ -143,6 +148,8 @@ class UpdateCoordinator(QObject):
         self._next_due_monotonic: float | None = None
         self._server_retry_deadline: datetime | None = None
         self._last_error = ""
+        self._handoff_error = ""
+        self._clear_completed_pending_target()
         if self._supported:
             self.reschedule()
 
@@ -162,6 +169,10 @@ class UpdateCoordinator(QObject):
     def last_error(self) -> str:
         """The current sanitized background failure, cleared by success."""
         return self._last_error
+
+    @property
+    def handoff_error(self) -> str:
+        return self._handoff_error
 
     def set_automatic_enabled(self, enabled: bool) -> None:
         settings.set_automatic_update_checks_enabled(enabled)
@@ -231,6 +242,31 @@ class UpdateCoordinator(QObject):
         if self._state is not UpdateState.HANDING_OFF:
             return False
         self._set_state(UpdateState.READY)
+        return True
+
+    def launch_ready_installer(self) -> bool:
+        """Persist an attempted target then ask Windows to elevate the verified file."""
+        if self._state is not UpdateState.HANDING_OFF or self._release is None or self.storage is None:
+            return False
+        installer = self.storage.reusable_installer(self._release)
+        if installer is None:
+            self._handoff_error = "The verified update installer is no longer available. Download it again."
+            self.handoff_failed()
+            return False
+        try:
+            settings.set_pending_update_target_version(self._release.version)
+            stored = settings._settings()
+            stored.sync()
+            if stored.status() != stored.Status.NoError:
+                raise WindowsUpdateError("Could not record the pending update")
+            self._launch(installer)
+        except (OSError, WindowsUpdateError) as exc:
+            settings.set_pending_update_target_version(None)
+            settings._settings().sync()
+            self._handoff_error = str(exc)
+            self.handoff_failed()
+            return False
+        self._handoff_error = ""
         return True
 
     def request_check(self, *, manual: bool = False) -> bool:
@@ -368,3 +404,15 @@ class UpdateCoordinator(QObject):
         if state != self._state:
             self._state = state
             self.state_changed.emit(state.value)
+
+    def _clear_completed_pending_target(self) -> None:
+        target = settings.pending_update_target_version()
+        if not target:
+            return
+        try:
+            if parse_version(self._app.applicationVersion()) >= parse_version(target):
+                settings.set_pending_update_target_version(None)
+                settings._settings().sync()
+        except ReleaseDataError:
+            # Keep an invalid target: it must never be mistaken for a completed update.
+            return
