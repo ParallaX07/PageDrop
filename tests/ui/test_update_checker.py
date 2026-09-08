@@ -17,7 +17,7 @@ from pagedrop.utils.update_checker import ReleaseInfo
 def _release(payload: bytes = b"installer") -> ReleaseInfo:
     return ReleaseInfo(
         "1.2.3", "v1.2.3", "PageDrop-1.2.3-Setup.exe", "https://example.test/installer",
-        "https://example.test/checksum", len(payload), "", hashlib.sha256(payload).hexdigest(),
+        len(payload), "", hashlib.sha256(payload).hexdigest(),
     )
 
 
@@ -185,3 +185,31 @@ def test_explicit_download_reaches_ready_and_reuses_verified_cache(qtbot, qapp, 
     assert coordinator.state is UpdateState.READY
     assert calls == ["1.2.3"]
     coordinator.stop()
+
+
+def test_first_failure_schedules_retry_but_manual_can_retry(qtbot, qapp, isolated_settings):
+    from pagedrop.utils.update_checker import UpdateNetworkError
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    coordinator = UpdateCoordinator(qapp, clock=lambda: now, check=lambda *_: None, supported=True)
+    coordinator._check_finished(None, UpdateNetworkError("secret URL"))
+    assert coordinator._due_at(now) == now + timedelta(hours=1)
+    assert not coordinator.request_check()
+    assert "secret" not in coordinator.last_error
+    with qtbot.waitSignal(coordinator.check_succeeded):
+        assert coordinator.request_check(manual=True)
+    assert coordinator.last_error == ""
+    assert settings.update_retry_after_utc() is None
+    coordinator.stop()
+
+
+def test_throttle_without_deadline_survives_restart(qapp, isolated_settings):
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    coordinator = UpdateCoordinator(qapp, clock=lambda: now, supported=True)
+    coordinator._check_finished(None, RateLimitedError(None))
+    deadline = now + timedelta(minutes=1)
+    assert settings.server_retry_after_utc() == deadline
+    assert deadline.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z") in coordinator.last_error
+    restarted = UpdateCoordinator(qapp, clock=lambda: now, supported=True)
+    assert not restarted.request_check(manual=True)
+    coordinator.stop()
+    restarted.stop()

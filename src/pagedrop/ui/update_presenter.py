@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from PyQt6.QtCore import QEvent, QObject, QTimer, QUrl
+from PyQt6.QtCore import QEvent, QObject, QTimer, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
@@ -38,6 +38,7 @@ class UpdateDialog(QDialog):
         self.message = QLabel()
         self.message.setObjectName("UpdateMessage")
         self.message.setWordWrap(True)
+        self.message.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.message)
         self.notes = QPlainTextEdit()
         self.notes.setObjectName("UpdateReleaseNotes")
@@ -108,8 +109,8 @@ class UpdateDialog(QDialog):
             self.show_downloading(cancelling=True)
 
     def _start_download(self) -> None:
-        if self._coordinator.start_download():
-            self.show_downloading()
+        self.show_downloading()
+        self._coordinator.start_download()
 
     def _install_later_phase(self) -> None:
         if self._manager.prepare_for_installation(self):
@@ -125,23 +126,23 @@ class UpdatePresenter(QObject):
         self._coordinator = manager.update_coordinator
         self._dialog: UpdateDialog | None = None
         self._manual = False
-        self._manual_no_release = False
         self._pending_offer = False
         app = QApplication.instance()
         app.installEventFilter(self)
         self._coordinator.release_available.connect(self._on_release_available)
         self._coordinator.check_succeeded.connect(self._on_check_succeeded)
-        self._coordinator.no_published_release.connect(self._on_no_published_release)
         self._coordinator.check_failed.connect(self._on_check_failed)
         self._coordinator.download_progress.connect(self._on_download_progress)
         self._coordinator.download_completed.connect(self._on_download_completed)
         self._coordinator.download_failed_signal.connect(self._on_download_failed)
+        self._coordinator.download_cancelled.connect(self._on_download_cancelled)
 
     @property
     def dialog(self) -> UpdateDialog | None:
         return self._dialog
 
     def check_manually(self, parent) -> None:
+        self._manual = False
         if not self._coordinator.supported:
             self._show_message(
                 parent,
@@ -152,13 +153,26 @@ class UpdatePresenter(QObject):
         if self._coordinator.state is UpdateState.READY:
             self._show_ready(parent)
             return
-        self._manual = True
+        if self._coordinator.state is UpdateState.AVAILABLE:
+            self._show_offer(parent)
+            return
+        if self._coordinator.state is UpdateState.DOWNLOADING:
+            if self._dialog is None:
+                self._ensure_dialog(parent).show_downloading()
+            else:
+                self._ensure_dialog(parent)
+            return
+        if self._coordinator.state in {UpdateState.PREPARING, UpdateState.HANDING_OFF}:
+            self._show_message(parent, "PageDrop is preparing installation. Finish the open installation prompts.")
+            return
         if self._coordinator.request_check(manual=True):
+            self._manual = True
             self._show_message(parent, "Checking for updates…")
         elif self._coordinator.state is UpdateState.CHECKING:
+            self._manual = True
             self._show_message(parent, "Checking for updates…")
         else:
-            self._show_message(parent, "Update checks are temporarily unavailable. Try again later.")
+            self._show_message(parent, self._coordinator.check_block_reason, release_page=True)
 
     def window_closed(self, window) -> None:
         if self._dialog is not None and self._dialog.parentWidget() is window:
@@ -179,19 +193,13 @@ class UpdatePresenter(QObject):
             self._present_pending_offer()
 
     def _on_check_succeeded(self, release: object) -> None:
-        if self._manual and release is None and not self._manual_no_release:
+        if self._manual and release is None:
             self._show_message(self._presenter_window(), "PageDrop is up to date.")
         self._manual = False
-        self._manual_no_release = False
-
-    def _on_no_published_release(self) -> None:
-        if self._manual:
-            self._manual_no_release = True
-            self._show_message(self._presenter_window(), "No published PageDrop release is available.")
 
     def _on_check_failed(self, message: str) -> None:
         if self._manual:
-            self._show_message(self._presenter_window(), message)
+            self._show_message(self._presenter_window(), message, release_page=True)
         self._manual = False
 
     def _on_download_progress(self, done: int, total: int) -> None:
@@ -202,9 +210,14 @@ class UpdatePresenter(QObject):
         self._show_ready(self._presenter_window())
 
     def _on_download_failed(self, message: str) -> None:
-        self._show_message(self._presenter_window(), message)
+        self._show_message(self._presenter_window(), message, release_page=True)
         if self._coordinator.release is not None and self._dialog is not None:
             self._dialog._button("Try again", lambda: self._dialog.show_offer(self._coordinator.release))
+
+    def _on_download_cancelled(self) -> None:
+        self._show_offer(self._presenter_window())
+        if self._dialog is not None:
+            self._dialog.message.setText("Update download canceled. " + self._dialog.message.text())
 
     def _present_pending_offer(self) -> None:
         if not self._pending_offer or not self._can_interrupt():
@@ -253,8 +266,17 @@ class UpdatePresenter(QObject):
         dialog = self._ensure_dialog(parent)
         dialog.show_message(message)
         if release_page:
-            dialog._button("Open releases page", lambda: QDesktopServices.openUrl(_RELEASE_PAGE))
-            dialog._button("Close", dialog.reject)
+            dialog._button("Open releases page", self._open_releases)
+        dialog._button("Close", dialog.reject)
+
+    def _open_releases(self) -> None:
+        if not QDesktopServices.openUrl(_RELEASE_PAGE):
+            self._show_message(self._presenter_window(), "PageDrop could not open your browser. Open github.com/ParallaX07/PageDrop/releases in your browser.")
+
+    def show_installation_error(self, message: str) -> None:
+        self._show_message(self._presenter_window(), message, release_page=True)
+        self._dialog._button("Try again", lambda: self.check_manually(self._presenter_window()))
+
 
     def _show_offer(self, parent) -> None:
         release = self._coordinator.release

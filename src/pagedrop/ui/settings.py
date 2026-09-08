@@ -29,6 +29,7 @@ KEY_UPDATES_AUTOMATIC_ENABLED = "updates/automatic_enabled"
 KEY_UPDATES_LAST_CHECK_ATTEMPT_UTC = "updates/last_check_attempt_utc"
 KEY_UPDATES_LAST_SUCCESSFUL_CHECK_UTC = "updates/last_successful_check_utc"
 KEY_UPDATES_RETRY_AFTER_UTC = "updates/retry_after_utc"
+KEY_UPDATES_SERVER_RETRY_AFTER_UTC = "updates/server_retry_after_utc"
 KEY_UPDATES_SKIPPED_VERSION = "updates/skipped_version"
 KEY_UPDATES_REMIND_AFTER_UTC = "updates/remind_after_utc"
 KEY_UPDATES_PENDING_TARGET_VERSION = "updates/pending_target_version"
@@ -109,6 +110,14 @@ def set_last_successful_check_utc(value: datetime | None) -> None:
 
 def update_retry_after_utc() -> datetime | None:
     return _stored_utc(KEY_UPDATES_RETRY_AFTER_UTC)
+
+
+def server_retry_after_utc() -> datetime | None:
+    return _stored_utc(KEY_UPDATES_SERVER_RETRY_AFTER_UTC)
+
+
+def set_server_retry_after_utc(value: datetime | None) -> None:
+    _set_utc(KEY_UPDATES_SERVER_RETRY_AFTER_UTC, value)
 
 
 def set_update_retry_after_utc(value: datetime | None) -> None:

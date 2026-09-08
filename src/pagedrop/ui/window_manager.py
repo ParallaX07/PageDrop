@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
@@ -114,12 +114,15 @@ class WindowManager(QObject):
     def handoff_update_installer(self, parent: QWidget | None = None) -> bool:
         """Launch only after U5 preparation, then perform the one-shot close."""
         if self._update_mutex_error or (self.update_coordinator.supported and self._update_mutex is None):
-            self._preparation_failed(parent, self._update_mutex_error or "Installer coordination is unavailable")
+            self.cancel_installation_preparation()
+            self.update_presenter.show_installation_error(
+                "PageDrop could not safely prepare installation. Your documents remain open. Restart PageDrop and try again, or use the releases page."
+            )
             return False
         if not self.update_coordinator.begin_handoff() or not self.update_coordinator.launch_ready_installer():
             self.cancel_installation_preparation()
             if self.update_coordinator.handoff_error:
-                QMessageBox.information(parent or self._primary, "PageDrop updates", self.update_coordinator.handoff_error)
+                self.update_presenter.show_installation_error(self.update_coordinator.handoff_error)
             return False
         self.allow_prepared_shutdown()
         for window in tuple(self._windows):
@@ -153,7 +156,7 @@ class WindowManager(QObject):
         self._set_preparation_enabled(True)
         self.update_coordinator.preparation_failed()
         if message:
-            QMessageBox.information(parent or self._primary, "PageDrop updates", message)
+            self.update_presenter.show_installation_error(message + ". Your documents remain open.")
 
     def create_window(
         self,

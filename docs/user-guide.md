@@ -74,9 +74,13 @@ successful check and any current background error; background failures do not
 interrupt your work.
 
 Use Help → **Check for updates…** at any time for visible feedback. It can show
-that PageDrop is current, that no public release exists, a temporary rate limit,
-or a connection/problem message. A manual check can reveal an update you skipped
-or deferred, but still respects a GitHub retry deadline. Unsupported builds offer
+that PageDrop is current, that published update information is unavailable, a
+temporary rate limit, or a connection/problem message. A manual check can reveal
+an update you skipped or deferred and immediately retry ordinary failures.
+Server throttling shows the exact retry date and time in your local timezone.
+Manual errors include **Open releases page** and **Close**.
+An active download or a verified update is reopened without starting another
+check. Unsupported builds offer
 the PageDrop releases page instead of checking.
 
 When an update is available, review its plain-text release notes and choose one:
@@ -93,6 +97,13 @@ install, PageDrop asks you to finish or cancel active tasks and resolves unsaved
 tabs in every window with Save As, Discard, or Cancel. Save As always writes a
 new file; PageDrop never overwrites the original PDF. Cancelling a save or the
 installer launch leaves all windows and unsaved work usable.
+
+Download and installation failures explain what went wrong and offer recovery
+actions. Check available space and folder permissions for storage errors.
+A failed verification removes the invalid file before another download.
+Refusing UAC keeps the verified update ready to try again. **Try again** reopens
+the appropriate download or installation choice; **Open releases page** provides
+a manual fallback.
 
 Choosing install opens the normal elevated Windows installer (UAC). Refusing UAC,
 cancelling the wizard, or a failed launch does not close PageDrop. Windows may

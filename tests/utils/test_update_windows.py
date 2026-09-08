@@ -18,7 +18,7 @@ def _release() -> ReleaseInfo:
     payload = b"installer"
     return ReleaseInfo(
         "1.2.3", "v1.2.3", "PageDrop-1.2.3-Setup.exe", "https://example.test/installer",
-        "https://example.test/installer.sha256", len(payload), "", hashlib.sha256(payload).hexdigest(),
+        len(payload), "", hashlib.sha256(payload).hexdigest(),
     )
 
 
@@ -125,7 +125,7 @@ def test_handoff_revalidates_persists_and_clears_failed_attempt(qapp, tmp_path, 
     storage.close()
 
 
-def test_tampered_installer_keeps_ready_state(qapp, tmp_path, isolated_settings):
+def test_tampered_installer_returns_to_download(qapp, tmp_path, isolated_settings):
     release = _release()
     storage = UpdateStorage(tmp_path / "updates")
     installer = storage.destination(release)
@@ -135,7 +135,8 @@ def test_tampered_installer_keeps_ready_state(qapp, tmp_path, isolated_settings)
     coordinator._set_state(UpdateState.PREPARING)
     assert coordinator.begin_handoff()
     assert not coordinator.launch_ready_installer()
-    assert coordinator.state is UpdateState.READY
+    assert coordinator.state is UpdateState.AVAILABLE
+    assert not installer.exists()
     storage.close()
 
 

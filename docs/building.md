@@ -98,10 +98,24 @@ The workflow creates the required checksum beside it:
 On a matching tag push, `.github/workflows/release-windows.yml` runs the full
 test suite, packaging validation, and the newly built executable smoke test on
 Windows x64 before publication. It then creates or resumes an unpublished draft,
-checks the exact installer and checksum bytes, and publishes only that pair. A
+generates `latest.json` from the tested installer and draft release notes, verifies
+the downloaded installer, checksum, and manifest bytes, and publishes all three. A
 published release is never changed. If an unpublished draft is interrupted, rerun
 the same tag workflow: it replaces only incomplete or mismatched draft assets and
-re-verifies both assets before publishing. It will not move “latest” backwards.
+re-verifies all three assets before publishing. It will not move “latest” backwards.
+
+The UTF-8 manifest contains `schema_version: 1`, numeric `version` as a
+`MAJOR.MINOR.PATCH` string, positive integer `installer_size`, lowercase
+`installer_sha256`, and plain-text `notes`. Generation is deterministic and
+limited to 1 MiB. Notes changed during publication cause publication to fail;
+rerun the draft workflow to regenerate and verify the manifest.
+
+The first manifest-capable release must include this asset. Older API-based
+updaters can still discover its installer/checksum pair. Newly built clients use
+`https://github.com/ParallaX07/PageDrop/releases/latest/download/latest.json`;
+until that release is published, a missing manifest is reported as unavailable
+update information, with an explicit link to the releases page. No API fallback
+or client credentials are used.
 
 Do not use `-SkipBuild` for a release. Never upload a checksum made from anything
 other than the final installer bytes. The production updater and workflow are

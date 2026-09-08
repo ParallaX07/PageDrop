@@ -14,11 +14,12 @@ from PyQt6.QtWidgets import QApplication
 
 from pagedrop.ui import settings
 from pagedrop.ui.update_storage import UpdateStorage
+from pagedrop.ui.update_messages import throttle_message, update_error_message
 from pagedrop.utils.update_checker import (
     RateLimitedError,
     ReleaseDataError,
     ReleaseInfo,
-    ReleaseNotFoundError,
+    UpdateCancelledError,
     check_for_update,
     download_installer,
     parse_version,
@@ -104,11 +105,11 @@ class UpdateCoordinator(QObject):
     state_changed = pyqtSignal(str)
     release_available = pyqtSignal(object)
     check_succeeded = pyqtSignal(object)
-    no_published_release = pyqtSignal()
     check_failed = pyqtSignal(str)
     download_progress = pyqtSignal(int, int)
     download_completed = pyqtSignal(object)
     download_failed_signal = pyqtSignal(str)
+    download_cancelled = pyqtSignal()
     stopped = pyqtSignal()
 
     def __init__(
@@ -132,7 +133,7 @@ class UpdateCoordinator(QObject):
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic = monotonic
         self._supported = sys.platform == "win32" if supported is None else supported
-        self.storage = storage or (UpdateStorage() if self._supported else None)
+        self.storage = storage
         self._launch = launch or launch_installer
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
@@ -174,6 +175,13 @@ class UpdateCoordinator(QObject):
     def handoff_error(self) -> str:
         return self._handoff_error
 
+    @property
+    def check_block_reason(self) -> str:
+        deadline = self._retry_deadline(self._now())
+        if deadline and deadline > self._now():
+            return throttle_message(deadline)
+        return "PageDrop is closing. Open it again to check for updates."
+
     def set_automatic_enabled(self, enabled: bool) -> None:
         settings.set_automatic_update_checks_enabled(enabled)
         self.reschedule()
@@ -186,9 +194,20 @@ class UpdateCoordinator(QObject):
 
     def start_download(self) -> bool:
         """Begin an explicitly approved verified installer download."""
-        if self._release is None or self.storage is None or not self.begin_download():
+        deadline = self._retry_deadline(self._now())
+        if deadline and deadline > self._now():
+            self.download_failed_signal.emit(throttle_message(deadline))
             return False
-        reusable = self.storage.reusable_installer(self._release)
+        if self._release is None or not self.begin_download():
+            return False
+        try:
+            if self.storage is None:
+                self.storage = UpdateStorage()
+            reusable = self.storage.reusable_installer(self._release)
+        except Exception as exc:
+            self.download_failed()
+            self.download_failed_signal.emit(update_error_message(exc, operation="download"))
+            return False
         if reusable is not None:
             self.download_finished()
             self.download_completed.emit(reusable)
@@ -248,10 +267,15 @@ class UpdateCoordinator(QObject):
         """Persist an attempted target then ask Windows to elevate the verified file."""
         if self._state is not UpdateState.HANDING_OFF or self._release is None or self.storage is None:
             return False
-        installer = self.storage.reusable_installer(self._release)
+        try:
+            installer = self.storage.reusable_installer(self._release)
+        except Exception as exc:
+            self._handoff_error = update_error_message(exc, operation="installation")
+            self.handoff_failed()
+            return False
         if installer is None:
             self._handoff_error = "The verified update installer is no longer available. Download it again."
-            self.handoff_failed()
+            self._set_state(UpdateState.AVAILABLE)
             return False
         try:
             settings.set_pending_update_target_version(self._release.version)
@@ -260,10 +284,10 @@ class UpdateCoordinator(QObject):
             if stored.status() != stored.Status.NoError:
                 raise WindowsUpdateError("Could not record the pending update")
             self._launch(installer)
-        except (OSError, WindowsUpdateError) as exc:
+        except Exception as exc:
             settings.set_pending_update_target_version(None)
             settings._settings().sync()
-            self._handoff_error = str(exc)
+            self._handoff_error = update_error_message(exc, operation="installation")
             self.handoff_failed()
             return False
         self._handoff_error = ""
@@ -273,7 +297,7 @@ class UpdateCoordinator(QObject):
         """Start one check, returning False when state/deadline disallows it."""
         if not self._supported or self._stopping or self._worker is not None or self._download_worker is not None:
             return False
-        if self._state is UpdateState.READY:
+        if self._state in {UpdateState.READY, UpdateState.PREPARING, UpdateState.HANDING_OFF}:
             return False  # A verified download stays available until U6 consumes it.
         now = self._now()
         retry_after = self._retry_deadline(now)
@@ -320,7 +344,8 @@ class UpdateCoordinator(QObject):
         if self._next_due_monotonic is not None and self._monotonic() < self._next_due_monotonic:
             self._timer.start(min(int((self._next_due_monotonic - self._monotonic()) * 1000), _MAX_TIMER_MS))
             return
-        self.request_check()
+        if not self.request_check():
+            self.reschedule()
 
     def _check_finished(self, release: object, error: object) -> None:
         self._worker = None
@@ -328,13 +353,11 @@ class UpdateCoordinator(QObject):
             self._finish_stop_if_idle()
             return
         now = self._now()
-        if isinstance(error, ReleaseNotFoundError):
-            self.no_published_release.emit()
-            release, error = None, None
         if error is None:
             self._last_error = ""
             settings.set_last_successful_check_utc(now)
             settings.set_update_retry_after_utc(None)
+            settings.set_server_retry_after_utc(None)
             self._server_retry_deadline = None
             if isinstance(release, ReleaseInfo):
                 self._release = release
@@ -346,15 +369,14 @@ class UpdateCoordinator(QObject):
             self.check_succeeded.emit(release)
         else:
             retry_at = now + _FAILURE_INTERVAL
-            if isinstance(error, RateLimitedError) and error.retry_after is not None:
-                retry_at = max(retry_at, error.retry_after.astimezone(UTC))
-            stored_retry = settings.update_retry_after_utc()
-            if stored_retry is not None:
-                retry_at = max(retry_at, stored_retry)
-            self._server_retry_deadline = retry_at
+            if isinstance(error, RateLimitedError):
+                self._record_throttle(error, now)
+            server_retry = self._retry_deadline(now)
+            if server_retry is not None:
+                retry_at = max(retry_at, server_retry)
             settings.set_update_retry_after_utc(retry_at)
             self._set_state(UpdateState.AVAILABLE if self._release else UpdateState.IDLE)
-            self._last_error = str(error)
+            self._last_error = self.check_block_reason if isinstance(error, RateLimitedError) else update_error_message(error)
             self.check_failed.emit(self._last_error)
         settings._settings().sync()
         self.reschedule()
@@ -369,7 +391,17 @@ class UpdateCoordinator(QObject):
             self.download_completed.emit(installer)
         else:
             self.download_failed()
-            self.download_failed_signal.emit(str(error))
+            if isinstance(error, UpdateCancelledError):
+                self.download_cancelled.emit()
+                self.reschedule()
+                return
+            if isinstance(error, RateLimitedError):
+                self._record_throttle(error, self._now())
+            self.download_failed_signal.emit(
+                self.check_block_reason if isinstance(error, RateLimitedError)
+                else update_error_message(error, operation="download")
+            )
+        self.reschedule()
 
     def _finish_stop_if_idle(self) -> None:
         if self._worker is not None or self._download_worker is not None:
@@ -383,17 +415,30 @@ class UpdateCoordinator(QObject):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     def _retry_deadline(self, now: datetime) -> datetime | None:
-        stored = settings.update_retry_after_utc()
+        stored = settings.server_retry_after_utc()
         if self._server_retry_deadline is not None:
             return max(self._server_retry_deadline, stored) if stored else self._server_retry_deadline
         return stored
 
+    def _record_throttle(self, error: RateLimitedError, now: datetime) -> None:
+        deadline = error.retry_after or now + timedelta(minutes=1)
+        deadline = max(now + timedelta(seconds=1), deadline)
+        previous = self._retry_deadline(now)
+        self._server_retry_deadline = max(deadline, previous) if previous else deadline
+        settings.set_server_retry_after_utc(self._server_retry_deadline)
+        settings._settings().sync()
+
     def _due_at(self, now: datetime) -> datetime:
         success = settings.last_successful_check_utc()
-        if success is None or success > now + _IMPLAUSIBLE_FUTURE:
-            return now
-        retry = self._retry_deadline(now)
-        return max(success + _SUCCESS_INTERVAL, retry) if retry else success + _SUCCESS_INTERVAL
+        retry = settings.update_retry_after_utc()
+        server = self._retry_deadline(now)
+        if retry and retry > now + _IMPLAUSIBLE_FUTURE:
+            retry = None
+        if retry:
+            due = retry
+        else:
+            due = now if success is None or success > now + _IMPLAUSIBLE_FUTURE else success + _SUCCESS_INTERVAL
+        return max(due, server) if server else due
 
     def _is_due(self, now: datetime) -> bool:
         if self._next_due_monotonic is not None:

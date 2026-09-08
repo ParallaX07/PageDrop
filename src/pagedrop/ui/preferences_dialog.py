@@ -209,6 +209,9 @@ class PreferencesDialog(QDialog):
 
         self._refresh_status()
         self._refresh_update_status()
+        if self._update_coordinator is not None:
+            self._update_coordinator.check_failed.connect(self._refresh_update_status)
+            self._update_coordinator.check_succeeded.connect(self._refresh_update_status)
 
     def _refresh_update_status(self) -> None:
         from pagedrop.ui.settings import last_successful_check_utc

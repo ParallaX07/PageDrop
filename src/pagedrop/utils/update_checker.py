@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, Protocol
 from urllib.error import HTTPError, URLError
@@ -17,10 +18,9 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPOSITORY = "ParallaX07/PageDrop"
-_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+MANIFEST_URL = f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json"
 _USER_AGENT = "PageDrop-updater"
 _METADATA_LIMIT = 1024 * 1024
-_CHECKSUM_LIMIT = 4096
 _SOCKET_TIMEOUT = 10.0
 _DOWNLOAD_SOCKET_TIMEOUT = 15.0
 _METADATA_DEADLINE = 30.0
@@ -70,6 +70,14 @@ class UpdateDownloadError(UpdateCheckError):
     """Installer bytes could not be safely downloaded or verified."""
 
 
+class UpdateStorageError(UpdateDownloadError):
+    """The local update files could not be accessed."""
+
+
+class UpdateVerificationError(UpdateDownloadError):
+    """Installer bytes did not match the manifest."""
+
+
 class UpdateCancelledError(UpdateDownloadError):
     """The caller cancelled the download."""
 
@@ -82,7 +90,6 @@ class ReleaseInfo:
     tag: str
     installer_name: str
     installer_url: str
-    checksum_url: str
     installer_size: int
     notes: str
     expected_sha256: str
@@ -130,7 +137,7 @@ def fetch_latest_release(*, open_url: OpenUrl | None = None, monotonic: Callable
     opener = open_url or _stdlib_open
     started = monotonic()
     response = _request(
-        _API_URL, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, False, cancel_event
+        MANIFEST_URL, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, True, cancel_event
     )
     try:
         raw = _read_limited(response, _METADATA_LIMIT, monotonic, started, _METADATA_DEADLINE, cancel_event)
@@ -138,9 +145,9 @@ def fetch_latest_release(*, open_url: OpenUrl | None = None, monotonic: Callable
         response.close()
     try:
         data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise ReleaseDataError("Release metadata is not valid JSON") from exc
-    return _release_from_data(data, opener, monotonic, started, cancel_event)
+    return _release_from_data(data)
 
 
 def check_for_update(installed_version: str, **kwargs: object) -> ReleaseInfo | None:
@@ -168,84 +175,47 @@ def download_installer(
         raise UpdateDownloadError("Installer destination does not match the release")
     if destination.exists():
         raise UpdateDownloadError("Installer destination already exists")
+    _validate_initial_asset_url(release.installer_url, release.tag, release.installer_name)
     part = destination.with_name(f"{destination.name}.part")
+    created = False
     try:
         with part.open("xb") as output:
+            created = True
             _download_to(
                 release, output, cancel_event, progress, open_url or _stdlib_open, monotonic
             )
         os.replace(part, destination)
         return destination
     except UpdateCheckError:
-        _remove_owned(part)
+        if created:
+            _remove_owned(part)
         raise
     except OSError as exc:
-        _remove_owned(part)
-        raise UpdateDownloadError("Could not save the update installer") from exc
+        if created:
+            _remove_owned(part)
+        raise UpdateStorageError("Could not save the update installer") from exc
+    except Exception:
+        if created:
+            _remove_owned(part)
+        raise
 
 
-def _release_from_data(data: object, opener: OpenUrl, monotonic: Callable[[], float], started: float, cancel_event: threading.Event | None = None) -> ReleaseInfo:
-    if (
-        not isinstance(data, dict)
-        or not isinstance(data.get("draft"), bool)
-        or not isinstance(data.get("prerelease"), bool)
-        or data["draft"]
-        or data["prerelease"]
-    ):
-        raise ReleaseDataError("Latest release is not a stable published release")
-    tag = data.get("tag_name")
-    if not isinstance(tag, str) or not tag.startswith("v"):
-        raise ReleaseDataError("Release tag is invalid")
-    version = tag.removeprefix("v")
+def _release_from_data(data: object) -> ReleaseInfo:
+    if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        raise ReleaseDataError("Unsupported update manifest")
+    version = data.get("version")
     parse_version(version)
-    assets = data.get("assets")
-    notes = data.get("body")
-    if not isinstance(assets, list) or not isinstance(notes, str):
-        raise ReleaseDataError("Release metadata has invalid fields")
-    installer_name = f"PageDrop-{version}-Setup.exe"
-    checksum_name = f"{installer_name}.sha256"
-    matching: dict[str, dict[str, object]] = {}
-    for asset in assets:
-        if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
-            raise ReleaseDataError("Release asset is malformed")
-        name = asset["name"]
-        if name in matching:
-            raise ReleaseDataError("Release contains duplicate asset names")
-        matching[name] = asset
-    try:
-        installer, checksum = matching[installer_name], matching[checksum_name]
-    except KeyError as exc:
-        raise ReleaseDataError("Release is missing its installer or checksum") from exc
-    installer_url = _asset_url(installer, tag, installer_name)
-    checksum_url = _asset_url(checksum, tag, checksum_name)
-    size = installer.get("size")
-    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+    size, digest, notes = data.get("installer_size"), data.get("installer_sha256"), data.get("notes")
+    if type(size) is not int or size <= 0:
         raise ReleaseDataError("Installer size is invalid")
-    if (
-        not isinstance(checksum.get("size"), int)
-        or isinstance(checksum["size"], bool)
-        or checksum["size"] <= 0
-    ):
-        raise ReleaseDataError("Checksum size is invalid")
-    checksum_response = _request(
-        checksum_url, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, True, cancel_event
-    )
-    try:
-        checksum_bytes = _read_limited(checksum_response, _CHECKSUM_LIMIT, monotonic, started, _METADATA_DEADLINE, cancel_event)
-    finally:
-        checksum_response.close()
-    digest = _parse_checksum(checksum_bytes, installer_name)
-    return ReleaseInfo(version, tag, installer_name, installer_url, checksum_url, size, notes, digest)
-
-
-def _asset_url(asset: dict[str, object], tag: str, name: str) -> str:
-    if asset.get("state") != "uploaded":
-        raise ReleaseDataError("Release asset is not uploaded")
-    url = asset.get("browser_download_url")
-    if not isinstance(url, str):
-        raise ReleaseDataError("Release asset URL is invalid")
-    _validate_initial_asset_url(url, tag, name)
-    return url
+    if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
+        raise ReleaseDataError("Installer checksum is invalid")
+    if not isinstance(notes, str):
+        raise ReleaseDataError("Release notes are invalid")
+    tag = f"v{version}"
+    name = f"PageDrop-{version}-Setup.exe"
+    url = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+    return ReleaseInfo(version, tag, name, url, size, notes, digest)
 
 
 def _validate_initial_asset_url(url: str, tag: str, name: str) -> None:
@@ -306,10 +276,17 @@ def _request(
             if 300 <= exc.code < 400:
                 response = exc
             else:
-                if exc.code == 404 and current == _API_URL:
-                    raise ReleaseNotFoundError("No published PageDrop release is available") from exc
-                _raise_http_error(exc)
-        except (TimeoutError, URLError, OSError) as exc:
+                try:
+                    if exc.code == 404 and url == MANIFEST_URL:
+                        raise ReleaseNotFoundError("No published PageDrop release is available") from exc
+                    _raise_http_error(exc)
+                finally:
+                    exc.close()
+        except TimeoutError as exc:
+            raise UpdateTimeoutError("Update operation timed out") from exc
+        except (URLError, OSError) as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                raise UpdateTimeoutError("Update operation timed out") from exc
             raise UpdateNetworkError("Could not contact the update service") from exc
         code = response.getcode() or 200
         if 300 <= code < 400:
@@ -320,12 +297,12 @@ def _request(
             _validate_redirect_url(location)
             current = location
             continue
-        if code == 404 and current == _API_URL:
+        if code == 404 and url == MANIFEST_URL:
             response.close()
             raise ReleaseNotFoundError("No published PageDrop release is available")
         if code >= 400:
             response.close()
-            _raise_http_status(code, None)
+            _raise_http_status(code, response.headers)
         return response
     raise UnsafeUpdateUrlError("Release redirect limit exceeded")
 
@@ -342,7 +319,9 @@ def _read_limited(response: _Response, limit: int, monotonic: Callable[[], float
         _ensure_before_deadline(monotonic, started, deadline)
         try:
             chunk = response.read(min(_CHUNK_SIZE, limit + 1 - total))
-        except (TimeoutError, OSError) as exc:
+        except TimeoutError as exc:
+            raise UpdateTimeoutError("Update operation timed out") from exc
+        except OSError as exc:
             raise UpdateNetworkError("Could not read the update service response") from exc
         if not chunk:
             return b"".join(chunks)
@@ -352,34 +331,14 @@ def _read_limited(response: _Response, limit: int, monotonic: Callable[[], float
         chunks.append(chunk)
 
 
-def _parse_checksum(content: bytes, installer_name: str) -> str:
-    try:
-        text = content.decode("ascii")
-    except UnicodeDecodeError as exc:
-        raise ReleaseDataError("Installer checksum is invalid") from exc
-    entries = [line.split() for line in text.splitlines() if line.strip()]
-    matches = [parts for parts in entries if len(parts) == 2 and parts[1].lstrip("*") == installer_name]
-    if len(matches) != 1 or not _SHA256_RE.fullmatch(matches[0][0]):
-        raise ReleaseDataError("Installer checksum is invalid")
-    return matches[0][0]
-
-
 def _download_to(release: ReleaseInfo, output, cancel_event: threading.Event | None, progress: ProgressCallback | None, opener: OpenUrl, monotonic: Callable[[], float]) -> None:  # type: ignore[no-untyped-def]
     started = monotonic()
     if cancel_event is not None and cancel_event.is_set():
         raise UpdateCancelledError("Update download was cancelled")
-    try:
-        response = _request(
-            release.installer_url,
-            opener,
-            _DOWNLOAD_SOCKET_TIMEOUT,
-            monotonic,
-            started,
-            _DOWNLOAD_DEADLINE,
-            True,
-        )
-    except UpdateNetworkError as exc:
-        raise UpdateDownloadError("Could not download the update installer") from exc
+    response = _request(
+        release.installer_url, opener, _DOWNLOAD_SOCKET_TIMEOUT, monotonic,
+        started, _DOWNLOAD_DEADLINE, True, cancel_event,
+    )
     total = 0
     digest = hashlib.sha256()
     if progress:
@@ -391,13 +350,15 @@ def _download_to(release: ReleaseInfo, output, cancel_event: threading.Event | N
                 raise UpdateCancelledError("Update download was cancelled")
             try:
                 chunk = response.read(_CHUNK_SIZE)
-            except (TimeoutError, OSError) as exc:
-                raise UpdateDownloadError("Could not download the update installer") from exc
+            except TimeoutError as exc:
+                raise UpdateTimeoutError("Update operation timed out") from exc
+            except OSError as exc:
+                raise UpdateNetworkError("Could not download the update installer") from exc
             if not chunk:
                 break
             total += len(chunk)
             if total > release.installer_size:
-                raise UpdateDownloadError("Downloaded installer is larger than expected")
+                raise UpdateVerificationError("Downloaded installer is larger than expected")
             output.write(chunk)
             digest.update(chunk)
             if progress:
@@ -405,7 +366,7 @@ def _download_to(release: ReleaseInfo, output, cancel_event: threading.Event | N
     finally:
         response.close()
     if total != release.installer_size or digest.hexdigest() != release.expected_sha256:
-        raise UpdateDownloadError("Downloaded installer could not be verified")
+        raise UpdateVerificationError("Downloaded installer could not be verified")
 
 
 def _ensure_before_deadline(monotonic: Callable[[], float], started: float, deadline: float) -> None:
@@ -428,7 +389,11 @@ def _raise_http_error(error: HTTPError) -> None:
 
 
 def _raise_http_status(code: int, headers: object | None) -> None:
-    if code == 429 or (code == 403 and _header(headers, "X-RateLimit-Remaining") == "0"):
+    if (
+        code == 429
+        or (code == 403 and _header(headers, "X-RateLimit-Remaining") == "0")
+        or (code in {403, 503} and _header(headers, "Retry-After") is not None)
+    ):
         raise RateLimitedError(_retry_after(headers))
     raise UpdateNetworkError("Update service returned an error")
 
@@ -436,16 +401,26 @@ def _raise_http_status(code: int, headers: object | None) -> None:
 def _retry_after(headers: object | None) -> datetime | None:
     now = datetime.now(UTC)
     value = _header(headers, "Retry-After")
-    if value and value.isdecimal():
-        return now + timedelta(seconds=int(value))
-    reset = _header(headers, "X-RateLimit-Reset")
-    if reset and reset.isdecimal():
-        return datetime.fromtimestamp(int(reset), UTC)
+    try:
+        if value:
+            if value.isdecimal():
+                return now + timedelta(seconds=int(value))
+            parsed = parsedate_to_datetime(value)
+            if parsed.tzinfo:
+                return parsed.astimezone(UTC)
+    except (ValueError, OverflowError, TypeError):
+        pass
+    try:
+        reset = _header(headers, "X-RateLimit-Reset")
+        if reset and reset.isdecimal():
+            return datetime.fromtimestamp(int(reset), UTC)
+    except (ValueError, OverflowError, OSError):
+        pass
     return None
 
 
 def _remove_owned(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise UpdateStorageError("Could not remove the incomplete update file") from exc

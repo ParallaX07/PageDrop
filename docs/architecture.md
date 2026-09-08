@@ -72,9 +72,13 @@ idle → checking → available → downloading → ready → preparing → hand
 ```
 
 The Qt-independent service in `utils/update_checker.py` fetches only the public
-`ParallaX07/PageDrop` latest stable release. It validates the strict numeric tag,
-exact installer and checksum names, trusted HTTPS URLs and redirects, asset size,
-and SHA-256 before atomically promoting downloaded bytes. HTTPS plus SHA-256
+`ParallaX07/PageDrop` latest stable release's `latest.json` static asset, without
+using GitHub's REST API. It validates schema version 1, the strict numeric version,
+positive installer size, SHA-256, and string notes within a 1 MiB UTF-8 response.
+Additive fields are ignored. Installer names and URLs are derived locally;
+the digest comes from the manifest, avoiding a separate checksum request.
+Trusted HTTPS redirects, exact size, and SHA-256 are verified before atomically
+promoting downloaded bytes. HTTPS plus SHA-256
 detects corrupt or mismatched release assets; it is not independent publisher
 authentication if the release account is compromised.
 
@@ -83,14 +87,27 @@ after launch when due, then runs 24 hours after a successful check. Failures wai
 at least one hour and retain any longer GitHub rate-limit deadline. Settings use
 UTC values under `updates/`; malformed or implausibly future values cannot create
 a request loop. Manual checks bypass the daily, reminder, and skip suppression
-but still honour a server retry deadline. Disabling automatic checks cancels only
+and ordinary failure backoff, but still honour a separately persisted
+`server_retry_after_utc` deadline. Server throttling without a valid deadline
+uses one minute; automatic failures retain their one-hour backoff in
+`retry_after_utc`. The legacy retry value is automatic-only, so an old API
+cooldown cannot block manual manifest checks. The first failed check schedules
+a new automatic attempt even when there has never been a successful check.
+Disabling automatic checks cancels only
 scheduled checks, never a download already approved by the user.
 
 `UpdateStorage` uses the Qt application-local `updates/` directory and gives each
 process a locked session subdirectory. It revalidates a cached installer before
 reuse, removes only recognised inactive updater files, and expires inactive
 verified installers after seven days. It never uses PDF paths or the shared PDF
-temporary-file lifecycle.
+temporary-file lifecycle. Storage is created lazily for an approved download;
+storage failures cannot prevent application startup. Failed cache verification
+removes the owned invalid installer and offers another download.
+
+The presenter reopens active checks, downloads, and offers. Shared typed-error
+messages provide local retry times and recovery actions without exposing raw
+exceptions. Background failures remain quiet and update Preferences; manual
+failures offer the fixed releases page and a close button.
 
 Installation remains explicit. The presenter may show a verified release, but
 only starts a download after consent. Before handoff, `WindowManager` blocks new

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QLockFile, QStandardPaths
 
-from pagedrop.utils.update_checker import ReleaseInfo
+from pagedrop.utils.update_checker import ReleaseInfo, UpdateStorageError
 
 _INSTALLER_RE = re.compile(r"^PageDrop-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-Setup\.exe$")
 _EXPIRY = timedelta(days=7)
@@ -26,14 +26,14 @@ class UpdateStorage:
         )
         self.root = base.absolute()
         if self.root.is_symlink():
-            raise RuntimeError("Update storage directory must not be a link")
+            raise UpdateStorageError("Update storage directory must not be a link")
         self.root.mkdir(parents=True, exist_ok=True)
         self.session_dir = self.root / uuid.uuid4().hex
         self.session_dir.mkdir()
         self._lock = QLockFile(str(self.session_dir / ".active.lock"))
         self._lock.setStaleLockTime(0)
         if not self._lock.tryLock(0):
-            raise RuntimeError("Could not reserve update storage")
+            raise UpdateStorageError("Could not reserve update storage")
         self.cleanup()
 
     def destination(self, release: ReleaseInfo) -> Path:
@@ -41,11 +41,17 @@ class UpdateStorage:
 
     def reusable_installer(self, release: ReleaseInfo) -> Path | None:
         candidate = self.destination(release)
-        if not self._owned_file(candidate) or candidate.stat().st_size != release.installer_size:
+        if not self._owned_file(candidate):
+            return None
+        if candidate.stat().st_size != release.installer_size:
+            candidate.unlink()
             return None
         with candidate.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
-        return candidate if digest == release.expected_sha256 else None
+        if digest == release.expected_sha256:
+            return candidate
+        candidate.unlink()
+        return None
 
     def cleanup(self, *, now: datetime | None = None) -> None:
         """Remove only inactive, expired installers and inactive partial files."""

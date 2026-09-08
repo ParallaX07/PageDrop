@@ -29,7 +29,7 @@ from pagedrop.utils.update_checker import (
     is_newer,
 )
 
-API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+MANIFEST_URL = update_checker.MANIFEST_URL
 
 
 class FakeResponse(io.BytesIO):
@@ -83,99 +83,75 @@ def _asset_url(tag: str, name: str) -> str:
     return f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
 
 
-def _metadata(*, version: str = "1.10.0", assets: list[dict[str, object]] | None = None) -> tuple[bytes, str, str, str]:
-    tag = f"v{version}"
-    installer = f"PageDrop-{version}-Setup.exe"
-    checksum = f"{installer}.sha256"
-    if assets is None:
-        assets = [
-            {"name": installer, "browser_download_url": _asset_url(tag, installer), "size": 4, "state": "uploaded"},
-            {"name": checksum, "browser_download_url": _asset_url(tag, checksum), "size": 80, "state": "uploaded"},
-        ]
-    return json.dumps({"tag_name": tag, "draft": False, "prerelease": False, "body": "Notes", "assets": assets}).encode(), tag, installer, checksum
+def _manifest(**changes):
+    data = {"schema_version": 1, "version": "1.10.0", "installer_size": 4,
+            "installer_sha256": "a" * 64, "notes": "Notes"}
+    data.update(changes)
+    return json.dumps(data).encode()
 
 
-def _release_info(data: bytes, tag: str, installer: str, checksum: str, *, checksum_data: bytes | None = None):
-    checksum_data = checksum_data or f"{'a' * 64}  {installer}\n".encode()
-    return FakeOpen({API_URL: FakeResponse(data), _asset_url(tag, checksum): FakeResponse(checksum_data)})
-
-
-def test_numeric_versions_and_installed_validation():
+def test_numeric_versions_and_single_manifest_request():
     assert is_newer("1.10.0", "1.9.0")
-    data, tag, installer, checksum = _metadata()
-    opener = _release_info(data, tag, installer, checksum)
-    assert check_for_update("1.10.0", open_url=opener) is None
-    with pytest.raises(ReleaseDataError, match="application version"):
+    opener = FakeOpen({MANIFEST_URL: FakeResponse(_manifest(extra=True, installer_url="https://evil.test"))})
+    release = check_for_update("1.9.0", open_url=opener)
+    assert release.installer_url == _asset_url("v1.10.0", "PageDrop-1.10.0-Setup.exe")
+    assert opener.requests == [MANIFEST_URL]
+    assert check_for_update("1.10.0", open_url=FakeOpen({MANIFEST_URL: FakeResponse(_manifest())})) is None
+    with pytest.raises(ReleaseDataError):
         check_for_update("0.0.0-dev", open_url=opener)
 
 
-@pytest.mark.parametrize("field", ["draft", "prerelease"])
-def test_drafts_and_prereleases_are_rejected(field):
-    data, tag, installer, checksum = _metadata()
-    payload = json.loads(data)
-    payload[field] = True
-    with pytest.raises(ReleaseDataError, match="stable"):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
+@pytest.mark.parametrize("field,value", [
+    ("schema_version", None), ("schema_version", True), ("schema_version", 2),
+    ("schema_version", 1.0), ("version", "1.2"), ("version", "01.2.3"),
+    ("version", "1.2.3-beta"), ("version", None), ("installer_size", True),
+    ("installer_size", 0), ("installer_size", -1), ("installer_size", "4"),
+    ("installer_sha256", "A" * 64), ("installer_sha256", "a" * 63),
+    ("installer_sha256", None), ("notes", None), ("notes", 4),
+])
+def test_invalid_manifest_fields(field, value):
+    with pytest.raises(ReleaseDataError):
+        fetch_latest_release(open_url=FakeOpen({MANIFEST_URL: FakeResponse(_manifest(**{field: value}))}))
 
 
-def test_metadata_404_and_rate_limit_are_distinct():
-    not_found = FakeOpen({API_URL: HTTPError(API_URL, 404, "missing", Message(), None)})
+@pytest.mark.parametrize("body", [b"{}", b"[]", b"not json", b"\xff", b"x" * (1024 * 1024 + 1)],
+                         ids=["empty", "array", "invalid-json", "invalid-utf8", "oversized"])
+def test_invalid_manifest_body(body):
+    with pytest.raises(ReleaseDataError):
+        fetch_latest_release(open_url=FakeOpen({MANIFEST_URL: FakeResponse(body)}))
+
+
+def test_metadata_redirects_and_missing_manifest():
+    final = "https://release-assets.githubusercontent.com/file"
+    opener = FakeOpen({MANIFEST_URL: FakeResponse(b"", code=302, headers={"Location": final}),
+                       final: FakeResponse(_manifest())})
+    assert fetch_latest_release(open_url=opener).version == "1.10.0"
     with pytest.raises(ReleaseNotFoundError):
-        fetch_latest_release(open_url=not_found)
-    headers = Message()
-    headers["X-RateLimit-Remaining"] = "0"
-    headers["X-RateLimit-Reset"] = "2000000000"
-    limited = FakeOpen({API_URL: HTTPError(API_URL, 403, "limited", headers, None)})
+        fetch_latest_release(open_url=FakeOpen({
+            MANIFEST_URL: FakeResponse(b"", code=302, headers={"Location": final}),
+            final: HTTPError(final, 404, "missing", Message(), None)}))
+    with pytest.raises(UnsafeUpdateUrlError):
+        fetch_latest_release(open_url=FakeOpen({
+            MANIFEST_URL: FakeResponse(b"", code=302, headers={"Location": "https://evil.test"})}))
+
+
+def test_metadata_timeout_and_rate_limit():
+    with pytest.raises(update_checker.UpdateTimeoutError):
+        fetch_latest_release(open_url=FakeOpen({MANIFEST_URL: TimeoutError("slow")}))
     with pytest.raises(RateLimitedError) as exc:
-        fetch_latest_release(open_url=limited)
+        fetch_latest_release(open_url=FakeOpen({
+            MANIFEST_URL: FakeResponse(b"", code=429, headers={"Retry-After": "60"})}))
     assert exc.value.retry_after is not None
+    assert update_checker._retry_after({"Retry-After": "garbage", "X-RateLimit-Reset": "9" * 100}) is None
+    assert update_checker._retry_after({"Retry-After": "Wed, 09 Sep 2026 12:00:00 GMT"}) is not None
 
 
-def test_metadata_timeout_and_oversized_response_are_rejected():
-    with pytest.raises(UpdateNetworkError, match="contact"):
-        fetch_latest_release(open_url=FakeOpen({API_URL: TimeoutError("slow")}))
-    with pytest.raises(ReleaseDataError, match="too large"):
-        fetch_latest_release(open_url=FakeOpen({API_URL: FakeResponse(b"x" * (1024 * 1024 + 1))}))
-
-
-def test_bad_assets_urls_and_checksum_are_rejected():
-    data, tag, installer, checksum = _metadata()
-    payload = json.loads(data)
-    payload["assets"][0]["browser_download_url"] = "https://github.com.evil.test/file.exe"
-    with pytest.raises(UnsafeUpdateUrlError):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
-    with pytest.raises(ReleaseDataError, match="checksum"):
-        fetch_latest_release(open_url=_release_info(data, tag, installer, checksum, checksum_data=b"not-a-checksum\n"))
-    with pytest.raises(ReleaseDataError, match="checksum"):
-        fetch_latest_release(open_url=_release_info(data, tag, installer, checksum, checksum_data=f"{'a' * 64}  other.exe\n".encode()))
-
-
-def test_duplicate_assets_and_missing_uploaded_state_are_rejected():
-    data, tag, installer, checksum = _metadata()
-    payload = json.loads(data)
-    payload["assets"].append(dict(payload["assets"][0]))
-    with pytest.raises(ReleaseDataError, match="duplicate"):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
-
-
-def test_missing_assets_and_unsafe_initial_checksum_url_are_rejected():
-    data, tag, installer, checksum = _metadata()
-    payload = json.loads(data)
-    payload["assets"].pop()
-    with pytest.raises(ReleaseDataError, match="missing"):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
-    payload = json.loads(data)
-    payload["assets"][1]["browser_download_url"] = "http://github.com/not-safe"
-    with pytest.raises(UnsafeUpdateUrlError):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
-    payload = json.loads(data)
-    payload["draft"] = "false"
-    with pytest.raises(ReleaseDataError, match="stable"):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
-    payload = json.loads(data)
-    payload["assets"][0]["state"] = "new"
-    with pytest.raises(ReleaseDataError, match="uploaded"):
-        fetch_latest_release(open_url=_release_info(json.dumps(payload).encode(), tag, installer, checksum))
+@pytest.mark.parametrize("status", [403, 503])
+def test_service_retry_after_is_honored_without_api_quota_headers(status):
+    with pytest.raises(RateLimitedError) as exc:
+        fetch_latest_release(open_url=FakeOpen({
+            MANIFEST_URL: FakeResponse(b"", code=status, headers={"Retry-After": "120"})}))
+    assert exc.value.retry_after is not None
 
 
 def test_download_redirects_only_to_exact_allowed_hosts(tmp_path: Path):
@@ -219,7 +195,7 @@ def test_download_cancellation_and_read_failure_remove_partial_file(tmp_path: Pa
     with pytest.raises(UpdateCancelledError):
         download_installer(release, tmp_path / release.installer_name, cancel_event=cancelled)
     assert not (tmp_path / f"{release.installer_name}.part").exists()
-    with pytest.raises(UpdateDownloadError):
+    with pytest.raises(UpdateNetworkError):
         download_installer(release, tmp_path / release.installer_name, open_url=FakeOpen({release.installer_url: OSError("read failed")}))
     assert not (tmp_path / f"{release.installer_name}.part").exists()
 
@@ -230,7 +206,7 @@ def test_download_truncation_interruption_and_midstream_cancel_clean_up(tmp_path
     with pytest.raises(UpdateDownloadError, match="verified"):
         download_installer(release, tmp_path / release.installer_name, open_url=FakeOpen({release.installer_url: FakeResponse(payload[:-1])}))
     assert not (tmp_path / f"{release.installer_name}.part").exists()
-    with pytest.raises(UpdateDownloadError):
+    with pytest.raises(UpdateNetworkError):
         download_installer(release, tmp_path / release.installer_name, open_url=FakeOpen({release.installer_url: InterruptingResponse(payload[:2])}))
     assert not (tmp_path / f"{release.installer_name}.part").exists()
     cancelled = threading.Event()
@@ -252,8 +228,21 @@ def test_disk_error_removes_the_owned_partial_file(tmp_path: Path, monkeypatch):
     assert not (tmp_path / f"{release.installer_name}.part").exists()
 
 
+def test_unexpected_download_failure_cleans_partial_and_closes_response(tmp_path):
+    release = _ready_release(b"bytes")
+    response = FakeResponse(b"bytes")
+    def progress(done, total):
+        if done:
+            raise RuntimeError("unexpected")
+    with pytest.raises(RuntimeError):
+        download_installer(release, tmp_path / release.installer_name,
+                           open_url=FakeOpen({release.installer_url: response}), progress=progress)
+    assert response.closed
+    assert not (tmp_path / f"{release.installer_name}.part").exists()
+
+
 def _ready_release(payload: bytes, *, size: int | None = None) -> ReleaseInfo:
     version = "2.0.0"
     name = f"PageDrop-{version}-Setup.exe"
     tag = f"v{version}"
-    return ReleaseInfo(version, tag, name, _asset_url(tag, name), _asset_url(tag, f"{name}.sha256"), size if size is not None else len(payload), "", hashlib.sha256(payload).hexdigest())
+    return ReleaseInfo(version, tag, name, _asset_url(tag, name), size if size is not None else len(payload), "", hashlib.sha256(payload).hexdigest())

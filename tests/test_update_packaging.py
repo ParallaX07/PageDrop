@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -35,7 +36,7 @@ class FakeReleaseOperations:
     def delete_asset(self, tag: str, name: str) -> None:
         self.calls.append(("delete", tag, name))
         release = self.releases[tag]
-        self.releases[tag] = Release(tag, release.draft, release.assets - {name})
+        self.releases[tag] = Release(tag, release.draft, release.assets - {name}, release.notes)
         self.files.pop(name, None)
 
     def upload(self, tag: str, paths: list[Path]) -> None:
@@ -44,7 +45,7 @@ class FakeReleaseOperations:
             raise ReleaseError("simulated native upload failure")
         release = self.releases[tag]
         self.releases[tag] = Release(
-            tag, release.draft, release.assets | {path.name for path in paths}
+            tag, release.draft, release.assets | {path.name for path in paths}, release.notes
         )
         self.files.update({path.name: path.read_bytes() for path in paths})
 
@@ -121,7 +122,7 @@ def test_partial_draft_retry_replaces_only_mismatched_asset(tmp_path):
 
     assert ("delete", "v1.2.3", checksum.name) in operations.calls
     assert ("delete", "v1.2.3", installer.name) not in operations.calls
-    assert ("upload", "v1.2.3", (checksum.name,)) in operations.calls
+    assert ("upload", "v1.2.3", (checksum.name, "latest.json")) in operations.calls
     assert ("publish", "v1.2.3", True) in operations.calls
 
 
@@ -161,3 +162,42 @@ def test_failed_build_job_cannot_schedule_publish_job():
     assert "needs: build" in publish
     assert ".\\scripts\\build_windows_installer.ps1 -Release" in build
     assert "if ($LASTEXITCODE -ne 0)" in build
+
+
+@pytest.mark.parametrize("notes", ["", "Improved café rendering — বাংলা"])
+def test_manifest_matches_tested_installer_and_draft_notes(tmp_path, notes):
+    installer, checksum, payload, _ = _pair(tmp_path)
+    operations = FakeReleaseOperations({"v1.2.3": Release("v1.2.3", True, frozenset(), notes)})
+    publish_tested_pair(operations, tag="v1.2.3", installer=installer, checksum=checksum)
+    manifest = operations.files["latest.json"]
+    assert json.loads(manifest) == {
+        "schema_version": 1, "version": "1.2.3", "installer_size": len(payload),
+        "installer_sha256": hashlib.sha256(payload).hexdigest(), "notes": notes,
+    }
+    operations.calls.clear()
+    publish_tested_pair(operations, tag="v1.2.3", installer=installer, checksum=checksum)
+    assert operations.files["latest.json"] == manifest
+    assert not any(call[0] in {"upload", "delete"} for call in operations.calls)
+
+
+def test_mismatched_manifest_is_replaced_and_verified(tmp_path):
+    installer, checksum, payload, digest = _pair(tmp_path)
+    operations = FakeReleaseOperations(
+        {"v1.2.3": Release("v1.2.3", True, frozenset({installer.name, checksum.name, "latest.json"}))},
+        {installer.name: payload, checksum.name: digest, "latest.json": b"wrong"},
+    )
+    publish_tested_pair(operations, tag="v1.2.3", installer=installer, checksum=checksum)
+    assert ("delete", "v1.2.3", "latest.json") in operations.calls
+    assert ("upload", "v1.2.3", ("latest.json",)) in operations.calls
+
+
+def test_corrupt_uploaded_manifest_never_publishes(tmp_path):
+    installer, checksum, _, _ = _pair(tmp_path)
+    class CorruptUpload(FakeReleaseOperations):
+        def upload(self, tag, paths):
+            super().upload(tag, paths)
+            self.files["latest.json"] = b"corrupted"
+    operations = CorruptUpload()
+    with pytest.raises(ReleaseError, match="latest.json"):
+        publish_tested_pair(operations, tag="v1.2.3", installer=installer, checksum=checksum)
+    assert not any(call[0] == "publish" for call in operations.calls)

@@ -102,7 +102,7 @@ jobs:
           name: tested-release-${{ github.ref_name }}
           path: installer/Output
 
-      - name: Publish tested artifact pair
+      - name: Publish tested installer, checksum, and update manifest
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
