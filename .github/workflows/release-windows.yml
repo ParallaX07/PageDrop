@@ -107,89 +107,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $repo = "ParallaX07/PageDrop"
-          if ("${{ github.repository }}" -cne $repo) { throw "Refusing to publish outside $repo" }
-          $tag = "${{ github.ref_name }}"
-          if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') { throw "Invalid release tag: $tag" }
-          $version = $Matches[1..3] -join '.'
-          $installer = "installer/Output/PageDrop-$version-Setup.exe"
-          $checksum = "$installer.sha256"
-          if (-not (Test-Path -LiteralPath $installer) -or -not (Test-Path -LiteralPath $checksum)) { throw "Tested artifact pair is incomplete" }
-          $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = "$installerHash  PageDrop-$version-Setup.exe`n"
-          if ([System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $checksum), [System.Text.Encoding]::ASCII) -cne $expected) { throw "Tested checksum does not match installer bytes" }
-
-          $releaseJson = & gh api "repos/$repo/releases/tags/$tag" 2>&1
-          $releaseExit = $LASTEXITCODE
-          if ($releaseExit -eq 0) {
-            $release = $releaseJson | Out-String | ConvertFrom-Json
-            if (-not $release.draft) { throw "Release $tag is already published; refusing to mutate it" }
-            if ($release.tag_name -cne $tag) { throw "Draft tag identity mismatch" }
-          } elseif (($releaseJson | Out-String) -match '404|Not Found') {
-            & gh release create $tag --repo $repo --draft --title "PageDrop $version" --generate-notes
-            if ($LASTEXITCODE -ne 0) { throw "Creating draft release failed with exit code $LASTEXITCODE" }
-          } else {
-            throw "Reading release $tag failed with exit code $releaseExit"
-          }
-
-          $release = (& gh api "repos/$repo/releases/tags/$tag") | Out-String | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Reading draft release failed with exit code $LASTEXITCODE" }
-          if (-not $release.draft -or $release.tag_name -cne $tag) { throw "Draft release identity changed" }
-          $wanted = @((Split-Path -Leaf $installer), (Split-Path -Leaf $checksum))
-          $existingDir = Join-Path $env:RUNNER_TEMP "pagedrop-existing-draft-assets"
-          New-Item -ItemType Directory -Force -Path $existingDir | Out-Null
-          $upload = @()
-          foreach ($asset in $release.assets) {
-            if ($asset.name -in $wanted) {
-              & gh release download $tag --repo $repo --pattern $asset.name --dir $existingDir
-              if ($LASTEXITCODE -ne 0) { throw "Downloading draft asset failed with exit code $LASTEXITCODE" }
-              $existing = Join-Path $existingDir $asset.name
-              $matches = if ($asset.name -eq (Split-Path -Leaf $installer)) {
-                (Get-FileHash -LiteralPath $existing -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $installerHash
-              } else {
-                [System.IO.File]::ReadAllText($existing, [System.Text.Encoding]::ASCII) -ceq $expected
-              }
-              if (-not $matches) {
-                & gh release delete-asset $tag $asset.name --repo $repo --yes
-                if ($LASTEXITCODE -ne 0) { throw "Removing incomplete draft asset failed with exit code $LASTEXITCODE" }
-                if ($asset.name -eq (Split-Path -Leaf $installer)) { $upload += $installer } else { $upload += $checksum }
-              }
-            }
-          }
-          foreach ($asset in $wanted) {
-            if (-not ($release.assets.name -contains $asset)) {
-              if ($asset -eq (Split-Path -Leaf $installer)) { $upload += $installer } else { $upload += $checksum }
-            }
-          }
-          if ($upload.Count -gt 0) {
-            & gh release upload $tag $upload --repo $repo
-            if ($LASTEXITCODE -ne 0) { throw "Uploading tested artifacts failed with exit code $LASTEXITCODE" }
-          }
-
-          $verifyDir = Join-Path $env:RUNNER_TEMP "pagedrop-release-verify"
-          New-Item -ItemType Directory -Force -Path $verifyDir | Out-Null
-          & gh release download $tag --repo $repo --pattern "PageDrop-$version-Setup.exe*" --dir $verifyDir
-          if ($LASTEXITCODE -ne 0) { throw "Downloading draft artifacts for verification failed with exit code $LASTEXITCODE" }
-          $verifiedInstaller = Join-Path $verifyDir "PageDrop-$version-Setup.exe"
-          $verifiedChecksum = "$verifiedInstaller.sha256"
-          if ((Get-FileHash -LiteralPath $verifiedInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -cne (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()) { throw "Uploaded installer bytes differ from tested bytes" }
-          if ([System.IO.File]::ReadAllText($verifiedChecksum, [System.Text.Encoding]::ASCII) -cne $expected) { throw "Uploaded checksum differs from tested bytes" }
-
-          $latestJson = & gh api "repos/$repo/releases/latest" 2>&1
-          $latestExit = $LASTEXITCODE
-          $isLatest = $true
-          if ($latestExit -eq 0) {
-            $latest = $latestJson | Out-String | ConvertFrom-Json
-            if ($latest.tag_name -notmatch '^v(\d+)\.(\d+)\.(\d+)$') { throw "Existing latest stable tag is invalid: $($latest.tag_name)" }
-            $current = [version]$version
-            $existing = [version]($Matches[1..3] -join '.')
-            $isLatest = $current -gt $existing
-          } elseif (($latestJson | Out-String) -notmatch '404|Not Found') {
-            throw "Reading latest release failed with exit code $latestExit"
-          }
-          $finalRelease = (& gh api "repos/$repo/releases/tags/$tag") | Out-String | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Final draft recheck failed with exit code $LASTEXITCODE" }
-          if (-not $finalRelease.draft -or $finalRelease.tag_name -cne $tag) { throw "Draft changed before publication" }
-          & gh release edit $tag --repo $repo --draft=false --latest=$($isLatest.ToString().ToLowerInvariant())
+          $version = (uv run --locked python scripts/read_version.py).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Version reading failed with exit code $LASTEXITCODE" }
+          uv run --locked python scripts/publish_windows_release.py `
+            --tag "${{ github.ref_name }}" `
+            --installer "installer/Output/PageDrop-$version-Setup.exe" `
+            --checksum "installer/Output/PageDrop-$version-Setup.exe.sha256" `
+            --repository "${{ github.repository }}"
           if ($LASTEXITCODE -ne 0) { throw "Publishing release failed with exit code $LASTEXITCODE" }
