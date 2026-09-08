@@ -18,7 +18,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # PyQt6 wheels dlopen libEGL/libGL/XCB at import time even with
       # QT_QPA_PLATFORM=offscreen; ubuntu-latest does not ship them.
@@ -46,7 +46,7 @@ jobs:
             libxcb-xkb1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: "3.11"
 
