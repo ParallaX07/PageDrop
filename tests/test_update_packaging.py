@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_packaging
-from publish_windows_release import Release, ReleaseError, publish_tested_pair
+from publish_windows_release import GhReleaseOperations, Release, ReleaseError, publish_tested_pair
 
 
 class FakeReleaseOperations:
@@ -123,6 +123,20 @@ def test_partial_draft_retry_replaces_only_mismatched_asset(tmp_path):
     assert ("delete", "v1.2.3", installer.name) not in operations.calls
     assert ("upload", "v1.2.3", (checksum.name,)) in operations.calls
     assert ("publish", "v1.2.3", True) in operations.calls
+
+
+def test_github_draft_release_is_found_when_tag_endpoint_returns_not_found(monkeypatch):
+    operations = GhReleaseOperations("ParallaX07/PageDrop")
+
+    def run(*args):
+        if args[1].endswith("/tags/v1.2.3"):
+            raise ReleaseError("HTTP 404: Not Found")
+        assert args == ("api", "repos/ParallaX07/PageDrop/releases?per_page=100")
+        return '[{"tag_name": "v1.2.3", "draft": true, "assets": []}]'
+
+    monkeypatch.setattr(operations, "_run", run)
+
+    assert operations.get("v1.2.3") == Release("v1.2.3", True, frozenset())
 
 
 def test_published_release_and_failed_upload_never_reach_publication(tmp_path):

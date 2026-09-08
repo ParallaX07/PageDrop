@@ -78,7 +78,15 @@ class GhReleaseOperations:
 
     def get(self, tag: str) -> Release | None:
         value = self._get(f"repos/{self.repository}/releases/tags/{tag}")
-        return None if value is None else self._release(value)
+        if value is not None:
+            return self._release(value)
+        releases = json.loads(self._run(f"api", f"repos/{self.repository}/releases?per_page=100"))
+        if not isinstance(releases, list):
+            raise ReleaseError("GitHub returned malformed release list")
+        for release in releases:
+            if isinstance(release, dict) and release.get("tag_name") == tag:
+                return self._release(release)
+        return None
 
     def create_draft(self, tag: str, title: str) -> None:
         self._run("release", "create", tag, "--repo", self.repository, "--draft", "--title", title, "--generate-notes")
