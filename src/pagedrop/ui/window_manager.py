@@ -6,6 +6,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.update_checker import UpdateCoordinator
 
 if TYPE_CHECKING:
     from pagedrop.ui.main_window import MainWindow
@@ -27,6 +28,7 @@ class WindowManager(QObject):
         self._app = app
         self._windows: set[MainWindow] = set()
         self._primary: MainWindow | None = None
+        self.update_coordinator = UpdateCoordinator(app)
 
     @property
     def windows(self) -> frozenset[MainWindow]:
@@ -83,4 +85,5 @@ class WindowManager(QObject):
 
     def _maybe_quit(self) -> None:
         self.last_window_closing.emit()
-        self._app.quit()
+        self.update_coordinator.stopped.connect(self._app.quit)
+        self.update_coordinator.stop()

@@ -32,6 +32,7 @@ from pagedrop.ui.settings import (
     thumbnail_render_width,
     thumbnail_zoom,
 )
+from datetime import UTC, datetime
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
@@ -81,6 +82,28 @@ def test_thumbnail_zoom_pref_round_trip(isolated_settings):
     assert thumbnail_zoom() == 240
     set_thumbnail_zoom(MAX_THUMBNAIL_WIDTH + 50)
     assert thumbnail_zoom() == MAX_THUMBNAIL_WIDTH
+
+
+def test_update_preferences_use_strict_utc_timestamps(isolated_settings):
+    moment = datetime(2026, 9, 8, 1, 2, 3, 999, tzinfo=UTC)
+    settings_mod.set_automatic_update_checks_enabled(False)
+    settings_mod.set_last_check_attempt_utc(moment)
+    settings_mod.set_last_successful_check_utc(moment)
+    settings_mod.set_update_retry_after_utc(moment)
+    settings_mod.set_update_remind_after_utc(moment)
+    settings_mod.set_skipped_update_version("1.2.3")
+    settings_mod.set_pending_update_target_version("1.2.4")
+
+    store = settings_mod._settings()
+    assert settings_mod.automatic_update_checks_enabled() is False
+    assert store.value(settings_mod.KEY_UPDATES_LAST_CHECK_ATTEMPT_UTC) == "2026-09-08T01:02:03Z"
+    assert settings_mod.last_successful_check_utc() == moment.replace(microsecond=0)
+    assert settings_mod.update_retry_after_utc() == moment.replace(microsecond=0)
+    assert settings_mod.update_remind_after_utc() == moment.replace(microsecond=0)
+    assert settings_mod.skipped_update_version() == "1.2.3"
+    assert settings_mod.pending_update_target_version() == "1.2.4"
+    store.setValue(settings_mod.KEY_UPDATES_LAST_SUCCESSFUL_CHECK_UTC, "not-a-timestamp")
+    assert settings_mod.last_successful_check_utc() is None
 
 
 def test_fuzzy_match_substring_and_subsequence():

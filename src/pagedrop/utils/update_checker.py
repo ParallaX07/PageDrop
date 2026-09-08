@@ -125,22 +125,22 @@ def is_newer(release_version: str, installed_version: str) -> bool:
     return parse_version(release_version) > parse_version(installed_version)
 
 
-def fetch_latest_release(*, open_url: OpenUrl | None = None, monotonic: Callable[[], float] = time.monotonic) -> ReleaseInfo:
+def fetch_latest_release(*, open_url: OpenUrl | None = None, monotonic: Callable[[], float] = time.monotonic, cancel_event: threading.Event | None = None) -> ReleaseInfo:
     """Fetch and validate the latest public stable release metadata."""
     opener = open_url or _stdlib_open
     started = monotonic()
     response = _request(
-        _API_URL, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, False
+        _API_URL, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, False, cancel_event
     )
     try:
-        raw = _read_limited(response, _METADATA_LIMIT, monotonic, started, _METADATA_DEADLINE)
+        raw = _read_limited(response, _METADATA_LIMIT, monotonic, started, _METADATA_DEADLINE, cancel_event)
     finally:
         response.close()
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ReleaseDataError("Release metadata is not valid JSON") from exc
-    return _release_from_data(data, opener, monotonic, started)
+    return _release_from_data(data, opener, monotonic, started, cancel_event)
 
 
 def check_for_update(installed_version: str, **kwargs: object) -> ReleaseInfo | None:
@@ -184,7 +184,7 @@ def download_installer(
         raise UpdateDownloadError("Could not save the update installer") from exc
 
 
-def _release_from_data(data: object, opener: OpenUrl, monotonic: Callable[[], float], started: float) -> ReleaseInfo:
+def _release_from_data(data: object, opener: OpenUrl, monotonic: Callable[[], float], started: float, cancel_event: threading.Event | None = None) -> ReleaseInfo:
     if (
         not isinstance(data, dict)
         or not isinstance(data.get("draft"), bool)
@@ -228,10 +228,10 @@ def _release_from_data(data: object, opener: OpenUrl, monotonic: Callable[[], fl
     ):
         raise ReleaseDataError("Checksum size is invalid")
     checksum_response = _request(
-        checksum_url, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, True
+        checksum_url, opener, _SOCKET_TIMEOUT, monotonic, started, _METADATA_DEADLINE, True, cancel_event
     )
     try:
-        checksum_bytes = _read_limited(checksum_response, _CHECKSUM_LIMIT, monotonic, started, _METADATA_DEADLINE)
+        checksum_bytes = _read_limited(checksum_response, _CHECKSUM_LIMIT, monotonic, started, _METADATA_DEADLINE, cancel_event)
     finally:
         checksum_response.close()
     digest = _parse_checksum(checksum_bytes, installer_name)
@@ -293,9 +293,11 @@ def _request(
     started: float,
     deadline: float,
     allow_redirects: bool,
+    cancel_event: threading.Event | None = None,
 ) -> _Response:
     current = url
     for redirect_count in range(_MAX_REDIRECTS + 1):
+        _ensure_not_cancelled(cancel_event)
         _ensure_before_deadline(monotonic, started, deadline)
         request = Request(current, headers={"User-Agent": _USER_AGENT, "Accept": "application/octet-stream"})
         try:
@@ -332,10 +334,11 @@ def _stdlib_open(request: Request, timeout: float) -> _Response:
     return build_opener(_NoRedirect()).open(request, timeout=timeout)  # type: ignore[return-value]
 
 
-def _read_limited(response: _Response, limit: int, monotonic: Callable[[], float], started: float, deadline: float) -> bytes:
+def _read_limited(response: _Response, limit: int, monotonic: Callable[[], float], started: float, deadline: float, cancel_event: threading.Event | None = None) -> bytes:
     chunks: list[bytes] = []
     total = 0
     while True:
+        _ensure_not_cancelled(cancel_event)
         _ensure_before_deadline(monotonic, started, deadline)
         try:
             chunk = response.read(min(_CHUNK_SIZE, limit + 1 - total))
@@ -408,6 +411,11 @@ def _download_to(release: ReleaseInfo, output, cancel_event: threading.Event | N
 def _ensure_before_deadline(monotonic: Callable[[], float], started: float, deadline: float) -> None:
     if monotonic() - started > deadline:
         raise UpdateTimeoutError("Update operation timed out")
+
+
+def _ensure_not_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise UpdateCancelledError("Update check was cancelled")
 
 
 def _header(headers: object, name: str) -> str | None:
