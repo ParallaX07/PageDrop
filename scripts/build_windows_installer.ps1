@@ -6,16 +6,21 @@
 #
 # Usage:
 #   .\scripts\build_windows_installer.ps1
-#   .\scripts\build_windows_installer.ps1 -SkipBuild   # reuse existing dist/pagedrop/
+#   .\scripts\build_windows_installer.ps1 -SkipBuild   # local-only: reuse dist/pagedrop/
 
 [CmdletBinding()]
 param(
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+
+if ($Release -and $SkipBuild) {
+    throw "-SkipBuild is not permitted for a release build."
+}
 
 function Get-Iscc {
     if ($env:ISCC -and (Test-Path -LiteralPath $env:ISCC)) {
@@ -37,7 +42,10 @@ function Get-Iscc {
     throw "Inno Setup compiler (iscc) not found. Install Inno Setup 6+ or set `$env:ISCC`."
 }
 
-$Version = (& uv run python scripts/read_version.py).Trim()
+$Version = (& uv run --locked python scripts/read_version.py).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Version reading failed with exit code $LASTEXITCODE"
+}
 if (-not $Version) {
     throw "Could not read version from pyproject.toml"
 }
@@ -47,12 +55,21 @@ $Ico = Join-Path $Root "src\pagedrop\assets\app-icon.ico"
 if (-not (Test-Path -LiteralPath $Ico)) {
     Write-Host "Generating app-icon.ico..."
     & uv run --with pillow python scripts/generate_icons.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Icon generation failed with exit code $LASTEXITCODE"
+    }
 }
 
 if (-not $SkipBuild) {
     Write-Host "Building PyInstaller onedir..."
-    & uv sync --group dev
+    & uv sync --locked --group dev
+    if ($LASTEXITCODE -ne 0) {
+        throw "Dependency sync failed with exit code $LASTEXITCODE"
+    }
     & uv run pyinstaller --noconfirm pagedrop.spec
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed with exit code $LASTEXITCODE"
+    }
 }
 
 $Exe = Join-Path $Root "dist\pagedrop\pagedrop.exe"
@@ -62,14 +79,17 @@ if (-not (Test-Path -LiteralPath $Exe)) {
 
 $Iscc = Get-Iscc
 $Iss = Join-Path $Root "installer\windows.iss"
+$Out = Join-Path $Root "installer\Output\PageDrop-$Version-Setup.exe"
+if (Test-Path -LiteralPath $Out) {
+    Remove-Item -LiteralPath $Out -Force
+}
 Write-Host "Compiling installer with $Iscc ..."
 & $Iscc "/DAppVersion=$Version" $Iss
 if ($LASTEXITCODE -ne 0) {
     throw "iscc failed with exit code $LASTEXITCODE"
 }
 
-$Out = Join-Path $Root "installer\Output\PageDrop-$Version-Setup.exe"
-if (-not (Test-Path -LiteralPath $Out)) {
-    throw "Expected output missing: $Out"
+if (-not (Test-Path -LiteralPath $Out) -or (Get-Item -LiteralPath $Out).Length -le 0) {
+    throw "Expected new non-empty output missing: $Out"
 }
 Write-Host "Installer ready: $Out"

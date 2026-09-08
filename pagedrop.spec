@@ -55,13 +55,10 @@ for package in ("fitz",):
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
-# so importlib.metadata.version("pagedrop") works when frozen
-try:
-    from PyInstaller.utils.hooks import copy_metadata
+# Packaging without PageDrop metadata would make the frozen app report 0.0.0.
+from PyInstaller.utils.hooks import copy_metadata
 
-    datas += copy_metadata("pagedrop")
-except Exception:
-    pass
+datas += copy_metadata("pagedrop")
 
 hiddenimports += collect_submodules("pagedrop")
 hiddenimports = list(dict.fromkeys(hiddenimports))

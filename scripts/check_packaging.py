@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,7 @@ from read_version import read_version  # noqa: E402
 NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 SPEC = ROOT / "pagedrop.spec"
 LICENSE = ROOT / "LICENSE"
+APP_ID = "{{A7C3E91F-2B4D-4F8A-9E1C-6D5B0A8F3C21}}"
 
 
 def _assert_notices_content(text: str) -> None:
@@ -73,7 +75,7 @@ def _onedir_data_root(bundle: Path) -> Path:
 
 
 def _assert_onedir_dist_if_present() -> None:
-    """When dist/pagedrop/ exists with an exe, require notices + Phosphor icons."""
+    """When dist/pagedrop/ exists with an exe, require its release contents."""
     bundle = ROOT / "dist" / "pagedrop"
     if not bundle.is_dir():
         return
@@ -90,6 +92,30 @@ def _assert_onedir_dist_if_present() -> None:
     assert icons.is_dir() and any(icons.iterdir()), (
         f"onedir bundle must include Phosphor icons under {icons}"
     )
+    metadata = list(data_root.glob("pagedrop-*.dist-info/METADATA"))
+    assert len(metadata) == 1, "onedir bundle must include exactly one PageDrop METADATA file"
+    metadata_text = metadata[0].read_text(encoding="utf-8")
+    assert "Name: pagedrop\n" in metadata_text, "frozen metadata must name pagedrop"
+    assert f"Version: {read_version()}\n" in metadata_text, (
+        "frozen metadata version must match scripts/read_version.py"
+    )
+
+
+def _assert_installer_if_present(version: str) -> None:
+    """Validate a locally built installer/checksum pair without requiring a build."""
+    output = ROOT / "installer" / "Output"
+    installer = output / f"PageDrop-{version}-Setup.exe"
+    checksum = output / f"{installer.name}.sha256"
+    if not installer.exists() and not checksum.exists():
+        return
+    assert installer.is_file() and installer.stat().st_size > 0, (
+        f"missing non-empty installer: {installer}"
+    )
+    assert checksum.is_file(), f"missing checksum: {checksum}"
+    expected = f"{sha256(installer.read_bytes()).hexdigest()}  {installer.name}\n"
+    assert checksum.read_text(encoding="ascii") == expected, (
+        "checksum must contain the final installer SHA-256 and exact filename"
+    )
 
 
 def main() -> None:
@@ -104,6 +130,10 @@ def main() -> None:
     assert "pagedrop.exe" in iss_text
     assert "CurrentVersion\\Run" not in iss_text  # no autostart
     assert "AppVersion" in iss_text
+    assert f"AppId={APP_ID}" in iss_text, "windows.iss AppId must stay fixed"
+    assert "OutputBaseFilename=PageDrop-{#AppVersion}-Setup" in iss_text, (
+        "windows.iss must use the exact release installer name"
+    )
     assert "recursesubdirs" in iss_text.lower(), (
         "windows.iss must install the onedir tree (recursesubdirs)"
     )
@@ -125,6 +155,7 @@ def main() -> None:
     _assert_icons_in_spec(spec_text)
     _assert_onedir_spec(spec_text)
     _assert_onedir_dist_if_present()
+    _assert_installer_if_present(ver)
 
     assert "THIRD_PARTY_NOTICES.md" in iss_text, (
         "windows.iss must install THIRD_PARTY_NOTICES.md beside the exe"
