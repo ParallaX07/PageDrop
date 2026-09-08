@@ -43,6 +43,8 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 1. Go to [Releases](https://github.com/ParallaX07/PageDrop/releases) and download the latest `PageDrop-*-Setup.exe` installer.
 2. Run Setup.exe and follow the wizard. It installs to Program Files and adds a Start Menu shortcut.
 
+Packaged Windows builds check for updates automatically; use **Help → Check for updates…** to check now. Downloads are verified before installation, and PageDrop asks you to resolve active work and unsaved tabs before handing off to Setup.
+
 > Windows may show a SmartScreen warning on unsigned builds. Choose **More info → Run anyway** if that happens.
 
 macOS and Linux binaries aren't published yet. Run from source (below) or build your own with PyInstaller.
@@ -164,9 +166,3 @@ Windows installer and packaging checklist: [docs/building.md](docs/building.md).
 ## License
 
 PageDrop is licensed under the GNU Affero General Public License v3.0 or later — see [`LICENSE`](LICENSE). Source and build instructions for every published binary are available in the corresponding source release. See [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
-## Status
-
-**v0.5.1**: Patch over 0.5.0 — frozen builds re-enter redaction fresh-process verify via `--pagedrop-redact-verify` (same pattern as the Office COM worker) so Save with redaction no longer opens a second GUI or skips verification.
-
-**v0.5.0**: Builds on 0.4.0 with ToolShell layout/help polish, stronger annotations (freetext styling, markup colors, redaction confirm), blank-page detection, multi-page print with credentials, FITZ_LOCK thread-safety across PDF ops, thumbnail/file-grid performance work, zoom control icons, and a Windows PyInstaller onedir bundle + installer path. macOS/Linux release binaries and Authenticode signing for the Inno installer are planned.

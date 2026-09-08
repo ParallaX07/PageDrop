@@ -1,6 +1,6 @@
 [project]
 name = "pagedrop"
-version = "0.5.1"
+version = "0.6.0"
 description = "Grab PDF pages and drop them where they belong — folders, merges, multi-tab edits"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
