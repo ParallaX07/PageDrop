@@ -70,7 +70,15 @@ Before tagging a release, also verify manually on a machine without Python: inst
 
 ## Windows installer (GitHub Releases)
 
-Version comes from `pyproject.toml`. Generate icons once (or after logo changes), then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isinfo.php), with `iscc` on PATH or `$env:ISCC`):
+Windows releases are published only from the `vMAJOR.MINOR.PATCH` tag that
+exactly matches the version in `pyproject.toml`. The release workflow builds and
+tests one onedir installer, produces its checksum from the final bytes, then
+passes that tested pair to its publication job. Do not create a release manually
+or rebuild an artifact between testing and publication.
+
+For a local Windows packaging check, generate icons once (or after logo changes),
+then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isinfo.php),
+with `iscc` on PATH or `$env:ISCC`):
 
 ```powershell
 uv run --with pillow python scripts/generate_icons.py   # or: make generate-icons
@@ -81,23 +89,42 @@ uv run python scripts/check_packaging.py
 
 Output lands at `installer/Output/PageDrop-<version>-Setup.exe` (gitignored — do not commit binaries). The installer copies the whole `dist/pagedrop/` onedir tree plus `LICENSE` and `THIRD_PARTY_NOTICES.md` under Program Files.
 
-Publish to GitHub Releases (replace `X.Y.Z` with the `pyproject.toml` version):
+The workflow creates the required checksum beside it:
 
-```powershell
-gh release create "vX.Y.Z" `
-  "installer/Output/PageDrop-X.Y.Z-Setup.exe" `
-  --repo ParallaX07/PageDrop `
-  --title "vX.Y.Z" `
-  --notes "Windows Setup.exe for PageDrop X.Y.Z."
+```text
+<64 lowercase SHA-256 hex characters>  PageDrop-X.Y.Z-Setup.exe
 ```
+
+On a matching tag push, `.github/workflows/release-windows.yml` runs the full
+test suite, packaging validation, and the newly built executable smoke test on
+Windows x64 before publication. It then creates or resumes an unpublished draft,
+checks the exact installer and checksum bytes, and publishes only that pair. A
+published release is never changed. If an unpublished draft is interrupted, rerun
+the same tag workflow: it replaces only incomplete or mismatched draft assets and
+re-verifies both assets before publishing. It will not move “latest” backwards.
+
+Do not use `-SkipBuild` for a release. Never upload a checksum made from anything
+other than the final installer bytes. The production updater and workflow are
+pinned to `ParallaX07/PageDrop`.
+
+### First updater-capable release
+
+Existing PageDrop builds without the in-app updater must be upgraded by manually
+installing the first updater-capable release. Builds from before the installer
+mutex also need every old PageDrop process closed manually before upgrading; they
+cannot advertise the mutex to the installer.
 
 ## Packaging checklist
 
 Before a tagged binary package:
 
 1. Run `make test-release` (or equivalent full suite + executable smoke)
-2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, and `QtPrintSupport`
+2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, `QtPrintSupport`, installer identity, and updater mutex contract
 3. Confirm release notes / About / installer materials match the redistribution policy in [Licensing](licensing.md)
 4. Confirm Qt LGPL obligations (licence texts + source/offer) for that release
+
+Passing source tests or this checklist is not release clearance. Follow the
+binary-release requirements in [Licensing](licensing.md) for every published
+installer.
 
 See [Licensing](licensing.md) and [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) for Combined Work and Qt details.

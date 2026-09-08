@@ -60,9 +60,53 @@ See [Tools](tools.md) for the full catalogue and optional backends.
 ## Preferences and accessibility
 
 - View → Toggle Light Theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
-- Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, and **Reduce motion** (platform reduce-motion is still honored when available)
+- Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, **Automatically check for updates**, and **Reduce motion** (platform reduce-motion is still honored when available)
 - High-contrast preferences are respected where the platform exposes them
 - Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions
+
+## Windows updates
+
+Updates are available only in the packaged Windows version. PageDrop checks for a
+new stable release five seconds after opening when a check is due, then at most
+once a day after a successful check. Turn off **Automatically check for updates**
+in Preferences to stop background checks. Preferences also show the last
+successful check and any current background error; background failures do not
+interrupt your work.
+
+Use Help → **Check for updates…** at any time for visible feedback. It can show
+that PageDrop is current, that no public release exists, a temporary rate limit,
+or a connection/problem message. A manual check can reveal an update you skipped
+or deferred, but still respects a GitHub retry deadline. Unsupported builds offer
+the PageDrop releases page instead of checking.
+
+When an update is available, review its plain-text release notes and choose one:
+
+- **Download update** downloads the installer only after your approval. Progress
+  includes Cancel; cancellation removes the partial download.
+- **Remind me tomorrow** hides this offer for 24 hours.
+- **Skip this version** hides only that exact version. A later version is still
+  offered.
+
+After the download is verified, choose **Install and close PageDrop** or **Later**.
+Later keeps the verified download available without fetching it again. Before an
+install, PageDrop asks you to finish or cancel active tasks and resolves unsaved
+tabs in every window with Save As, Discard, or Cancel. Save As always writes a
+new file; PageDrop never overwrites the original PDF. Cancelling a save or the
+installer launch leaves all windows and unsaved work usable.
+
+Choosing install opens the normal elevated Windows installer (UAC). Refusing UAC,
+cancelling the wizard, or a failed launch does not close PageDrop. Windows may
+show an unsigned or unknown-publisher warning if the installer is not code signed;
+read that prompt and do not proceed unless you trust the release. Other open
+PageDrop processes block installation through the installer and are never closed
+automatically.
+
+The updater validates the expected installer size and SHA-256 checksum over HTTPS
+before it offers installation. This detects corruption and mismatched assets, but
+does not independently prove publisher identity if the release account itself is
+compromised. Existing builds without the updater need one manual installation of
+the first updater-capable release; for an older build without the installer mutex,
+close every old PageDrop process manually before upgrading.
 
 ## Keyboard shortcuts
 
