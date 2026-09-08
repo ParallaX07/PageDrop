@@ -13,6 +13,7 @@ from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from pagedrop.ui import settings
+from pagedrop.ui.update_storage import UpdateStorage
 from pagedrop.utils.update_checker import (
     RateLimitedError,
     ReleaseInfo,
@@ -86,6 +87,7 @@ class UpdateCoordinator(QObject):
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         supported: bool | None = None,
+        storage: UpdateStorage | None = None,
     ) -> None:
         super().__init__(app)
         self._app = app
@@ -93,6 +95,7 @@ class UpdateCoordinator(QObject):
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic = monotonic
         self._supported = sys.platform == "win32" if supported is None else supported
+        self.storage = storage or (UpdateStorage() if self._supported else None)
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._pool.setObjectName("PageDropUpdatePool")
@@ -205,6 +208,8 @@ class UpdateCoordinator(QObject):
         self._stopping = True
         self._timer.stop()
         if self._worker is None:
+            if self.storage is not None:
+                self.storage.close()
             self.stopped.emit()
         else:
             self._worker.cancel()
@@ -218,6 +223,8 @@ class UpdateCoordinator(QObject):
     def _check_finished(self, release: object, error: object) -> None:
         self._worker = None
         if self._stopping:
+            if self.storage is not None:
+                self.storage.close()
             self.stopped.emit()
             return
         now = self._now()
