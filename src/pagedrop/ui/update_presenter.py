@@ -51,6 +51,7 @@ class UpdateDialog(QDialog):
         self.progress.setAccessibleName("Update download progress")
         layout.addWidget(self.progress)
         self.buttons = QDialogButtonBox()
+        self.buttons.setCenterButtons(True)
         layout.addWidget(self.buttons)
 
     def show_message(self, message: str, *, notes: str = "") -> None:
@@ -69,6 +70,7 @@ class UpdateDialog(QDialog):
         self._button("Download update", self._start_download)
         self._button("Remind me tomorrow", self._remind)
         self._button("Skip this version", self._skip)
+        self.setMinimumWidth(max(self.minimumWidth(), self.minimumSizeHint().width()))
 
     def show_downloading(self, done: int = 0, total: int = 0, *, cancelling: bool = False) -> None:
         self.message.setText("Cancelling update download…" if cancelling else "Downloading update…")

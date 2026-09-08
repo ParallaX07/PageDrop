@@ -84,6 +84,21 @@ def test_available_offer_is_reopened_without_network(presenter):
     assert presenter.dialog.notes.toPlainText() == "<b>plain notes</b>"
 
 
+def test_offer_actions_are_centered_and_fit(presenter, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter.check_manually(presenter._manager.primary)
+    dialog = presenter.dialog
+    dialog.show()
+    qtbot.waitUntil(lambda: dialog.buttons.width() > 0)
+    actions = dialog.buttons.buttons()
+    left = actions[0].geometry().left()
+    right = dialog.buttons.width() - actions[-1].geometry().right() - 1
+    assert abs(left - right) <= 1
+    assert dialog.minimumWidth() >= dialog.minimumSizeHint().width()
+
+
 @pytest.mark.parametrize("error,expected", [
     (UpdateNetworkError("private"), "internet connection"),
     (UpdateTimeoutError("private"), "timed out"),

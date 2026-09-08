@@ -178,6 +178,12 @@ def test_failed_build_job_cannot_schedule_publish_job():
     assert "if ($LASTEXITCODE -ne 0)" in build
 
 
+def test_installer_build_rejects_stale_frozen_version_before_compiling():
+    script = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+    assert "scripts/check_packaging.py" in script
+    assert script.index("scripts/check_packaging.py") < script.index("Compiling installer")
+
+
 @pytest.mark.parametrize("notes", ["", "Improved café rendering — বাংলা"])
 def test_manifest_matches_tested_installer_and_draft_notes(tmp_path, notes):
     installer, checksum, payload, _ = _pair(tmp_path)

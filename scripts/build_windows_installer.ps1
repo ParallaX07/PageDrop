@@ -77,6 +77,13 @@ if (-not (Test-Path -LiteralPath $Exe)) {
     throw "Missing $Exe - run without -SkipBuild or build with pyinstaller first."
 }
 
+# Do not label an installer with the pyproject version when its frozen app has
+# stale package metadata (which is what the in-app updater reports).
+& uv run --locked python scripts/check_packaging.py
+if ($LASTEXITCODE -ne 0) {
+    throw "Frozen package validation failed with exit code $LASTEXITCODE"
+}
+
 $Iscc = Get-Iscc
 $Iss = Join-Path $Root "installer\windows.iss"
 $Out = Join-Path $Root "installer\Output\PageDrop-$Version-Setup.exe"
