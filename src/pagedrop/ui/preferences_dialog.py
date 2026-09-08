@@ -92,6 +92,8 @@ class PreferencesDialog(QDialog):
         self._update_status.setWordWrap(True)
         root.addWidget(self._update_status)
 
+        root.addWidget(self._prefs_divider())
+
         window_heading = QLabel("Window")
         window_heading.setObjectName("PreferencesSection")
         root.addWidget(window_heading)

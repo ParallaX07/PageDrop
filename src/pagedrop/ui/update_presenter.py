@@ -111,9 +111,8 @@ class UpdateDialog(QDialog):
             self.show_downloading()
 
     def _install_later_phase(self) -> None:
-        # U5/U6 own shutdown preparation and the Windows launch; preserve READY.
-        self.show_message("Installation will be available after PageDrop prepares open documents.")
-        self._button("Later", self.reject)
+        if self._manager.prepare_for_installation(self):
+            self.show_message("PageDrop is ready to close for installation.")
 
 
 class UpdatePresenter(QObject):
