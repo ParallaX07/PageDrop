@@ -159,3 +159,29 @@ def test_unsupported_build_and_ready_state_reject_new_checks(qapp, isolated_sett
     assert not coordinator.request_check(manual=True)
     unsupported.stop()
     coordinator.stop()
+
+
+def test_explicit_download_reaches_ready_and_reuses_verified_cache(qtbot, qapp, isolated_settings, tmp_path):
+    release = _release()
+    calls: list[str] = []
+
+    def download(info, destination, cancel, progress):
+        calls.append(info.version)
+        progress(info.installer_size, info.installer_size)
+        destination.write_bytes(b"installer")
+        return destination
+
+    coordinator = UpdateCoordinator(
+        qapp,
+        supported=True,
+        storage=UpdateStorage(tmp_path / "updates"),
+        download=download,
+    )
+    coordinator._release = release
+    coordinator._set_state(UpdateState.AVAILABLE)
+
+    with qtbot.waitSignal(coordinator.download_completed):
+        assert coordinator.start_download()
+    assert coordinator.state is UpdateState.READY
+    assert calls == ["1.2.3"]
+    coordinator.stop()

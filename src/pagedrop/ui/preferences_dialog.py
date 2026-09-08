@@ -39,17 +39,19 @@ from pagedrop.ui.settings import (
     set_remember_window_geometry,
     set_tessdata_path,
     tessdata_path,
+    automatic_update_checks_enabled,
 )
 
 
 class PreferencesDialog(QDialog):
     """Modal prefs: safety, accessibility, Office/OCR + Recheck."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, coordinator=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Preferences")
         self.setObjectName("PreferencesDialog")
         self.setMinimumWidth(480)
+        self._update_coordinator = coordinator
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -76,6 +78,19 @@ class PreferencesDialog(QDialog):
         root.addWidget(self._confirm_close_dirty)
 
         root.addWidget(self._prefs_divider())
+
+        updates_heading = QLabel("Updates")
+        updates_heading.setObjectName("PreferencesSection")
+        root.addWidget(updates_heading)
+        self._automatic_updates = QCheckBox("Automatically check for updates")
+        self._automatic_updates.setObjectName("PreferencesAutomaticUpdates")
+        self._automatic_updates.setToolTip("Checks once a day while PageDrop is open.")
+        self._automatic_updates.setChecked(automatic_update_checks_enabled())
+        root.addWidget(self._automatic_updates)
+        self._update_status = QLabel()
+        self._update_status.setObjectName("PreferencesUpdateStatus")
+        self._update_status.setWordWrap(True)
+        root.addWidget(self._update_status)
 
         window_heading = QLabel("Window")
         window_heading.setObjectName("PreferencesSection")
@@ -191,6 +206,16 @@ class PreferencesDialog(QDialog):
         root.addWidget(buttons)
 
         self._refresh_status()
+        self._refresh_update_status()
+
+    def _refresh_update_status(self) -> None:
+        from pagedrop.ui.settings import last_successful_check_utc
+
+        checked = last_successful_check_utc()
+        text = "No successful update check yet" if checked is None else f"Last successful check: {checked.strftime('%Y-%m-%d %H:%M UTC')}"
+        if self._update_coordinator is not None and getattr(self._update_coordinator, "last_error", ""):
+            text += f"\nCurrent background error: {self._update_coordinator.last_error}"
+        self._update_status.setText(text)
 
     @staticmethod
     def _prefs_divider() -> QFrame:
@@ -304,6 +329,12 @@ class PreferencesDialog(QDialog):
         set_confirm_before_closing_dirty_tabs(self._confirm_close_dirty.isChecked())
         set_remember_window_geometry(self._remember_geometry.isChecked())
         set_reduce_motion(self._reduce_motion.isChecked())
+        if self._update_coordinator is not None:
+            self._update_coordinator.set_automatic_enabled(self._automatic_updates.isChecked())
+        else:
+            from pagedrop.ui.settings import set_automatic_update_checks_enabled
+
+            set_automatic_update_checks_enabled(self._automatic_updates.isChecked())
         set_office_preferred_backend(str(self._backend.currentData()))
         set_office_soffice_path(self._soffice.text().strip() or None)
         set_tessdata_path(self._tessdata.text().strip() or None)
@@ -312,8 +343,8 @@ class PreferencesDialog(QDialog):
         self.accept()
 
 
-def open_preferences(parent: QWidget | None = None) -> PreferencesDialog:
+def open_preferences(parent: QWidget | None = None, *, coordinator=None) -> PreferencesDialog:
     """Show the Preferences dialog (modal). Returns the dialog instance."""
-    dialog = PreferencesDialog(parent)
+    dialog = PreferencesDialog(parent, coordinator=coordinator)
     dialog.exec()
     return dialog

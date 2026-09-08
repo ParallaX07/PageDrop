@@ -19,6 +19,7 @@ from pagedrop.utils.update_checker import (
     ReleaseInfo,
     ReleaseNotFoundError,
     check_for_update,
+    download_installer,
 )
 
 _STARTUP_DELAY_MS = 5_000
@@ -66,6 +67,30 @@ class _CheckWorker(QRunnable):
             self.signals.finished.emit(result, None)
 
 
+class _DownloadWorker(QRunnable):
+    class Signals(QObject):
+        progress = pyqtSignal(int, int)
+        finished = pyqtSignal(object, object)
+
+    def __init__(self, download, release: ReleaseInfo, destination: object) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._download, self._release, self._destination = download, release, destination
+        self._cancel = threading.Event()
+        self.setAutoDelete(True)
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    def run(self) -> None:
+        try:
+            result = self._download(self._release, self._destination, self._cancel, self.signals.progress.emit)
+        except BaseException as exc:  # Worker must always notify its owner.
+            self.signals.finished.emit(None, exc)
+        else:
+            self.signals.finished.emit(result, None)
+
+
 class UpdateCoordinator(QObject):
     """The sole updater owner for one application process.
 
@@ -76,7 +101,11 @@ class UpdateCoordinator(QObject):
     state_changed = pyqtSignal(str)
     release_available = pyqtSignal(object)
     check_succeeded = pyqtSignal(object)
+    no_published_release = pyqtSignal()
     check_failed = pyqtSignal(str)
+    download_progress = pyqtSignal(int, int)
+    download_completed = pyqtSignal(object)
+    download_failed_signal = pyqtSignal(str)
     stopped = pyqtSignal()
 
     def __init__(
@@ -84,6 +113,7 @@ class UpdateCoordinator(QObject):
         app: QApplication,
         *,
         check: Callable[[str, threading.Event], ReleaseInfo | None] | None = None,
+        download=None,
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         supported: bool | None = None,
@@ -92,6 +122,9 @@ class UpdateCoordinator(QObject):
         super().__init__(app)
         self._app = app
         self._check = check or (lambda version, cancel: check_for_update(version, cancel_event=cancel))
+        self._download = download or (lambda release, destination, cancel, progress: download_installer(
+            release, destination, cancel_event=cancel, progress=progress
+        ))
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic = monotonic
         self._supported = sys.platform == "win32" if supported is None else supported
@@ -105,9 +138,11 @@ class UpdateCoordinator(QObject):
         self._state = UpdateState.IDLE
         self._release: ReleaseInfo | None = None
         self._worker: _CheckWorker | None = None
+        self._download_worker: _DownloadWorker | None = None
         self._stopping = False
         self._next_due_monotonic: float | None = None
         self._server_retry_deadline: datetime | None = None
+        self._last_error = ""
         if self._supported:
             self.reschedule()
 
@@ -123,6 +158,11 @@ class UpdateCoordinator(QObject):
     def supported(self) -> bool:
         return self._supported
 
+    @property
+    def last_error(self) -> str:
+        """The current sanitized background failure, cleared by success."""
+        return self._last_error
+
     def set_automatic_enabled(self, enabled: bool) -> None:
         settings.set_automatic_update_checks_enabled(enabled)
         self.reschedule()
@@ -131,6 +171,30 @@ class UpdateCoordinator(QObject):
         if self._state is not UpdateState.AVAILABLE:
             return False
         self._set_state(UpdateState.DOWNLOADING)
+        return True
+
+    def start_download(self) -> bool:
+        """Begin an explicitly approved verified installer download."""
+        if self._release is None or self.storage is None or not self.begin_download():
+            return False
+        reusable = self.storage.reusable_installer(self._release)
+        if reusable is not None:
+            self.download_finished()
+            self.download_completed.emit(reusable)
+            return True
+        worker = _DownloadWorker(
+            self._download, self._release, self.storage.destination(self._release)
+        )
+        self._download_worker = worker
+        worker.signals.progress.connect(self.download_progress)
+        worker.signals.finished.connect(self._download_finished)
+        self._pool.start(worker)
+        return True
+
+    def cancel_download(self) -> bool:
+        if self._download_worker is None:
+            return False
+        self._download_worker.cancel()
         return True
 
     def download_finished(self) -> bool:
@@ -171,7 +235,7 @@ class UpdateCoordinator(QObject):
 
     def request_check(self, *, manual: bool = False) -> bool:
         """Start one check, returning False when state/deadline disallows it."""
-        if not self._supported or self._stopping or self._worker is not None:
+        if not self._supported or self._stopping or self._worker is not None or self._download_worker is not None:
             return False
         if self._state is UpdateState.READY:
             return False  # A verified download stays available until U6 consumes it.
@@ -207,12 +271,14 @@ class UpdateCoordinator(QObject):
         """Cancel owned work; ``stopped`` fires only after the worker exits."""
         self._stopping = True
         self._timer.stop()
-        if self._worker is None:
+        if self._worker is None and self._download_worker is None:
             if self.storage is not None:
                 self.storage.close()
             self.stopped.emit()
-        else:
+        elif self._worker is not None:
             self._worker.cancel()
+        if self._download_worker is not None:
+            self._download_worker.cancel()
 
     def _run_scheduled_check(self) -> None:
         if self._next_due_monotonic is not None and self._monotonic() < self._next_due_monotonic:
@@ -223,14 +289,14 @@ class UpdateCoordinator(QObject):
     def _check_finished(self, release: object, error: object) -> None:
         self._worker = None
         if self._stopping:
-            if self.storage is not None:
-                self.storage.close()
-            self.stopped.emit()
+            self._finish_stop_if_idle()
             return
         now = self._now()
         if isinstance(error, ReleaseNotFoundError):
+            self.no_published_release.emit()
             release, error = None, None
         if error is None:
+            self._last_error = ""
             settings.set_last_successful_check_utc(now)
             settings.set_update_retry_after_utc(None)
             self._server_retry_deadline = None
@@ -252,9 +318,29 @@ class UpdateCoordinator(QObject):
             self._server_retry_deadline = retry_at
             settings.set_update_retry_after_utc(retry_at)
             self._set_state(UpdateState.AVAILABLE if self._release else UpdateState.IDLE)
-            self.check_failed.emit(str(error))
+            self._last_error = str(error)
+            self.check_failed.emit(self._last_error)
         settings._settings().sync()
         self.reschedule()
+
+    def _download_finished(self, installer: object, error: object) -> None:
+        self._download_worker = None
+        if self._stopping:
+            self._finish_stop_if_idle()
+            return
+        if error is None:
+            self.download_finished()
+            self.download_completed.emit(installer)
+        else:
+            self.download_failed()
+            self.download_failed_signal.emit(str(error))
+
+    def _finish_stop_if_idle(self) -> None:
+        if self._worker is not None or self._download_worker is not None:
+            return
+        if self.storage is not None:
+            self.storage.close()
+        self.stopped.emit()
 
     def _now(self) -> datetime:
         value = self._clock()

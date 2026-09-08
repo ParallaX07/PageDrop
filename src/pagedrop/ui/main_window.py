@@ -296,6 +296,11 @@ class MainWindow(QMainWindow):
         )
         actions.register("tips", "Show &tips", slot=self._show_tips_overlay)
         actions.register(
+            "check_for_updates",
+            "Check for &updates…",
+            slot=self._check_for_updates,
+        )
+        actions.register(
             "preferences",
             "&Preferences…",
             slot=self._open_preferences,
@@ -494,6 +499,8 @@ class MainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
         help_menu.addAction(a["tips"])
+        help_menu.addSeparator()
+        help_menu.addAction(a["check_for_updates"])
 
         window_controls = QWidget(menubar)
         window_controls.setObjectName("WindowControls")
@@ -1628,7 +1635,18 @@ class MainWindow(QMainWindow):
     def _open_preferences(self) -> None:
         from pagedrop.ui.preferences_dialog import open_preferences
 
-        open_preferences(self)
+        open_preferences(
+            self,
+            coordinator=self._window_manager.update_coordinator if self._window_manager else None,
+        )
+
+    def _check_for_updates(self) -> None:
+        if self._window_manager is None:
+            QMessageBox.information(
+                self, "PageDrop updates", "Updates are available only in the packaged Windows version."
+            )
+            return
+        self._window_manager.update_presenter.check_manually(self)
 
     def eventFilter(self, obj, event) -> bool:
         is_title_area = obj in getattr(self, "_title_drag_widgets", ())

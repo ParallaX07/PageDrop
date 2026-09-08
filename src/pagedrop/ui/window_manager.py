@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.update_checker import UpdateCoordinator
+from pagedrop.ui.update_presenter import UpdatePresenter
 
 if TYPE_CHECKING:
     from pagedrop.ui.main_window import MainWindow
@@ -29,6 +30,7 @@ class WindowManager(QObject):
         self._windows: set[MainWindow] = set()
         self._primary: MainWindow | None = None
         self.update_coordinator = UpdateCoordinator(app)
+        self.update_presenter = UpdatePresenter(self)
 
     @property
     def windows(self) -> frozenset[MainWindow]:
@@ -73,6 +75,7 @@ class WindowManager(QObject):
         if window not in self._windows:
             return
         self._windows.discard(window)
+        self.update_presenter.window_closed(window)
         if window is self._primary:
             self._primary = None
         if not self._windows:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QKeySequence
+from PyQt6.QtWidgets import QCheckBox
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -106,6 +107,16 @@ def test_update_preferences_use_strict_utc_timestamps(isolated_settings):
     assert settings_mod.last_successful_check_utc() is None
 
 
+def test_preferences_exposes_automatic_update_checks(qtbot, isolated_settings):
+    dialog = PreferencesDialog()
+    checkbox = dialog.findChild(QCheckBox, "PreferencesAutomaticUpdates")
+    assert checkbox is not None
+    assert checkbox.toolTip() == "Checks once a day while PageDrop is open."
+    checkbox.setChecked(False)
+    dialog._on_accept()
+    assert settings_mod.automatic_update_checks_enabled() is False
+
+
 def test_fuzzy_match_substring_and_subsequence():
     assert fuzzy_match("", "Open PDF")
     assert fuzzy_match("open", "Open PDF")
@@ -120,6 +131,7 @@ def test_command_palette_collects_menu_actions(main_window):
     assert "Toggle light theme" in labels
     assert "Command palette…" in labels
     assert "Preferences…" in labels
+    assert "Check for updates…" in labels
     # Safety / geometry toggles live in Preferences only (no Edit-menu duplicates).
     assert "Confirm before deleting multiple pages" not in labels
     assert "Confirm before closing dirty tabs" not in labels
