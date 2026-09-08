@@ -22,7 +22,8 @@ def _release() -> ReleaseInfo:
     )
 
 
-def test_non_windows_launch_is_capability_detected(tmp_path):
+def test_non_windows_launch_is_capability_detected(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_windows.sys, "platform", "linux")
     with pytest.raises(WindowsUpdateError, match="Windows"):
         launch_installer(tmp_path / "PageDrop-1.2.3-Setup.exe")
 
