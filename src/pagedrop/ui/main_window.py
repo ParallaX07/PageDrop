@@ -296,6 +296,11 @@ class MainWindow(QMainWindow):
         )
         actions.register("tips", "Show &tips", slot=self._show_tips_overlay)
         actions.register(
+            "check_for_updates",
+            "Check for &updates…",
+            slot=self._check_for_updates,
+        )
+        actions.register(
             "preferences",
             "&Preferences…",
             slot=self._open_preferences,
@@ -494,6 +499,8 @@ class MainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
         help_menu.addAction(a["tips"])
+        help_menu.addSeparator()
+        help_menu.addAction(a["check_for_updates"])
 
         window_controls = QWidget(menubar)
         window_controls.setObjectName("WindowControls")
@@ -1628,7 +1635,18 @@ class MainWindow(QMainWindow):
     def _open_preferences(self) -> None:
         from pagedrop.ui.preferences_dialog import open_preferences
 
-        open_preferences(self)
+        open_preferences(
+            self,
+            coordinator=self._window_manager.update_coordinator if self._window_manager else None,
+        )
+
+    def _check_for_updates(self) -> None:
+        if self._window_manager is None:
+            QMessageBox.information(
+                self, "PageDrop updates", "Updates are available only in the packaged Windows version."
+            )
+            return
+        self._window_manager.update_presenter.check_manually(self)
 
     def eventFilter(self, obj, event) -> bool:
         is_title_area = obj in getattr(self, "_title_drag_widgets", ())
@@ -1822,6 +1840,8 @@ class MainWindow(QMainWindow):
         self._show_toast(f"Extracted {count} {noun} to new tab", kind="success")
 
     def _extract_selected_to_new_window(self) -> None:
+        if self._window_manager is not None and self._window_manager.preparing_installation:
+            return
         tab = self._active_tab()
         if tab is None or tab.edit_model is None or tab.is_preview_visible():
             return
@@ -1834,6 +1854,8 @@ class MainWindow(QMainWindow):
             return
 
         new_window = self._window_manager.open_new_window()
+        if new_window is None:
+            return
         target = new_window._active_tab()
         if target is None or not target.is_blank:
             target = new_window._tab_manager.add_blank_tab()
@@ -1851,6 +1873,8 @@ class MainWindow(QMainWindow):
 
     def open_tool_page(self, page: QWidget, *, page_id: str) -> None:
         """Focus an existing tool tab or add *page* as a new tab."""
+        if self._window_manager is not None and self._window_manager.preparing_installation:
+            return
         page.tool_page_id = page_id  # type: ignore[attr-defined]
         existing = self._tool_pages.get(page_id)
         if existing is not None:
@@ -2073,6 +2097,8 @@ class MainWindow(QMainWindow):
             return
 
         new_window = self._window_manager.open_new_window()
+        if new_window is None:
+            return
         tab = new_window._active_tab()
         if tab is None or not tab.is_blank:
             tab = new_window._tab_manager.add_blank_tab()
@@ -2373,6 +2399,8 @@ class MainWindow(QMainWindow):
         return prompt_unsaved_changes(self, tab.tab_title)
 
     def _try_close_tab(self, index: int) -> bool:
+        if self._window_manager is not None and self._window_manager.preparing_installation:
+            return False
         if index < 0 or index >= self._tab_manager.count():
             return False
 
@@ -2638,6 +2666,13 @@ class MainWindow(QMainWindow):
         self._update_selection_status(selection)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._window_manager is not None:
+            if self._window_manager.preparing_installation:
+                event.ignore()
+                return
+            prepared_shutdown = self._window_manager.prepared_shutdown
+        else:
+            prepared_shutdown = False
         dirty_tabs: list[PdfTab] = []
         for index in range(self._tab_manager.count()):
             widget = self._tab_manager.widget(index)
@@ -2648,7 +2683,7 @@ class MainWindow(QMainWindow):
             ):
                 dirty_tabs.append(widget)
 
-        if confirm_before_closing_dirty_tabs():
+        if confirm_before_closing_dirty_tabs() and not prepared_shutdown:
             for tab in dirty_tabs:
                 choice = self._prompt_unsaved_changes(tab)
                 if choice == "cancel":

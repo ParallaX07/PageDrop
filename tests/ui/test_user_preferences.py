@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QKeySequence
+from PyQt6.QtWidgets import QCheckBox
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -32,6 +33,7 @@ from pagedrop.ui.settings import (
     thumbnail_render_width,
     thumbnail_zoom,
 )
+from datetime import UTC, datetime
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
@@ -83,6 +85,38 @@ def test_thumbnail_zoom_pref_round_trip(isolated_settings):
     assert thumbnail_zoom() == MAX_THUMBNAIL_WIDTH
 
 
+def test_update_preferences_use_strict_utc_timestamps(isolated_settings):
+    moment = datetime(2026, 9, 8, 1, 2, 3, 999, tzinfo=UTC)
+    settings_mod.set_automatic_update_checks_enabled(False)
+    settings_mod.set_last_check_attempt_utc(moment)
+    settings_mod.set_last_successful_check_utc(moment)
+    settings_mod.set_update_retry_after_utc(moment)
+    settings_mod.set_update_remind_after_utc(moment)
+    settings_mod.set_skipped_update_version("1.2.3")
+    settings_mod.set_pending_update_target_version("1.2.4")
+
+    store = settings_mod._settings()
+    assert settings_mod.automatic_update_checks_enabled() is False
+    assert store.value(settings_mod.KEY_UPDATES_LAST_CHECK_ATTEMPT_UTC) == "2026-09-08T01:02:03Z"
+    assert settings_mod.last_successful_check_utc() == moment.replace(microsecond=0)
+    assert settings_mod.update_retry_after_utc() == moment.replace(microsecond=0)
+    assert settings_mod.update_remind_after_utc() == moment.replace(microsecond=0)
+    assert settings_mod.skipped_update_version() == "1.2.3"
+    assert settings_mod.pending_update_target_version() == "1.2.4"
+    store.setValue(settings_mod.KEY_UPDATES_LAST_SUCCESSFUL_CHECK_UTC, "not-a-timestamp")
+    assert settings_mod.last_successful_check_utc() is None
+
+
+def test_preferences_exposes_automatic_update_checks(qtbot, isolated_settings):
+    dialog = PreferencesDialog()
+    checkbox = dialog.findChild(QCheckBox, "PreferencesAutomaticUpdates")
+    assert checkbox is not None
+    assert checkbox.toolTip() == "Checks once a day while PageDrop is open."
+    checkbox.setChecked(False)
+    dialog._on_accept()
+    assert settings_mod.automatic_update_checks_enabled() is False
+
+
 def test_fuzzy_match_substring_and_subsequence():
     assert fuzzy_match("", "Open PDF")
     assert fuzzy_match("open", "Open PDF")
@@ -97,6 +131,7 @@ def test_command_palette_collects_menu_actions(main_window):
     assert "Toggle light theme" in labels
     assert "Command palette…" in labels
     assert "Preferences…" in labels
+    assert "Check for updates…" in labels
     # Safety / geometry toggles live in Preferences only (no Edit-menu duplicates).
     assert "Confirm before deleting multiple pages" not in labels
     assert "Confirm before closing dirty tabs" not in labels

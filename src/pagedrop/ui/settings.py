@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +25,13 @@ KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
 KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
 KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
 KEY_TESSDATA_PATH = "ocr/tessdata_path"
+KEY_UPDATES_AUTOMATIC_ENABLED = "updates/automatic_enabled"
+KEY_UPDATES_LAST_CHECK_ATTEMPT_UTC = "updates/last_check_attempt_utc"
+KEY_UPDATES_LAST_SUCCESSFUL_CHECK_UTC = "updates/last_successful_check_utc"
+KEY_UPDATES_RETRY_AFTER_UTC = "updates/retry_after_utc"
+KEY_UPDATES_SKIPPED_VERSION = "updates/skipped_version"
+KEY_UPDATES_REMIND_AFTER_UTC = "updates/remind_after_utc"
+KEY_UPDATES_PENDING_TARGET_VERSION = "updates/pending_target_version"
 
 OfficePreferredBackend = Literal["auto", "com", "libreoffice"]
 OFFICE_BACKEND_VALUES: tuple[OfficePreferredBackend, ...] = (
@@ -48,6 +56,95 @@ THUMBNAIL_QUALITY_CAP_PX: dict[ThumbnailQuality, int] = {
 
 def _settings() -> QSettings:
     return QSettings(ORGANIZATION, APPLICATION)
+
+
+def _utc_timestamp(value: object) -> datetime | None:
+    """Parse persisted updater timestamps, treating invalid data as unset."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC)
+
+
+def _stored_utc(key: str) -> datetime | None:
+    return _utc_timestamp(_settings().value(key))
+
+
+def _set_utc(key: str, value: datetime | None) -> None:
+    settings = _settings()
+    if value is None:
+        settings.remove(key)
+        return
+    normalized = value.astimezone(UTC).replace(microsecond=0)
+    settings.setValue(key, normalized.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+def automatic_update_checks_enabled() -> bool:
+    """Whether PageDrop may check for updates while it is open."""
+    return _settings().value(KEY_UPDATES_AUTOMATIC_ENABLED, True, type=bool)
+
+
+def set_automatic_update_checks_enabled(enabled: bool) -> None:
+    _settings().setValue(KEY_UPDATES_AUTOMATIC_ENABLED, bool(enabled))
+
+
+def last_check_attempt_utc() -> datetime | None:
+    return _stored_utc(KEY_UPDATES_LAST_CHECK_ATTEMPT_UTC)
+
+
+def set_last_check_attempt_utc(value: datetime | None) -> None:
+    _set_utc(KEY_UPDATES_LAST_CHECK_ATTEMPT_UTC, value)
+
+
+def last_successful_check_utc() -> datetime | None:
+    return _stored_utc(KEY_UPDATES_LAST_SUCCESSFUL_CHECK_UTC)
+
+
+def set_last_successful_check_utc(value: datetime | None) -> None:
+    _set_utc(KEY_UPDATES_LAST_SUCCESSFUL_CHECK_UTC, value)
+
+
+def update_retry_after_utc() -> datetime | None:
+    return _stored_utc(KEY_UPDATES_RETRY_AFTER_UTC)
+
+
+def set_update_retry_after_utc(value: datetime | None) -> None:
+    _set_utc(KEY_UPDATES_RETRY_AFTER_UTC, value)
+
+
+def skipped_update_version() -> str:
+    return str(_settings().value(KEY_UPDATES_SKIPPED_VERSION, "") or "")
+
+
+def set_skipped_update_version(version: str | None) -> None:
+    settings = _settings()
+    if version:
+        settings.setValue(KEY_UPDATES_SKIPPED_VERSION, version)
+    else:
+        settings.remove(KEY_UPDATES_SKIPPED_VERSION)
+
+
+def update_remind_after_utc() -> datetime | None:
+    return _stored_utc(KEY_UPDATES_REMIND_AFTER_UTC)
+
+
+def set_update_remind_after_utc(value: datetime | None) -> None:
+    _set_utc(KEY_UPDATES_REMIND_AFTER_UTC, value)
+
+
+def pending_update_target_version() -> str:
+    return str(_settings().value(KEY_UPDATES_PENDING_TARGET_VERSION, "") or "")
+
+
+def set_pending_update_target_version(version: str | None) -> None:
+    settings = _settings()
+    if version:
+        settings.setValue(KEY_UPDATES_PENDING_TARGET_VERSION, version)
+    else:
+        settings.remove(KEY_UPDATES_PENDING_TARGET_VERSION)
 
 
 def last_directory() -> str:

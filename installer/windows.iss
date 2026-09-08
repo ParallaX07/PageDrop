@@ -7,12 +7,12 @@
 ;
 ; Build installer (version from pyproject.toml via /DAppVersion=…):
 ;   .\scripts\build_windows_installer.ps1
-;   ; or: iscc /DAppVersion=0.5.1 installer/windows.iss
+;   ; or: iscc /DAppVersion=0.6.0 installer/windows.iss
 ;
 ; Output: installer/Output/PageDrop-<version>-Setup.exe
 
 #ifndef AppVersion
-  #define AppVersion "0.5.1"
+  #define AppVersion "0.6.0"
 #endif
 
 #define AppExeName "pagedrop.exe"
@@ -22,6 +22,7 @@
 
 [Setup]
 AppId={{A7C3E91F-2B4D-4F8A-9E1C-6D5B0A8F3C21}}
+AppMutex=Global\PageDropInstallerMutex
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
@@ -33,6 +34,8 @@ OutputBaseFilename=PageDrop-{#AppVersion}-Setup
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin
+CloseApplications=no
+RestartApplications=no
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}

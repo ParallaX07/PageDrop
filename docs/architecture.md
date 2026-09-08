@@ -56,3 +56,54 @@ UI render pools stay at max thread count 1 and still share the same lock across 
 ## Result UX
 
 Tool and conversion success surfaces status + toast by default. Opening a result in the editor or file manager is always an explicit Preview / Open / Show in folder choice (`result_actions`), never an automatic tab open.
+
+## Windows updates
+
+The Windows updater is deliberately separate from PDF work. `WindowManager`
+creates exactly one `UpdateCoordinator` and one `UpdatePresenter` for the
+application process. The coordinator owns network workers, scheduling, release
+state, and local installer storage; windows only request presentation. This keeps
+multiple PageDrop windows from starting competing checks or downloads.
+
+```
+idle → checking → available → downloading → ready → preparing → handing_off
+                 │              │              │
+                 └──────────────┴──────────────┴→ available / idle on a safe failure
+```
+
+The Qt-independent service in `utils/update_checker.py` fetches only the public
+`ParallaX07/PageDrop` latest stable release. It validates the strict numeric tag,
+exact installer and checksum names, trusted HTTPS URLs and redirects, asset size,
+and SHA-256 before atomically promoting downloaded bytes. HTTPS plus SHA-256
+detects corrupt or mismatched release assets; it is not independent publisher
+authentication if the release account is compromised.
+
+On supported packaged Windows builds, automatic checking starts five seconds
+after launch when due, then runs 24 hours after a successful check. Failures wait
+at least one hour and retain any longer GitHub rate-limit deadline. Settings use
+UTC values under `updates/`; malformed or implausibly future values cannot create
+a request loop. Manual checks bypass the daily, reminder, and skip suppression
+but still honour a server retry deadline. Disabling automatic checks cancels only
+scheduled checks, never a download already approved by the user.
+
+`UpdateStorage` uses the Qt application-local `updates/` directory and gives each
+process a locked session subdirectory. It revalidates a cached installer before
+reuse, removes only recognised inactive updater files, and expires inactive
+verified installers after seven days. It never uses PDF paths or the shared PDF
+temporary-file lifecycle.
+
+Installation remains explicit. The presenter may show a verified release, but
+only starts a download after consent. Before handoff, `WindowManager` blocks new
+interaction, requires active jobs to finish or be cancelled by the user, and
+collects Save As/Discard/Cancel decisions for dirty tabs in every window. Discard
+is deferred until the accepted installer launch, so cancellation or launch failure
+leaves tabs intact and usable. The Windows helper revalidates the installer,
+records a pending target version, invokes the normal elevated Inno Setup wizard,
+and only then performs the one-shot prepared shutdown. A later launch clears the
+pending version only after the running version reaches it.
+
+Every packaged Windows process holds `Global\\PageDropInstallerMutex`, matching
+Inno Setup's `AppMutex`. The mutex protects installation while allowing multiple
+PageDrop instances; it does not close or terminate another process. On final
+window close the coordinator cancels its owned network work and lets its worker
+finish before the application quits.

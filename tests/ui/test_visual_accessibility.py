@@ -200,8 +200,8 @@ def test_r10a_prefs_dialog_has_section_dividers(qtbot, isolated_settings):
 
     dialog = PreferencesDialog()
     qtbot.addWidget(dialog)
-    assert len(dialog.findChildren(QLabel, "PreferencesSection")) == 5
-    assert len(dialog.findChildren(QFrame, "PreferencesDivider")) == 4
+    assert len(dialog.findChildren(QLabel, "PreferencesSection")) == 6
+    assert len(dialog.findChildren(QFrame, "PreferencesDivider")) == 5
 
 
 def test_r10b_empty_drop_affordance_and_glyphs(qtbot):

@@ -1,0 +1,117 @@
+name: Windows release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+
+      - name: Verify tag version
+        shell: powershell
+        run: |
+          $version = (uv run --locked python scripts/read_version.py).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Version reading failed with exit code $LASTEXITCODE" }
+          if ("${{ github.ref_name }}" -cne "v$version") {
+            throw "Tag ${{ github.ref_name }} must equal v$version"
+          }
+
+      - name: Run release tests
+        run: uv run python all_tests.py
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build installer
+        shell: powershell
+        run: .\scripts\build_windows_installer.ps1 -Release
+
+      - name: Create checksum and validate package
+        shell: powershell
+        run: |
+          $version = (uv run --locked python scripts/read_version.py).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Version reading failed with exit code $LASTEXITCODE" }
+          $installer = "installer/Output/PageDrop-$version-Setup.exe"
+          if (-not (Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).Length -le 0) {
+            throw "Missing non-empty installer: $installer"
+          }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$installer.sha256", "$hash  PageDrop-$version-Setup.exe`n", [System.Text.ASCIIEncoding]::new())
+          uv run --locked python scripts/check_packaging.py
+          if ($LASTEXITCODE -ne 0) { throw "Packaging validation failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke test built executable
+        shell: powershell
+        run: |
+          $env:PAGEDROP_EXE = "$PWD/dist/pagedrop/pagedrop.exe"
+          if (-not (Test-Path -LiteralPath $env:PAGEDROP_EXE)) { throw "Missing built executable: $env:PAGEDROP_EXE" }
+          uv run --locked pytest tests/smoke/test_phase16_executable.py -v -n 0
+          if ($LASTEXITCODE -ne 0) { throw "Executable smoke tests failed with exit code $LASTEXITCODE" }
+
+      - name: Upload tested release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-release-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            installer/Output/PageDrop-*-Setup.exe
+            installer/Output/PageDrop-*-Setup.exe.sha256
+
+  publish:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    concurrency:
+      group: windows-release-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      - name: Download tested release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tested-release-${{ github.ref_name }}
+          path: installer/Output
+
+      - name: Publish tested artifact pair
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (uv run --locked python scripts/read_version.py).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Version reading failed with exit code $LASTEXITCODE" }
+          uv run --locked python scripts/publish_windows_release.py `
+            --tag "${{ github.ref_name }}" `
+            --installer "installer/Output/PageDrop-$version-Setup.exe" `
+            --checksum "installer/Output/PageDrop-$version-Setup.exe.sha256" `
+            --repository "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { throw "Publishing release failed with exit code $LASTEXITCODE" }
