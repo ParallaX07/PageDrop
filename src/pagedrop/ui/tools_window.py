@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QEvent, QSize, Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QScrollArea,
     QSizePolicy,
@@ -48,8 +50,17 @@ CATEGORIES: tuple[str, ...] = (
 )
 
 _GRID_COLUMNS = 3
+_TILE_COMFORTABLE_WIDTH = 240
 _TILE_MIN_HEIGHT = 88
 _TILE_MIN_HEIGHT_COMPACT = 64
+
+CATEGORY_DESCRIPTIONS: dict[str, str] = {
+    "Organize": "Arrange, split, and combine PDF pages.",
+    "Convert": "Create PDFs or export their content.",
+    "Modify": "Add, remove, or change page content.",
+    "Optimize": "Reduce size and repair document structure.",
+    "Secure": "Protect passwords and remove private information.",
+}
 
 
 @dataclass(frozen=True)
@@ -711,14 +722,14 @@ class ToolTile(QFrame):
         self._subtitle.setWordWrap(True)
         layout.addWidget(self._subtitle)
 
+        self._capability_label = QLabel()
+        self._capability_label.setObjectName("ToolTileCapability")
+        layout.addWidget(self._capability_label)
+
         self._refresh_chrome()
         self.refresh_icon()
 
     def _subtitle_text(self) -> str:
-        if self._capability is not None and not self._capability.available:
-            return f"{_absence_subtitle(self._capability)}: {self.entry.description}"
-        if self.entry.coming_soon and self.entry.action is None:
-            return f"Coming soon: {self.entry.description}"
         return self.entry.description
 
     def is_blocked(self) -> bool:
@@ -763,7 +774,17 @@ class ToolTile(QFrame):
         self.setProperty("comingSoon", self.entry.coming_soon and not blocked)
         self.setProperty("compact", self._compact)
         self.setAccessibleName(self.entry.title)
-        self.setAccessibleDescription(self._subtitle_text())
+        accessible_description = self._subtitle_text()
+        if blocked and self._capability is not None:
+            availability = f"Unavailable · {_absence_subtitle(self._capability)}"
+            self._capability_label.setText(
+                availability
+            )
+            self._capability_label.show()
+            accessible_description = f"{availability}: {accessible_description}"
+        else:
+            self._capability_label.hide()
+        self.setAccessibleDescription(accessible_description)
         style = self.style()
         style.unpolish(self)
         style.polish(self)
@@ -872,6 +893,7 @@ class ToolsWindow(QWidget):
         self._tiles: list[ToolTile] = []
         self._category_sections: dict[str, QWidget] = {}
         self._category_headings: dict[str, QToolButton] = {}
+        self._category_descriptions: dict[str, QLabel] = {}
         self._category_grids: dict[str, QWidget] = {}
         self._collapsed_categories: set[str] = set()
         self._show_upcoming = False
@@ -927,6 +949,18 @@ class ToolsWindow(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
+        # The responsive grid decides its column count; don't let its initial
+        # three-column size hint raise the window's explicit 560 px minimum.
+        root.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+
+        heading = QLabel("Tools")
+        heading.setObjectName("ToolsHeading")
+        root.addWidget(heading)
+
+        purpose = QLabel("Choose a task to create a new file; originals stay unchanged.")
+        purpose.setObjectName("ToolsPurpose")
+        purpose.setWordWrap(True)
+        root.addWidget(purpose)
 
         toolbar = QToolBar("Tools", self)
         toolbar.setObjectName("ToolsToolbar")
@@ -945,6 +979,17 @@ class ToolsWindow(QWidget):
         self._search.textChanged.connect(self._apply_filter)
         self._search.returnPressed.connect(self._focus_first_visible_tile)
         toolbar.addWidget(self._search)
+
+        self._category_jump = QComboBox()
+        self._category_jump.setObjectName("ToolsCategoryJump")
+        self._category_jump.addItem("Jump to category")
+        self._category_jump.addItems(CATEGORIES)
+        self._category_jump.setAccessibleName("Jump to category")
+        self._category_jump.setAccessibleDescription(
+            "Jump to a visible tool category. Selecting a collapsed category expands it."
+        )
+        self._category_jump.activated.connect(self._jump_to_category)
+        toolbar.addWidget(self._category_jump)
 
         self._compact_btn = QToolButton()
         self._compact_btn.setObjectName("ToolsDensityToggle")
@@ -997,6 +1042,11 @@ class ToolsWindow(QWidget):
             )
             section_layout.addWidget(heading)
 
+            description = QLabel(CATEGORY_DESCRIPTIONS[category])
+            description.setObjectName("ToolsCategoryDescription")
+            description.setWordWrap(True)
+            section_layout.addWidget(description)
+
             grid_host = QWidget()
             grid_host.setObjectName("ToolsCategoryGrid")
             grid = QGridLayout(grid_host)
@@ -1007,6 +1057,7 @@ class ToolsWindow(QWidget):
 
             self._category_sections[category] = section
             self._category_headings[category] = heading
+            self._category_descriptions[category] = description
             self._category_grids[category] = grid_host
             self._catalogue_layout.addWidget(section)
 
@@ -1078,6 +1129,32 @@ class ToolsWindow(QWidget):
         # Only show grid when expanded and the section itself is visible.
         if self._category_sections[category].isVisible():
             grid_host.setVisible(expanded)
+        self._refresh_category_jump()
+
+    def _jump_to_category(self, index: int) -> None:
+        if index <= 0:
+            return
+        category = CATEGORIES[index - 1]
+        section = self._category_sections[category]
+        if not section.isVisible():
+            return
+        heading = self._category_headings[category]
+        if not heading.isChecked():
+            heading.setChecked(True)
+        self._scroll.ensureWidgetVisible(section, 0, 8)
+        self._category_jump.setCurrentIndex(0)
+
+    def _refresh_category_jump(self) -> None:
+        model = self._category_jump.model()
+        for index, category in enumerate(CATEGORIES, start=1):
+            visible = self._category_sections[category].isVisible()
+            label = category
+            if category in self._collapsed_categories:
+                label += " (collapsed)"
+            self._category_jump.setItemText(index, label)
+            item = model.item(index) if hasattr(model, "item") else None
+            if item is not None:
+                item.setEnabled(visible)
 
     def _on_upcoming_toggled(self, show: bool) -> None:
         self._show_upcoming = show
@@ -1176,6 +1253,7 @@ class ToolsWindow(QWidget):
         self._upcoming_btn.blockSignals(True)
         self._upcoming_btn.setChecked(self._show_upcoming)
         self._upcoming_btn.blockSignals(False)
+        self._refresh_category_jump()
 
     def _on_tile_activated(self, tool_id: str) -> None:
         entry = next((e for e in TOOL_CATALOGUE if e.id == tool_id), None)
@@ -1250,8 +1328,14 @@ class ToolsWindow(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        width = max(1, self._scroll.viewport().width())
-        cols = max(1, min(4, width // 200))
+        # Do not use the grid's viewport width here: its three-column hint can
+        # remain wide after the window has narrowed.
+        available_width = event.size().width() - 48
+        cols = (
+            _GRID_COLUMNS
+            if available_width >= _GRID_COLUMNS * _TILE_COMFORTABLE_WIDTH + 20
+            else 2
+        )
         if cols != self._grid_columns:
             self._grid_columns = cols
             self._apply_filter(self._search.text())

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from PyQt6.QtWidgets import QLabel
 
 from pagedrop.core.capabilities import (
     AbsenceReason,
@@ -140,6 +141,51 @@ def test_search_filters_category_grid(qtbot):
     window._search.setText("zzz-no-match")
     assert not window.visible_tiles()
     assert window._empty_label.isVisible()
+    window.close()
+
+
+def test_tools_hierarchy_and_category_jump_track_filter_and_collapse(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.resize(960, 680)
+    window.show()
+
+    assert window.findChild(QLabel, "ToolsHeading").text() == "Tools"
+    assert "originals stay unchanged" in window.findChild(
+        QLabel, "ToolsPurpose"
+    ).text()
+    assert window._category_descriptions["Organize"].isVisible()
+    assert window._category_jump.accessibleName() == "Jump to category"
+
+    window._search.setText("encrypt")
+    model = window._category_jump.model()
+    assert model.item(1).isEnabled() is False
+    assert model.item(5).isEnabled() is True
+
+    secure = window._category_headings["Secure"]
+    secure.setChecked(False)
+    assert "collapsed" in window._category_jump.itemText(5)
+    window._jump_to_category(5)
+    assert secure.isChecked()
+    assert window._category_jump.currentIndex() == 0
+    window.close()
+
+
+def test_tools_switch_to_two_columns_before_tile_descriptions_compress(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.resize(960, 680)
+    window.show()
+    qtbot.waitUntil(lambda: window.grid_columns() == 3)
+
+    window.resize(720, 480)
+    qtbot.waitUntil(lambda: window.grid_columns() == 2)
+    visible = [
+        tile
+        for tile in window.visible_tiles()
+        if tile.entry.category == "Organize"
+    ]
+    assert min(tile.width() for tile in visible) >= 210
     window.close()
 
 

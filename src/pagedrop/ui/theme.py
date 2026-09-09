@@ -1613,12 +1613,29 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-height: 32px;
     }}
 
+    QLabel#ToolsHeading {{
+        color: {text_primary};
+        font-size: 21px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+    }}
+
+    QLabel#ToolsPurpose,
+    QLabel#ToolsCategoryDescription {{
+        color: {text_secondary};
+        font-size: 13px;
+    }}
+
+    QComboBox#ToolsCategoryJump {{
+        min-height: 32px;
+        min-width: 150px;
+    }}
+
     QLabel#ToolsCategoryHeading,
     QToolButton#ToolsCategoryHeading {{
-        color: {text_secondary};
-        font-size: 12px;
+        color: {text_primary};
+        font-size: 16px;
         font-weight: 600;
-        letter-spacing: 0.4px;
         border: none;
         border-bottom: 1px solid {border_subtle};
         background: transparent;
@@ -2094,7 +2111,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#ToolTile[blocked="true"] QLabel#ToolTileTitle,
     QFrame#ToolTile[comingSoon="true"] QLabel#ToolTileTitle {{
-        color: {text_muted};
+        color: {text_secondary};
     }}
     QFrame#ToolTile[compact="true"] QLabel#ToolTileTitle {{
         font-size: 12px;
@@ -2103,6 +2120,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         font-size: 11px;
         font-weight: 400;
+    }}
+    QLabel#ToolTileCapability {{
+        color: {status_warning};
+        font-size: 11px;
+        font-weight: 600;
     }}
     QFrame#ToolTile[compact="true"] QLabel#ToolTileSubtitle {{
         font-size: 10px;
