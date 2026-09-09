@@ -1776,8 +1776,14 @@ class MainWindow(QMainWindow):
 
         count = len(paths)
         noun = "page" if count == 1 else "pages"
-        self._transient_status(f"Extracted {count} {noun} to {folder}")
-        self._show_toast(f"Extracted {count} {noun}", kind="success")
+        base_name = Path(tab.edit_model.original_path).stem
+        renamed = any(
+            path.name != f"{base_name}_page_{index:04d}.pdf"
+            for index, path in enumerate(paths, start=1)
+        )
+        suffix = " (renamed to avoid collisions)" if renamed else ""
+        self._transient_status(f"Extracted {count} {noun} to {folder}{suffix}")
+        self._show_toast(f"Extracted {count} {noun}{suffix}", kind="success")
 
     def _export_all_pages(self) -> None:
         tab = self._active_tab()
@@ -1819,8 +1825,14 @@ class MainWindow(QMainWindow):
 
         count = len(paths)
         noun = "page" if count == 1 else "pages"
-        self._transient_status(f"Exported {count} {noun} to {folder}")
-        self._show_toast(f"Exported {count} {noun}", kind="success")
+        base_name = Path(tab.edit_model.original_path).stem
+        renamed = any(
+            path.name != f"{base_name}_page_{index:04d}.pdf"
+            for index, path in enumerate(paths, start=1)
+        )
+        suffix = " (renamed to avoid collisions)" if renamed else ""
+        self._transient_status(f"Exported {count} {noun} to {folder}{suffix}")
+        self._show_toast(f"Exported {count} {noun}{suffix}", kind="success")
 
     def _extract_selected_to_new_tab(self) -> None:
         tab = self._active_tab()

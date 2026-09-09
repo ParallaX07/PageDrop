@@ -75,6 +75,24 @@ def test_export_all_pages(main_window, five_page_pdf, tmp_path, monkeypatch, qtb
     ]
 
 
+def test_export_all_reports_collision_safe_names(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    existing = tmp_path / f"{five_page_pdf.stem}_page_0001.pdf"
+    existing.write_bytes(b"unrelated")
+
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path)
+    )
+    main_window._export_all_pages()
+
+    assert existing.read_bytes() == b"unrelated"
+    assert (tmp_path / f"{five_page_pdf.stem}_page_0001_2.pdf").is_file()
+    assert "renamed to avoid collisions" in main_window.statusBar().currentMessage()
+
+
 def _press_key(widget, key: Qt.Key) -> None:
     event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
     widget.keyPressEvent(event)

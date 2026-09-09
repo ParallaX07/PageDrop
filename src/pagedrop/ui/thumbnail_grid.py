@@ -46,7 +46,10 @@ from pagedrop.core.drag_mime import (
     decode_page_indices,
     decode_page_refs,
 )
-from pagedrop.core.page_extractor import extract_page_refs_to_files
+from pagedrop.core.page_extractor import (
+    extract_page_refs_to_files,
+    extract_page_refs_to_folder,
+)
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader
 from pagedrop.core.pdf_service import render_ref_png
@@ -1747,7 +1750,7 @@ class ThumbnailGrid(QScrollArea):
             return []
         refs = [self._model.page_at(i) for i in logical_indices]
         base_name = Path(self._model.original_path).stem
-        return extract_page_refs_to_files(
+        return extract_page_refs_to_folder(
             refs,
             output_dir,
             base_name,
@@ -1763,7 +1766,7 @@ class ThumbnailGrid(QScrollArea):
             return []
         refs = [self._model.page_at(i) for i in range(total)]
         base_name = Path(self._model.original_path).stem
-        return extract_page_refs_to_files(
+        return extract_page_refs_to_folder(
             refs,
             output_dir,
             base_name,

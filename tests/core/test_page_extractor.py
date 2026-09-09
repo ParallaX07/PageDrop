@@ -9,12 +9,17 @@ import fitz
 import pytest
 
 from pagedrop.core.page_extractor import (
+    extract_page_refs_to_folder,
     extract_page_refs_to_files,
     extract_page_refs_to_pdf,
     extract_pages_to_files,
+    plan_folder_export_paths,
 )
+from pagedrop.core.jobs import CancelToken, JobCancelledError, OutputExistsError
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
+from pagedrop.core.jobs.staging import JobStaging
+from pagedrop.utils.temp_manager import TempManager
 from tests.core.test_jobs import _encrypted_pdf
 
 
@@ -211,6 +216,142 @@ def test_extract_page_refs_wrong_password_fails_clearly(tmp_path):
         )
 
     assert _file_hash(enc) == source_hash
+    assert list(output_dir.iterdir()) == []
+
+
+def test_plan_folder_export_paths_reserves_stable_names(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    (output_dir / "report_page_0001.pdf").write_bytes(b"existing")
+    (output_dir / "report_page_0001_2.pdf").write_bytes(b"existing too")
+    (output_dir / "report_page_0002.pdf").write_bytes(b"existing")
+
+    paths = plan_folder_export_paths(output_dir, "report", [1, 1, 2])
+
+    assert [path.name for path in paths] == [
+        "report_page_0001_3.pdf",
+        "report_page_0001_4.pdf",
+        "report_page_0002_2.pdf",
+    ]
+    assert not any(path.exists() for path in paths)
+
+
+def test_folder_export_renames_collisions_without_changing_existing(
+    five_page_pdf: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    existing = output_dir / "report_page_0001.pdf"
+    existing.write_bytes(b"unrelated bytes")
+    existing_hash = _file_hash(existing)
+
+    paths = extract_page_refs_to_folder(
+        [PageRef(str(five_page_pdf), 0), PageRef(str(five_page_pdf), 2)],
+        output_dir,
+        "report",
+    )
+
+    assert [path.name for path in paths] == [
+        "report_page_0001_2.pdf",
+        "report_page_0002.pdf",
+    ]
+    assert _file_hash(existing) == existing_hash
+    for path in paths:
+        document = fitz.open(str(path))
+        try:
+            assert document.page_count == 1
+        finally:
+            document.close()
+
+
+def test_folder_export_preserves_file_created_after_planning(
+    five_page_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    concurrent = output_dir / "report_page_0001.pdf"
+    real_promote = JobStaging.promote_no_clobber
+    calls = 0
+
+    def create_concurrent(self: JobStaging, staged: Path, destination: Path) -> Path:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            concurrent.write_bytes(b"concurrent bytes")
+        return real_promote(self, staged, destination)
+
+    monkeypatch.setattr(JobStaging, "promote_no_clobber", create_concurrent)
+    with pytest.raises(OutputExistsError):
+        extract_page_refs_to_folder(
+            [PageRef(str(five_page_pdf), 0), PageRef(str(five_page_pdf), 1)],
+            output_dir,
+            "report",
+        )
+
+    assert concurrent.read_bytes() == b"concurrent bytes"
+    assert list(output_dir.iterdir()) == [concurrent]
+
+
+def test_folder_export_rolls_back_owned_files_on_promotion_failure(
+    five_page_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    existing = output_dir / "keep.pdf"
+    existing.write_bytes(b"keep")
+    temp = TempManager()
+    real_promote = JobStaging.promote_no_clobber
+    calls = 0
+
+    def fail_second(self: JobStaging, staged: Path, destination: Path) -> Path:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            replacement = output_dir / "concurrent.pdf"
+            replacement.write_bytes(b"concurrent")
+            replacement.replace(output_dir / "report_page_0001.pdf")
+            raise OSError("promotion failed")
+        return real_promote(self, staged, destination)
+
+    monkeypatch.setattr(JobStaging, "promote_no_clobber", fail_second)
+    try:
+        with pytest.raises(OSError, match="promotion failed"):
+            extract_page_refs_to_folder(
+                [PageRef(str(five_page_pdf), 0), PageRef(str(five_page_pdf), 1)],
+                output_dir,
+                "report",
+                temp_manager=temp,
+        )
+        assert existing.read_bytes() == b"keep"
+        concurrent = output_dir / "report_page_0001.pdf"
+        assert concurrent.read_bytes() == b"concurrent"
+        assert sorted(output_dir.iterdir()) == sorted([concurrent, existing])
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_folder_export_cancellation_leaves_no_outputs(
+    five_page_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    token = CancelToken()
+    real_save = fitz.Document.save
+
+    def cancel_after_first_save(self: fitz.Document, *args: object, **kwargs: object) -> None:
+        real_save(self, *args, **kwargs)
+        token.cancel()
+
+    monkeypatch.setattr(fitz.Document, "save", cancel_after_first_save)
+    with pytest.raises(JobCancelledError):
+        extract_page_refs_to_folder(
+            [PageRef(str(five_page_pdf), 0), PageRef(str(five_page_pdf), 1)],
+            output_dir,
+            "report",
+            cancel=token,
+        )
+
     assert list(output_dir.iterdir()) == []
 
 

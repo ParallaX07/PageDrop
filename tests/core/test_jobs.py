@@ -98,8 +98,14 @@ def test_promote_falls_back_on_cross_device_link(
 
     real_replace = os.replace
 
+    calls = 0
+
     def exdev_replace(src: object, dst: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        real_replace(src, dst)
 
     monkeypatch.setattr(os, "replace", exdev_replace)
 
@@ -113,6 +119,39 @@ def test_promote_falls_back_on_cross_device_link(
         assert result == dest
         assert dest.read_bytes() == b"%PDF-1.4 cross-device"
         assert not staged.exists()
+    finally:
+        monkeypatch.setattr(os, "replace", real_replace)
+        temp.cleanup()
+
+
+def test_cross_device_promotion_failure_preserves_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed copy never truncates the already-confirmed replacement target."""
+    import errno
+    import os
+
+    from pagedrop.core.jobs.staging import JobStaging
+
+    real_replace = os.replace
+    temp = TempManager()
+    try:
+        staging = JobStaging(temp)
+        staged = staging.stage_file("out.pdf")
+        staged.write_bytes(b"new bytes")
+        destination = tmp_path / "out.pdf"
+        destination.write_bytes(b"existing bytes")
+
+        def exdev_replace(src: object, dst: object) -> None:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        monkeypatch.setattr(os, "replace", exdev_replace)
+        monkeypatch.setattr("shutil.copyfile", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("copy failed")))
+        with pytest.raises(OSError, match="copy failed"):
+            staging.promote(staged, destination)
+
+        assert destination.read_bytes() == b"existing bytes"
+        assert staged.exists()
     finally:
         monkeypatch.setattr(os, "replace", real_replace)
         temp.cleanup()

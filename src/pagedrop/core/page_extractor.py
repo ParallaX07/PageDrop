@@ -7,9 +7,89 @@ from pathlib import Path
 import fitz
 
 from pagedrop.core.pdf_editor import PageRef
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel
+from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.pdf_writer import append_page_refs
+from pagedrop.utils.temp_manager import TempManager
+
+
+def plan_folder_export_paths(
+    output_dir: str | Path, base_name: str, page_numbers: list[int]
+) -> list[Path]:
+    """Reserve stable, collision-free names for one folder-export batch."""
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    reserved = {path.name for path in directory.iterdir()}
+    paths: list[Path] = []
+    for page_number in page_numbers:
+        name = f"{base_name}_page_{page_number:04d}.pdf"
+        candidate = directory / name
+        suffix = 2
+        while candidate.name in reserved:
+            candidate = directory / f"{Path(name).stem}_{suffix}.pdf"
+            suffix += 1
+        reserved.add(candidate.name)
+        paths.append(candidate)
+    return paths
+
+
+def _validate_single_page_pdf(path: Path) -> None:
+    with FITZ_LOCK:
+        document = fitz.open(str(path))
+        try:
+            if document.page_count != 1:
+                raise ValueError(f"Staged export is not a single-page PDF: {path}")
+        finally:
+            document.close()
+
+
+def extract_page_refs_to_folder(
+    refs: list[PageRef],
+    output_dir: str | Path,
+    base_name: str,
+    *,
+    passwords: Mapping[str, str] | None = None,
+    cancel: CancelToken | None = None,
+    temp_manager: TempManager | None = None,
+) -> list[Path]:
+    """Stage, validate, and exclusively publish one PDF per ref in order."""
+    if not refs:
+        return []
+    destinations = plan_folder_export_paths(
+        output_dir, base_name, list(range(1, len(refs) + 1))
+    )
+    staging = JobStaging(temp_manager or TempManager())
+    docs: dict[str, fitz.Document] = {}
+    staged: list[Path] = []
+    promoted: list[Path] = []
+    try:
+        for index, ref in enumerate(refs):
+            check_cancel(cancel)
+            staged_path = staging.stage_file(f"page_{index + 1:04d}.pdf")
+            with FITZ_LOCK:
+                output = fitz.open()
+                try:
+                    append_page_refs(output, [ref], docs, passwords)
+                    output.save(str(staged_path))
+                finally:
+                    output.close()
+            _validate_single_page_pdf(staged_path)
+            staged.append(staged_path)
+        for staged_path, destination in zip(staged, destinations, strict=True):
+            check_cancel(cancel)
+            promoted.append(staging.promote_no_clobber(staged_path, destination))
+        return promoted
+    except Exception:
+        for path in promoted:
+            staging.remove_published(path)
+        raise
+    finally:
+        with FITZ_LOCK:
+            for document in docs.values():
+                document.close()
+        staging.cleanup()
 
 
 def extract_page_refs_to_pdf(
