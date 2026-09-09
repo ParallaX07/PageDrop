@@ -13,7 +13,7 @@ import pytest
 
 from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.markup import MarkupSession
-from pagedrop.core.pdf_editor import PdfEditModel
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.redact import (
     REDACT_VERIFY_FLAG,
     RedactionError,
@@ -370,6 +370,27 @@ def test_redact_edit_model_with_markup_session(tmp_path: Path) -> None:
     )
     assert _file_hash(src) == before
     assert inspect_redaction_result(out, absent_text=[SECRET]).ok
+
+
+def test_redact_edit_model_rejects_imported_source(tmp_path: Path) -> None:
+    source_a = _text_pdf(tmp_path / "a.pdf")
+    source_b = _text_pdf(tmp_path / "b.pdf")
+    hash_a = _file_hash(source_a)
+    hash_b = _file_hash(source_b)
+    model = PdfEditModel(str(source_a), 1)
+    model.insert_pages(1, [PageRef(str(source_b), 0)])
+    model.remove_pages([1])
+
+    with pytest.raises(SourceOverwriteError):
+        redact_edit_model(
+            model,
+            source_b,
+            [RedactionRegion(0, _secret_rect(source_a))],
+            verify=False,
+        )
+
+    assert _file_hash(source_a) == hash_a
+    assert _file_hash(source_b) == hash_b
 
 
 def test_redact_edit_model_encrypted_with_passwords(tmp_path: Path) -> None:

@@ -29,7 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.core.jobs.paths import paths_refer_to_same_file
+from pagedrop.core.jobs.errors import SourceOverwriteError
+from pagedrop.core.jobs.paths import paths_refer_to_same_file, reject_source_overwrite
 from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
@@ -2285,11 +2286,13 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".pdf"):
             path = f"{path}.pdf"
 
-        if self._same_path(path, model.original_path):
+        try:
+            reject_source_overwrite(path, *model.source_paths())
+        except SourceOverwriteError:
             QMessageBox.warning(
                 self,
                 "Save as",
-                "Cannot save over the original file.\n"
+                "Cannot save over a source file.\n"
                 "Choose a different path.",
             )
             return False
@@ -2329,6 +2332,13 @@ class MainWindow(QMainWindow):
                 self._transient_status(
                     "Redaction verification failed. Output discarded"
                 )
+            return False
+        except SourceOverwriteError as exc:
+            QMessageBox.warning(
+                self,
+                "Save as",
+                str(exc),
+            )
             return False
         except (PdfPasswordRequiredError, PdfPasswordError, RedactionError) as exc:
             QMessageBox.critical(

@@ -30,6 +30,7 @@ class PdfEditModel:
         self._pages: list[PageRef] = [
             PageRef(source_path, index) for index in range(page_count)
         ]
+        self._protected_sources: set[str] = {source_path}
         self._dirty = False
         self._undo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
         self._redo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
@@ -41,6 +42,7 @@ class PdfEditModel:
         model._original_path = primary_path
         model._save_path = None
         model._pages = list(pages)
+        model._protected_sources = {primary_path, *(page.source_path for page in pages)}
         model._dirty = True
         model._undo_stack = []
         model._redo_stack = []
@@ -65,7 +67,11 @@ class PdfEditModel:
         return list(self._pages)
 
     def source_paths(self) -> set[str]:
-        """Paths still needed for the current page list (plus original)."""
+        """Every source path ever admitted to this tab, protected from overwrite."""
+        return set(self._protected_sources)
+
+    def current_reference_paths(self) -> set[str]:
+        """Paths still needed to render the current page list (plus original)."""
         paths = {self._original_path}
         paths.update(page.source_path for page in self._pages)
         return paths
@@ -88,6 +94,7 @@ class PdfEditModel:
             self._push_undo()
         clamped = max(0, min(index, len(self._pages)))
         self._pages[clamped:clamped] = list(refs)
+        self._protected_sources.update(ref.source_path for ref in refs)
         self._dirty = True
 
     def remove_pages(

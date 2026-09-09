@@ -6,9 +6,10 @@ import hashlib
 
 import fitz
 from PyQt6.QtCore import QMimeData
-from PyQt6.QtWidgets import QFileDialog, QInputDialog
+from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, encode_page_refs
+from pagedrop.core.pdf_editor import PageRef
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import remember_directory
@@ -51,6 +52,33 @@ def test_save_as_never_writes_original_path(
 
     assert main_window._save_as(tab) is False
     assert five_page_pdf.read_bytes() == original_bytes
+    assert tab.is_dirty
+
+
+def test_save_as_rejects_imported_source_and_keeps_tab_dirty(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+):
+    imported = tmp_path / "imported.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page()
+        doc.save(str(imported))
+    finally:
+        doc.close()
+    imported_bytes = imported.read_bytes()
+    tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
+    assert tab.edit_model is not None
+    tab.edit_model.insert_pages(0, [PageRef(str(imported), 0)])
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(imported), "PDF Files (*.pdf)"),
+    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+
+    assert main_window._save_as(tab) is False
+    assert imported.read_bytes() == imported_bytes
     assert tab.is_dirty
 
 

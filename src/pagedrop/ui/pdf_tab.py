@@ -514,7 +514,11 @@ class PdfTab(QWidget):
         """Close unreferenced source loaders beyond LOADER_CACHE_IDLE_MAX."""
         if not self._loader_cache:
             return
-        live = self._edit_model.source_paths() if self._edit_model is not None else set()
+        live = (
+            self._edit_model.current_reference_paths()
+            if self._edit_model is not None
+            else set()
+        )
         if keep:
             live |= keep
         idle = [path for path in self._loader_cache if path not in live]

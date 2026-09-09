@@ -6,6 +6,7 @@ from pathlib import Path
 import fitz
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
+from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.markup import MarkupEntry, apply_markup_entries
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import open_pdf
@@ -100,6 +101,7 @@ def write_pdf(
     Contiguous same-source ranges use one ``insert_pdf`` call.
     Holds ``FITZ_LOCK`` for open/work/close (GUI Save As / redaction stage included).
     """
+    reject_source_overwrite(output_path, *model.source_paths())
     with FITZ_LOCK:
         docs: dict[str, fitz.Document] = {}
         out = fitz.open()

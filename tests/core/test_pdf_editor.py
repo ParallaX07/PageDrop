@@ -32,6 +32,15 @@ def test_insert_pages_at_index():
     assert model.page_at(4).source_index == 1
 
 
+def test_source_paths_protect_removed_imports_without_pinning_loader_refs():
+    model = PdfEditModel("/a.pdf", 2)
+    model.insert_pages(1, [PageRef("/b.pdf", 0)])
+    model.remove_pages([1])
+
+    assert model.source_paths() == {"/a.pdf", "/b.pdf"}
+    assert model.current_reference_paths() == {"/a.pdf"}
+
+
 def test_remove_pages():
     model = PdfEditModel("/a.pdf", 5)
     model.remove_pages([1, 3])

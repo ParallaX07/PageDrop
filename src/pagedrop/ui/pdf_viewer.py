@@ -2862,7 +2862,7 @@ class PdfViewerWidget(QWidget):
 
     def _populate_outline(self) -> None:
         assert self._model is not None
-        paths = sorted(self._model.source_paths())
+        paths = sorted(self._model.current_reference_paths())
         self._outline.clear()
         try:
             items = outline_for_paths(paths, passwords=self._passwords())
