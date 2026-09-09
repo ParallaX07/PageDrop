@@ -149,7 +149,7 @@ def test_blank_tab_accepts_inbound_pdf_drop(main_window, five_page_pdf, qtbot):
     tab = main_window._active_tab()
     assert tab is not None and tab.is_blank
     grid = tab.thumbnail_grid
-    assert "drop" in grid._empty_hint.text().lower()
+    assert "drop" in grid._empty_kbd.text().lower()
 
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(str(five_page_pdf))])

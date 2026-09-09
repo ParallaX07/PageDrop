@@ -861,7 +861,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#GridEmptyState {{
         color: {text_secondary};
-        font-size: 15px;
+        font-size: 21px;
         font-weight: 600;
         letter-spacing: -0.2px;
         padding: 0;
@@ -874,6 +874,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 0;
     }}
 
+    QLabel#EmptyStateOpenButton {{
+        color: {TEXT_ON_ACCENT};
+        background-color: {ACCENT};
+        border-radius: {RADIUS_CONTROL}px;
+        min-height: 30px;
+        padding: 3px {SPACE_4}px;
+    }}
+
     QLabel#GridEmptyKbd,
     QLabel#MergeEmptyKbd,
     QLabel#ConvertEmptyKbd {{
@@ -881,6 +889,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-family: {FONT_MONO};
         font-size: 11px;
         padding: {SPACE_2}px 0 0 0;
+    }}
+
+    QLabel#GridEmptyKbd {{
+        font-family: {FONT_UI};
+        font-size: 12px;
+        padding: 0;
     }}
 
     /* R6: flat tab strip — accent underline + muted inactive; no filled selected box. */

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QApplication, QFileDialog, QLabel, QToolBar, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QLabel,
+    QToolBar,
+    QWidget,
+)
 
 from pagedrop.ui.main_window import MainWindow
 
@@ -276,6 +282,49 @@ def test_narrow_shell_elides_title_and_keeps_application_actions_reachable(main_
         main_window._help_menu_action,
     ):
         assert action in top_level_actions or action in overflow_actions
+
+
+def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_window):
+    for width, height in ((960, 680), (720, 480)):
+        main_window.resize(width, height)
+        QApplication.processEvents()
+        top_level_actions = main_window.menuBar().actions()
+        overflow_actions = main_window._application_overflow_menu.actions()
+        assert main_window._actions["open"] in _file_menu_actions(main_window)
+        for action in (
+            main_window._actions["create_pdf"],
+            main_window._actions["tools"],
+            main_window._help_menu_action,
+        ):
+            assert action in top_level_actions or action in overflow_actions
+        assert main_window._title_label.toolTip() == main_window.windowTitle()
+
+
+def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, monkeypatch):
+    grid = main_window._active_tab().thumbnail_grid
+    button = grid.findChild(QLabel, "EmptyStateOpenButton")
+    assert button is not None
+    assert not button.isHidden()
+    assert button.accessibleName() == "Open PDF"
+    assert grid._empty_title.text() == "Open a PDF"
+    assert grid._empty_hint.text() == "Arrange pages, extract selections, or combine documents"
+    assert grid._empty_kbd.text() == "or drop a file here"
+    assert "select" not in grid._empty_kbd.text().lower()
+    assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    for action in (
+        main_window._actions["select_all"],
+        main_window._actions["extract_selected"],
+        main_window._actions["delete_pages"],
+    ):
+        assert main_window._toolbar.widgetForAction(action).isHidden()
+
+    triggered: list[bool] = []
+    main_window._actions["open"].triggered.connect(lambda: triggered.append(True))
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileNames", lambda *args, **kwargs: ([], "")
+    )
+    button.click()
+    assert triggered == [True]
 
 
 def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pdf, qtbot):

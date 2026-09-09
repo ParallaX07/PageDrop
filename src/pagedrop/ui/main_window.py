@@ -144,9 +144,12 @@ class MainWindow(QMainWindow):
         self._transient_status_timer.timeout.connect(self._restore_active_status)
 
         self.setWindowTitle(self.APP_TITLE)
-        # Offscreen Qt has no window manager and is prone to teardown crashes
-        # for frameless windows; desktop Windows/Linux use custom chrome.
-        if QApplication.platformName() != "offscreen":
+        # Offscreen Qt has no window manager and does not support custom chrome.
+        # Desktop Windows/Linux use the frameless title bar below.
+        if QApplication.platformName() == "offscreen":
+            # Direct test windows otherwise survive until SIP interpreter teardown.
+            QApplication.instance().aboutToQuit.connect(self.deleteLater)
+        else:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(720, 480)
         self.resize(960, 680)
@@ -530,7 +533,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(a["check_for_updates"])
         self._help_menu_action = help_menu.menuAction()
 
-        self._application_overflow_menu = menubar.addMenu("&More")
+        self._application_overflow_menu = menubar.addMenu("M&ore")
         self._application_overflow_menu.setToolTip("More application actions")
         self._application_overflow_menu.setAccessibleName("More application actions")
         for action in (
@@ -878,6 +881,7 @@ class MainWindow(QMainWindow):
             self._extract_selected_to_new_window
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
+        grid.open_pdf_requested.connect(self._actions["open"].trigger)
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
@@ -916,6 +920,7 @@ class MainWindow(QMainWindow):
                 self._extract_selected_to_new_window,
             ),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
+            (grid.open_pdf_requested, self._actions["open"].trigger),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
@@ -1225,6 +1230,21 @@ class MainWindow(QMainWindow):
         self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(set())
         self._update_selection_status(set())
         self._sync_contextual_toolbar(set())
+        for action in (
+            self._save_as_action,
+            self._select_all_action,
+            self._deselect_all_action,
+            self._duplicate_pages_action,
+            self._rotate_cw_action,
+            self._rotate_ccw_action,
+            self._move_up_action,
+            self._move_down_action,
+            self._move_to_action,
+            self._extract_selected_action,
+            self._delete_pages_action,
+        ):
+            self._set_toolbar_action_visible(action, False)
+        self._toolbar_overflow.hide()
         self._update_thumbnail_zoom_host()
 
     def _reset_toolbar_for_tool_page(self) -> None:

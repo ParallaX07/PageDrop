@@ -212,6 +212,35 @@ class _CrossWindowMoveUndo:
         return True
 
 
+class EmptyStateOpenButton(QLabel):
+    """Keyboard-operable, button-styled label for the scroll-grid empty state."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self) -> None:
+        super().__init__("Open PDF")
+        self.setObjectName("EmptyStateOpenButton")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAccessibleName("Open PDF")
+        self.setToolTip("Open a PDF")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def click(self) -> None:
+        self.clicked.emit()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.click()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class ThumbnailGrid(QScrollArea):
     rendering_started = pyqtSignal(int)
     rendering_progress = pyqtSignal(int, int)
@@ -235,6 +264,7 @@ class ThumbnailGrid(QScrollArea):
     page_transfer_failed = pyqtSignal(str)
     pdf_drop_failed = pyqtSignal(object)
     open_pdfs_requested = pyqtSignal(list)  # blank-tab file-manager drops
+    open_pdf_requested = pyqtSignal()  # blank-tab empty-state button
 
     def __init__(
         self,
@@ -262,9 +292,9 @@ class ThumbnailGrid(QScrollArea):
 
         self._empty_state = QWidget()
         self._empty_state.setObjectName("EmptyStatePanel")
-        self._empty_state.setAccessibleName("No document open")
+        self._empty_state.setAccessibleName("Open a PDF")
         self._empty_state.setAccessibleDescription(
-            "Choose a file or drop one onto the grid"
+            "Arrange pages, extract selections, or combine documents"
         )
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -278,23 +308,32 @@ class ThumbnailGrid(QScrollArea):
         self._empty_logo.setAccessibleName("PageDrop logo")
         self._refresh_empty_logo()
 
-        self._empty_title = QLabel("No document open")
+        self._empty_title = QLabel("Open a PDF")
         self._empty_title.setObjectName("GridEmptyState")
         self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._empty_hint = QLabel("Choose a file or drop one onto the grid")
+        self._empty_hint = QLabel(
+            "Arrange pages, extract selections, or combine documents"
+        )
         self._empty_hint.setObjectName("GridEmptyHint")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_hint.setWordWrap(True)
 
-        self._empty_kbd = QLabel("Ctrl+O open  ·  Ctrl+A select all  ·  drag pages to export")
+        self._empty_open_button = EmptyStateOpenButton()
+        self._empty_open_button.clicked.connect(self.open_pdf_requested)
+
+        self._empty_kbd = QLabel("or drop a file here")
         self._empty_kbd.setObjectName("GridEmptyKbd")
         self._empty_kbd.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # More space below keeps this short start task just above visual center.
+        empty_layout.addStretch(1)
         empty_layout.addWidget(self._empty_logo)
         empty_layout.addWidget(self._empty_title)
         empty_layout.addWidget(self._empty_hint)
+        empty_layout.addWidget(self._empty_open_button, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addWidget(self._empty_kbd)
+        empty_layout.addStretch(2)
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
         self.setWidget(self._container)
@@ -380,6 +419,7 @@ class ThumbnailGrid(QScrollArea):
         hint: str | None = None,
         show_hint: bool = True,
         show_shortcuts: bool = True,
+        show_open_button: bool = False,
     ) -> None:
         self._empty_title.setText(title)
         self._empty_state.setAccessibleName(title)
@@ -394,6 +434,8 @@ class ThumbnailGrid(QScrollArea):
             self._empty_kbd.show()
         else:
             self._empty_kbd.hide()
+        if self._empty_open_button is not None:
+            self._empty_open_button.setVisible(show_open_button)
 
     def load_model(
         self,
@@ -453,6 +495,7 @@ class ThumbnailGrid(QScrollArea):
                 hint="Open another PDF or add pages to continue",
                 show_hint=True,
                 show_shortcuts=False,
+                show_open_button=False,
             )
         self.load_model(self._model, self._get_loader)
 
@@ -1736,6 +1779,7 @@ class ThumbnailGrid(QScrollArea):
                 hint="Open another PDF or add pages to continue",
                 show_hint=True,
                 show_shortcuts=False,
+                show_open_button=False,
             )
 
         self._sync_grid_after_delete(logical_indices)

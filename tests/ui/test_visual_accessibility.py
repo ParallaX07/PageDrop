@@ -225,8 +225,7 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
 
     grid = ThumbnailGrid()
     qtbot.addWidget(grid)
-    assert "Ctrl+O" in grid._empty_kbd.text()
-    assert "Ctrl+A" in grid._empty_kbd.text()
+    assert grid._empty_kbd.text() == "or drop a file here"
     assert grid._empty_logo.accessibleName() == "PageDrop logo"
     # Editor keeps logo only — no second empty glyph label.
     empty_labels = [
@@ -238,6 +237,7 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
         grid._empty_logo,
         grid._empty_title,
         grid._empty_hint,
+        grid._empty_open_button,
         grid._empty_kbd,
     ]
 
@@ -584,8 +584,8 @@ def test_r2_fonts_and_spacing_tokens():
     assert f"padding: 0 0 {SPACE_3}px 0" in sheet
 
 
-def test_r2_empty_state_shortcuts_unchanged(qtbot):
-    """R2: empty-state kbd strings stay accurate; spacing reads from tokens."""
+def test_r2_empty_state_drop_copy_and_spacing(qtbot):
+    """Empty-state drop copy stays concise; spacing reads from tokens."""
     from pagedrop.ui.theme import SPACE_2, SPACE_3, SPACE_4, SPACE_6, SPACE_7
 
     grid = ThumbnailGrid()
@@ -597,8 +597,7 @@ def test_r2_empty_state_shortcuts_unchanged(qtbot):
     empty_margins = empty_layout.contentsMargins()
     assert empty_margins.left() == SPACE_6
     assert empty_margins.top() == SPACE_7
-    assert "Ctrl+O" in grid._empty_kbd.text()
-    assert "Ctrl+A" in grid._empty_kbd.text()
+    assert grid._empty_kbd.text() == "or drop a file here"
 
 
 def test_r5_card_chrome_and_empty_tokens():

@@ -94,6 +94,13 @@ Keep these when changing behaviour:
 
 Sentence-case toolbar/menu labels (`Move up`, not `Move Up`). Status: progress ends with `…`, idle does not. Respect accessibility hooks in `ui/accessibility.py` (contrast, reduce-motion).
 
+## Native window-chrome verification
+
+Automated tests exercise the custom title drag fallback and window-control wiring using
+Qt's offscreen platform. They do not verify compositor-specific hit targets or native
+window-manager behavior. Before release, manually verify title dragging plus minimize,
+maximize/restore, and close on native Linux and Windows.
+
 ## Deeper reading
 
 - [Architecture](architecture.md) — layers, edit model, jobs, locking

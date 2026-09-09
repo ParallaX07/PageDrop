@@ -77,9 +77,11 @@ class PdfTab(QWidget):
 
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
         self._thumbnail_grid.set_empty_state_message(
-            "Open a PDF to begin",
-            hint="Choose a file or drop one onto the grid",
+            "Open a PDF",
+            hint="Arrange pages, extract selections, or combine documents",
             show_hint=True,
+            show_shortcuts=True,
+            show_open_button=True,
         )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)

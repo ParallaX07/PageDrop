@@ -253,6 +253,11 @@ def test_thumbnail_zoom_lives_in_status_bar_and_compacts_at_narrow_width(
     assert not zoom._zoom_in.isHidden()
     assert not zoom._value_label.isHidden()
 
+    initial = main_window._thumbnail_grid.thumbnail_width_px
+    zoom._zoom_in.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.keyClick(zoom._zoom_in, Qt.Key.Key_Space)
+    assert main_window._thumbnail_grid.thumbnail_width_px > initial
+
 
 def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
