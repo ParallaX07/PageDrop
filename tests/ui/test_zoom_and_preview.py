@@ -234,6 +234,26 @@ def test_zoom_controls_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     assert zoom.isEnabled()
 
 
+def test_thumbnail_zoom_lives_in_status_bar_and_compacts_at_narrow_width(
+    main_window, five_page_pdf, qtbot
+):
+    zoom = main_window.findChild(ZoomControls)
+    assert zoom.parentWidget() is main_window._thumbnail_zoom_host
+    assert main_window._thumbnail_zoom_label.text() == "Thumbnail size"
+    assert main_window._thumbnail_zoom_host.isHidden()
+
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    assert not main_window._thumbnail_zoom_host.isHidden()
+
+    main_window.show()
+    main_window.resize(720, 480)
+    qtbot.waitUntil(lambda: zoom._slider.isHidden())
+    assert not zoom._zoom_out.isHidden()
+    assert not zoom._zoom_in.isHidden()
+    assert not zoom._value_label.isHidden()
+
+
 def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)

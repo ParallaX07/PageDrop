@@ -519,12 +519,33 @@ class MainWindow(QMainWindow):
         menubar.addAction(a["merge"])
         menubar.addAction(a["create_pdf"])
         menubar.addAction(a["tools"])
+        self._merge_menu_action = a["merge"]
+        self._create_pdf_menu_action = a["create_pdf"]
+        self._tools_menu_action = a["tools"]
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
         help_menu.addAction(a["tips"])
         help_menu.addSeparator()
         help_menu.addAction(a["check_for_updates"])
+        self._help_menu_action = help_menu.menuAction()
+
+        self._application_overflow_menu = menubar.addMenu("&More")
+        self._application_overflow_menu.setToolTip("More application actions")
+        self._application_overflow_menu.setAccessibleName("More application actions")
+        for action in (
+            self._merge_menu_action,
+            self._create_pdf_menu_action,
+            self._tools_menu_action,
+            self._help_menu_action,
+        ):
+            self._application_overflow_menu.addAction(action)
+        self._responsive_menu_actions = (
+            self._merge_menu_action,
+            self._create_pdf_menu_action,
+            self._tools_menu_action,
+            self._help_menu_action,
+        )
 
         window_controls = QWidget(menubar)
         window_controls.setObjectName("WindowControls")
@@ -552,6 +573,7 @@ class MainWindow(QMainWindow):
         menubar.setCornerWidget(window_controls, Qt.Corner.TopRightCorner)
         self._menu_bar = menubar
         self._title_drag_widgets = (window_controls, self._title_label)
+        QTimer.singleShot(0, self._update_responsive_shell)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
@@ -595,20 +617,12 @@ class MainWindow(QMainWindow):
                 btn.setAccessibleName(name)
         toolbar.addSeparator()
 
-        spacer = QWidget()
-        spacer.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        toolbar.addWidget(spacer)
-
         self._zoom_controls = ZoomControls(
             min_width=MIN_THUMBNAIL_WIDTH,
             max_width=MAX_THUMBNAIL_WIDTH,
             step=ZOOM_WHEEL_STEP,
             initial=thumbnail_zoom(),
         )
-        toolbar.addWidget(self._zoom_controls)
         self._zoom_controls.zoom_requested.connect(self._on_zoom_requested)
         self._zoom_controls.reset_requested.connect(self._reset_thumbnail_zoom)
         zoom_hint = "Thumbnail size (Ctrl+scroll · Ctrl+0 reset)"
@@ -803,6 +817,17 @@ class MainWindow(QMainWindow):
         self._selection_status.setAccessibleName("Selection count")
         self._selection_status.hide()
 
+        self._thumbnail_zoom_host = QWidget()
+        self._thumbnail_zoom_host.setObjectName("ThumbnailZoomStatusHost")
+        zoom_layout = QHBoxLayout(self._thumbnail_zoom_host)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.setSpacing(4)
+        self._thumbnail_zoom_label = QLabel("Thumbnail size")
+        self._thumbnail_zoom_label.setObjectName("ThumbnailZoomLabel")
+        zoom_layout.addWidget(self._thumbnail_zoom_label)
+        zoom_layout.addWidget(self._zoom_controls)
+        self._thumbnail_zoom_host.hide()
+
         self._move_undo_widget = QWidget()
         self._move_undo_widget.setObjectName("MoveUndoToast")
         move_undo_layout = QHBoxLayout(self._move_undo_widget)
@@ -824,6 +849,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._selection_status)
         self.statusBar().addPermanentWidget(self._move_undo_widget)
         self.statusBar().addPermanentWidget(self._progress_bar)
+        self.statusBar().addPermanentWidget(self._thumbnail_zoom_host)
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def _connect_tab_signals(self, tab: PdfTab) -> None:
@@ -1101,6 +1127,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
+        self._update_thumbnail_zoom_host()
         self._update_preview_mode_ui()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -1198,6 +1225,7 @@ class MainWindow(QMainWindow):
         self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(set())
         self._update_selection_status(set())
         self._sync_contextual_toolbar(set())
+        self._update_thumbnail_zoom_host()
 
     def _reset_toolbar_for_tool_page(self) -> None:
         """Tool pages own their chrome and footer; never inherit PDF context."""
@@ -1205,6 +1233,7 @@ class MainWindow(QMainWindow):
         self._selection_status.hide()
         self._progress_bar.hide()
         self._move_undo_widget.hide()
+        self._update_thumbnail_zoom_host()
         self._persistent_status("Ready")
 
     def _update_save_as_action(self) -> None:
@@ -1539,7 +1568,7 @@ class MainWindow(QMainWindow):
                 "Preview selected page (Enter or double-click a card)",
             )
         has_pdf = tab is not None and tab.loader is not None
-        self._zoom_controls.setVisible(not in_preview)
+        self._update_thumbnail_zoom_host()
         self._clear_selection_action.setEnabled(not in_preview)
         self._select_all_action.setEnabled(has_pdf and not in_preview)
         self._deselect_all_action.setEnabled(
@@ -1879,12 +1908,54 @@ class MainWindow(QMainWindow):
         title_label = getattr(self, "_title_label", None)
         if title_label is not None:
             full_title = self.windowTitle()
-            title_label.setText(
-                title_label.fontMetrics().elidedText(
-                    full_title, Qt.TextElideMode.ElideRight, 220
-                )
-            )
+            width = title_label.maximumWidth()
+            title_label.setText(title_label.fontMetrics().elidedText(
+                full_title, Qt.TextElideMode.ElideRight, width if width < 10000 else 220
+            ))
             title_label.setToolTip(full_title)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_shell()
+
+    def _update_responsive_shell(self) -> None:
+        """Give navigation priority over the decorative document title."""
+        if not hasattr(self, "_menu_bar"):
+            return
+        menu_width = self._menu_bar.fontMetrics()
+        action_width = lambda action: menu_width.horizontalAdvance(
+            action.text().replace("&", "")
+        ) + 28
+        controls_width = self._maximize_button.sizeHint().width() * 3 + 12
+        base_actions = [
+            action for action in self._menu_bar.actions()
+            if action not in self._responsive_menu_actions
+        ]
+        available = self.width() - controls_width - sum(
+            action_width(action) for action in base_actions
+        ) - sum(action_width(action) for action in self._responsive_menu_actions)
+        shown = list(self._responsive_menu_actions)
+        while available < 0 and shown:
+            action = shown.pop()
+            available += action_width(action)
+        for action in self._responsive_menu_actions:
+            self._menu_bar.removeAction(action)
+        for action in shown:
+            self._menu_bar.insertAction(
+                self._application_overflow_menu.menuAction(), action
+            )
+        title_width = max(0, min(220, available))
+        self._title_label.setFixedWidth(title_width)
+        self._sync_custom_title()
+        self._update_thumbnail_zoom_host()
+
+    def _update_thumbnail_zoom_host(self) -> None:
+        if not hasattr(self, "_thumbnail_zoom_host"):
+            return
+        tab = self._active_tab()
+        visible = tab is not None and tab.loader is not None and not tab.is_preview_visible()
+        self._thumbnail_zoom_host.setVisible(visible)
+        self._zoom_controls.set_slider_visible(self.width() > 800)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():

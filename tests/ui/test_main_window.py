@@ -261,6 +261,23 @@ def test_document_identity_is_in_the_title_not_the_toolbar(
     assert "…" in main_window._title_label.text()
 
 
+def test_narrow_shell_elides_title_and_keeps_application_actions_reachable(main_window):
+    main_window.resize(720, 480)
+    main_window.show()
+    QApplication.processEvents()
+
+    assert main_window._title_label.toolTip() == main_window.windowTitle()
+    assert main_window._title_label.width() < 220
+    overflow_actions = main_window._application_overflow_menu.actions()
+    top_level_actions = main_window.menuBar().actions()
+    for action in (
+        main_window._actions["create_pdf"],
+        main_window._actions["tools"],
+        main_window._help_menu_action,
+    ):
+        assert action in top_level_actions or action in overflow_actions
+
+
 def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitUntil(lambda: "Loaded" in main_window.statusBar().currentMessage())
