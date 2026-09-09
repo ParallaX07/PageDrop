@@ -730,6 +730,8 @@ class ToolTile(QFrame):
         self.refresh_icon()
 
     def _subtitle_text(self) -> str:
+        if self.is_blocked() and self._capability is not None:
+            return f"{_absence_subtitle(self._capability)} — {self.entry.description}"
         return self.entry.description
 
     def is_blocked(self) -> bool:
@@ -777,9 +779,7 @@ class ToolTile(QFrame):
         accessible_description = self._subtitle_text()
         if blocked and self._capability is not None:
             availability = f"Unavailable · {_absence_subtitle(self._capability)}"
-            self._capability_label.setText(
-                availability
-            )
+            self._capability_label.setText("Unavailable")
             self._capability_label.show()
             accessible_description = f"{availability}: {accessible_description}"
         else:

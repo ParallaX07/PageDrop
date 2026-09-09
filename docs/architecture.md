@@ -58,7 +58,7 @@ UI render pools stay at max thread count 1 and still share the same lock across 
 
 ## Result UX
 
-Tool and conversion success surfaces status + toast by default. Opening a result in the editor or file manager is always an explicit Preview / Open / Show in folder choice (`result_actions`), never an automatic tab open.
+Tool pages use the same order: title and purpose, input, options, one valid execution action, then progress or result. A selected shell input contracts to a filename summary with **Change file** access. Tool and conversion success surfaces status + toast and the result summary by default; the rerun action becomes secondary. Opening a result in the editor or file manager is always an explicit Preview / Open / Show in folder choice (`result_actions`), never an automatic tab open.
 
 ## Windows updates
 

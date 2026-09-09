@@ -39,7 +39,7 @@ Open via the menu bar **Merge PDFs** or the Tools hub tile. It is an editor tab 
 - Add folder recursively adds PDFs from a directory
 - Double-click or press Enter on a file to preview all its pages
 - Merge writes one combined PDF and leaves source files unchanged
-- Success offers Preview / Open in editor / Show in folder — results do **not** auto-open
+- Success prioritizes the output summary and offers Preview / Open in editor / Show in folder — results do **not** auto-open
 
 ## Create PDF
 
@@ -53,7 +53,7 @@ Open via the menu bar **Create PDF** or the Tools hub tile. Turn images into PDF
 
 ## Tools hub
 
-**Tools** (`Ctrl+Shift+O`) is a searchable catalogue of organize, convert, modify, optimize, and secure jobs. Tool pages open as sibling tabs in the same strip. After a job finishes, use Preview / Open / Show in folder explicitly — PageDrop does not auto-open results into PDF tabs.
+**Tools** (`Ctrl+Shift+O`) is a searchable catalogue of organize, convert, modify, optimize, and secure jobs. Tool pages open as sibling tabs in the same strip. Once you choose an input, its large drop area becomes a concise filename summary with **Change file**. After a job finishes, use Preview / Open / Show in folder explicitly — PageDrop does not auto-open results into PDF tabs.
 
 See [Tools](tools.md) for the full catalogue and optional backends.
 

@@ -579,6 +579,21 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {border_subtle};
     }}
 
+    /* A finished output is the task's primary destination; rerun is quiet. */
+    QPushButton#ToolbarPrimary[resultAvailable="true"],
+    QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"] {{
+        background-color: transparent;
+        color: {text_secondary};
+        border-color: {border_default};
+    }}
+
+    QPushButton#ToolbarPrimary[resultAvailable="true"]:hover,
+    QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"]:hover {{
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border-color: {border_hover};
+    }}
+
     /* Ghost / outline secondary — quieter than default fill, not accent primary. */
     QPushButton#ToolbarSecondary,
     QToolBar QToolButton#ToolbarSecondary {{
@@ -1685,6 +1700,22 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QWidget#ToolShellWindow {{
         background-color: {bg_base};
+    }}
+
+    QWidget#ToolWorkflowHeader {{
+        background-color: {bg_base};
+    }}
+
+    QLabel#ToolWorkflowTitle {{
+        color: {text_primary};
+        font-size: 21px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+    }}
+
+    QLabel#ToolWorkflowPurpose {{
+        color: {text_secondary};
+        font-size: 13px;
     }}
 
     QLabel#ToolShellTitle {{

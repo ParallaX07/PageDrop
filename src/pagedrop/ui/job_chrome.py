@@ -97,6 +97,9 @@ class JobChromeMixin:
         self._job_running = True
         self._cancel_token = CancelToken()
         self._result_bar.clear()
+        set_precedence = getattr(self, "_set_result_precedence", None)
+        if callable(set_precedence):
+            set_precedence(False)
         self._busy_overlay.show_message(message)
         self.statusBar().showMessage(message)
         self._set_job_controls_enabled(False)
@@ -138,6 +141,9 @@ class JobChromeMixin:
         if result_path:
             # Same copy as status when provided (multi-output honesty, O12).
             self._result_bar.show_for(result_path, message=status)
+        set_precedence = getattr(self, "_set_result_precedence", None)
+        if callable(set_precedence):
+            set_precedence(bool(result_path))
 
     def cancel_active_job(self) -> None:
         if self._cancel_token is not None:

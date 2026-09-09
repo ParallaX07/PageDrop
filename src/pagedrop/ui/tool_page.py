@@ -36,6 +36,24 @@ class StatusFooter(QLabel):
         return self._message
 
 
+class ToolWorkflowHeader(QWidget):
+    """Shared title and purpose block for tool input workflows."""
+
+    def __init__(self, title: str, purpose: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("ToolWorkflowHeader")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 8)
+        layout.setSpacing(2)
+        heading = QLabel(title)
+        heading.setObjectName("ToolWorkflowTitle")
+        layout.addWidget(heading)
+        description = QLabel(purpose)
+        description.setObjectName("ToolWorkflowPurpose")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+
 def attach_status_footer(
     root: QVBoxLayout,
     *,

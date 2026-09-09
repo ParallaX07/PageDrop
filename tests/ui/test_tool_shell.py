@@ -11,7 +11,7 @@ import fitz
 import pytest
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
-from PyQt6.QtWidgets import QFileDialog, QLineEdit
+from PyQt6.QtWidgets import QFileDialog, QLabel, QLineEdit
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import CancelToken
@@ -235,6 +235,26 @@ def test_run_button_tooltip_matches_description(qtbot):
     qtbot.addWidget(shell)
     assert shell._run_btn.toolTip() == tip
     assert shell._run_btn.statusTip() == tip
+
+
+def test_shell_sequence_collapses_selected_input_and_demotes_rerun(qtbot, tmp_path):
+    source = tmp_path / "report.pdf"
+    _write_pdf(source)
+    shell = ToolShellWindow(title="Reverse", description="Reverse every page")
+    qtbot.addWidget(shell)
+
+    layout = shell.layout()
+    assert layout.indexOf(shell._workflow_header) < layout.indexOf(shell.drop_zone)
+    assert shell._workflow_header.findChild(QLabel, "ToolWorkflowTitle").text() == "Reverse"
+
+    shell.drop_zone.set_paths([str(source)])
+    assert shell.drop_zone._prompt.text() == "Input file"
+    assert shell.drop_zone._files_label.text() == "report.pdf"
+    assert not shell.drop_zone._change_btn.isHidden()
+    assert shell.drop_zone._privacy.isHidden()
+
+    shell._set_result_precedence(True)
+    assert shell._run_btn.property("resultAvailable") is True
 
 
 def test_migrated_tool_runs_job_and_shows_result_actions(

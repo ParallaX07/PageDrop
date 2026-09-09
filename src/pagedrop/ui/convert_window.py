@@ -53,7 +53,7 @@ from pagedrop.ui.theme import (
     MIN_THUMBNAIL_WIDTH,
     ZOOM_WHEEL_STEP,
 )
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.zoom_controls import ZoomControls
 
 _PREVIEW_FOOTER_HINT = (
@@ -348,8 +348,15 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._build_central_widget()
         self._build_toolbar()
         self._root.insertWidget(0, self._toolbar)
+        self._root.insertWidget(
+            0,
+            ToolWorkflowHeader(
+                self.WINDOW_TITLE,
+                "Arrange images, choose an output mode, then create a new PDF.",
+            ),
+        )
         self._result_bar = ResultActionsBar()
-        self._root.addWidget(self._result_bar)
+        self._root.insertWidget(self._root.indexOf(self._stack), self._result_bar)
         self._root.addWidget(self._status)
         self._toast = ToastOverlay(self)
         refresh_cb = self._refresh_toolbar_icons
@@ -570,6 +577,15 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._create_action.setEnabled(has_files and not self._converting)
         self._zoom_controls.setEnabled(has_files and not in_preview and not self._converting)
         self._output_mode_host.setEnabled(toolbar_enabled)
+        self._set_result_precedence(self._result_bar.isVisible())
+
+    def _set_result_precedence(self, available: bool) -> None:
+        button = self._toolbar.widgetForAction(self._create_action)
+        if button is None:
+            return
+        button.setProperty("resultAvailable", available)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -871,6 +887,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
             self.statusBar().showMessage(status)
             self._toast.show_toast(status, kind="success")
             self._result_bar.show_for(result, message=status)
+            self._set_result_precedence(True)
             return
 
         written = list(result)
@@ -885,6 +902,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._toast.show_toast(status, kind="success")
         if written:
             self._result_bar.show_for(written[0], message=status)
+            self._set_result_precedence(True)
 
     def _on_convert_failed(self, message: str) -> None:
         self._finish_convert()

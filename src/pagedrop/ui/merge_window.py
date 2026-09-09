@@ -44,7 +44,7 @@ from pagedrop.ui.theme import (
     MIN_THUMBNAIL_WIDTH,
     ZOOM_WHEEL_STEP,
 )
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.zoom_controls import ZoomControls
 
 # Show a progress dialog once folder validation exceeds this many candidates.
@@ -125,8 +125,15 @@ class MergeWindow(JobChromeMixin, QWidget):
         # Toolbar must sit above the stack: insert at top after stack exists.
         self._build_toolbar()
         self._root.insertWidget(0, self._toolbar)
+        self._root.insertWidget(
+            0,
+            ToolWorkflowHeader(
+                self.WINDOW_TITLE,
+                "Combine PDFs in the order shown. Your original files stay unchanged.",
+            ),
+        )
         self._result_bar = ResultActionsBar()
-        self._root.addWidget(self._result_bar)
+        self._root.insertWidget(self._root.indexOf(self._stack), self._result_bar)
         self._root.addWidget(self._status)
         self._toast = ToastOverlay(self)
         refresh_cb = self._refresh_toolbar_icons
@@ -316,6 +323,15 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._zoom_controls.setEnabled(
             has_files and not in_preview and not self._merging and not self._folder_checking
         )
+        self._set_result_precedence(self._result_bar.isVisible())
+
+    def _set_result_precedence(self, available: bool) -> None:
+        button = self._toolbar.widgetForAction(self._merge_action)
+        if button is None:
+            return
+        button.setProperty("resultAvailable", available)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -716,6 +732,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         self._result_bar.show_for(path, message=status)
+        self._set_result_precedence(True)
 
     def _on_merge_failed(self, message: str) -> None:
         self._finish_merge()
