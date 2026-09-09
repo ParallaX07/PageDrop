@@ -183,6 +183,10 @@ class PdfTab(QWidget):
         return self._dirty
 
     @property
+    def is_editor_job_running(self) -> bool:
+        return bool(self.property("editorJobRunning"))
+
+    @property
     def can_rename_tab(self) -> bool:
         """True when the tab has no saved path yet (blank or unsaved document)."""
         if self._edit_model is None:
@@ -321,7 +325,7 @@ class PdfTab(QWidget):
 
     def delete_selected_pages(self) -> bool:
         """Delete the current thumbnail selection; no-op when nothing is selected."""
-        if self._edit_model is None:
+        if self._edit_model is None or self.is_editor_job_running:
             return False
         selection = self._thumbnail_grid.selection_manager.selection
         if not selection:
@@ -409,7 +413,7 @@ class PdfTab(QWidget):
 
     def move_selected_pages_to(self, dest: int) -> bool:
         """Move selection so the block starts at *dest* (0-based); no-op if unchanged."""
-        if self._edit_model is None or self.is_preview_visible():
+        if self._edit_model is None or self.is_preview_visible() or self.is_editor_job_running:
             return False
         if not self._thumbnail_grid.can_move_selection_to():
             return False
@@ -431,7 +435,7 @@ class PdfTab(QWidget):
 
     def rotate_selected_pages(self, delta_degrees: int) -> bool:
         """Rotate the current selection by *delta_degrees*."""
-        if self._edit_model is None or self.is_preview_visible():
+        if self._edit_model is None or self.is_preview_visible() or self.is_editor_job_running:
             return False
         if not self._thumbnail_grid.rotate_selected_pages(delta_degrees):
             return False

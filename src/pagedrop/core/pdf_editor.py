@@ -82,6 +82,18 @@ class PdfEditModel:
         """Current logical page list (copy — safe to iterate while reading)."""
         return list(self._pages)
 
+    def snapshot_for_write(self) -> PdfEditModel:
+        """Return a detached, immutable-in-practice model for a background write."""
+        snapshot = self.__class__.__new__(self.__class__)
+        snapshot._original_path = self._original_path
+        snapshot._save_path = self._save_path
+        snapshot._pages = list(self._pages)
+        snapshot._protected_sources = set(self._protected_sources)
+        snapshot._dirty = self._dirty
+        snapshot._undo_stack = []
+        snapshot._redo_stack = []
+        return snapshot
+
     def source_paths(self) -> set[str]:
         """Every source path ever admitted to this tab, protected from overwrite."""
         return set(self._protected_sources)

@@ -91,6 +91,7 @@ def test_rename_cannot_rename_after_save(
     )
 
     assert main_window._save_as(tab) is True
+    qtbot.waitUntil(lambda: tab not in main_window._editor_busy, timeout=15_000)
     assert tab.custom_tab_title is None
     assert not tab.can_rename_tab
     assert tab.tab_title == "saved.pdf"

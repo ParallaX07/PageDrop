@@ -44,7 +44,7 @@ Inbound drops (PDF onto the grid, images onto Create PDF, files onto tool shells
 
 ## Jobs and capabilities
 
-Batch Tools work through a **serialized job runner** (`SerializedJobRunner`): stage under temp, validate, promote to the user path, support cooperative cancel. Handlers take explicit input/output paths — not live `fitz.Document` handles from the UI.
+Batch Tools and editor Save As work through a **serialized job runner** (`SerializedJobRunner`): stage under temp, validate, promote to the user path, support cooperative cancel. Editor folder export uses the same single-threaded worker flow with the I2 staged batch extractor. Workers receive paths and immutable edit/markup snapshots — never live `fitz.Document` handles or tab loaders from the UI. A save completion rebases only when its snapshot still matches the tab; otherwise the earlier copy remains saved and newer tab edits stay dirty.
 
 Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI can configure / recheck without crashing the app. Core thumbnail / edit / merge / Create PDF must remain usable when optional backends are absent.
 

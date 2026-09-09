@@ -29,6 +29,10 @@ def _active_tab(window: MainWindow) -> PdfTab:
     return tab
 
 
+def _wait_for_editor_job(qtbot, window: MainWindow, tab: PdfTab) -> None:
+    qtbot.waitUntil(lambda: tab not in window._editor_busy, timeout=15_000)
+
+
 def _load_and_dirty(window: MainWindow, qtbot, pdf_path) -> PdfTab:
     window.showMinimized()
     window._load_pdf(str(pdf_path))
@@ -97,6 +101,7 @@ def test_dirty_flag_cleared_after_save(
     )
 
     assert main_window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, main_window, tab)
     assert output.is_file()
     assert not tab.is_dirty
     assert tab.edit_model is not None
@@ -117,17 +122,19 @@ def test_failed_second_save_keeps_previous_baseline_and_pending_markup(
         lambda *args, **kwargs: (str(next(outputs)), "PDF Files (*.pdf)"),
     )
     assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
     tab.markup_session.push_annotation(
         AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="Keep")
     )
     tab._sync_dirty_from_model()
     monkeypatch.setattr(
-        "pagedrop.ui.main_window.write_pdf",
+        "pagedrop.core.editor_jobs.write_pdf",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("simulated write failure")),
     )
     monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: None)
 
-    assert not main_window._save_as(tab)
+    assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
     assert not second.exists()
     assert tab.is_dirty
     assert tab.edit_model is not None
@@ -165,7 +172,9 @@ def test_repeated_save_preserves_forms_page_order_and_rotation(
     )
 
     assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
     assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
 
     saved = fitz.open(str(second))
     try:
@@ -217,6 +226,7 @@ def test_drop_init_save_as_updates_tab_title_and_stays_editable(
     )
 
     assert main_window._save_as(blank) is True
+    _wait_for_editor_job(qtbot, main_window, blank)
     assert output.is_file()
     assert not blank.is_dirty
     assert blank.tab_title == "saved.pdf"
@@ -289,6 +299,7 @@ def test_encrypted_save_as_uses_runtime_credentials(
     assert reopened.page_count == 1
 
     assert main_window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, main_window, tab)
     assert output.is_file()
     assert _file_hash(enc) == source_hash
     out = fitz.open(str(output))

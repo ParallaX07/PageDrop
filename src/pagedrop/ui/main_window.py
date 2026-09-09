@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtCore import QEvent, QEventLoop, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -29,24 +30,28 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.core.editor_jobs import register_editor_handlers
+from pagedrop.core.jobs import (
+    CancelToken,
+    JobSpec,
+    RuntimeCredentials,
+    SerializedJobRunner,
+)
 from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.jobs.paths import paths_refer_to_same_file, reject_source_overwrite
-from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
     PdfPasswordError,
     PdfPasswordRequiredError,
-    open_pdf,
-)
-from pagedrop.core.pdf_writer import write_pdf
-from pagedrop.core.redact import (
-    RedactionError,
-    RedactionVerifyError,
-    redact_edit_model,
 )
 from pagedrop.ui.actions import ActionRegistry
-from pagedrop.ui.busy_overlay import ToastOverlay
+from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
+from pagedrop.ui.editor_jobs import (
+    EditorJobWorker,
+    release_editor_signals,
+    start_editor_worker,
+)
 from pagedrop.ui.command_palette import CommandPalette, action_label
 from pagedrop.ui.dialogs import (
     fit_message_box_buttons,
@@ -107,6 +112,7 @@ STATUS_TRANSIENT_MS = 5000
 
 class MainWindow(QMainWindow):
     APP_TITLE = "PageDrop"
+    editor_job_finished = pyqtSignal(object)
 
     def __init__(
         self,
@@ -637,6 +643,9 @@ class MainWindow(QMainWindow):
                 tab.set_zoom_level(thumbnail_zoom())
         self.setCentralWidget(self._tab_manager)
         self._toast = ToastOverlay(self._tab_manager)
+        self._editor_runner = SerializedJobRunner(self._temp_manager)
+        register_editor_handlers(self._editor_runner)
+        self._editor_busy: dict[PdfTab, tuple[BusyOverlay, CancelToken]] = {}
         self._last_tab_index = self._tab_manager.currentIndex()
         set_content_tab_order(
             self._toolbar,
@@ -658,6 +667,40 @@ class MainWindow(QMainWindow):
         on_undo=None,
     ) -> None:
         self._toast.show_toast(message, kind=kind, on_undo=on_undo)
+
+    def _begin_editor_job(self, tab: PdfTab, message: str) -> CancelToken:
+        overlay = BusyOverlay(tab)
+        overlay.set_cancellable(True)
+        token = CancelToken()
+        overlay.cancelled.connect(token.cancel)
+        overlay.show_message(message)
+        tab.setProperty("editorJobRunning", True)
+        self._editor_busy[tab] = (overlay, token)
+        return token
+
+    def _end_editor_job(self, tab: PdfTab) -> None:
+        item = self._editor_busy.pop(tab, None)
+        if item is not None:
+            item[0].hide_overlay()
+        tab.setProperty("editorJobRunning", False)
+        self.editor_job_finished.emit(tab)
+
+    def wait_for_editor_job(self, tab: PdfTab) -> None:
+        """Run a nested event loop only for shutdown preparation's save contract."""
+        if tab not in self._editor_busy:
+            return
+        loop = QEventLoop(self)
+
+        def done(finished_tab: object) -> None:
+            if finished_tab is tab:
+                loop.quit()
+
+        self.editor_job_finished.connect(done)
+        try:
+            if tab in self._editor_busy:
+                loop.exec()
+        finally:
+            self.editor_job_finished.disconnect(done)
 
     def _restore_document_status(self) -> None:
         """Restore sticky document status after a drag hint."""
@@ -1751,41 +1794,9 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        remember_directory(folder)
-        try:
-            paths = tab.thumbnail_grid.extract_selected_to_folder(Path(folder))
-        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
-            QMessageBox.critical(
-                self,
-                "Extract pages",
-                f"Could not extract pages:\n{exc}",
-            )
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Extract pages",
-                f"Could not write PDFs to the chosen folder:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Extract pages",
-                f"Could not extract pages:\n{exc}",
-            )
-            return
-
-        count = len(paths)
-        noun = "page" if count == 1 else "pages"
-        base_name = Path(tab.edit_model.original_path).stem
-        renamed = any(
-            path.name != f"{base_name}_page_{index:04d}.pdf"
-            for index, path in enumerate(paths, start=1)
+        self._start_folder_export(
+            tab, tab.selected_page_refs(), Path(folder), "Extracted"
         )
-        suffix = " (renamed to avoid collisions)" if renamed else ""
-        self._transient_status(f"Extracted {count} {noun} to {folder}{suffix}")
-        self._show_toast(f"Extracted {count} {noun}{suffix}", kind="success")
 
     def _export_all_pages(self) -> None:
         tab = self._active_tab()
@@ -1800,41 +1811,70 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        remember_directory(folder)
-        try:
-            paths = tab.thumbnail_grid.extract_all_to_folder(Path(folder))
-        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
-            QMessageBox.critical(
-                self,
-                "Export all pages",
-                f"Could not export pages:\n{exc}",
-            )
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Export all pages",
-                f"Could not write PDFs to the chosen folder:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Export all pages",
-                f"Could not export pages:\n{exc}",
-            )
-            return
+        refs = [
+            tab.edit_model.page_at(index)
+            for index in range(tab.edit_model.logical_count())
+        ]
+        self._start_folder_export(tab, refs, Path(folder), "Exported")
 
-        count = len(paths)
-        noun = "page" if count == 1 else "pages"
+    def _start_folder_export(self, tab: PdfTab, refs, folder: Path, verb: str) -> None:
+        if not refs or tab in self._editor_busy or tab.edit_model is None:
+            return
+        remember_directory(str(folder))
         base_name = Path(tab.edit_model.original_path).stem
-        renamed = any(
-            path.name != f"{base_name}_page_{index:04d}.pdf"
-            for index, path in enumerate(paths, start=1)
+        token = self._begin_editor_job(
+            tab, f"{verb[:-2] if verb.endswith('ed') else verb}ing pages…"
         )
-        suffix = " (renamed to avoid collisions)" if renamed else ""
-        self._transient_status(f"Exported {count} {noun} to {folder}{suffix}")
-        self._show_toast(f"Exported {count} {noun}{suffix}", kind="success")
+        worker = EditorJobWorker.export(
+            list(refs),
+            folder,
+            base_name,
+            tab.credentials.snapshot(),
+            token,
+            tab._temp_manager,
+        )
+        signals = worker.signals
+
+        def finish() -> None:
+            release_editor_signals(signals)
+            self._end_editor_job(tab)
+
+        def succeeded(result: object) -> None:
+            paths = list(result)
+            count = len(paths)
+            noun = "page" if count == 1 else "pages"
+            renamed = any(
+                path.name != f"{base_name}_page_{index:04d}.pdf"
+                for index, path in enumerate(paths, start=1)
+            )
+            suffix = " (renamed to avoid collisions)" if renamed else ""
+            message = f"{verb} {count} {noun} to {folder}{suffix}"
+            self._transient_status(message)
+            self._show_toast(f"{verb} {count} {noun}{suffix}", kind="success")
+            finish()
+
+        def cancelled() -> None:
+            finish()
+            self._transient_status(f"{verb} cancelled")
+            self._show_toast(f"{verb} cancelled", kind="info")
+
+        def failed(error: str) -> None:
+            finish()
+            QMessageBox.critical(
+                self, f"{verb} pages", f"Could not {verb.lower()} pages:\n{error}"
+            )
+            self._transient_status(f"{verb} failed")
+            self._show_toast(f"{verb} failed", kind="error")
+
+        signals.progress.connect(
+            lambda _fraction, message: self._persistent_status(message)
+            if tab is self._active_tab()
+            else None
+        )
+        signals.succeeded.connect(succeeded)
+        signals.cancelled.connect(cancelled)
+        signals.failed.connect(failed)
+        start_editor_worker(worker)
 
     def _extract_selected_to_new_tab(self) -> None:
         tab = self._active_tab()
@@ -2279,9 +2319,9 @@ class MainWindow(QMainWindow):
         return str(start_dir / f"{stem}.pdf")
 
     def _save_as(self, tab: PdfTab | None = None) -> bool:
-        """Save the active tab (or *tab*) to a new path. Returns True on success."""
+        """Start a non-blocking Save As transaction for an immutable tab snapshot."""
         target = tab or self._active_tab()
-        if target is None or target.edit_model is None:
+        if target is None or target.edit_model is None or target in self._editor_busy:
             return False
 
         model = target.edit_model
@@ -2312,89 +2352,79 @@ class MainWindow(QMainWindow):
             return False
 
         regions = target.markup_session.redaction_regions(model)
-        passwords = target.credentials.snapshot()
-        non_redact = target.markup_session.non_redaction_ops(model) or None
+        scope = prompt_redaction_scope(self) if regions else None
+        if regions and scope is None:
+            return False
+        snapshot = model.snapshot_for_write()
+        markup = copy.deepcopy(target.markup_session.non_redaction_ops(model) or None)
+        revision = (tuple(model.iter_pages()), tuple(target.peek_markup_ops()))
+        credentials = RuntimeCredentials()
+        for source, password in target.credentials.snapshot().items():
+            credentials.set(source, password)
+        token = self._begin_editor_job(target, "Saving PDF…")
+        spec = JobSpec.create(
+            "editor_save",
+            inputs=sorted(snapshot.source_paths()),
+            output=path,
+            options={
+                "model": snapshot,
+                "markup": markup,
+                "regions": copy.deepcopy(regions),
+                "scope": scope,
+            },
+            overwrite=True,
+        )
+        worker = EditorJobWorker.save(self._editor_runner, spec, token, credentials)
+        signals = worker.signals
 
-        staging = JobStaging(target._temp_manager)
-        staged = staging.stage_file(Path(path).name)
-        try:
-            if regions:
-                scope = prompt_redaction_scope(self)
-                if scope is None:
-                    return False
-                redact_edit_model(
-                    model,
-                    staged,
-                    regions,
-                    markup=non_redact,
-                    passwords=passwords,
-                    scope=scope,
-                    verify=True,
-                )
-            else:
-                write_pdf(
-                    model,
-                    str(staged),
-                    markup=non_redact,
-                    passwords=passwords,
-                )
-                with open_pdf(str(staged)) as output:
-                    if output.page_count != model.logical_count():
-                        raise PdfLoadError("Saved PDF has an unexpected page count")
-            staging.promote(staged, Path(path))
-        except RedactionVerifyError as exc:
-            QMessageBox.critical(
-                self,
-                "Redaction verification failed",
-                f"{exc}\n\nNo redacted copy was produced.",
-            )
+        def finish() -> None:
+            release_editor_signals(signals)
+            self._end_editor_job(target)
+
+        def progress(_fraction: float, message: str) -> None:
             if target is self._active_tab():
-                self._transient_status(
-                    "Redaction verification failed. Output discarded"
-                )
-            return False
-        except SourceOverwriteError as exc:
-            QMessageBox.warning(
-                self,
-                "Save as",
-                str(exc),
-            )
-            return False
-        except (PdfPasswordRequiredError, PdfPasswordError, RedactionError) as exc:
-            QMessageBox.critical(
-                self,
-                "Save as",
-                f"Could not save PDF:\n{exc}",
-            )
-            return False
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Save as",
-                f"Could not write PDF:\n{exc}",
-            )
-            return False
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Save as",
-                f"Could not save PDF:\n{exc}",
-            )
-            return False
-        finally:
-            staging.cleanup()
+                self._persistent_status(message)
 
-        remember_directory(path)
-        try:
-            target.commit_saved_output(path)
-        except (PdfLoadError, OSError) as exc:
-            QMessageBox.critical(self, "Save as", f"Saved copy could not be opened:\n{exc}")
-            return False
-        self._tab_manager.update_tab_title(target)
-        if target is self._active_tab():
-            self._sync_toolbar_from_active_tab()
-            self._transient_status(f"Saved to {Path(path).name}")
-            self._show_toast(f"Saved to {Path(path).name}", kind="success")
+        def succeeded(_result: object) -> None:
+            remember_directory(path)
+            current = target.edit_model
+            if current is None or (
+                tuple(current.iter_pages()), tuple(target.peek_markup_ops())
+            ) != revision:
+                message = f"Saved {Path(path).name} from an earlier snapshot"
+                self._transient_status(message)
+                self._show_toast(message, kind="warning")
+                finish()
+                return
+            try:
+                target.commit_saved_output(path)
+            except (PdfLoadError, OSError) as exc:
+                QMessageBox.critical(self, "Save as", f"Saved copy could not be opened:\n{exc}")
+                finish()
+                return
+            self._tab_manager.update_tab_title(target)
+            if target is self._active_tab():
+                self._sync_toolbar_from_active_tab()
+                self._transient_status(f"Saved to {Path(path).name}")
+                self._show_toast(f"Saved to {Path(path).name}", kind="success")
+            finish()
+
+        def cancelled() -> None:
+            finish()
+            self._transient_status("Save cancelled")
+            self._show_toast("Save cancelled", kind="info")
+
+        def failed(error: str) -> None:
+            finish()
+            QMessageBox.critical(self, "Save as", f"Could not save PDF:\n{error}")
+            self._transient_status("Save failed")
+            self._show_toast("Save failed", kind="error")
+
+        signals.progress.connect(progress)
+        signals.succeeded.connect(succeeded)
+        signals.cancelled.connect(cancelled)
+        signals.failed.connect(failed)
+        start_editor_worker(worker)
         return True
 
     def _rename_tab(self, index: int) -> None:

@@ -164,6 +164,7 @@ def test_smoke_cross_tab_copy_cut_save_as_ctrl_tab(
         lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
     )
     assert window._save_as(blank) is True
+    qtbot.waitUntil(lambda: blank not in window._editor_busy, timeout=15_000)
     assert output.is_file()
     doc = fitz.open(str(output))
     try:

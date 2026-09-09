@@ -47,6 +47,10 @@ from typing import Any
 # (direct ``with FITZ_LOCK`` or public helpers that call ``pdf_service.call``).
 WORKER_AUDIT: tuple[tuple[str, str], ...] = (
     (
+        "EditorJobWorker",
+        "ui/editor_jobs.py — pool max 1; paths/snapshots only, writer/extractor take FITZ_LOCK",
+    ),
+    (
         "ThumbnailWorker",
         "ui/thumbnail_grid.py — per-page via pdf_service.render_ref_png; pool max 1",
     ),

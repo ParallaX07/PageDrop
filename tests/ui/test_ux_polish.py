@@ -13,6 +13,12 @@ from pagedrop.ui.theme import ZOOM_WHEEL_STEP
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 
 
+def _wait_for_editor_job(qtbot, window) -> None:
+    tab = window._tab_manager.active_tab
+    assert tab is not None
+    qtbot.waitUntil(lambda: tab not in window._editor_busy, timeout=15_000)
+
+
 def test_card_tooltip(qtbot, five_page_pdf):
     grid = ThumbnailGrid()
     qtbot.addWidget(grid)
@@ -49,6 +55,7 @@ def test_context_menu_extract_action(
 
     # Context menu emits the signal; verify wiring reaches the extract handler.
     grid.extract_to_folder_requested.emit()
+    _wait_for_editor_job(qtbot, main_window)
 
     pdfs = list(tmp_path.glob("*.pdf"))
     assert len(pdfs) == 2
@@ -67,6 +74,7 @@ def test_export_all_pages(main_window, five_page_pdf, tmp_path, monkeypatch, qtb
         lambda *args, **kwargs: str(tmp_path),
     )
     main_window._export_all_pages()
+    _wait_for_editor_job(qtbot, main_window)
 
     pdfs = sorted(tmp_path.glob("*.pdf"))
     assert len(pdfs) == 5
@@ -87,10 +95,11 @@ def test_export_all_reports_collision_safe_names(
         QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path)
     )
     main_window._export_all_pages()
+    _wait_for_editor_job(qtbot, main_window)
 
     assert existing.read_bytes() == b"unrelated"
     assert (tmp_path / f"{five_page_pdf.stem}_page_0001_2.pdf").is_file()
-    assert "renamed to avoid collisions" in main_window.statusBar().currentMessage()
+    assert "renamed to avoid collisions" in main_window._toast._message.text()
 
 
 def _press_key(widget, key: Qt.Key) -> None:

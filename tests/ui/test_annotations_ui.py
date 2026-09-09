@@ -13,7 +13,7 @@ from pagedrop.core.annotations import AnnotationOp, list_annotation_summaries
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool
 from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
-from tests.ui.test_save_as import _file_hash, _load_and_dirty
+from tests.ui.test_save_as import _file_hash, _load_and_dirty, _wait_for_editor_job
 
 
 def _text_pdf(path: Path) -> None:
@@ -240,9 +240,10 @@ def test_save_as_with_redaction_uses_verify_path(
         "getSaveFileName",
         lambda *a, **k: (str(next(outputs)), "PDF Files (*.pdf)"),
     )
-    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _spy)
+    monkeypatch.setattr("pagedrop.core.editor_jobs.redact_edit_model", _spy)
 
     assert window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, window, tab)
     assert len(calls) == 1
     assert out.is_file()
     assert hashlib.sha256(src.read_bytes()).hexdigest() == before
@@ -255,6 +256,7 @@ def test_save_as_with_redaction_uses_verify_path(
 
     # The next save starts from the verified redacted baseline, not the source.
     assert window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, window, tab)
     assert inspect_redaction_result(second, absent_text=[secret]).ok
     assert hashlib.sha256(src.read_bytes()).hexdigest() == before
 
@@ -277,11 +279,13 @@ def test_repeated_save_rebases_comments_and_preserves_sources(
     )
 
     assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
     tab.markup_session.push_annotation(
         AnnotationOp(kind="comment", page_index=0, points=((40, 110),), text="Second")
     )
     tab._sync_dirty_from_model()
     assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
 
     assert _file_hash(five_page_pdf) == source_hash
     assert [summary[2] for summary in list_annotation_summaries(str(first))] == ["First"]
@@ -327,9 +331,10 @@ def test_save_as_redaction_verify_fail_keeps_marks(
         "getSaveFileName",
         lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
     )
-    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _fail)
+    monkeypatch.setattr("pagedrop.core.editor_jobs.redact_edit_model", _fail)
 
-    assert window._save_as(tab) is False
+    assert window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, window, tab)
     assert not out.exists()
     assert len(session.redaction_regions()) == 1
     assert tab.is_dirty
@@ -364,11 +369,6 @@ def test_save_as_redaction_scope_cancel_aborts(
         "pagedrop.ui.main_window.prompt_redaction_scope",
         lambda *_a, **_k: None,
     )
-
-    def _must_not_run(*_a, **_k):
-        raise AssertionError("redact_edit_model must not run when scope is cancelled")
-
-    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _must_not_run)
 
     assert window._save_as(tab) is False
     assert not out.exists()

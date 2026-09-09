@@ -22,7 +22,7 @@ Right-click to extract selected pages to a folder, a new tab, or a new window. F
 - Delete, duplicate (`Ctrl+D`), and rotate from the toolbar, context menu, or shortcuts
 - Undo / redo with `Ctrl+Z` / `Ctrl+Shift+Z`; deleting many pages at once can prompt for confirmation
 - Drop a PDF onto the grid (including a blank tab) to open or insert its pages at the cursor
-- **File → Save As** writes edits to a new file. The original stays untouched; later saves continue from that saved copy, preserving prior page edits, annotations, forms, and verified redactions
+- **File → Save As** writes edits to a new file in the background. The original stays untouched; you can cancel while it is saving. Later saves continue from that saved copy, preserving prior page edits, annotations, forms, and verified redactions
 - Dirty tabs show a `*` in the title; closing one prompts Save As, Discard, or Cancel
 
 ## Multi-window
