@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from uuid import uuid4
 
 from pagedrop.utils.list_utils import move_items
 
@@ -14,6 +15,11 @@ class PageRef:
     source_path: str
     source_index: int  # 0-based in that file
     rotation: int = 0  # additional degrees: 0, 90, 180, or 270
+    instance_id: str = field(default_factory=lambda: uuid4().hex, compare=False)
+
+    def new_instance(self) -> PageRef:
+        """Copy this source reference as a distinct logical page occurrence."""
+        return replace(self, instance_id=uuid4().hex)
 
 
 def normalize_rotation(degrees: int) -> int:
@@ -41,7 +47,7 @@ class PdfEditModel:
         model = cls.__new__(cls)
         model._original_path = primary_path
         model._save_path = None
-        model._pages = list(pages)
+        model._pages = [page.new_instance() for page in pages]
         model._protected_sources = {primary_path, *(page.source_path for page in pages)}
         model._dirty = True
         model._undo_stack = []
@@ -61,6 +67,16 @@ class PdfEditModel:
 
     def page_at(self, logical_index: int) -> PageRef:
         return self._pages[logical_index]
+
+    def logical_index_for_instance(self, instance_id: str) -> int | None:
+        """Return a page occurrence's current logical position, if it remains."""
+        return next(
+            (i for i, page in enumerate(self._pages) if page.instance_id == instance_id),
+            None,
+        )
+
+    def instance_id_at(self, logical_index: int) -> str:
+        return self._pages[logical_index].instance_id
 
     def iter_pages(self) -> list[PageRef]:
         """Current logical page list (copy — safe to iterate while reading)."""
@@ -93,20 +109,25 @@ class PdfEditModel:
         if record_undo:
             self._push_undo()
         clamped = max(0, min(index, len(self._pages)))
-        self._pages[clamped:clamped] = list(refs)
+        # Every insertion is a new occurrence, including duplicate/cross-tab refs.
+        self._pages[clamped:clamped] = [ref.new_instance() for ref in refs]
         self._protected_sources.update(ref.source_path for ref in refs)
         self._dirty = True
 
     def remove_pages(
         self, logical_indices: list[int], *, record_undo: bool = True
-    ) -> None:
+    ) -> set[str]:
         if not logical_indices:
-            return
+            return set()
         if record_undo:
             self._push_undo()
         remove = set(logical_indices)
+        removed = {
+            page.instance_id for i, page in enumerate(self._pages) if i in remove
+        }
         self._pages = [page for i, page in enumerate(self._pages) if i not in remove]
         self._dirty = True
+        return removed
 
     def move_pages(
         self, indices: list[int], to_index: int, *, record_undo: bool = True
@@ -149,6 +170,7 @@ class PdfEditModel:
                 old.source_path,
                 old.source_index,
                 normalize_rotation(old.rotation + delta_degrees),
+                old.instance_id,
             )
         self._dirty = True
 

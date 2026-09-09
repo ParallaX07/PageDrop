@@ -817,8 +817,6 @@ class _PageTile(QWidget):
         for entry in self._overlay_entries:
             if entry.kind == "redaction" and entry.redaction is not None:
                 region = entry.redaction
-                if region.page_index != self.logical_page:
-                    continue
                 wr = _map_pdf_rect_to_widget(
                     region.rect,
                     self._page_w,
@@ -834,8 +832,6 @@ class _PageTile(QWidget):
             if entry.kind != "annotation" or entry.annotation is None:
                 continue
             op = entry.annotation
-            if op.page_index != self.logical_page:
-                continue
             color = QColor(
                 int(op.color[0] * 255),
                 int(op.color[1] * 255),
@@ -1736,15 +1732,14 @@ class PdfViewerWidget(QWidget):
                 btn.setChecked(tool == self._tool)
 
     def refresh_markup_overlays(self) -> None:
-        entries = self._markup.ops() if self._markup is not None else []
         for tile in self._tiles.values():
-            tile.set_overlay_entries(entries)
+            tile.set_overlay_entries(self._markup_entries_for(tile.logical_page))
             tile.set_markup_color(self._markup_color)
             tile.set_pending_redaction(self._pending_redact)
             tile.set_selected_op(
                 self._selected_overlay
                 if self._selected_overlay is not None
-                and self._selected_overlay.page_index == tile.logical_page
+                and self._selected_overlay_is_on(tile.logical_page)
                 else None
             )
         self._sync_floating_chrome()
@@ -1754,9 +1749,25 @@ class PdfViewerWidget(QWidget):
         self._selected_overlay = op
         for tile in self._tiles.values():
             tile.set_selected_op(
-                op if op is not None and op.page_index == tile.logical_page else None
+                op if op is not None and self._selected_overlay_is_on(tile.logical_page) else None
             )
         self._sync_freetext_format_bar()
+
+    def _page_instance_id(self, logical: int) -> str | None:
+        if self._model is None or not 0 <= logical < self._model.logical_count():
+            return None
+        return self._model.instance_id_at(logical)
+
+    def _markup_entries_for(self, logical: int) -> list[MarkupEntry]:
+        instance_id = self._page_instance_id(logical)
+        if self._markup is None or instance_id is None:
+            return []
+        return self._markup.entries_for_instance(instance_id)
+
+    def _selected_overlay_is_on(self, logical: int) -> bool:
+        if self._markup is None or self._selected_overlay is None:
+            return False
+        return self._markup.annotation_instance_id(self._selected_overlay) == self._page_instance_id(logical)
 
     def _delete_overlay(self, op: AnnotationOp | None = None) -> bool:
         if self._markup is None:
@@ -2229,7 +2240,8 @@ class PdfViewerWidget(QWidget):
                     page_index=tile.logical_page,
                     rects=rects,
                     color=self._markup_color,
-                )
+                ),
+                self._page_instance_id(tile.logical_page),
             )
             tile.clear_selection()
             applied = True
@@ -2500,7 +2512,10 @@ class PdfViewerWidget(QWidget):
     def _confirm_pending_redact(self) -> None:
         if self._markup is None or self._pending_redact is None:
             return
-        self._markup.push_redaction(self._pending_redact)
+        self._markup.push_redaction(
+            self._pending_redact,
+            self._page_instance_id(self._pending_redact.page_index),
+        )
         self._pending_redact = None
         self.refresh_markup_overlays()
         self.markup_changed.emit()
@@ -2599,7 +2614,7 @@ class PdfViewerWidget(QWidget):
                 rects=tuple(rects),
                 color=self._markup_color,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.INK:
             strokes = payload.get("strokes") or ()
             if not strokes:
@@ -2610,7 +2625,7 @@ class PdfViewerWidget(QWidget):
             created = AnnotationOp(
                 kind="ink", page_index=logical, strokes=normalized, color=self._markup_color
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool in (AnnotTool.RECT, AnnotTool.CIRCLE):
             rect = payload.get("rect")
             if not rect:
@@ -2621,7 +2636,7 @@ class PdfViewerWidget(QWidget):
                 rects=(rect,),
                 color=(0.9, 0.2, 0.2),
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.LINE:
             points = payload.get("points")
             if not points:
@@ -2632,7 +2647,7 @@ class PdfViewerWidget(QWidget):
                 points=tuple(points),
                 color=(0.9, 0.2, 0.2),
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.STAMP:
             point = payload.get("point")
             if not point:
@@ -2645,7 +2660,7 @@ class PdfViewerWidget(QWidget):
                 rects=(rect,),
                 stamp_id=STAMP_APPROVED,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.FREETEXT:
             point = payload.get("point")
             if not point:
@@ -2667,7 +2682,7 @@ class PdfViewerWidget(QWidget):
                 italic=False,
                 border=False,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
             self._set_selected_overlay(created)
             self.refresh_markup_overlays()
             self.markup_changed.emit()
@@ -2689,7 +2704,7 @@ class PdfViewerWidget(QWidget):
                 rects=(tuple(rect),),  # type: ignore[arg-type]
                 image_path=path,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
             self._set_selected_overlay(created)
         elif tool == AnnotTool.COMMENT:
             point = payload.get("point")
@@ -2704,7 +2719,7 @@ class PdfViewerWidget(QWidget):
                 points=(tuple(point),),  # type: ignore[arg-type]
                 text=text.strip(),
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.REDACT:
             rect = payload.get("rect")
             if not rect:
@@ -2725,7 +2740,8 @@ class PdfViewerWidget(QWidget):
                     field_name=name.strip(),
                     field_type="checkbox" if tool == AnnotTool.FORM_CHECK else "text",
                     rect=tuple(rect),  # type: ignore[arg-type]
-                )
+                ),
+                self._page_instance_id(logical),
             )
         else:
             return
@@ -3049,11 +3065,11 @@ class PdfViewerWidget(QWidget):
         tile.set_tool(self._tool)
         tile.set_markup_color(self._markup_color)
         if self._markup is not None:
-            tile.set_overlay_entries(self._markup.ops())
+            tile.set_overlay_entries(self._markup_entries_for(logical))
         tile.set_pending_redaction(self._pending_redact)
         if (
             self._selected_overlay is not None
-            and self._selected_overlay.page_index == logical
+            and self._selected_overlay_is_on(logical)
         ):
             tile.set_selected_op(self._selected_overlay)
         self._tiles[logical] = tile
@@ -3279,7 +3295,7 @@ class PdfViewerWidget(QWidget):
                     widgets=widgets,
                 )
                 if self._markup is not None:
-                    tile.set_overlay_entries(self._markup.ops())
+                    tile.set_overlay_entries(self._markup_entries_for(logical))
             self._pending_meta.discard(logical)
 
     def _on_render_finished(

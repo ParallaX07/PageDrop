@@ -7,7 +7,7 @@ import fitz
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.markup import MarkupEntry, apply_markup_entries
+from pagedrop.core.markup import MarkupEntry, apply_markup_entries, resolve_markup_entries
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_service import FITZ_LOCK
@@ -108,7 +108,7 @@ def write_pdf(
         try:
             append_page_refs(out, model.iter_pages(), docs, passwords)
             if markup:
-                apply_markup_entries(out, markup)
+                apply_markup_entries(out, resolve_markup_entries(markup, model))
             out.save(output_path)
         finally:
             out.close()

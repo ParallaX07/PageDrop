@@ -191,3 +191,23 @@ def test_duplicate_via_insert_after_last_selected():
     model.insert_pages(selected[-1] + 1, refs)
     assert model.logical_count() == 6
     assert [model.page_at(i).source_index for i in range(6)] == [0, 1, 2, 3, 1, 3]
+
+
+def test_page_instance_identity_survives_edits_and_is_fresh_on_insert() -> None:
+    model = PdfEditModel("/a.pdf", 2)
+    first_id = model.instance_id_at(0)
+    second_id = model.instance_id_at(1)
+    model.move_pages([0], 2)
+    assert model.instance_id_at(1) == first_id
+    model.rotate_pages([1], 90)
+    assert model.instance_id_at(1) == first_id
+    assert model.undo()
+    assert model.instance_id_at(1) == first_id
+    assert model.undo()
+    assert model.instance_id_at(0) == first_id
+    assert model.redo() and model.redo()
+    assert model.instance_id_at(1) == first_id
+
+    model.insert_pages(0, [model.page_at(1)])
+    assert model.instance_id_at(0) not in {first_id, second_id}
+    assert model.logical_index_for_instance(first_id) == 2

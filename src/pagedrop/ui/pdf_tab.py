@@ -122,7 +122,7 @@ class PdfTab(QWidget):
         return self._credentials
 
     def peek_markup_ops(self):
-        return self._markup.ops()
+        return self._markup.ops(self._edit_model)
 
     def clear_markup_after_save(self) -> None:
         # Ordinary Save As applies annotation/form ops only. Pending redaction
@@ -289,6 +289,7 @@ class PdfTab(QWidget):
             self._credentials.set(path, password)
         self._loader_cache[path] = loader
         self._edit_model = PdfEditModel(path, loader.page_count)
+        self._markup.bind_model(self._edit_model)
         self._markup.clear()
         self._pdf_path = path
         self._drop_initialized = False
@@ -454,6 +455,7 @@ class PdfTab(QWidget):
 
         primary = refs[0].source_path
         self._edit_model = PdfEditModel.with_pages(primary, refs)
+        self._markup.bind_model(self._edit_model)
         self._markup.clear()
         self._pdf_path = primary
         self._drop_initialized = True
@@ -531,7 +533,7 @@ class PdfTab(QWidget):
 
     def _sync_dirty_from_model(self) -> None:
         model_dirty = self._edit_model.is_dirty() if self._edit_model is not None else False
-        dirty = model_dirty or self._markup.is_dirty()
+        dirty = model_dirty or self._markup.is_dirty(self._edit_model)
         if dirty != self._dirty:
             self._dirty = dirty
             self.dirty_changed.emit(dirty)

@@ -2309,9 +2309,9 @@ class MainWindow(QMainWindow):
             )
             return False
 
-        regions = target.markup_session.redaction_regions()
+        regions = target.markup_session.redaction_regions(model)
         passwords = target.credentials.snapshot()
-        non_redact = target.markup_session.non_redaction_ops() or None
+        non_redact = target.markup_session.non_redaction_ops(model) or None
 
         try:
             if regions:

@@ -16,7 +16,12 @@ from pagedrop.core.annotations import (
     list_annotation_summaries,
 )
 from pagedrop.core.jobs.errors import SourceOverwriteError
-from pagedrop.core.markup import MarkupSession
+from pagedrop.core.markup import (
+    MarkupEntry,
+    MarkupSession,
+    MarkupTargetError,
+    resolve_markup_entries,
+)
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.pdf_viewer import _apply_box_transform
@@ -92,7 +97,8 @@ def test_highlight_survives_write_pdf_markup(tmp_path: Path) -> None:
     model = PdfEditModel(str(src), 1)
     session = MarkupSession()
     session.push_annotation(
-        AnnotationOp(kind="highlight", page_index=0, rects=((40, 60, 120, 90),))
+        AnnotationOp(kind="highlight", page_index=0, rects=((40, 60, 120, 90),)),
+        model.instance_id_at(0),
     )
     assert session.is_dirty()
     assert session.can_undo()
@@ -106,6 +112,52 @@ def test_highlight_survives_write_pdf_markup(tmp_path: Path) -> None:
     assert not session.is_dirty()
     session.redo()
     assert session.is_dirty()
+
+
+def test_markup_resolves_identity_and_hides_deleted_targets() -> None:
+    model = PdfEditModel("/a.pdf", 2)
+    first_id = model.instance_id_at(0)
+    session = MarkupSession()
+    session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((10, 10),), text="First"),
+        first_id,
+    )
+
+    model.move_pages([0], 2)
+    resolved = resolve_markup_entries(session.ops(model), model)
+    assert resolved[0].annotation is not None
+    assert resolved[0].annotation.page_index == 1
+
+    model.remove_pages([1])
+    assert session.ops(model) == []
+    assert not session.is_dirty(model)
+    assert model.undo()
+    assert len(session.ops(model)) == 1
+
+
+def test_duplicate_markup_isolated_and_missing_target_rejected() -> None:
+    model = PdfEditModel("/a.pdf", 1)
+    original_id = model.instance_id_at(0)
+    session = MarkupSession()
+    session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((10, 10),), text="Original"),
+        original_id,
+    )
+    model.insert_pages(1, [model.page_at(0)])
+    assert model.instance_id_at(1) != original_id
+    assert len(session.entries_for_instance(model.instance_id_at(1))) == 0
+
+    with pytest.raises(MarkupTargetError):
+        resolve_markup_entries(
+            [
+                session.ops()[0],
+                MarkupEntry(
+                    kind="annotation",
+                    annotation=AnnotationOp(kind="comment", page_index=0, points=((1, 1),)),
+                ),
+            ],
+            model,
+        )
 
 
 def test_underline_strikeout_color_and_freetext_border(tmp_path: Path) -> None:

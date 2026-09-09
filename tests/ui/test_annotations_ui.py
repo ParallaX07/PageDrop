@@ -426,6 +426,36 @@ def test_viewer_markup_undo_redo_via_main_window(
     assert tab.is_viewer_mode()
 
 
+def test_comment_stays_with_first_page_after_grid_reorder(
+    qtbot, main_window, tmp_path: Path
+) -> None:
+    """Regression: moving First after Second must not retarget its comment."""
+    source = tmp_path / "ordered.pdf"
+    doc = fitz.open()
+    try:
+        for text in ("First", "Second"):
+            doc.new_page(width=300, height=400).insert_text((40, 80), text)
+        doc.save(str(source))
+    finally:
+        doc.close()
+
+    window = main_window
+    window._load_pdf(str(source))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="First note")
+    )
+    tab.thumbnail_grid.selection_manager.set_selection({0})
+    assert tab.move_selected_pages_down()
+
+    out = tmp_path / "reordered.pdf"
+    from pagedrop.core.pdf_writer import write_pdf
+
+    write_pdf(tab.edit_model, str(out), markup=tab.peek_markup_ops())
+    assert (1, "Text", "First note") in list_annotation_summaries(str(out))
+
+
 def test_text_markup_uses_char_rects_not_drag_box(qtbot) -> None:
     from PyQt6.QtCore import QPointF
 
