@@ -7,12 +7,13 @@ from pathlib import Path
 import fitz
 import pytest
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QColorDialog, QToolButton
+from PyQt6.QtWidgets import QColorDialog, QFileDialog, QToolButton
 
 from pagedrop.core.annotations import AnnotationOp, list_annotation_summaries
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool
 from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
+from tests.ui.test_save_as import _file_hash, _load_and_dirty
 
 
 def _text_pdf(path: Path) -> None:
@@ -223,6 +224,7 @@ def test_save_as_with_redaction_uses_verify_path(
     assert tab.is_dirty
 
     out = tmp_path / "verified.pdf"
+    second = tmp_path / "verified-again.pdf"
     calls: list[dict] = []
     real_redact = redact_edit_model
 
@@ -232,10 +234,11 @@ def test_save_as_with_redaction_uses_verify_path(
         assert kwargs.get("scope") is not None
         return real_redact(*args, **kwargs)
 
+    outputs = iter((out, second))
     monkeypatch.setattr(
         QFileDialog,
         "getSaveFileName",
-        lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
+        lambda *a, **k: (str(next(outputs)), "PDF Files (*.pdf)"),
     )
     monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _spy)
 
@@ -249,6 +252,43 @@ def test_save_as_with_redaction_uses_verify_path(
     assert not tab.is_dirty
     assert tab.edit_model is not None
     assert tab.edit_model.save_path == str(out)
+
+    # The next save starts from the verified redacted baseline, not the source.
+    assert window._save_as(tab) is True
+    assert inspect_redaction_result(second, absent_text=[secret]).ok
+    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+
+
+def test_repeated_save_rebases_comments_and_preserves_sources(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+) -> None:
+    source_hash = _file_hash(five_page_pdf)
+    tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="First")
+    )
+    tab._sync_dirty_from_model()
+    first, second = tmp_path / "first.pdf", tmp_path / "second.pdf"
+    outputs = iter((first, second))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(next(outputs)), "PDF Files (*.pdf)"),
+    )
+
+    assert main_window._save_as(tab)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 110),), text="Second")
+    )
+    tab._sync_dirty_from_model()
+    assert main_window._save_as(tab)
+
+    assert _file_hash(five_page_pdf) == source_hash
+    assert [summary[2] for summary in list_annotation_summaries(str(first))] == ["First"]
+    assert [summary[2] for summary in list_annotation_summaries(str(second))] == ["First", "Second"]
+    assert tab.edit_model is not None
+    assert {str(five_page_pdf), str(first), str(second)} <= tab.edit_model.source_paths()
+    assert {page.source_path for page in tab.edit_model.iter_pages()} == {str(second)}
 
 
 def test_save_as_redaction_verify_fail_keeps_marks(

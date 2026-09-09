@@ -95,8 +95,27 @@ def test_mark_saved_clears_undo_redo_stacks():
     assert model.can_undo()
     assert model.undo()
     assert not model.is_dirty()
-    assert [model.page_at(i).source_index for i in range(2)] == [1, 2]
+    assert [model.page_at(i).source_index for i in range(2)] == [0, 1]
     assert not model.can_undo()
+
+
+def test_rebase_saved_output_uses_new_baseline_and_keeps_source_protection():
+    model = PdfEditModel("/a.pdf", 2)
+    model.insert_pages(1, [PageRef("/b.pdf", 0)])
+    model.rotate_pages([0], 90)
+
+    model.rebase_saved_output("/saved.pdf")
+
+    assert model.original_path == "/saved.pdf"
+    assert model.save_path == "/saved.pdf"
+    assert model.source_paths() == {"/a.pdf", "/b.pdf", "/saved.pdf"}
+    assert model.current_reference_paths() == {"/saved.pdf"}
+    assert [(page.source_path, page.source_index, page.rotation) for page in model.iter_pages()] == [
+        ("/saved.pdf", 0, 0),
+        ("/saved.pdf", 1, 0),
+        ("/saved.pdf", 2, 0),
+    ]
+    assert not model.can_redo()
 
 
 def test_undo_redo_restore_pages_and_dirty():

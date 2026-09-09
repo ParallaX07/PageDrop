@@ -135,6 +135,24 @@ class PdfTab(QWidget):
         self._markup.clear_redactions()
         self._preview_widget.refresh_markup_overlays()
 
+    def commit_saved_output(self, path: str) -> None:
+        """Rebase this tab after a staged output has been promoted successfully."""
+        assert self._edit_model is not None
+        # Open first: a failed reopen must leave the current tab untouched.
+        saved_loader = PdfLoader(path)
+        self.close_preview()
+        self._thumbnail_grid.cancel_rendering()
+        self._close_loader_cache()
+        self._loader_cache[path] = saved_loader
+        self._edit_model.rebase_saved_output(path)
+        self._markup.clear()
+        self._pdf_path = path
+        self._drop_initialized = False
+        self._custom_tab_title = None
+        self._preview_widget.set_model(None, None)
+        self._thumbnail_grid.load_model(self._edit_model, self.get_loader)
+        self._sync_dirty_from_model()
+
     @property
     def loader(self) -> PdfLoader | None:
         if self._edit_model is None:

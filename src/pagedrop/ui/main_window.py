@@ -31,11 +31,13 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.jobs.paths import paths_refer_to_same_file, reject_source_overwrite
+from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
     PdfPasswordError,
     PdfPasswordRequiredError,
+    open_pdf,
 )
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.core.redact import (
@@ -2313,6 +2315,8 @@ class MainWindow(QMainWindow):
         passwords = target.credentials.snapshot()
         non_redact = target.markup_session.non_redaction_ops(model) or None
 
+        staging = JobStaging(target._temp_manager)
+        staged = staging.stage_file(Path(path).name)
         try:
             if regions:
                 scope = prompt_redaction_scope(self)
@@ -2320,7 +2324,7 @@ class MainWindow(QMainWindow):
                     return False
                 redact_edit_model(
                     model,
-                    path,
+                    staged,
                     regions,
                     markup=non_redact,
                     passwords=passwords,
@@ -2330,10 +2334,14 @@ class MainWindow(QMainWindow):
             else:
                 write_pdf(
                     model,
-                    path,
+                    str(staged),
                     markup=non_redact,
                     passwords=passwords,
                 )
+                with open_pdf(str(staged)) as output:
+                    if output.page_count != model.logical_count():
+                        raise PdfLoadError("Saved PDF has an unexpected page count")
+            staging.promote(staged, Path(path))
         except RedactionVerifyError as exc:
             QMessageBox.critical(
                 self,
@@ -2373,14 +2381,15 @@ class MainWindow(QMainWindow):
                 f"Could not save PDF:\n{exc}",
             )
             return False
+        finally:
+            staging.cleanup()
 
         remember_directory(path)
-        model.mark_saved(path)
-        target.clear_markup_after_save()
-        if regions:
-            target.clear_redactions_after_apply()
-        target.clear_custom_tab_title()
-        target._sync_dirty_from_model()
+        try:
+            target.commit_saved_output(path)
+        except (PdfLoadError, OSError) as exc:
+            QMessageBox.critical(self, "Save as", f"Saved copy could not be opened:\n{exc}")
+            return False
         self._tab_manager.update_tab_title(target)
         if target is self._active_tab():
             self._sync_toolbar_from_active_tab()

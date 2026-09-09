@@ -195,12 +195,20 @@ class PdfEditModel:
     def is_dirty(self) -> bool:
         return self._dirty
 
-    def mark_saved(self, save_path: str) -> None:
-        """Record save path, clear dirty, and establish a savepoint (no undo past save)."""
+    def rebase_saved_output(self, save_path: str) -> None:
+        """Make a successfully written copy this model's new page baseline."""
+        page_count = len(self._pages)
+        self._original_path = save_path
         self._save_path = save_path
+        self._protected_sources.add(save_path)
+        self._pages = [PageRef(save_path, index) for index in range(page_count)]
         self._dirty = False
         self._undo_stack.clear()
         self._redo_stack.clear()
+
+    def mark_saved(self, save_path: str) -> None:
+        """Backward-compatible name for rebasing a successfully saved output."""
+        self.rebase_saved_output(save_path)
 
     def _append_undo_snapshot(
         self, snapshot: tuple[tuple[PageRef, ...], bool]

@@ -9,6 +9,8 @@ from PyQt6.QtCore import QMimeData
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, encode_page_refs
+from pagedrop.core.annotations import AnnotationOp
+from pagedrop.core.forms import FormCreateOp, list_form_fields
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
@@ -101,6 +103,78 @@ def test_dirty_flag_cleared_after_save(
     assert tab.edit_model.save_path == str(output)
     assert tab.tab_title == "saved.pdf"
     assert "*" not in main_window._tab_manager.tabText(0)
+
+
+def test_failed_second_save_keeps_previous_baseline_and_pending_markup(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+):
+    tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
+    first, second = tmp_path / "first.pdf", tmp_path / "second.pdf"
+    outputs = iter((first, second))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(next(outputs)), "PDF Files (*.pdf)"),
+    )
+    assert main_window._save_as(tab)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="Keep")
+    )
+    tab._sync_dirty_from_model()
+    monkeypatch.setattr(
+        "pagedrop.ui.main_window.write_pdf",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("simulated write failure")),
+    )
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args, **kwargs: None)
+
+    assert not main_window._save_as(tab)
+    assert not second.exists()
+    assert tab.is_dirty
+    assert tab.edit_model is not None
+    assert {page.source_path for page in tab.edit_model.iter_pages()} == {str(first)}
+    assert [entry.annotation.text for entry in tab.peek_markup_ops() if entry.annotation] == ["Keep"]
+
+
+def test_repeated_save_preserves_forms_page_order_and_rotation(
+    main_window, tmp_path, monkeypatch, qtbot
+):
+    source = tmp_path / "source.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=300)
+        doc.new_page(width=400, height=300)
+        doc.save(str(source))
+    finally:
+        doc.close()
+    source_hash = _file_hash(source)
+    main_window.showMinimized()
+    main_window._load_pdf(str(source))
+    wait_for_pdf_loaded(qtbot, main_window)
+    tab = _active_tab(main_window)
+    assert tab.edit_model is not None
+    tab.edit_model.move_pages([1], 0)
+    tab.edit_model.rotate_pages([0], 90)
+    tab.markup_session.push_form_create(FormCreateOp(0, "Name"))
+    tab._sync_dirty_from_model()
+    first, second = tmp_path / "first.pdf", tmp_path / "second.pdf"
+    outputs = iter((first, second))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(next(outputs)), "PDF Files (*.pdf)"),
+    )
+
+    assert main_window._save_as(tab)
+    assert main_window._save_as(tab)
+
+    saved = fitz.open(str(second))
+    try:
+        assert [page.rotation for page in saved] == [90, 0]
+        assert [round(page.rect.width) for page in saved] == [300, 200]
+    finally:
+        saved.close()
+    assert [field.name for field in list_form_fields(str(second))] == ["Name"]
+    assert _file_hash(source) == source_hash
 
 
 def _drop_init_blank_tab(main_window, five_page_pdf, qtbot) -> PdfTab:

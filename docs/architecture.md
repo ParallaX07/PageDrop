@@ -32,7 +32,7 @@ main.py → WindowManager → MainWindow(s)
 | `rotation` | Extra rotation in {0, 90, 180, 270} |
 | `instance_id` | Immutable UUID for one logical page occurrence |
 
-UI counts and labels use `logical_count()` after insert/delete/reorder — not the source loader’s page count. Writers and extractors follow the model; Save As / extract / merge always write **new** paths and never truncate the user’s original.
+UI counts and labels use `logical_count()` after insert/delete/reorder — not the source loader’s page count. Writers and extractors follow the model; Save As / extract / merge always write **new** paths and never truncate the user’s original. After a staged Save As has been validated and promoted, the output becomes the model's fresh page baseline; protected-source history remains so neither the original nor earlier imported/saved sources can later be overwritten.
 
 Pending annotations, page-scoped form creation, and redactions retain a `PageRef.instance_id`, not a numeric output position. Reordering and rotation retain it; every insert or duplicate receives a new ID. The writer resolves live IDs to output indices immediately before applying markup, and deleted targets stay hidden until an undo restores their page occurrence.
 
