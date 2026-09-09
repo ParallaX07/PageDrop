@@ -67,6 +67,43 @@ def test_page_ready_populates_card(qtbot, five_page_pdf):
     loader.close()
 
 
+def test_mixed_page_shapes_keep_thumbnail_frames_and_captions_aligned(qtbot, tmp_path):
+    """Portrait, landscape, and rotated pages fit one stable grid rhythm."""
+    import fitz
+
+    from pagedrop.core.pdf_editor import PdfEditModel
+
+    path = tmp_path / "mixed-shapes.pdf"
+    document = fitz.open()
+    try:
+        for width, height in ((300, 500), (500, 300), (250, 500)):
+            document.new_page(width=width, height=height)
+        document.save(path)
+    finally:
+        document.close()
+
+    loader = PdfLoader(str(path))
+    model = PdfEditModel(str(path), loader.page_count)
+    model.rotate_pages([1], 90)
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+
+    with qtbot.waitSignal(grid.rendering_finished, timeout=15000):
+        grid.load_model(model, lambda _path: loader)
+
+    frames = [card._thumbnail_label for card in grid._cards]
+    assert len({frame.height() for frame in frames}) == 1
+    assert len({card._page_label.y() for card in grid._cards}) == 1
+    assert all(
+        frame.pixmap() is not None
+        and frame.pixmap().width() <= frame.width()
+        and frame.pixmap().height() <= frame.height()
+        for frame in frames
+    )
+    assert frames[1].pixmap().height() > frames[1].pixmap().width()
+    loader.close()
+
+
 def test_progress_bar_visible_during_load(qtbot, five_page_pdf):
     grid = ThumbnailGrid()
     qtbot.addWidget(grid)

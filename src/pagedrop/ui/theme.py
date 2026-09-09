@@ -13,6 +13,13 @@ BG_STATUS = "#1A1A1F"
 BG_TAB_BAR = "#17171C"
 BG_PREVIEW_FOOTER = "#1A1A1F"
 
+# Semantic surface roles.  Keep these named by purpose so document-oriented
+# widgets do not need to infer a colour from generic application-card tokens.
+SURFACE_QUIET_CHROME = BG_SURFACE
+SURFACE_DOCUMENT_CANVAS = BG_GRID
+SURFACE_PAPER = "#FFFFFF"
+SURFACE_RAISED = BG_CARD
+
 BORDER_SUBTLE = "#2E2E36"
 BORDER_DEFAULT = "#45454F"
 BORDER_HOVER = "#5C5C68"
@@ -39,6 +46,10 @@ TEXT_MUTED_LIGHT = "#5A5D68"
 BG_CARD_LIGHT = "#FFFFFF"
 BG_BASE_LIGHT = "#F7F8FA"
 BG_GRID_LIGHT = "#F0F1F4"
+SURFACE_QUIET_CHROME_LIGHT = BG_CARD_LIGHT
+SURFACE_DOCUMENT_CANVAS_LIGHT = BG_GRID_LIGHT
+SURFACE_PAPER_LIGHT = "#FFFFFF"
+SURFACE_RAISED_LIGHT = BG_CARD_LIGHT
 
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
@@ -55,7 +66,7 @@ STATUS_SUCCESS_LIGHT = "#1B7A3D"
 STATUS_WARNING_LIGHT = "#8A6200"
 
 # Viewer page paper — intentional light plane even under dark chrome
-VIEWER_PAGE_BG = "#FAFAFA"
+VIEWER_PAGE_BG = SURFACE_PAPER
 # Marks drawn on page paper (stay dark regardless of chrome theme)
 PAGE_INK = "#141414"
 # Find / search overlays drawn on the page (content, not chrome)
@@ -114,9 +125,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     if light:
         # Cool off-white base; white cards; light borders (Bento light translation).
         bg_base = BG_BASE_LIGHT
-        bg_surface = BG_CARD_LIGHT
-        bg_grid = BG_GRID_LIGHT
-        bg_card = BG_CARD_LIGHT
+        bg_surface = SURFACE_QUIET_CHROME_LIGHT
+        bg_grid = SURFACE_DOCUMENT_CANVAS_LIGHT
+        bg_card = SURFACE_RAISED_LIGHT
         bg_card_hover = "#EEF0F4"
         bg_thumb_empty = "#E2E4EA"
         bg_toolbar = BG_CARD_LIGHT
@@ -141,9 +152,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         bg_pressed = "#E2E4EA"
     else:
         bg_base = BG_BASE
-        bg_surface = BG_SURFACE
-        bg_grid = BG_GRID
-        bg_card = BG_CARD
+        bg_surface = SURFACE_QUIET_CHROME
+        bg_grid = SURFACE_DOCUMENT_CANVAS
+        bg_card = SURFACE_RAISED
         bg_card_hover = BG_CARD_HOVER
         bg_thumb_empty = "#2A2A32"
         bg_toolbar = BG_TOOLBAR
@@ -1913,37 +1924,48 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     /* Card / tile chrome — dynamic properties + :hover/:focus; no per-state setStyleSheet. */
-    QFrame#PageCard,
+    QFrame#PageCard {{
+        background-color: transparent;
+        border: none;
+        border-radius: 0;
+    }}
     QFrame#MergeFileCard,
     QFrame#ConvertFileCard {{
         background-color: {bg_card};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CARD}px;
     }}
-    QFrame#PageCard:hover,
+    QFrame#PageCard:hover {{
+        background-color: transparent;
+    }}
     QFrame#MergeFileCard:hover,
     QFrame#ConvertFileCard:hover {{
         background-color: {bg_card_hover};
         border-color: {border_hover};
     }}
-    QFrame#PageCard[focused="true"],
     QFrame#MergeFileCard[focused="true"],
     QFrame#ConvertFileCard[focused="true"] {{
         border: {focus_width}px solid {ACCENT};
     }}
-    QFrame#PageCard[selected="true"],
     QFrame#MergeFileCard[selected="true"],
     QFrame#ConvertFileCard[selected="true"] {{
         border: {selected_width}px solid {ACCENT};
     }}
-    QFrame#PageCard[selected="true"]:hover,
     QFrame#MergeFileCard[selected="true"]:hover,
     QFrame#ConvertFileCard[selected="true"]:hover {{
         border-color: {ACCENT_HOVER};
     }}
     QLabel#PageCardThumbnail {{
         background-color: {bg_thumb_empty};
-        border-radius: {RADIUS_BADGE}px;
+        border: 1px solid {border_subtle};
+        border-radius: 2px;
+    }}
+    QFrame#PageCard:hover QLabel#PageCardThumbnail {{
+        border-color: {border_hover};
+        background-color: {bg_card_hover};
+    }}
+    QFrame#PageCard[selected="true"] QLabel#PageCardThumbnail {{
+        border: {selected_width}px solid {ACCENT};
     }}
     QLabel#PageCardLabel {{
         color: {text_secondary};
@@ -1953,6 +1975,24 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#PageCard[selected="true"] QLabel#PageCardLabel {{
         color: {text_primary};
+    }}
+    QLabel#PageCardSelectionIndicator {{
+        color: {TEXT_ON_ACCENT};
+        background-color: {ACCENT};
+        border: 1px solid {TEXT_ON_ACCENT};
+        border-radius: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        min-width: 16px;
+        min-height: 16px;
+        max-width: 16px;
+        max-height: 16px;
+        qproperty-alignment: AlignCenter;
+    }}
+    QLabel#PageCardFocusRing {{
+        background-color: transparent;
+        border: {focus_width}px dashed {ACCENT};
+        border-radius: 3px;
     }}
     QLabel#PageCardPageOverlay {{
         color: {TEXT_ON_ACCENT};

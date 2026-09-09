@@ -92,6 +92,22 @@ class PageCard(BaseFileCard):
         )
         self._rotation_overlay.hide()
 
+        # Selection needs a shape as well as the accent outline; this remains
+        # legible for people who cannot distinguish the accent colour.
+        self._selection_indicator = QLabel("✓", self._thumbnail_label)
+        self._selection_indicator.setObjectName("PageCardSelectionIndicator")
+        self._selection_indicator.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self._selection_indicator.hide()
+
+        # Focus is intentionally independent from selection: selecting a page
+        # must not hide the keyboard location.
+        self._focus_ring = QLabel(self)
+        self._focus_ring.setObjectName("PageCardFocusRing")
+        self._focus_ring.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._focus_ring.hide()
+
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -145,6 +161,19 @@ class PageCard(BaseFileCard):
         self.clear_skeleton_pulse()
         super().set_thumbnail(pixmap)
         self._sync_page_overlay_visibility()
+
+    def set_selected(self, selected: bool) -> None:
+        super().set_selected(selected)
+        self._selection_indicator.setVisible(selected)
+        if selected:
+            self._sync_selection_indicator_geometry()
+        self._sync_accessible()
+
+    def set_keyboard_focused(self, focused: bool) -> None:
+        super().set_keyboard_focused(focused)
+        self._focus_ring.setVisible(focused)
+        if focused:
+            self._sync_focus_ring_geometry()
 
     def release_thumbnail(self) -> bool:
         """Drop the cached pixmap and return to skeleton placeholder.
@@ -243,13 +272,14 @@ class PageCard(BaseFileCard):
     def _sync_accessible(self) -> None:
         page_num = self.page_index + 1
         self.setAccessibleName(f"Page {page_num}")
+        selected = "Selected · " if self._selected else ""
         if self._size_cached is not None:
             width_mm, height_mm = self._size_cached
             self.setAccessibleDescription(
-                f"{width_mm}×{height_mm} mm · Click to select"
+                f"{selected}{width_mm}×{height_mm} mm · Click to select"
             )
         else:
-            self.setAccessibleDescription("Click to select")
+            self.setAccessibleDescription(f"{selected}Click to select")
 
     def _sync_page_overlay_visibility(self) -> None:
         visible = self._page_overlay_wanted or self._is_skeleton
@@ -258,11 +288,15 @@ class PageCard(BaseFileCard):
             self._sync_page_overlay_geometry()
 
     def _apply_skeleton_size(self) -> None:
-        if not self._is_skeleton:
-            return
         thumb_w = max(1, self._card_width - CARD_PADDING)
-        self._thumbnail_label.setMinimumHeight(max(80, int(thumb_w * _SKELETON_ASPECT)))
+        # A fixed final frame keeps the grid and its captions stable while the
+        # rendered page arrives.  The pixmap is fitted inside this frame below.
+        self._thumbnail_label.setFixedHeight(
+            max(80, int(thumb_w * _SKELETON_ASPECT))
+        )
         self._sync_page_overlay_geometry()
+        self._sync_rotation_overlay_geometry()
+        self._sync_selection_indicator_geometry()
 
     def set_rotation_indicator(self, degrees: int) -> None:
         rot = degrees % 360
@@ -277,9 +311,28 @@ class PageCard(BaseFileCard):
         super().resizeEvent(event)
         self._sync_page_overlay_geometry()
         self._sync_rotation_overlay_geometry()
+        self._sync_selection_indicator_geometry()
+        self._sync_focus_ring_geometry()
+
+    def _refresh_thumbnail_display(self, *, fast: bool = False) -> None:
+        """Fit every page within the stable thumbnail frame without cropping."""
+        if self._source_pixmap is None or self._source_pixmap.isNull():
+            return
+        mode = (
+            Qt.TransformationMode.FastTransformation
+            if fast
+            else Qt.TransformationMode.SmoothTransformation
+        )
+        display = self._source_pixmap.scaled(
+            max(1, self._card_width - CARD_PADDING),
+            self._thumbnail_label.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            mode,
+        )
+        self._thumbnail_label.setPixmap(display)
 
     def _sync_page_overlay_geometry(self) -> None:
-        if not self._page_overlay.isVisible():
+        if self._page_overlay.isHidden():
             return
         self._page_overlay.adjustSize()
         margin = 4
@@ -294,11 +347,31 @@ class PageCard(BaseFileCard):
         self._page_overlay.move(x, y)
 
     def _sync_rotation_overlay_geometry(self) -> None:
-        if not self._rotation_overlay.isVisible():
+        if self._rotation_overlay.isHidden():
             return
         self._rotation_overlay.adjustSize()
         margin = 4
         self._rotation_overlay.move(margin, margin)
+
+    def _sync_selection_indicator_geometry(self) -> None:
+        if self._selection_indicator.isHidden():
+            return
+        self._selection_indicator.adjustSize()
+        margin = 4
+        self._selection_indicator.move(
+            margin,
+            max(
+                0,
+                self._thumbnail_label.height()
+                - self._selection_indicator.height()
+                - margin,
+            ),
+        )
+
+    def _sync_focus_ring_geometry(self) -> None:
+        if self._focus_ring.isHidden():
+            return
+        self._focus_ring.setGeometry(self.rect().adjusted(1, 1, -1, -1))
 
     def set_drag_context(
         self,
@@ -500,4 +573,3 @@ class PageCard(BaseFileCard):
                 return current._source_passwords()
             current = current.parentWidget()
         return None
-

@@ -613,13 +613,12 @@ def test_r5_card_chrome_and_empty_tokens():
     dark = app_stylesheet()
     high = app_stylesheet(high_contrast=True)
 
-    page_block = dark.split("QFrame#PageCard,")[1].split("QFrame#PageCard:hover")[0]
-    assert "border: 1px solid" in page_block
-    assert f'QFrame#PageCard[focused="true"]' in dark
-    assert f"border: 2px solid {ACCENT}" in dark
+    page_block = dark.split("QFrame#PageCard {")[1].split("QFrame#MergeFileCard,")[0]
+    assert "background-color: transparent" in page_block
+    assert "QLabel#PageCardFocusRing" in dark
+    assert "QLabel#PageCardSelectionIndicator" in dark
     assert f"border: 3px solid {ACCENT}" in dark
-    assert f"border: 3px solid {ACCENT}" in high  # focus in HC
-    assert f"border: 4px solid {ACCENT}" in high  # selected in HC
+    assert f"border: 4px solid {ACCENT}" in high
     assert f"border-radius: {RADIUS_BADGE}px" in dark
     assert f"padding: {SPACE_2}px 0 0 0" in dark
     assert SHADOW_ALPHA_CAP_LIGHT == 48
@@ -674,7 +673,7 @@ def test_r5_smoke_select_hover_focus_drag_badge(qtbot, isolated_settings):
     sheet = app_stylesheet()
     assert "QFrame#PageCard:hover" in sheet
     assert f'QFrame#PageCard[selected="true"]' in sheet
-    assert f'QFrame#PageCard[focused="true"]' in sheet
+    assert "QLabel#PageCardFocusRing" in sheet
 
     card = PageCard(0)
     qtbot.addWidget(card)
