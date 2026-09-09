@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar
+from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar, QWidget
 
 from pagedrop.ui.main_window import MainWindow
 
@@ -115,6 +115,44 @@ def test_toolbar_open_button(main_window):
     assert open_action is not None
     assert open_action is main_window._actions["open"]
     assert open_action.isEnabled()
+
+
+def test_contextual_toolbar_lives_in_active_pdf_tab_and_hides_for_tools(main_window):
+    """The window owns actions; the active PDF tab only hosts their toolbar."""
+    tab = main_window._active_tab()
+    assert tab is not None
+    assert main_window._toolbar.parentWidget() is tab
+    assert main_window.toolBarArea(main_window._toolbar) == Qt.ToolBarArea.NoToolBarArea
+
+    tool_page = QWidget()
+    tool_page.tool_page_id = "test-tool"
+    main_window._tab_manager.add_page(tool_page, "Test tool")
+
+    assert main_window._active_tab() is None
+    assert main_window._toolbar.isHidden()
+
+
+def test_contextual_toolbar_promotes_save_as_after_edit(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None, timeout=15000)
+    tab = main_window._active_tab()
+    assert tab is not None
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    main_window._duplicate_selected_pages()
+    tab.thumbnail_grid.selection_manager.select_single(0)
+
+    save_button = main_window._toolbar.widgetForAction(main_window._actions["save_as"])
+    extract_button = main_window._toolbar.widgetForAction(
+        main_window._actions["extract_selected"]
+    )
+    assert save_button is not None and save_button.objectName() == "ToolbarPrimary"
+    assert save_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    qtbot.waitUntil(lambda: extract_button is not None and not extract_button.isHidden())
+    assert extract_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    assert main_window._selection_toolbar_label.text() == "1 page selected"
+
+    preview_button = main_window._toolbar.widgetForAction(main_window._actions["preview"])
+    assert preview_button is not None and preview_button.text() == "Pages / Preview"
 
 
 def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):

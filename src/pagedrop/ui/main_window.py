@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QInputDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -212,6 +213,7 @@ class MainWindow(QMainWindow):
             "Save &as",
             slot=self._save_as,
             shortcut="Ctrl+Shift+S",
+            icon=icons.icon("floppy-disk"),
             enabled=False,
         )
         self._export_all_action = actions.register(
@@ -411,6 +413,14 @@ class MainWindow(QMainWindow):
             tip="Rotate selected pages counter-clockwise",
             enabled=False,
         )
+        self._extract_selected_action = actions.register(
+            "extract_selected",
+            "Extract",
+            slot=self._extract_selected_to_folder,
+            icon=icons.icon("export"),
+            tip="Extract selected pages to a folder",
+            enabled=False,
+        )
 
         actions.register(
             "next_tab",
@@ -459,6 +469,7 @@ class MainWindow(QMainWindow):
         """Re-tint Phosphor toolbar icons after a light/dark swap."""
         a = self._actions
         a["open"].setIcon(icons.icon("folder-open"))
+        a["save_as"].setIcon(icons.icon("floppy-disk"))
         a["preview"].setIcon(icons.icon("list"))
         a["select_all"].setIcon(icons.icon("selection-all"))
         a["deselect_all"].setIcon(icons.icon("selection-slash"))
@@ -469,6 +480,7 @@ class MainWindow(QMainWindow):
         a["duplicate_pages"].setIcon(icons.icon("copy"))
         a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
         a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
+        a["extract_selected"].setIcon(icons.icon("export"))
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -541,26 +553,38 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
-        self.addToolBar(toolbar)
         self._toolbar = toolbar
+        self._toolbar_host_tab: PdfTab | None = None
         a = self._actions
 
         toolbar.addAction(a["open"])
-        open_button = toolbar.widgetForAction(a["open"])
-        if open_button is not None:
-            open_button.setObjectName("ToolbarPrimary")
-
         toolbar.addAction(a["preview"])
+        self._filename_label = QLabel("No file open")
+        self._filename_label.setObjectName("ToolbarFilename")
+        self._filename_label.setProperty("active", False)
+        self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self._filename_label.setWordWrap(False)
+        self._filename_label.setMaximumWidth(TOOLBAR_FILENAME_MAX_WIDTH)
+        toolbar.addWidget(self._filename_label)
         toolbar.addSeparator()
+        toolbar.addAction(a["save_as"])
+        toolbar.addSeparator()
+        self._selection_toolbar_label = QLabel()
+        self._selection_toolbar_label.setObjectName("ToolbarSelectionCount")
+        self._selection_toolbar_label.setFixedWidth(130)
+        self._selection_toolbar_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        toolbar.addWidget(self._selection_toolbar_label)
         toolbar.addAction(a["select_all"])
         toolbar.addAction(a["deselect_all"])
-        toolbar.addAction(a["move_up"])
-        toolbar.addAction(a["move_down"])
-        toolbar.addAction(a["move_to"])
-        toolbar.addAction(a["delete_pages"])
         toolbar.addAction(a["duplicate_pages"])
         toolbar.addAction(a["rotate_cw"])
         toolbar.addAction(a["rotate_ccw"])
+        toolbar.addAction(a["move_up"])
+        toolbar.addAction(a["move_down"])
+        toolbar.addAction(a["move_to"])
+        toolbar.addAction(a["extract_selected"])
+        toolbar.addSeparator()
+        toolbar.addAction(a["delete_pages"])
         # QAction has no setAccessibleName — expand CW/CCW on the toolbar buttons.
         for action, name in (
             (a["rotate_cw"], "Rotate clockwise"),
@@ -570,14 +594,6 @@ class MainWindow(QMainWindow):
             if btn is not None:
                 btn.setAccessibleName(name)
         toolbar.addSeparator()
-
-        self._filename_label = QLabel("No file open")
-        self._filename_label.setObjectName("ToolbarFilename")
-        self._filename_label.setProperty("active", False)
-        self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self._filename_label.setWordWrap(False)
-        self._filename_label.setMaximumWidth(TOOLBAR_FILENAME_MAX_WIDTH)
-        toolbar.addWidget(self._filename_label)
 
         spacer = QWidget()
         spacer.setSizePolicy(
@@ -598,6 +614,26 @@ class MainWindow(QMainWindow):
         zoom_hint = "Thumbnail size (Ctrl+scroll · Ctrl+0 reset)"
         self._zoom_controls.setToolTip(zoom_hint)
         self._zoom_controls.setStatusTip(zoom_hint)
+
+        self._toolbar_overflow = QToolButton(toolbar)
+        self._toolbar_overflow.setObjectName("ToolbarOverflow")
+        self._toolbar_overflow.setText("More")
+        self._toolbar_overflow.setToolTip("More page actions")
+        self._toolbar_overflow.setAccessibleName("More page actions")
+        self._toolbar_overflow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        overflow = QMenu(self._toolbar_overflow)
+        for action in (a["export_all"], a["deselect_all"], a["move_to"]):
+            overflow.addAction(action)
+        self._toolbar_overflow.setMenu(overflow)
+        toolbar.addWidget(self._toolbar_overflow)
+
+        for action in (a["open"], a["save_as"], a["extract_selected"]):
+            button = toolbar.widgetForAction(action)
+            if isinstance(button, QToolButton):
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        preview_button = toolbar.widgetForAction(a["preview"])
+        if isinstance(preview_button, QToolButton):
+            preview_button.setText("Pages / Preview")
 
         enable_toolbar_keyboard_navigation(toolbar)
 
@@ -850,6 +886,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         if self.sender() is self._active_tab():
             self._update_window_title()
+            self._set_toolbar_primary()
 
     def _active_tab(self) -> PdfTab | None:
         return self._tab_manager.active_tab
@@ -948,6 +985,7 @@ class MainWindow(QMainWindow):
         if self._last_tab_index != index:
             self._previous_tab_index = self._last_tab_index
         self._last_tab_index = index
+        self._sync_toolbar_from_active_tab()
 
     @staticmethod
     def _remap_tab_index_after_close(
@@ -1020,6 +1058,7 @@ class MainWindow(QMainWindow):
 
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
+        self._set_toolbar_host(tab)
         if tab is None or tab.is_blank:
             self._reset_toolbar_for_blank_tab()
             return
@@ -1052,18 +1091,73 @@ class MainWindow(QMainWindow):
             selection
         )
         self._update_selection_status(selection)
+        self._sync_contextual_toolbar(selection)
+
+    def _set_toolbar_host(self, tab: PdfTab | None) -> None:
+        if self._toolbar_host_tab is tab:
+            self._toolbar.setVisible(tab is not None)
+            return
+        if self._toolbar_host_tab is not None:
+            self._toolbar_host_tab.detach_context_toolbar(self._toolbar)
+        self._toolbar_host_tab = tab
+        if tab is not None:
+            tab.attach_context_toolbar(self._toolbar)
 
     def _set_toolbar_filename(self, filename: str, *, tooltip: str = "") -> None:
-        """Show a single-line elided name; full path stays on the tooltip (R14)."""
         metrics = self._filename_label.fontMetrics()
         self._filename_label.setText(
             metrics.elidedText(
-                filename,
-                Qt.TextElideMode.ElideRight,
-                TOOLBAR_FILENAME_MAX_WIDTH,
+                filename, Qt.TextElideMode.ElideRight, TOOLBAR_FILENAME_MAX_WIDTH
             )
         )
         self._filename_label.setToolTip(tooltip)
+
+    def _set_toolbar_action_visible(self, action: QAction, visible: bool) -> None:
+        widget = self._toolbar.widgetForAction(action)
+        if widget is not None:
+            widget.setVisible(visible)
+
+    def _sync_contextual_toolbar(self, selection: set[int]) -> None:
+        has_selection = bool(selection)
+        self._selection_toolbar_label.setVisible(has_selection)
+        if has_selection:
+            count = len(selection)
+            self._selection_toolbar_label.setText(
+                f"{count} {'page' if count == 1 else 'pages'} selected"
+            )
+        for action in (
+            self._deselect_all_action,
+            self._duplicate_pages_action,
+            self._rotate_cw_action,
+            self._rotate_ccw_action,
+            self._move_up_action,
+            self._move_down_action,
+            self._move_to_action,
+            self._extract_selected_action,
+            self._delete_pages_action,
+        ):
+            self._set_toolbar_action_visible(action, has_selection)
+        self._set_toolbar_action_visible(self._select_all_action, not has_selection)
+        self._toolbar_overflow.setVisible(True)
+        self._set_toolbar_primary()
+
+    def _set_toolbar_primary(self) -> None:
+        for action in (self._actions["open"], self._save_as_action):
+            button = self._toolbar.widgetForAction(action)
+            if button is not None:
+                button.setObjectName("")
+                button.style().unpolish(button)
+                button.style().polish(button)
+        tab = self._active_tab()
+        primary = self._actions["open"] if tab is None or tab.is_blank else (
+            self._save_as_action if tab.is_dirty else None
+        )
+        if primary is not None:
+            button = self._toolbar.widgetForAction(primary)
+            if button is not None:
+                button.setObjectName("ToolbarPrimary")
+                button.style().unpolish(button)
+                button.style().polish(button)
 
     def _reset_toolbar_for_blank_tab(self) -> None:
         tab = self._active_tab()
@@ -1086,6 +1180,7 @@ class MainWindow(QMainWindow):
         self._redo_action.setEnabled(False)
         self._go_to_page_action.setEnabled(False)
         self._page_jump_action.setEnabled(False)
+        self._extract_selected_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(
             tab.zoom_level if tab is not None else thumbnail_zoom()
@@ -1096,6 +1191,7 @@ class MainWindow(QMainWindow):
         self._pending_selection = set()
         self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(set())
         self._update_selection_status(set())
+        self._sync_contextual_toolbar(set())
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
@@ -1127,6 +1223,7 @@ class MainWindow(QMainWindow):
         self._duplicate_pages_action.setEnabled(enabled)
         self._rotate_cw_action.setEnabled(enabled)
         self._rotate_ccw_action.setEnabled(enabled)
+        self._extract_selected_action.setEnabled(enabled)
 
     def _update_move_pages_actions(self) -> None:
         tab = self._active_tab()
@@ -1443,6 +1540,9 @@ class MainWindow(QMainWindow):
         self._update_delete_pages_action()
         self._update_move_pages_actions()
         self._update_page_op_actions()
+        preview_button = self._toolbar.widgetForAction(self._preview_action)
+        if isinstance(preview_button, QToolButton):
+            preview_button.setText("Pages / Preview")
 
     def _update_preview_status(self) -> None:
         tab = self._active_tab()
@@ -2725,6 +2825,7 @@ class MainWindow(QMainWindow):
         self._update_move_pages_actions()
         self._update_page_op_actions()
         self._update_selection_status(selection)
+        self._sync_contextual_toolbar(selection)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._window_manager is not None:

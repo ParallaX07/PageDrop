@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QStackedWidget, QToolBar, QVBoxLayout, QWidget
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
@@ -108,6 +108,20 @@ class PdfTab(QWidget):
     @property
     def content_stack(self) -> QStackedWidget:
         return self._content_stack
+
+    def attach_context_toolbar(self, toolbar: QToolBar) -> None:
+        """Place the window-owned editor toolbar directly above this tab's content."""
+        layout = self.layout()
+        assert isinstance(layout, QVBoxLayout)
+        layout.insertWidget(0, toolbar)
+        layout.setStretch(0, 1)
+        toolbar.show()
+
+    def detach_context_toolbar(self, toolbar: QToolBar) -> None:
+        layout = self.layout()
+        if isinstance(layout, QVBoxLayout):
+            layout.removeWidget(toolbar)
+        toolbar.hide()
 
     @property
     def edit_model(self) -> PdfEditModel | None:
