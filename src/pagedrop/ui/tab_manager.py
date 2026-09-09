@@ -383,7 +383,7 @@ class TabManager(QTabWidget):
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self.setTabToolTip(index, f"{title} ({count} {noun})")
+            self.setTabToolTip(index, f"{tab.identity_tooltip}\n{count} {noun}")
 
     def _connect_tab(self, tab: PdfTab, index: int) -> None:
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))

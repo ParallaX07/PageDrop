@@ -125,18 +125,33 @@ def test_tab_tooltip_includes_logical_page_count(
     main_window._load_pdf(str(five_page_pdf))
     _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))
     tab = _tab_at(main_window, 0)
-    assert (
-        main_window._tab_manager.tabToolTip(0)
-        == f"{five_page_pdf.name} (5 pages)"
-    )
+    assert main_window._tab_manager.tabToolTip(0) == f"{five_page_pdf.name}\n{five_page_pdf}\n5 pages"
 
     tab.thumbnail_grid.selection_manager.select_single(0)
     assert tab.delete_selected_pages()
     main_window._tab_manager.update_tab_title(tab)
-    assert (
-        main_window._tab_manager.tabToolTip(0)
-        == f"{five_page_pdf.name}* (4 pages)"
-    )
+    assert main_window._tab_manager.tabToolTip(0) == f"{five_page_pdf.name}\n{five_page_pdf}\n4 pages"
+
+
+def test_each_pdf_tab_restores_its_own_toolbar_context(
+    main_window, one_page_pdf, five_page_pdf, qtbot
+):
+    first = _tab_at(main_window, 0)
+    main_window._load_pdf(str(one_page_pdf), tab=first)
+    second = main_window._tab_manager.add_blank_tab()
+    main_window._load_pdf(str(five_page_pdf), tab=second)
+    _wait_for_tab_loaded(qtbot, first)
+    _wait_for_tab_loaded(qtbot, second)
+
+    main_window._tab_manager.setCurrentWidget(second)
+    second.thumbnail_grid.selection_manager.select_single(0)
+    qtbot.waitUntil(lambda: main_window._selection_status.text() == "1 page selected")
+    main_window._tab_manager.setCurrentWidget(first)
+
+    assert main_window.windowTitle() == f"PageDrop: {one_page_pdf.name} (1 page)"
+    assert main_window._selection_status.text() == "No selection"
+    assert main_window._selection_toolbar_label.isHidden()
+    assert main_window._toolbar.parentWidget() is first
 
 
 def test_detach_hint_restores_title_tooltip(main_window):
@@ -523,4 +538,3 @@ def test_detach_tab_in_preview_mode(
     detached_tab = _tab_at(detached, 0)
     assert detached_tab.is_preview_visible()
     assert detached_tab.preview_widget.current_page == 2
-

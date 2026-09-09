@@ -91,7 +91,6 @@ from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
-    TOOLBAR_FILENAME_MAX_WIDTH,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
@@ -139,6 +138,10 @@ class MainWindow(QMainWindow):
         self._selection_coalesce_timer.setSingleShot(True)
         self._selection_coalesce_timer.setInterval(0)
         self._selection_coalesce_timer.timeout.connect(self._flush_selection_toolbar)
+        self._status_by_page: dict[QWidget | None, str] = {}
+        self._transient_status_timer = QTimer(self)
+        self._transient_status_timer.setSingleShot(True)
+        self._transient_status_timer.timeout.connect(self._restore_active_status)
 
         self.setWindowTitle(self.APP_TITLE)
         # Offscreen Qt has no window manager and is prone to teardown crashes
@@ -559,14 +562,11 @@ class MainWindow(QMainWindow):
 
         toolbar.addAction(a["open"])
         toolbar.addAction(a["preview"])
-        self._filename_label = QLabel("No file open")
-        self._filename_label.setObjectName("ToolbarFilename")
-        self._filename_label.setProperty("active", False)
-        self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self._filename_label.setWordWrap(False)
-        self._filename_label.setMaximumWidth(TOOLBAR_FILENAME_MAX_WIDTH)
-        toolbar.addWidget(self._filename_label)
-        toolbar.addSeparator()
+        # Offscreen Qt needs a widget action here to tear down this reparented
+        # toolbar safely. It is intentionally zero-width, not document chrome.
+        self._toolbar_layout_anchor = QWidget(toolbar)
+        self._toolbar_layout_anchor.setFixedWidth(0)
+        toolbar.addWidget(self._toolbar_layout_anchor)
         toolbar.addAction(a["save_as"])
         toolbar.addSeparator()
         self._selection_toolbar_label = QLabel()
@@ -689,11 +689,33 @@ class MainWindow(QMainWindow):
             status_bar=self.statusBar(),
         )
 
-    def _transient_status(self, message: str) -> None:
-        self.statusBar().showMessage(message, STATUS_TRANSIENT_MS)
+    def _status_page(self) -> QWidget | None:
+        return self._tab_manager.currentWidget()
 
-    def _persistent_status(self, message: str) -> None:
-        self.statusBar().showMessage(message)
+    def _sender_tab(self) -> PdfTab | None:
+        sender = self.sender()
+        for index in range(self._tab_manager.count()):
+            tab = self._tab_manager.widget(index)
+            if isinstance(tab, PdfTab) and sender in (tab.thumbnail_grid, tab.preview_widget):
+                return tab
+        return None
+
+    def _transient_status(self, message: str, *, page: QWidget | None = None) -> None:
+        page = page or self._sender_tab() or self._status_page()
+        self._status_by_page[page] = message
+        if page is self._status_page():
+            self.statusBar().showMessage(message)
+            self._transient_status_timer.start(STATUS_TRANSIENT_MS)
+
+    def _persistent_status(self, message: str, *, page: QWidget | None = None) -> None:
+        page = page or self._sender_tab() or self._status_page()
+        self._status_by_page[page] = message
+        if page is self._status_page():
+            self._transient_status_timer.stop()
+            self.statusBar().showMessage(message)
+
+    def _restore_active_status(self) -> None:
+        self.statusBar().showMessage(self._status_by_page.get(self._status_page(), "Ready"))
 
     def _show_toast(
         self,
@@ -752,7 +774,7 @@ class MainWindow(QMainWindow):
             noun = "page" if count == 1 else "pages"
             self._persistent_status(f"Loaded {count} {noun}")
             return
-        self._persistent_status("Ready")
+        self._restore_active_status()
 
     def _update_selection_status(self, selection: set[int]) -> None:
         tab = self._active_tab()
@@ -1059,17 +1081,14 @@ class MainWindow(QMainWindow):
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
         self._set_toolbar_host(tab)
-        if tab is None or tab.is_blank:
+        if tab is None:
+            self._reset_toolbar_for_tool_page()
+            return
+        if tab.is_blank:
             self._reset_toolbar_for_blank_tab()
             return
 
-        pdf_path = tab.pdf_path or ""
-        filename = Path(pdf_path).name if pdf_path else "No file open"
         self._update_window_title()
-        self._set_toolbar_filename(filename, tooltip=pdf_path)
-        self._filename_label.setProperty("active", True)
-        self._filename_label.style().unpolish(self._filename_label)
-        self._filename_label.style().polish(self._filename_label)
         self._preview_action.setEnabled(True)
         self._select_all_action.setEnabled(not tab.is_preview_visible())
         self._deselect_all_action.setEnabled(
@@ -1102,15 +1121,6 @@ class MainWindow(QMainWindow):
         self._toolbar_host_tab = tab
         if tab is not None:
             tab.attach_context_toolbar(self._toolbar)
-
-    def _set_toolbar_filename(self, filename: str, *, tooltip: str = "") -> None:
-        metrics = self._filename_label.fontMetrics()
-        self._filename_label.setText(
-            metrics.elidedText(
-                filename, Qt.TextElideMode.ElideRight, TOOLBAR_FILENAME_MAX_WIDTH
-            )
-        )
-        self._filename_label.setToolTip(tooltip)
 
     def _set_toolbar_action_visible(self, action: QAction, visible: bool) -> None:
         widget = self._toolbar.widgetForAction(action)
@@ -1162,10 +1172,6 @@ class MainWindow(QMainWindow):
     def _reset_toolbar_for_blank_tab(self) -> None:
         tab = self._active_tab()
         self._update_window_title()
-        self._set_toolbar_filename("No file open")
-        self._filename_label.setProperty("active", False)
-        self._filename_label.style().unpolish(self._filename_label)
-        self._filename_label.style().polish(self._filename_label)
         self._preview_action.setEnabled(False)
         self._select_all_action.setEnabled(False)
         self._deselect_all_action.setEnabled(False)
@@ -1192,6 +1198,14 @@ class MainWindow(QMainWindow):
         self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(set())
         self._update_selection_status(set())
         self._sync_contextual_toolbar(set())
+
+    def _reset_toolbar_for_tool_page(self) -> None:
+        """Tool pages own their chrome and footer; never inherit PDF context."""
+        self._update_window_title()
+        self._selection_status.hide()
+        self._progress_bar.hide()
+        self._move_undo_widget.hide()
+        self._persistent_status("Ready")
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
@@ -1844,11 +1858,16 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.edit_model is None or tab.pdf_path is None:
+        if tab is None:
+            page = self._tab_manager.currentWidget()
+            title = getattr(page, "tab_title", None) or getattr(page, "WINDOW_TITLE", None)
+            self.setWindowTitle(f"{self.APP_TITLE}: {title}" if title else self.APP_TITLE)
+            self._sync_custom_title()
+            return
+        if tab.edit_model is None or tab.display_path is None:
             self.setWindowTitle(self.APP_TITLE)
             self._sync_custom_title()
             return
-        # tab.tab_title already includes dirty * and save-path / custom names.
         count = tab.edit_model.logical_count()
         noun = "page" if count == 1 else "pages"
         self.setWindowTitle(
@@ -1859,7 +1878,13 @@ class MainWindow(QMainWindow):
     def _sync_custom_title(self) -> None:
         title_label = getattr(self, "_title_label", None)
         if title_label is not None:
-            title_label.setText(self.windowTitle())
+            full_title = self.windowTitle()
+            title_label.setText(
+                title_label.fontMetrics().elidedText(
+                    full_title, Qt.TextElideMode.ElideRight, 220
+                )
+            )
+            title_label.setToolTip(full_title)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -1921,7 +1946,7 @@ class MainWindow(QMainWindow):
         if not refs or tab in self._editor_busy or tab.edit_model is None:
             return
         remember_directory(str(folder))
-        base_name = Path(tab.edit_model.original_path).stem
+        base_name = Path(tab.display_name).stem
         token = self._begin_editor_job(
             tab, f"{verb[:-2] if verb.endswith('ed') else verb}ing pages…"
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar, QWidget
+from PyQt6.QtWidgets import QApplication, QFileDialog, QLabel, QToolBar, QWidget
 
 from pagedrop.ui.main_window import MainWindow
 
@@ -155,6 +155,21 @@ def test_contextual_toolbar_promotes_save_as_after_edit(main_window, five_page_p
     assert preview_button is not None and preview_button.text() == "Pages / Preview"
 
 
+def test_toolbar_overflow_reuses_registered_actions(main_window):
+    overflow = main_window._toolbar_overflow.menu()
+    assert overflow is not None
+    actions = main_window._actions
+    assert overflow.actions() == [
+        actions["export_all"],
+        actions["deselect_all"],
+        actions["move_to"],
+    ]
+    rotate = main_window._toolbar.widgetForAction(actions["rotate_cw"])
+    assert rotate is not None
+    assert rotate.accessibleName() == "Rotate clockwise"
+    assert actions["move_to"].shortcut().toString()
+
+
 def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):
     monkeypatch.setattr(
         QFileDialog,
@@ -224,18 +239,11 @@ def test_exit_action_closes(main_window, qtbot):
     qtbot.waitUntil(lambda: not main_window.isVisible(), timeout=5000)
 
 
-def test_toolbar_filename_elides_with_full_path_tooltip(
+def test_document_identity_is_in_the_title_not_the_toolbar(
     main_window, tmp_path, qtbot
 ):
-    """R14: long PDF names must not expand the mid-toolbar label."""
+    """The title keeps discoverable identity without a redundant toolbar label."""
     import fitz
-
-    from pagedrop.ui.theme import TOOLBAR_FILENAME_MAX_WIDTH
-
-    label = main_window._filename_label
-    assert label.objectName() == "ToolbarFilename"
-    assert label.maximumWidth() == TOOLBAR_FILENAME_MAX_WIDTH
-    assert not label.wordWrap()
 
     long_name = "a" * 80 + ".pdf"
     pdf = tmp_path / long_name
@@ -247,6 +255,23 @@ def test_toolbar_filename_elides_with_full_path_tooltip(
         doc.close()
 
     main_window._load_pdf(str(pdf))
-    qtbot.waitUntil(lambda: label.toolTip() == str(pdf), timeout=15000)
-    assert len(label.text()) < len(long_name)
-    assert "…" in label.text()
+    qtbot.waitUntil(lambda: main_window.windowTitle().endswith("(1 page)"), timeout=15000)
+    assert main_window.findChild(QLabel, "ToolbarFilename") is None
+    assert main_window._title_label.toolTip() == main_window.windowTitle()
+    assert "…" in main_window._title_label.text()
+
+
+def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: "Loaded" in main_window.statusBar().currentMessage())
+    pdf_status = main_window.statusBar().currentMessage()
+
+    tool_page = QWidget()
+    tool_page.tool_page_id = "test-tool-status"
+    tool_page.WINDOW_TITLE = "Test tool"
+    main_window._tab_manager.add_page(tool_page, "Test tool")
+
+    assert main_window._toolbar.isHidden()
+    assert main_window._selection_status.isHidden()
+    assert main_window.windowTitle() == "PageDrop: Test tool"
+    assert main_window.statusBar().currentMessage() != pdf_status

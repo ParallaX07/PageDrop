@@ -71,7 +71,7 @@ def test_rename_drop_init_tab(main_window, five_page_pdf, monkeypatch, qtbot):
     assert blank.custom_tab_title == "Imported Pages"
     assert blank.tab_title == "Imported Pages*"
     # Tab chrome elides into setTabText; full title lives on the tooltip.
-    assert main_window._tab_manager.tabToolTip(blank_idx).startswith("Imported Pages*")
+    assert main_window._tab_manager.tabToolTip(blank_idx).startswith("Imported Pages\n")
     assert main_window._tab_manager.tabText(blank_idx).startswith("Imported")
 
 
@@ -95,6 +95,10 @@ def test_rename_cannot_rename_after_save(
     assert tab.custom_tab_title is None
     assert not tab.can_rename_tab
     assert tab.tab_title == "saved.pdf"
+    assert tab.display_name == "saved.pdf"
+    assert tab.display_path == str(output)
+    assert tab.suggested_save_stem() == "saved"
+    assert tab.original_path in tab.identity_tooltip
 
 
 def test_custom_title_used_for_default_save_as_path(

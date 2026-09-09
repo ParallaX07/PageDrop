@@ -78,6 +78,10 @@ def test_detach_tab_creates_new_window_with_same_pdf(
     assert detached_tab.loader is tab_b.loader
     assert detached_tab.zoom_level == tab_b.zoom_level
     assert detached_tab.thumbnail_grid.selection_manager.selection == set()
+    assert source._toolbar.parentWidget() is _tab_at(source, 0)
+    assert detached._toolbar.parentWidget() is detached_tab
+    assert source.windowTitle().endswith("(1 page)")
+    assert detached.windowTitle().endswith("(5 pages)")
 
 
 def test_move_to_new_window_context_menu(

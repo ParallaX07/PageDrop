@@ -212,28 +212,46 @@ class PdfTab(QWidget):
         return self._custom_tab_title
 
     @property
-    def tab_title(self) -> str:
+    def display_name(self) -> str:
+        """The single human-facing name for this document, without dirty state."""
         if self._edit_model is None:
             return self._custom_tab_title or "New tab"
         if self._edit_model.save_path is not None:
-            filename = Path(self._edit_model.save_path).name
-            return f"{filename}*" if self._dirty else filename
+            return Path(self._edit_model.save_path).name
         if self._custom_tab_title is not None:
-            title = self._custom_tab_title
-            return f"{title}*" if self._dirty else title
-        filename = Path(self._edit_model.original_path).name
-        return f"{filename}*" if self._dirty else filename
+            return self._custom_tab_title
+        return Path(self._edit_model.original_path).name
+
+    @property
+    def display_path(self) -> str | None:
+        """Path represented by :attr:`display_name`, when the tab has one."""
+        if self._edit_model is None:
+            return None
+        return self._edit_model.save_path or self._edit_model.original_path
+
+    @property
+    def identity_tooltip(self) -> str:
+        """Full current and original identities, without duplicating chrome."""
+        if self._edit_model is None:
+            return self.display_name
+        current = self.display_path or self.display_name
+        original = self._edit_model.original_path
+        detail = current if current == original else f"{current}\nOriginal: {original}"
+        return f"{self.display_name}\n{detail}"
+
+    @property
+    def tab_title(self) -> str:
+        return f"{self.display_name}*" if self._dirty else self.display_name
 
     def suggested_save_stem(self) -> str:
-        if self._custom_tab_title is not None:
-            return sanitize_tab_title_stem(self._custom_tab_title)
         if self._edit_model is None:
             return "untitled"
-        if self._edit_model.save_path is not None:
-            return Path(self._edit_model.save_path).stem
+        if self._custom_tab_title is not None:
+            return sanitize_tab_title_stem(self._custom_tab_title)
         if self._drop_initialized:
             return "untitled"
-        return f"{Path(self._edit_model.original_path).stem}_edited"
+        stem = Path(self.display_name).stem
+        return stem if self._edit_model.save_path is not None or self._custom_tab_title else f"{stem}_edited"
 
     def set_custom_tab_title(self, title: str | None) -> bool:
         """Set a display title for an unsaved tab. Returns True when changed."""
