@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QToolBar,
+    QToolButton,
     QWidget,
 )
 
@@ -290,6 +291,24 @@ def test_narrow_shell_elides_title_and_keeps_application_actions_reachable(main_
         main_window._help_menu_action,
     ):
         assert action in top_level_actions or action in overflow_actions
+
+
+def test_title_does_not_overlap_window_controls(main_window, qtbot):
+    main_window.resize(960, 680)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window._update_responsive_shell()
+
+    buttons = main_window._window_controls.findChildren(QToolButton)
+    assert buttons
+    assert (
+        main_window._window_controls.geometry().right()
+        <= main_window.menuBar().rect().right()
+    )
+    assert all(button.isVisible() and button.width() > 0 for button in buttons)
+    assert main_window._title_label.geometry().right() < min(
+        button.geometry().left() for button in buttons
+    )
 
 
 def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_window):

@@ -2002,6 +2002,16 @@ class MainWindow(QMainWindow):
 
             title_width = min(180, max(0, self._menu_action_slack()))
             self._title_label.setFixedWidth(title_width)
+            # The corner widget was sized while the title reservation was zero.
+            # Refresh it before painting so the label cannot spill into controls.
+            self._window_controls.setFixedWidth(
+                self._window_controls.layout().sizeHint().width()
+            )
+            self._menu_bar.setCornerWidget(
+                self._window_controls, Qt.Corner.TopRightCorner
+            )
+            self._window_controls.updateGeometry()
+            self._flush_menu_layout()
             self._sync_custom_title()
         finally:
             self._updating_responsive_shell = False
