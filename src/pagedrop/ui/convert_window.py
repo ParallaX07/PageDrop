@@ -904,7 +904,11 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         if written:
-            self._result_bar.show_for(written[0], message=status)
+            self._result_bar.show_for(
+                written[0],
+                message=status,
+                show_path=len(written) == 1,
+            )
             self._set_result_precedence(True)
 
     def _on_convert_failed(self, message: str) -> None:

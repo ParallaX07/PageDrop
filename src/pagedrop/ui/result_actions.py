@@ -63,13 +63,19 @@ class ResultActionsBar(QWidget):
         self._folder_btn.clicked.connect(self._emit_folder)
         layout.addWidget(self._folder_btn)
 
-    def show_for(self, path: str | Path, *, message: str | None = None) -> None:
+    def show_for(
+        self,
+        path: str | Path,
+        *,
+        message: str | None = None,
+        show_path: bool = True,
+    ) -> None:
         resolved = str(Path(path))
         self._path = resolved
         name = Path(resolved).name
         status = message or f"Saved {name}"
         detail = f"{status}\n{resolved}"
-        self._label.setText(detail)
+        self._label.setText(detail if show_path else status)
         self._label.setToolTip(resolved)
         self._label.setAccessibleName(detail)
         self.setAccessibleName(detail)
