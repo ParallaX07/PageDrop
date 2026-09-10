@@ -13,7 +13,7 @@ BG_STATUS = "#1A1A1F"
 BG_TAB_BAR = "#17171C"
 BG_PREVIEW_FOOTER = "#1A1A1F"
 
-# Semantic surface roles.  Keep these named by purpose so document-oriented
+# Semantic surface roles. Keep these named by purpose so document-oriented
 # widgets do not need to infer a colour from generic application-card tokens.
 SURFACE_QUIET_CHROME = BG_SURFACE
 SURFACE_DOCUMENT_CANVAS = BG_GRID
@@ -38,6 +38,19 @@ TEXT_MUTED = "#82828E"
 # Ink on accent / filled interactive chrome (labels, selection text, focus rings)
 TEXT_ON_ACCENT = "#FFFFFF"
 
+# Shared semantic roles. Widget code should use these names when the purpose is
+# known; the older palette names above remain the source values for compatibility.
+BACKGROUND = BG_BASE
+FOREGROUND = TEXT_PRIMARY
+MUTED_FOREGROUND = TEXT_MUTED
+BORDER = BORDER_DEFAULT
+INPUT = BG_CARD
+FOCUS_RING = ACCENT
+PRIMARY = ACCENT
+ON_PRIMARY = TEXT_ON_ACCENT
+DOCUMENT_CANVAS = SURFACE_DOCUMENT_CANVAS
+RAISED_SURFACE = SURFACE_RAISED
+
 # Light chrome mirrors — paint helpers + app_stylesheet(light=True) share these
 # so toggling light never leaves dark-only module hex on white surfaces.
 TEXT_PRIMARY_LIGHT = "#1A1A1F"
@@ -50,6 +63,14 @@ SURFACE_QUIET_CHROME_LIGHT = BG_CARD_LIGHT
 SURFACE_DOCUMENT_CANVAS_LIGHT = BG_GRID_LIGHT
 SURFACE_PAPER_LIGHT = "#FFFFFF"
 SURFACE_RAISED_LIGHT = BG_CARD_LIGHT
+
+BACKGROUND_LIGHT = BG_BASE_LIGHT
+FOREGROUND_LIGHT = TEXT_PRIMARY_LIGHT
+MUTED_FOREGROUND_LIGHT = TEXT_MUTED_LIGHT
+BORDER_LIGHT = "#D1D5DB"
+INPUT_LIGHT = BG_CARD_LIGHT
+DOCUMENT_CANVAS_LIGHT = SURFACE_DOCUMENT_CANVAS_LIGHT
+RAISED_SURFACE_LIGHT = SURFACE_RAISED_LIGHT
 
 CLOSE_TAB = "#E85D5D"
 CLOSE_TAB_HOVER_BG = "#3D2228"
@@ -82,8 +103,16 @@ SHADOW_RGB_LIGHT = (30, 40, 60)
 # R5: light hover needs a bit more depth than the old 40 cap; raise again if washout
 SHADOW_ALPHA_CAP_LIGHT = 48
 
-RADIUS_CARD = 12
-RADIUS_CONTROL = 8
+# The shared metrics are minimums, never fixed heights, so translated or
+# enlarged labels can grow. Keep the legacy radius names as aliases for the
+# existing component stylesheet.
+COMPACT_CONTROL_HEIGHT = 32
+FORM_CONTROL_HEIGHT = 36
+ICON_SIZE_SMALL = 16
+ICON_SIZE = 18
+RADIUS_CONTROL = 6
+RADIUS_SURFACE = 10
+RADIUS_CARD = RADIUS_SURFACE
 RADIUS_BADGE = 6
 
 FONT_UI = '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
@@ -97,6 +126,14 @@ SPACE_4 = 16
 SPACE_5 = 24
 SPACE_6 = 32
 SPACE_7 = 48
+
+COMPACT_CONTROL_VERTICAL_PADDING = 5
+FORM_CONTROL_VERTICAL_PADDING = 7
+# Qt styles ``min-height`` as the content area; this preserves the visible
+# 36 px single-line form-control target after padding and borders.
+FORM_CONTROL_CONTENT_HEIGHT = FORM_CONTROL_HEIGHT - (
+    2 * FORM_CONTROL_VERTICAL_PADDING + 2
+)
 
 CARD_PADDING = SPACE_4
 DEFAULT_THUMBNAIL_WIDTH = 160
@@ -197,7 +234,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card};
         color: {text_primary};
         border: 1px solid {border_default};
-        padding: 4px 8px;
+        border-radius: {RADIUS_CONTROL}px;
+        padding: {SPACE_1}px {SPACE_2}px;
     }}
 
     QMenuBar {{
@@ -209,7 +247,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QMenuBar::item {{
         background: transparent;
-        padding: 6px 12px;
+        padding: {COMPACT_CONTROL_VERTICAL_PADDING}px {SPACE_3}px;
         border-radius: {RADIUS_CONTROL}px;
         border: {focus_width}px solid transparent;
     }}
@@ -258,13 +296,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_surface};
         color: {text_primary};
         border: 1px solid {border_subtle};
-        border-radius: {RADIUS_CONTROL}px;
-        padding: 4px;
+        border-radius: {RADIUS_SURFACE}px;
+        padding: {SPACE_1}px;
     }}
 
     QMenu::item {{
-        padding: 8px 28px 8px 16px;
-        border-radius: 6px;
+        padding: {SPACE_2}px 28px {SPACE_2}px {SPACE_4}px;
+        border-radius: {RADIUS_CONTROL}px;
         border: {focus_width}px solid transparent;
     }}
 
@@ -276,7 +314,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QMenu::separator {{
         height: 1px;
         background: {border_subtle};
-        margin: 4px 8px;
+        margin: {SPACE_1}px {SPACE_2}px;
     }}
 
     QDialog {{
@@ -289,7 +327,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 8px 10px;
+        padding: {FORM_CONTROL_VERTICAL_PADDING}px {SPACE_2}px;
+        min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
         selection-background-color: {ACCENT};
         selection-color: {TEXT_ON_ACCENT};
     }}
@@ -362,7 +401,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QCheckBox,
     QRadioButton {{
         color: {text_primary};
-        spacing: 8px;
+        spacing: {SPACE_2}px;
         border: none;
         background-color: transparent;
         outline: none;
@@ -370,8 +409,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QCheckBox::indicator,
     QRadioButton::indicator {{
-        width: 16px;
-        height: 16px;
+        width: {ICON_SIZE_SMALL}px;
+        height: {ICON_SIZE_SMALL}px;
         border: 1px solid {border_default};
         background-color: {bg_card};
     }}
@@ -408,8 +447,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px 10px;
-        min-height: 20px;
+        padding: 6px {SPACE_2}px;
+        min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
     }}
 
     QComboBox:hover {{
@@ -507,7 +546,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px 10px;
+        padding: {COMPACT_CONTROL_VERTICAL_PADDING}px {SPACE_2}px;
         font-weight: 500;
     }}
 
@@ -814,7 +853,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_secondary};
         border-top: 1px solid {border_subtle};
         padding: {SPACE_1}px {SPACE_3}px;
-        min-height: 22px;
+        min-height: {COMPACT_CONTROL_HEIGHT}px;
     }}
 
     QWidget#MoveUndoToast QLabel {{

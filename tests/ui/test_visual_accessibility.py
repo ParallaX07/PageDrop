@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QEnterEvent
-from PyQt6.QtWidgets import QToolButton
+from PyQt6.QtWidgets import QLineEdit, QToolButton
 
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
@@ -14,6 +14,74 @@ from pagedrop.ui.settings import reduce_motion, set_reduce_motion
 from pagedrop.ui.theme import BG_BASE, TEXT_MUTED, app_stylesheet
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.ui.zoom_controls import ZoomControls
+
+
+def test_p1_semantic_roles_and_shared_metrics(qtbot):
+    """P1: role aliases and shared metrics drive light, dark, and HC chrome."""
+    from pagedrop.ui.theme import (
+        BACKGROUND,
+        BACKGROUND_LIGHT,
+        BG_BASE,
+        BG_BASE_LIGHT,
+        BG_CARD,
+        BORDER,
+        BORDER_DEFAULT,
+        COMPACT_CONTROL_HEIGHT,
+        DOCUMENT_CANVAS,
+        FOREGROUND,
+        FORM_CONTROL_HEIGHT,
+        ICON_SIZE,
+        ICON_SIZE_SMALL,
+        INPUT,
+        MUTED_FOREGROUND,
+        ON_PRIMARY,
+        PRIMARY,
+        RAISED_SURFACE,
+        RADIUS_CONTROL,
+        RADIUS_SURFACE,
+        SURFACE_DOCUMENT_CANVAS,
+        SURFACE_RAISED,
+        TEXT_MUTED,
+        TEXT_ON_ACCENT,
+        TEXT_PRIMARY,
+    )
+
+    assert (BACKGROUND, FOREGROUND, MUTED_FOREGROUND, BORDER, INPUT) == (
+        BG_BASE,
+        TEXT_PRIMARY,
+        TEXT_MUTED,
+        BORDER_DEFAULT,
+        BG_CARD,
+    )
+    assert BACKGROUND_LIGHT == BG_BASE_LIGHT
+    assert (PRIMARY, ON_PRIMARY) == ("#1868AD", TEXT_ON_ACCENT)
+    assert DOCUMENT_CANVAS == SURFACE_DOCUMENT_CANVAS
+    assert RAISED_SURFACE == SURFACE_RAISED
+    assert (COMPACT_CONTROL_HEIGHT, FORM_CONTROL_HEIGHT) == (32, 36)
+    assert (ICON_SIZE_SMALL, ICON_SIZE) == (16, 18)
+    assert (RADIUS_CONTROL, RADIUS_SURFACE) == (6, 10)
+
+    for sheet in (
+        app_stylesheet(),
+        app_stylesheet(light=True),
+        app_stylesheet(high_contrast=True),
+    ):
+        for selector in (
+            "QToolTip {",
+            "QMenu {",
+            "QDialog {",
+            "QLineEdit {",
+            "QToolBar {",
+            "QLabel#ToolPageStatus {",
+        ):
+            assert selector in sheet
+        assert f"border-radius: {RADIUS_CONTROL}px" in sheet
+        assert f"border-radius: {RADIUS_SURFACE}px" in sheet
+
+    field = QLineEdit()
+    qtbot.addWidget(field)
+    field.setStyleSheet("font-size: 24px;")
+    assert field.minimumSizeHint().height() > FORM_CONTROL_HEIGHT
 
 
 def test_text_muted_meets_wcag_aa_on_bg_base():
@@ -365,9 +433,16 @@ def test_r3_zoom_controls_use_spacing_tokens(qtbot):
 
 def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):
     """R3: Open / Merge / Save PDF / Run are primary; browse/add are secondary."""
+    from pagedrop.ui import icons
+    from pagedrop.ui.theme import ICON_SIZE, ON_PRIMARY
+
     open_btn = main_window._toolbar.widgetForAction(main_window._actions["open"])
     assert open_btn is not None
     assert open_btn.objectName() == "ToolbarPrimary"
+    assert open_btn.icon().cacheKey() == icons.icon(
+        "folder-open", color=ON_PRIMARY
+    ).cacheKey()
+    assert main_window._toolbar.iconSize().width() == ICON_SIZE
     preview = main_window._toolbar.widgetForAction(main_window._actions["preview"])
     assert preview is not None
     assert preview.objectName() == ""
@@ -382,6 +457,10 @@ def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):
         == "ToolbarSecondary"
     )
     assert merge._toolbar.widgetForAction(merge._merge_action).objectName() == "ToolbarPrimary"
+    assert merge._merge_action.icon().cacheKey() == icons.icon(
+        "floppy-disk", color=ON_PRIMARY
+    ).cacheKey()
+    assert merge._toolbar.iconSize().width() == ICON_SIZE
 
     from pagedrop.ui.convert_window import ConvertWindow
 
@@ -395,6 +474,10 @@ def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):
         convert._toolbar.widgetForAction(convert._create_action).objectName()
         == "ToolbarPrimary"
     )
+    assert convert._create_action.icon().cacheKey() == icons.icon(
+        "floppy-disk", color=ON_PRIMARY
+    ).cacheKey()
+    assert convert._toolbar.iconSize().width() == ICON_SIZE
 
     from pagedrop.ui.tool_shell import ToolShellWindow
 

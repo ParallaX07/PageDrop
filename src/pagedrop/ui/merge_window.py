@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QSize, pyqtSignal
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -40,8 +40,10 @@ from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
@@ -174,6 +176,7 @@ class MergeWindow(JobChromeMixin, QWidget):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Merge", self)
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._toolbar = toolbar
 
         def tip(action, text: str) -> None:
@@ -247,7 +250,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         toolbar.addWidget(self._zoom_controls)
 
         self._merge_action = toolbar.addAction(
-            icons.icon("floppy-disk"),
+            icons.icon("floppy-disk", color=ON_PRIMARY),
             "Merge",
         )
         self._merge_action.triggered.connect(self._merge_pdfs)
@@ -267,7 +270,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._remove_action.setIcon(icons.icon("trash"))
         self._move_up_action.setIcon(icons.icon("arrow-up"))
         self._move_down_action.setIcon(icons.icon("arrow-down"))
-        self._merge_action.setIcon(icons.icon("floppy-disk"))
+        self._merge_action.setIcon(icons.icon("floppy-disk", color=ON_PRIMARY))
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)

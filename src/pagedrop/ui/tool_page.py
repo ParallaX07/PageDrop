@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from pagedrop.ui.theme import SPACE_2, SPACE_4
+
 if TYPE_CHECKING:
     pass
 
@@ -43,8 +45,8 @@ class ToolWorkflowHeader(QWidget):
         super().__init__(parent)
         self.setObjectName("ToolWorkflowHeader")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 8)
-        layout.setSpacing(2)
+        layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_2)
+        layout.setSpacing(SPACE_2)
         heading = QLabel(title)
         heading.setObjectName("ToolWorkflowTitle")
         layout.addWidget(heading)

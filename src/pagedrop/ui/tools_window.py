@@ -36,7 +36,7 @@ from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import launch_organize_tool
 from pagedrop.ui.settings import light_theme
-from pagedrop.ui.theme import TEXT_MUTED, TEXT_MUTED_LIGHT
+from pagedrop.ui.theme import ICON_SIZE, TEXT_MUTED, TEXT_MUTED_LIGHT
 from pagedrop.ui.tool_page import StatusFooter
 
 _EMPTY_GLYPH_PX = 32
@@ -965,6 +965,7 @@ class ToolsWindow(QWidget):
         toolbar = QToolBar("Tools", self)
         toolbar.setObjectName("ToolsToolbar")
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         toolbar.setFloatable(False)
         self._toolbar = toolbar
 

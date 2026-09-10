@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, QEventLoop, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QEventLoop, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -89,8 +89,10 @@ from pagedrop.ui.settings import (
 from pagedrop.ui.tab_manager import TabManager
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
@@ -487,6 +489,7 @@ class MainWindow(QMainWindow):
         a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
         a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
         a["extract_selected"].setIcon(icons.icon("export"))
+        self._set_toolbar_primary()
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -581,6 +584,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._toolbar = toolbar
         self._toolbar_host_tab: PdfTab | None = None
         a = self._actions
@@ -1188,6 +1192,7 @@ class MainWindow(QMainWindow):
             button = self._toolbar.widgetForAction(action)
             if button is not None:
                 button.setObjectName("")
+                button.setIcon(action.icon())
                 button.style().unpolish(button)
                 button.style().polish(button)
         tab = self._active_tab()
@@ -1198,6 +1203,8 @@ class MainWindow(QMainWindow):
             button = self._toolbar.widgetForAction(primary)
             if button is not None:
                 button.setObjectName("ToolbarPrimary")
+                icon_name = "folder-open" if primary is self._actions["open"] else "floppy-disk"
+                button.setIcon(icons.icon(icon_name, color=ON_PRIMARY))
                 button.style().unpolish(button)
                 button.style().polish(button)
 

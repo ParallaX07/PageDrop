@@ -39,6 +39,7 @@ from pagedrop.ui.settings import (
     confirm_before_deleting_multiple_pages,
     set_tessdata_path,
 )
+from pagedrop.ui.theme import SPACE_2, SPACE_3, SPACE_4
 
 _REASON_COPY: dict[AbsenceReason, tuple[str, str]] = {
     AbsenceReason.ENGINE_MISSING: (
@@ -90,6 +91,9 @@ def prompt_redaction_scope(parent: QWidget | None) -> RedactionScope | None:
     dialog = QDialog(parent)
     dialog.setWindowTitle("Redaction options")
     form = QFormLayout(dialog)
+    form.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
+    form.setHorizontalSpacing(SPACE_3)
+    form.setVerticalSpacing(SPACE_2)
     strip_meta = QCheckBox("Strip document metadata")
     strip_meta.setChecked(True)
     strip_xmp = QCheckBox("Strip XMP metadata")
