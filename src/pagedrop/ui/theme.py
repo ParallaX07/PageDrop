@@ -1248,7 +1248,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#PdfViewerAnnotCollapse,
-    QToolButton#PdfViewerAnnotExpand {{
+    QToolButton#PdfViewerAnnotExpand,
+    QToolButton#PdfViewerSideCollapse,
+    QToolButton#PdfViewerSideExpand {{
         color: {text_muted};
         border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
@@ -1257,20 +1259,26 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#PdfViewerAnnotCollapse:hover,
-    QToolButton#PdfViewerAnnotExpand:hover {{
+    QToolButton#PdfViewerAnnotExpand:hover,
+    QToolButton#PdfViewerSideCollapse:hover,
+    QToolButton#PdfViewerSideExpand:hover {{
         color: {text_primary};
         background-color: {bg_card_hover};
     }}
 
     QToolButton#PdfViewerAnnotCollapse:pressed,
-    QToolButton#PdfViewerAnnotExpand:pressed {{
+    QToolButton#PdfViewerAnnotExpand:pressed,
+    QToolButton#PdfViewerSideCollapse:pressed,
+    QToolButton#PdfViewerSideExpand:pressed {{
         color: {text_primary};
         background-color: {bg_card};
         border-color: {border_default};
     }}
 
     QToolButton#PdfViewerAnnotCollapse:focus,
-    QToolButton#PdfViewerAnnotExpand:focus {{
+    QToolButton#PdfViewerAnnotExpand:focus,
+    QToolButton#PdfViewerSideCollapse:focus,
+    QToolButton#PdfViewerSideExpand:focus {{
         border: {focus_width}px solid {ACCENT};
     }}
 

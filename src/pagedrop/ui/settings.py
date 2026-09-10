@@ -21,6 +21,7 @@ KEY_LIGHT_THEME = "view/light_theme"
 KEY_CHROME_VISIBLE = "view/chrome_visible"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
+KEY_VIEWER_PANEL_STATE = "view/viewer_panel_state"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
 KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
 KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
@@ -328,6 +329,26 @@ def set_thumbnail_zoom(width_px: int) -> None:
 
     clamped = max(MIN_THUMBNAIL_WIDTH, min(int(width_px), MAX_THUMBNAIL_WIDTH))
     _settings().setValue(KEY_THUMBNAIL_ZOOM, clamped)
+
+
+def viewer_panel_collapsed(panel: str) -> bool:
+    """Return the saved viewer-panel state (markup starts collapsed)."""
+    bits = {"navigation": 1, "markup": 2}
+    if panel not in bits:
+        raise ValueError(f"Unknown viewer panel: {panel!r}")
+    state = _settings().value(KEY_VIEWER_PANEL_STATE, 2, type=int)
+    return bool(state & bits[panel])
+
+
+def set_viewer_panel_collapsed(panel: str, collapsed: bool) -> None:
+    """Persist one explicit viewer-panel choice in the shared state value."""
+    bits = {"navigation": 1, "markup": 2}
+    if panel not in bits:
+        raise ValueError(f"Unknown viewer panel: {panel!r}")
+    settings = _settings()
+    state = settings.value(KEY_VIEWER_PANEL_STATE, 2, type=int)
+    state = state | bits[panel] if collapsed else state & ~bits[panel]
+    settings.setValue(KEY_VIEWER_PANEL_STATE, state)
 
 
 def has_seen_tips() -> bool:

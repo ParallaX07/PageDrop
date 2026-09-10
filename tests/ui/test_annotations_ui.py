@@ -74,10 +74,11 @@ def test_annot_tools_and_markup_dirty_undo_save(
     assert hasattr(viewer, "_annot_rail")
     assert not viewer._annot_rail.isHidden()
     assert getattr(viewer, "_annot_bar", None) is None
-    viewer._toggle_annot_rail()
     assert viewer._annot_rail_collapsed
     viewer._toggle_annot_rail()
     assert not viewer._annot_rail_collapsed
+    viewer._toggle_annot_rail()
+    assert viewer._annot_rail_collapsed
 
     for _label, tool in ANNOT_TOOL_ITEMS:
         if tool == AnnotTool.SELECT:

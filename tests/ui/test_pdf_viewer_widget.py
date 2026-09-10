@@ -24,7 +24,7 @@ from pagedrop.core.pdf_service import (
     render_ref_png,
     search_model,
 )
-from pagedrop.ui.pdf_viewer import PdfViewerWidget, ViewerLayout, ZoomMode
+from pagedrop.ui.pdf_viewer import AnnotTool, PdfViewerWidget, ViewerLayout, ZoomMode
 
 
 def _text_pdf(path: Path, pages: list[str]) -> None:
@@ -210,6 +210,44 @@ def test_viewer_toolbar_layout_zoom_and_print_actions(qtbot, viewer_pdf: Path) -
         assert viewer._print_button.isVisible()
         assert not viewer._secondary_overflow.isVisible()
         assert not viewer._secondary_overflow_menu.actions()
+    finally:
+        loader.close()
+
+
+def test_viewer_panels_preserve_reader_state(qtbot, viewer_pdf: Path, isolated_settings) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        assert not viewer._navigation_panel_collapsed
+        assert viewer._annot_rail_collapsed
+        assert "collapsed" in viewer._annot_rail.accessibleDescription()
+
+        viewer.set_annot_tool(AnnotTool.COMMENT)
+        assert "Comment" in viewer._annot_expand_btn.text()
+        assert "active tool: Comment" in viewer._annot_expand_btn.accessibleName()
+
+        viewer.go_to_page(2)
+        viewer.set_layout_mode(ViewerLayout.SINGLE)
+        viewer.set_zoom_mode(ZoomMode.PERCENT, 125)
+        viewer._search_edit.setText("Alpha")
+        viewer.setFocus()
+        viewer._side_collapse_btn.setFocus()
+        viewer._side_collapse_btn.click()
+        assert viewer._side_expand_btn.hasFocus()
+        viewer._annot_expand_btn.setFocus()
+        viewer._annot_expand_btn.click()
+        assert viewer._annot_collapse_btn.hasFocus()
+        assert viewer._navigation_panel_collapsed
+        assert not viewer._annot_rail_collapsed
+        assert viewer.current_page == 2
+        assert viewer.layout_mode == ViewerLayout.SINGLE
+        assert viewer.zoom_mode == ZoomMode.PERCENT
+        assert viewer._search_edit.text() == "Alpha"
+        assert viewer._annot_collapse_btn.hasFocus()
+
+        breakpoint = viewer._toolbar_compact_breakpoint()
+        viewer.setFixedSize(breakpoint - 1, 700)
+        viewer._update_toolbar_layout()
+        assert viewer._layout_menu_button.isVisible()
     finally:
         loader.close()
 
