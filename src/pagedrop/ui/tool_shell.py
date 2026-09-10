@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QBoxLayout,
     QFileDialog,
     QFrame,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -496,6 +497,48 @@ def _options_has_controls(widget: QWidget) -> bool:
     return any(isinstance(c, QWidget) for c in widget.children())
 
 
+def _polish_form_layouts(widget: QWidget) -> None:
+    """Apply the shared, wrapping form composition to a tool's options."""
+    layouts = [widget.layout(), *(child.layout() for child in widget.findChildren(QWidget))]
+    for layout in layouts:
+        if not isinstance(layout, QFormLayout):
+            continue
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(8)
+        layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+
+def show_field_error(field: QWidget, message: str) -> QLabel:
+    """Show one local, persistent validation message beside *field*."""
+    error = field.property("toolFieldError")
+    if isinstance(error, QLabel):
+        error.setText(message)
+        error.show()
+        field.setFocus(Qt.FocusReason.OtherFocusReason)
+        return error
+    error = QLabel(message, field.parentWidget())
+    error.setObjectName("ToolsErrorHint")
+    error.setWordWrap(True)
+    error.setAccessibleName(message)
+    field.setProperty("toolFieldError", error)
+    for layout in [field.parentWidget().layout() if field.parentWidget() else None]:
+        if isinstance(layout, QFormLayout):
+            row, _role = layout.getWidgetPosition(field)
+            if row >= 0:
+                layout.insertRow(row + 1, "", error)
+                break
+    field.setFocus(Qt.FocusReason.OtherFocusReason)
+    return error
+
+
+def clear_field_error(field: QWidget) -> None:
+    error = field.property("toolFieldError")
+    if isinstance(error, QLabel):
+        error.hide()
+
+
 class _ToolHelpPopup(QFrame):
     """Dismissible popup for tool help (R19). Qt.Popup handles outside click / Escape."""
 
@@ -689,6 +732,8 @@ class ToolShellWindow(JobChromeMixin, QWidget):
             if scroll_idx >= 0:
                 root.setStretch(scroll_idx, 0)
             return
+
+        _polish_form_layouts(widget)
 
         if header_in_options:
             self._options_layout.addWidget(self._header_host)

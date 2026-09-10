@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QEnterEvent
-from PyQt6.QtWidgets import QLineEdit, QToolButton
+from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit, QScrollArea, QToolButton
 
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
@@ -270,6 +270,20 @@ def test_r10a_prefs_dialog_has_section_dividers(qtbot, isolated_settings):
     qtbot.addWidget(dialog)
     assert len(dialog.findChildren(QLabel, "PreferencesSection")) == 6
     assert len(dialog.findChildren(QFrame, "PreferencesDivider")) == 5
+
+
+def test_preferences_advanced_details_do_not_crowd_routine_controls(
+    qtbot, isolated_settings
+):
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.findChild(QScrollArea, "PreferencesScroll") is not None
+    assert dialog.findChild(QDialogButtonBox) is not None
+    assert dialog._advanced_button.accessibleName() != ""
+    assert dialog._advanced.isHidden()
+    dialog._advanced_button.click()
+    assert dialog._advanced.isVisible()
 
 
 def test_r10b_empty_drop_affordance_and_glyphs(qtbot):

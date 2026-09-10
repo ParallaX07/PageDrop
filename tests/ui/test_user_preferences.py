@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QCheckBox
+from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -187,6 +187,23 @@ def test_preferences_safety_geometry_persist_same_keys(qtbot, isolated_settings)
     assert dialog2._confirm_delete.isChecked() is True
     assert dialog2._confirm_close_dirty.isChecked() is True
     assert dialog2._remember_geometry.isChecked() is True
+
+
+def test_preferences_scrolls_content_with_a_persistent_footer(qtbot, isolated_settings):
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+    scroll = dialog.findChild(QScrollArea, "PreferencesScroll")
+    footer = dialog.findChild(QDialogButtonBox)
+    assert scroll is not None
+    assert footer is not None
+    assert dialog.layout().indexOf(footer) > dialog.layout().indexOf(scroll)
+    assert "dirty tabs" not in dialog._confirm_close_dirty.text().lower()
+    assert dialog._download_eng_btn.text() == "Download English language data…"
+    assert dialog._soffice.placeholderText() == "Find automatically"
+    assert dialog._advanced.isHidden()
+    dialog._advanced_button.click()
+    assert dialog._advanced.isVisible()
 
 
 def test_view_menu_theme_and_quality(isolated_settings, main_window, qtbot):

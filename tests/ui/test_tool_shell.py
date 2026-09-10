@@ -11,7 +11,7 @@ import fitz
 import pytest
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
-from PyQt6.QtWidgets import QFileDialog, QLabel, QLineEdit
+from PyQt6.QtWidgets import QFileDialog, QFormLayout, QLabel, QLineEdit, QWidget
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import CancelToken
@@ -24,6 +24,7 @@ from pagedrop.ui.organize_tools import (
 from pagedrop.ui.tool_shell import (
     FileDropZone,
     ToolShellWindow,
+    show_field_error,
     run_tool_job,
 )
 from pagedrop.ui.tools_window import ToolsWindow
@@ -42,6 +43,23 @@ def _write_pdf(path: Path, pages: int = 3) -> None:
         doc.save(str(path))
     finally:
         doc.close()
+
+
+def test_tool_forms_wrap_and_keep_validation_local(qtbot):
+    shell = ToolShellWindow(title="Test tool", description="Test tool.")
+    qtbot.addWidget(shell)
+    options = QWidget()
+    form = QFormLayout(options)
+    field = QLineEdit()
+    form.addRow("A deliberately long option label", field)
+    shell.set_options_widget(options)
+
+    assert form.rowWrapPolicy() is QFormLayout.RowWrapPolicy.WrapLongRows
+    error = show_field_error(field, "Enter a value.")
+    assert error.isVisible() is False  # The shell is not shown yet.
+    shell.show()
+    assert error.isVisible()
+    assert error.text() == "Enter a value."
 
 
 def _prime_shell_for_run(
