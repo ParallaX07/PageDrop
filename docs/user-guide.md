@@ -8,6 +8,8 @@ PageDrop is built around a thumbnail grid and drag-and-drop. You open PDFs in ta
 2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or use **Select pages** to enter a page or range like `1-5`.
 3. **Zoom and preview**: Ctrl+scroll zooms thumbnails; Ctrl+0 resets. Double-click or press Enter for a full-page preview; arrow keys plus Space handle keyboard navigation. Escape returns to the grid from preview.
 
+In preview, the markup hint states the gesture for the active tool. Redaction marks remain pending until confirmed and are only permanently removed in a newly saved, fresh-process-verified copy. Flattening forms likewise makes their fields part of the page content and no longer editable. Empty Bookmarks, Layers, and Attachments panels explain what is absent; when all three are empty, navigation yields its space to the document until you reopen it.
+
 The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette. It groups the existing commands, ranks precise matches first, and explains matching unavailable commands.
 
 ## Drag pages out

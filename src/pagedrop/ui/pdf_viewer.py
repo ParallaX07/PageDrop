@@ -132,7 +132,11 @@ from pagedrop.ui.theme import (
     status_success_hex,
     token_qcolor,
 )
-from pagedrop.ui.settings import set_viewer_panel_collapsed, viewer_panel_collapsed
+from pagedrop.ui.settings import (
+    set_viewer_panel_collapsed,
+    viewer_panel_collapsed,
+    viewer_panel_preference_explicit,
+)
 
 PAGE_GAP_PX = 16
 SIDE_PANEL_WIDTH = 240
@@ -1581,12 +1585,11 @@ class PdfViewerWidget(QWidget):
         center_layout.addWidget(self._scroll, stretch=1)
         self._overlay = BusyOverlay(self._scroll.viewport())
 
-        self._hint = QLabel(
-            "Right-click for markup tools  ·  PgUp/PgDn  ·  Ctrl+scroll zoom  ·  Esc grid"
-        )
+        self._hint = QLabel()
         self._hint.setObjectName("PdfViewerHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center_layout.addWidget(self._hint)
+        self._update_markup_hint()
 
         self._annot_rail = self._build_annot_rail()
 
@@ -1649,6 +1652,7 @@ class PdfViewerWidget(QWidget):
         self._markup = markup
         self._tool = AnnotTool.SELECT
         self._sync_annot_tool_ui()
+        self._update_markup_hint()
         self._cancel_pending_redact(status=False)
         self._set_selected_overlay(None)
         self._current_page = 0
@@ -1711,6 +1715,7 @@ class PdfViewerWidget(QWidget):
             return
         self._tool = tool
         self._sync_annot_tool_ui()
+        self._update_markup_hint()
         for tile in self._tiles.values():
             tile.set_tool(tool)
             tile.clear_selection()
@@ -1733,6 +1738,32 @@ class PdfViewerWidget(QWidget):
             AnnotTool.FORM_CHECK: "Add checkbox: drag",
         }
         self.status_message.emit(labels.get(tool, tool.value))
+
+    def _update_markup_hint(self) -> None:
+        """Keep the next markup gesture visible without opening the rail."""
+        guidance = {
+            AnnotTool.SELECT: "Select: drag across text; click an annotation to edit it.",
+            AnnotTool.HIGHLIGHT: "Highlight: drag across text.",
+            AnnotTool.UNDERLINE: "Underline: drag across text.",
+            AnnotTool.STRIKEOUT: "Strikeout: drag across text.",
+            AnnotTool.INK: "Ink: draw freehand.",
+            AnnotTool.RECT: "Rectangle: drag to draw.",
+            AnnotTool.CIRCLE: "Circle: drag to draw.",
+            AnnotTool.LINE: "Line: drag to draw.",
+            AnnotTool.STAMP: "Stamp: click to place.",
+            AnnotTool.FREETEXT: "Text: click to place text.",
+            AnnotTool.IMAGE: "Image: drag a box, then choose a file.",
+            AnnotTool.COMMENT: "Comment: click to place.",
+            AnnotTool.REDACT: (
+                "Redact: draw a region, then confirm. Save As permanently removes it."
+            ),
+            AnnotTool.FORM_FILL: "Fill form: click a field.",
+            AnnotTool.FORM_TEXT: "Add text field: drag.",
+            AnnotTool.FORM_CHECK: "Add checkbox: drag.",
+        }
+        text = guidance[self._tool]
+        self._hint.setText(text)
+        self._hint.setAccessibleName(f"Active markup tool: {text}")
 
     def _prompt_markup_color(self) -> bool:
         """Ask for markup color; return False if cancelled (caller keeps prior tool)."""
@@ -2462,7 +2493,8 @@ class PdfViewerWidget(QWidget):
         reply = QMessageBox.question(
             self,
             "Flatten forms",
-            "Form fields will be baked into page content when you Save As. Continue?",
+            "Saving will flatten form fields into page content. They will no longer "
+            "be editable. Continue?",
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -2647,7 +2679,11 @@ class PdfViewerWidget(QWidget):
             )
             anchor = tile.mapTo(self, QPoint(int(wr.left()), int(wr.bottom()) + 6))
             x = min(max(0, anchor.x()), max(0, self.width() - bar_w))
-            y = min(max(0, anchor.y()), max(0, self.height() - bar_h))
+            below = anchor.y()
+            above = tile.mapTo(
+                self, QPoint(int(wr.left()), int(wr.top()) - 6 - bar_h)
+            ).y()
+            y = below if below + bar_h <= self.height() else max(0, above)
         else:
             x = max(0, (self.width() - bar_w) // 2)
             y = max(0, self.height() - bar_h - 12)
@@ -2707,7 +2743,11 @@ class PdfViewerWidget(QWidget):
     def _begin_pending_redact(self, region: RedactionRegion) -> None:
         self._pending_redact = region
         self.refresh_markup_overlays()
-        self.status_message.emit("Confirm or cancel the redaction mark")
+        self._redact_confirm.setAccessibleDescription(
+            "Pending redaction mark. Confirm it, then Save As permanently removes "
+            "the marked content and verifies the new copy in a fresh process."
+        )
+        self.status_message.emit("Pending redaction mark. Confirm or cancel it")
 
     def _confirm_pending_redact(self) -> None:
         if self._markup is None or self._pending_redact is None:
@@ -2718,10 +2758,11 @@ class PdfViewerWidget(QWidget):
         )
         self._pending_redact = None
         self.refresh_markup_overlays()
-        self.markup_changed.emit()
-        self.status_message.emit(
-            "Redaction marked. Save As to permanently remove"
+        self._redact_confirm.setAccessibleDescription(
+            "Confirmed redaction mark pending Save As"
         )
+        self.markup_changed.emit()
+        self.status_message.emit("Redaction mark pending. Save As permanently removes it")
 
     def _cancel_pending_redact(self, *, status: bool = False) -> None:
         if self._pending_redact is None and (
@@ -2730,6 +2771,7 @@ class PdfViewerWidget(QWidget):
             return
         self._pending_redact = None
         self.refresh_markup_overlays()
+        self._redact_confirm.setAccessibleDescription("No pending redaction mark")
         if status:
             self.status_message.emit("Redaction cancelled")
 
@@ -3017,6 +3059,7 @@ class PdfViewerWidget(QWidget):
         extract_btn = QPushButton("Extract to folder…")
         extract_btn.setObjectName("ToolbarSecondary")
         extract_btn.clicked.connect(self._extract_selected_attachment)
+        self._extract_attachment_btn = extract_btn
         att_layout.addWidget(extract_btn)
         tabs.addTab(att_host, "Attachments")
 
@@ -3064,6 +3107,31 @@ class PdfViewerWidget(QWidget):
         self.status_message.emit(
             "Show navigation" if collapsed else "Collapse navigation"
         )
+
+    def _sync_navigation_empty_state(self) -> None:
+        """Default empty documents to the canvas, without overriding a user choice."""
+        if (
+            not viewer_panel_preference_explicit("navigation")
+            and self._outline.topLevelItemCount() == 1
+            and self._layers.count() == 1
+            and self._attachments.count() == 1
+        ):
+            self._set_navigation_panel_collapsed(True, persist=False)
+
+    @staticmethod
+    def _set_empty_list_state(widget: QListWidget, text: str) -> None:
+        widget.clear()
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        widget.addItem(item)
+        widget.setAccessibleDescription(text)
+
+    def _set_empty_outline_state(self) -> None:
+        self._outline.clear()
+        item = QTreeWidgetItem(["This PDF has no bookmarks"])
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._outline.addTopLevelItem(item)
+        self._outline.setAccessibleDescription("This PDF has no bookmarks")
 
     # --- model / layout -----------------------------------------------------
 
@@ -3125,6 +3193,12 @@ class PdfViewerWidget(QWidget):
             list_item.setSizeHint(row.sizeHint())
             self._layers.addItem(list_item)
             self._layers.setItemWidget(list_item, row)
+        if not layer_infos:
+            self._set_empty_list_state(
+                self._layers, "This PDF has no optional layers"
+            )
+        else:
+            self._layers.setAccessibleDescription("")
 
         self._attachments.clear()
         try:
@@ -3139,6 +3213,15 @@ class PdfViewerWidget(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, att)
             self._attachments.addItem(item)
+        if not atts:
+            self._set_empty_list_state(
+                self._attachments, "This PDF has no attachments"
+            )
+            self._extract_attachment_btn.hide()
+        else:
+            self._attachments.setAccessibleDescription("")
+            self._extract_attachment_btn.show()
+        self._sync_navigation_empty_state()
 
     def _populate_outline(self) -> None:
         assert self._model is not None
@@ -3163,6 +3246,11 @@ class PdfViewerWidget(QWidget):
                 parent.addChild(node)
             parents[item.level] = node
         self._outline.expandToDepth(1)
+        if not items:
+            self._set_empty_outline_state()
+        else:
+            self._outline.setAccessibleDescription("")
+        self._sync_navigation_empty_state()
 
     def _toggle_layer(self, number: int, on: bool) -> None:
         if self._ocg_source is None:

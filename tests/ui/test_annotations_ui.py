@@ -6,12 +6,13 @@ from pathlib import Path
 
 import fitz
 import pytest
+from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QColorDialog, QFileDialog, QToolButton
 
 from pagedrop.core.annotations import AnnotationOp, list_annotation_summaries
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool
+from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool, _map_pdf_rect_to_widget
 from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
 from tests.ui.test_save_as import _file_hash, _load_and_dirty, _wait_for_editor_job
 
@@ -161,6 +162,7 @@ def test_redact_confirm_cancel_chrome(
     assert session.redaction_regions() == []
     assert not session.is_dirty()
     assert not viewer._redact_confirm.isHidden()
+    assert "Pending redaction mark" in viewer._redact_confirm.accessibleDescription()
     assert viewer.findChild(QToolButton, "PdfViewerRedactConfirmBtn") is not None
     assert viewer.findChild(QToolButton, "PdfViewerRedactCancelBtn") is not None
 
@@ -177,6 +179,10 @@ def test_redact_confirm_cancel_chrome(
     assert regions[0].rect == (50.0, 70.0, 130.0, 100.0)
     assert session.is_dirty()
     assert viewer._redact_confirm.isHidden()
+    assert (
+        viewer._redact_confirm.accessibleDescription()
+        == "Confirmed redaction mark pending Save As"
+    )
     qtbot.waitUntil(lambda: tab.is_dirty, timeout=2000)
 
 
@@ -572,6 +578,20 @@ def test_freetext_place_defaults_and_format_bar(
     assert viewer._selected_overlay == op
     bar = viewer.findChild(QFrame, "FreeTextFormatBar")
     assert bar is not None and not bar.isHidden()
+    tile = viewer._tiles[0]
+    mapped = _map_pdf_rect_to_widget(
+        op.rects[0],
+        tile._page_w,
+        tile._page_h,
+        tile.width(),
+        tile.height(),
+        tile._rotation,
+    )
+    target = QRect(
+        tile.mapTo(viewer, QPoint(int(mapped.left()), int(mapped.top()))),
+        mapped.size().toSize(),
+    )
+    assert not bar.geometry().intersects(target)
 
     viewer._ft_bold.setChecked(True)
     viewer._ft_italic.setChecked(True)

@@ -22,6 +22,7 @@ KEY_CHROME_VISIBLE = "view/chrome_visible"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_VIEWER_PANEL_STATE = "view/viewer_panel_state"
+KEY_VIEWER_PANEL_EXPLICIT = "view/viewer_panel_explicit"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
 KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
 KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
@@ -349,6 +350,16 @@ def set_viewer_panel_collapsed(panel: str, collapsed: bool) -> None:
     state = settings.value(KEY_VIEWER_PANEL_STATE, 2, type=int)
     state = state | bits[panel] if collapsed else state & ~bits[panel]
     settings.setValue(KEY_VIEWER_PANEL_STATE, state)
+    explicit = settings.value(KEY_VIEWER_PANEL_EXPLICIT, 0, type=int) | bits[panel]
+    settings.setValue(KEY_VIEWER_PANEL_EXPLICIT, explicit)
+
+
+def viewer_panel_preference_explicit(panel: str) -> bool:
+    """Whether the user, rather than the viewer default, chose this state."""
+    bits = {"navigation": 1, "markup": 2}
+    if panel not in bits:
+        raise ValueError(f"Unknown viewer panel: {panel!r}")
+    return bool(_settings().value(KEY_VIEWER_PANEL_EXPLICIT, 0, type=int) & bits[panel])
 
 
 def has_seen_tips() -> bool:

@@ -25,6 +25,7 @@ from pagedrop.core.pdf_service import (
     search_model,
 )
 from pagedrop.ui.pdf_viewer import AnnotTool, PdfViewerWidget, ViewerLayout, ZoomMode
+from pagedrop.ui.settings import set_viewer_panel_collapsed
 
 
 def _text_pdf(path: Path, pages: list[str]) -> None:
@@ -217,9 +218,13 @@ def test_viewer_toolbar_layout_zoom_and_print_actions(qtbot, viewer_pdf: Path) -
 def test_viewer_panels_preserve_reader_state(qtbot, viewer_pdf: Path, isolated_settings) -> None:
     viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
     try:
-        assert not viewer._navigation_panel_collapsed
+        assert viewer._navigation_panel_collapsed
         assert viewer._annot_rail_collapsed
         assert "collapsed" in viewer._annot_rail.accessibleDescription()
+
+        viewer._side_expand_btn.setFocus()
+        viewer._side_expand_btn.click()
+        assert not viewer._navigation_panel_collapsed
 
         viewer.set_annot_tool(AnnotTool.COMMENT)
         assert "Comment" in viewer._annot_expand_btn.text()
@@ -248,6 +253,49 @@ def test_viewer_panels_preserve_reader_state(qtbot, viewer_pdf: Path, isolated_s
         viewer.setFixedSize(breakpoint - 1, 700)
         viewer._update_toolbar_layout()
         assert viewer._layout_menu_button.isVisible()
+    finally:
+        loader.close()
+
+
+def test_viewer_markup_guidance_and_empty_navigation(
+    qtbot, viewer_pdf: Path, isolated_settings, monkeypatch
+) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        monkeypatch.setattr(viewer, "_prompt_markup_color", lambda: True)
+        assert viewer._hint.text() == (
+            "Select: drag across text; click an annotation to edit it."
+        )
+        for tool, expected in (
+            (AnnotTool.HIGHLIGHT, "Highlight: drag across text."),
+            (AnnotTool.UNDERLINE, "Underline: drag across text."),
+            (AnnotTool.STRIKEOUT, "Strikeout: drag across text."),
+            (AnnotTool.FREETEXT, "Text: click to place text."),
+            (
+                AnnotTool.REDACT,
+                "Redact: draw a region, then confirm. Save As permanently removes it.",
+            ),
+        ):
+            viewer.set_annot_tool(tool)
+            assert viewer._hint.text() == expected
+            assert expected in viewer._hint.accessibleName()
+
+        assert viewer._outline.topLevelItem(0).text(0) == "This PDF has no bookmarks"
+        assert viewer._layers.item(0).text() == "This PDF has no optional layers"
+        assert viewer._attachments.item(0).text() == "This PDF has no attachments"
+        assert viewer._extract_attachment_btn.isHidden()
+        assert viewer._navigation_panel_collapsed
+    finally:
+        loader.close()
+
+
+def test_empty_navigation_does_not_override_explicit_preference(
+    qtbot, viewer_pdf: Path, isolated_settings
+) -> None:
+    set_viewer_panel_collapsed("navigation", False)
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        assert not viewer._navigation_panel_collapsed
     finally:
         loader.close()
 

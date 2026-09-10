@@ -2885,8 +2885,13 @@ class MainWindow(QMainWindow):
             self._tab_manager.update_tab_title(target)
             if target is self._active_tab():
                 self._sync_toolbar_from_active_tab()
-                self._transient_status(f"Saved to {Path(path).name}")
-                self._show_toast(f"Saved to {Path(path).name}", kind="success")
+                message = (
+                    f"Verified redacted copy saved to {Path(path).name}"
+                    if regions
+                    else f"Saved to {Path(path).name}"
+                )
+                self._transient_status(message)
+                self._show_toast(message, kind="success")
             finish()
 
         def cancelled() -> None:
