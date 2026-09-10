@@ -157,7 +157,7 @@ def test_contextual_toolbar_promotes_save_as_after_edit(main_window, five_page_p
     assert save_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
     qtbot.waitUntil(lambda: extract_button is not None and not extract_button.isHidden())
     assert extract_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    assert main_window._selection_toolbar_label.text() == "1 page selected"
+    assert main_window._selection_toolbar_label.text() == "Page 2 selected"
 
     preview_button = main_window._toolbar.widgetForAction(main_window._actions["preview"])
     assert preview_button is not None and preview_button.text() == "Pages / Preview"

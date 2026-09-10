@@ -145,12 +145,13 @@ def test_each_pdf_tab_restores_its_own_toolbar_context(
 
     main_window._tab_manager.setCurrentWidget(second)
     second.thumbnail_grid.selection_manager.select_single(0)
-    qtbot.waitUntil(lambda: main_window._selection_status.text() == "1 page selected")
+    qtbot.waitUntil(lambda: main_window._selection_status.text() == "Page 1 selected")
     main_window._tab_manager.setCurrentWidget(first)
 
     assert main_window.windowTitle() == f"PageDrop: {one_page_pdf.name} (1 page)"
     assert main_window._selection_status.text() == "No selection"
-    assert main_window._selection_toolbar_label.isHidden()
+    assert main_window._selection_toolbar_label.text() == "No selection"
+    assert not main_window._selection_toolbar_label.isHidden()
     assert main_window._toolbar.parentWidget() is first
 
 

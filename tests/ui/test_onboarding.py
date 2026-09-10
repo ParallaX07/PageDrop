@@ -96,14 +96,14 @@ _TOOLBAR_HINT_LABELS = {
     "Open PDF",
     "Preview",
     "Select all",
-    "Deselect all",
+    "Clear selection",
     "Move up",
     "Move down",
     "Move to…",
-    "Delete page(s)",
-    "Duplicate",
-    "Rotate CW",
-    "Rotate CCW",
+    "Delete selected pages",
+    "Duplicate selected pages",
+    "Rotate clockwise",
+    "Rotate counterclockwise",
 }
 
 

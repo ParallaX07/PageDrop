@@ -58,6 +58,7 @@ from pagedrop.ui.editor_jobs import (
     start_editor_worker,
 )
 from pagedrop.ui.command_palette import CommandPalette, action_label
+from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.ui.dialogs import (
     fit_message_box_buttons,
     prompt_pdf_password,
@@ -350,7 +351,7 @@ class MainWindow(QMainWindow):
         )
         self._deselect_all_action = actions.register(
             "deselect_all",
-            "Deselect all",
+            "Clear selection",
             slot=self._clear_selection,
             icon=icons.icon("selection-slash"),
             tip="Clear selection (Esc)",
@@ -394,7 +395,7 @@ class MainWindow(QMainWindow):
         )
         self._delete_pages_action = actions.register(
             "delete_pages",
-            "Delete page(s)",
+            "Delete selected pages",
             slot=self._delete_selected_pages,
             shortcut=QKeySequence(Qt.Key.Key_Delete),
             icon=icons.icon("trash"),
@@ -403,7 +404,7 @@ class MainWindow(QMainWindow):
         )
         self._duplicate_pages_action = actions.register(
             "duplicate_pages",
-            "Duplicate",
+            "Duplicate selected pages",
             slot=self._duplicate_selected_pages,
             shortcut="Ctrl+D",
             icon=icons.icon("copy"),
@@ -412,7 +413,7 @@ class MainWindow(QMainWindow):
         )
         self._rotate_cw_action = actions.register(
             "rotate_cw",
-            "Rotate CW",
+            "Rotate clockwise",
             slot=lambda: self._rotate_selected_pages(90),
             icon=icons.icon("arrow-clockwise"),
             tip="Rotate selected pages clockwise",
@@ -420,7 +421,7 @@ class MainWindow(QMainWindow):
         )
         self._rotate_ccw_action = actions.register(
             "rotate_ccw",
-            "Rotate CCW",
+            "Rotate counterclockwise",
             slot=lambda: self._rotate_selected_pages(-90),
             icon=icons.icon("arrow-counter-clockwise"),
             tip="Rotate selected pages counter-clockwise",
@@ -432,6 +433,18 @@ class MainWindow(QMainWindow):
             slot=self._extract_selected_to_folder,
             icon=icons.icon("export"),
             tip="Extract selected pages to a folder",
+            enabled=False,
+        )
+        self._extract_selected_to_tab_action = actions.register(
+            "extract_selected_to_tab",
+            "Extract selected pages to new tab",
+            slot=self._extract_selected_to_new_tab,
+            enabled=False,
+        )
+        self._extract_selected_to_window_action = actions.register(
+            "extract_selected_to_window",
+            "Extract selected pages to new window",
+            slot=self._extract_selected_to_new_window,
             enabled=False,
         )
 
@@ -624,14 +637,10 @@ class MainWindow(QMainWindow):
         toolbar.addAction(a["extract_selected"])
         toolbar.addSeparator()
         toolbar.addAction(a["delete_pages"])
-        # QAction has no setAccessibleName — expand CW/CCW on the toolbar buttons.
-        for action, name in (
-            (a["rotate_cw"], "Rotate clockwise"),
-            (a["rotate_ccw"], "Rotate counter-clockwise"),
-        ):
-            btn = toolbar.widgetForAction(action)
-            if btn is not None:
-                btn.setAccessibleName(name)
+        for action in (a["rotate_cw"], a["rotate_ccw"]):
+            button = toolbar.widgetForAction(action)
+            if button is not None:
+                button.setAccessibleName(action.text())
         toolbar.addSeparator()
 
         self._zoom_controls = ZoomControls(
@@ -813,13 +822,28 @@ class MainWindow(QMainWindow):
             self._selection_status.hide()
             return
         if selection:
-            count = len(selection)
-            noun = "page" if count == 1 else "pages"
-            self._selection_status.setText(f"{count} {noun} selected")
+            visible, accessible = self._selection_summary(selection)
+            self._selection_status.setText(visible)
+            self._selection_status.setToolTip(accessible)
+            self._selection_status.setAccessibleName(accessible)
             self._selection_status.show()
         else:
             self._selection_status.setText("No selection")
+            self._selection_status.setToolTip("")
+            self._selection_status.setAccessibleName("No selection")
             self._selection_status.show()
+
+    @staticmethod
+    def _selection_summary(selection: set[int]) -> tuple[str, str]:
+        """Return compact visible and complete accessible selection context."""
+        ranges = format_indices_as_ranges(selection).replace("-", "–")
+        count = len(selection)
+        if "," not in ranges:
+            noun = "Page" if count == 1 else "Pages"
+            summary = f"{noun} {ranges} selected"
+            return summary, summary
+        summary = f"{count} pages selected"
+        return summary, f"{summary}: Pages {ranges.replace(',', ', ')}"
 
     def _build_status_widgets(self) -> None:
         self._progress_bar = QProgressBar()
@@ -889,9 +913,19 @@ class MainWindow(QMainWindow):
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
-        grid.extract_to_new_tab_requested.connect(self._extract_selected_to_new_tab)
-        grid.extract_to_new_window_requested.connect(
-            self._extract_selected_to_new_window
+        grid.bind_page_actions(
+            (self._move_up_action, self._move_down_action, self._move_to_action),
+            (
+                self._duplicate_pages_action,
+                self._rotate_cw_action,
+                self._rotate_ccw_action,
+            ),
+            (self._delete_pages_action,),
+            (
+                self._extract_selected_action,
+                self._extract_selected_to_tab_action,
+                self._extract_selected_to_window_action,
+            ),
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         grid.bind_open_action(self._actions["open"])
@@ -927,11 +961,6 @@ class MainWindow(QMainWindow):
             (grid.page_transfer_failed, self._on_page_transfer_failed),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
-            (grid.extract_to_new_tab_requested, self._extract_selected_to_new_tab),
-            (
-                grid.extract_to_new_window_requested,
-                self._extract_selected_to_new_window,
-            ),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
             (preview.page_changed, self._on_preview_page_changed),
@@ -1173,14 +1202,15 @@ class MainWindow(QMainWindow):
 
     def _sync_contextual_toolbar(self, selection: set[int]) -> None:
         has_selection = bool(selection)
-        self._selection_toolbar_label.setVisible(has_selection)
         if has_selection:
-            count = len(selection)
-            self._selection_toolbar_label.setText(
-                f"{count} {'page' if count == 1 else 'pages'} selected"
-            )
+            visible, accessible = self._selection_summary(selection)
+        else:
+            visible = accessible = "No selection"
+        self._selection_toolbar_label.setText(visible)
+        self._selection_toolbar_label.setToolTip(accessible if has_selection else "")
+        self._selection_toolbar_label.setAccessibleName(accessible)
+        self._selection_toolbar_label.setVisible(True)
         for action in (
-            self._deselect_all_action,
             self._duplicate_pages_action,
             self._rotate_cw_action,
             self._rotate_ccw_action,
@@ -1191,7 +1221,8 @@ class MainWindow(QMainWindow):
             self._delete_pages_action,
         ):
             self._set_toolbar_action_visible(action, has_selection)
-        self._set_toolbar_action_visible(self._select_all_action, not has_selection)
+        self._set_toolbar_action_visible(self._select_all_action, True)
+        self._set_toolbar_action_visible(self._deselect_all_action, True)
         self._sync_toolbar_overflow(has_selection)
         self._set_toolbar_primary()
 
@@ -1264,6 +1295,8 @@ class MainWindow(QMainWindow):
         self._go_to_page_action.setEnabled(False)
         self._page_jump_action.setEnabled(False)
         self._extract_selected_action.setEnabled(False)
+        self._extract_selected_to_tab_action.setEnabled(False)
+        self._extract_selected_to_window_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(
             tab.zoom_level if tab is not None else thumbnail_zoom()
@@ -1332,6 +1365,8 @@ class MainWindow(QMainWindow):
         self._rotate_cw_action.setEnabled(enabled)
         self._rotate_ccw_action.setEnabled(enabled)
         self._extract_selected_action.setEnabled(enabled)
+        self._extract_selected_to_tab_action.setEnabled(enabled)
+        self._extract_selected_to_window_action.setEnabled(enabled)
 
     def _update_move_pages_actions(self) -> None:
         tab = self._active_tab()
@@ -2925,6 +2960,10 @@ class MainWindow(QMainWindow):
             return
         self._update_undo_redo_actions()
         self._update_move_pages_actions()
+        tab = self._active_tab()
+        if tab is not None:
+            self._update_selection_status(tab.thumbnail_grid.selection_manager.selection)
+            self._sync_contextual_toolbar(tab.thumbnail_grid.selection_manager.selection)
 
     def _on_cross_window_pages_inserted(
         self, count: int, filename: str

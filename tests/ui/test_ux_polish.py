@@ -199,7 +199,7 @@ def _toolbar_action(window: MainWindow, label: str):
 
 def test_select_all_deselect_all_toolbar(main_window, five_page_pdf, qtbot):
     select_all = _toolbar_action(main_window, "Select all")
-    deselect_all = _toolbar_action(main_window, "Deselect all")
+    deselect_all = _toolbar_action(main_window, "Clear selection")
     assert not select_all.icon().isNull()
     assert not deselect_all.icon().isNull()
     assert not main_window._move_to_action.icon().isNull()

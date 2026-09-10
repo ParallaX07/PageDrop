@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QMenu, QPushButton
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.main_window import MainWindow
@@ -117,7 +117,7 @@ def test_status_bar_matches_selection(qtbot, five_page_pdf):
     cards = window._thumbnail_grid._cards
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     qtbot.waitUntil(
-        lambda: window._selection_status.text() == "1 page selected",
+        lambda: window._selection_status.text() == "Page 1 selected",
         timeout=1000,
     )
     assert window._selection_status.isVisible()
@@ -169,8 +169,76 @@ def test_selection_toolbar_coalesces_storm(qtbot, five_page_pdf) -> None:
     assert updates == [{0}]
     qtbot.waitUntil(lambda: not window._selection_coalesce_timer.isActive(), timeout=1000)
     assert updates == [{0}, {0, 1, 2, 3, 4}]
-    assert window._selection_status.text() == "5 pages selected"
+    assert window._selection_status.text() == "Pages 1–5 selected"
     assert window._deselect_all_action.isEnabled()
+    window.close()
+
+
+def test_selection_context_is_compact_and_accessible(qtbot, five_page_pdf) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.showMinimized()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+
+    grid = window._thumbnail_grid
+    grid.selection_manager.set_selection({2, 3, 4})
+    qtbot.waitUntil(
+        lambda: window._selection_toolbar_label.text() == "Pages 3–5 selected"
+    )
+    assert window._selection_status.text() == "Pages 3–5 selected"
+
+    grid.selection_manager.set_selection({0, 2, 3})
+    qtbot.waitUntil(
+        lambda: window._selection_toolbar_label.text() == "3 pages selected"
+    )
+    expected = "3 pages selected: Pages 1, 3–4"
+    assert window._selection_toolbar_label.toolTip() == expected
+    assert window._selection_toolbar_label.accessibleName() == expected
+    assert window._selection_status.toolTip() == expected
+    window.close()
+
+
+def test_context_menu_projects_registered_page_actions(
+    qtbot, five_page_pdf, monkeypatch
+) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.showMinimized()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    grid = window._thumbnail_grid
+    select_button = window._toolbar.widgetForAction(window._select_all_action)
+    clear_button = window._toolbar.widgetForAction(window._deselect_all_action)
+    assert select_button is not None and clear_button is not None
+    stable_positions = (select_button.pos(), clear_button.pos())
+
+    captured: list[QMenu] = []
+
+    def capture(menu: QMenu, _position: QPoint):
+        captured.append(menu)
+        return None
+
+    monkeypatch.setattr(QMenu, "exec", capture)
+    grid._show_context_menu(QPoint())
+    assert [
+        action for action in captured[0].actions() if not action.isSeparator()
+    ] == [
+        window._move_up_action,
+        window._move_down_action,
+        window._move_to_action,
+        window._duplicate_pages_action,
+        window._rotate_cw_action,
+        window._rotate_ccw_action,
+        window._delete_pages_action,
+        window._extract_selected_action,
+        window._extract_selected_to_tab_action,
+        window._extract_selected_to_window_action,
+    ]
+    grid.selection_manager.select_single(0)
+    qtbot.waitUntil(lambda: window._deselect_all_action.isEnabled())
+    assert (select_button.pos(), clear_button.pos()) == stable_positions
+    assert window._deselect_all_action.text() == "Clear selection"
     window.close()
 
 

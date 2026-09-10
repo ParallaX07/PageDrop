@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
@@ -389,6 +388,7 @@ class ThumbnailGrid(QScrollArea):
         )
         self._painted_selection: set[int] = set()
         self._page_overlay_on = self._page_overlay_visible()
+        self._page_action_groups: tuple[tuple[QAction, ...], ...] = ()
 
     def set_empty_state_message(
         self,
@@ -421,6 +421,10 @@ class ThumbnailGrid(QScrollArea):
         self._empty_open_button.clicked.connect(action.trigger)
         action.changed.connect(self._sync_empty_open_action)
         self._sync_empty_open_action()
+
+    def bind_page_actions(self, *groups: tuple[QAction, ...]) -> None:
+        """Project window-owned page commands into this grid's context menu."""
+        self._page_action_groups = groups
 
     def _sync_empty_open_action(self) -> None:
         action = self._open_action
@@ -948,83 +952,12 @@ class ThumbnailGrid(QScrollArea):
 
     def _show_context_menu(self, global_pos) -> None:
         menu = QMenu(self)
-        has_pdf = self._model is not None
-        has_selection = bool(self.selection_manager.selection)
-
-        move_up_action = menu.addAction("Move up")
-        move_up_action.setEnabled(has_pdf and self.can_move_selection_up())
-        move_down_action = menu.addAction("Move down")
-        move_down_action.setEnabled(has_pdf and self.can_move_selection_down())
-        move_to_action = menu.addAction("Move to…")
-        move_to_action.setEnabled(has_pdf and self.can_move_selection_to())
-
-        menu.addSeparator()
-
-        duplicate_action = menu.addAction("Duplicate selected pages")
-        duplicate_action.setEnabled(has_pdf and has_selection)
-        rotate_cw_action = menu.addAction("Rotate clockwise")
-        rotate_cw_action.setEnabled(has_pdf and has_selection)
-        rotate_ccw_action = menu.addAction("Rotate counter-clockwise")
-        rotate_ccw_action.setEnabled(has_pdf and has_selection)
-
-        menu.addSeparator()
-
-        delete_action = menu.addAction("Delete selected pages")
-        delete_action.setEnabled(has_pdf and has_selection)
-
-        menu.addSeparator()
-        extract_action = menu.addAction("Extract selected pages to folder")
-        extract_action.setEnabled(has_pdf and has_selection)
-        extract_tab_action = menu.addAction("Extract selected to new tab")
-        extract_tab_action.setEnabled(has_pdf and has_selection)
-        extract_window_action = menu.addAction("Extract selected to new window")
-        extract_window_action.setEnabled(has_pdf and has_selection)
-
-        if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get(
-            "PAGEDROP_TESTING"
-        ):
-            chosen = None
-        else:
-            chosen = menu.exec(global_pos)
-        if chosen is move_up_action:
-            self.move_selection_up()
-        elif chosen is move_down_action:
-            self.move_selection_down()
-        elif chosen is move_to_action:
-            window = self.window()
-            move_to = getattr(window, "_move_selected_pages_to", None)
-            if callable(move_to):
-                move_to()
-        elif chosen is duplicate_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.duplicate_selected_pages()
-            else:
-                self.duplicate_selected_pages()
-        elif chosen is rotate_cw_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.rotate_selected_pages(90)
-            else:
-                self.rotate_selected_pages(90)
-        elif chosen is rotate_ccw_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.rotate_selected_pages(-90)
-            else:
-                self.rotate_selected_pages(-90)
-        elif chosen is delete_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.delete_selected_pages()
-            else:
-                self.delete_selected_pages()
-        elif chosen is extract_action:
-            self.extract_to_folder_requested.emit()
-        elif chosen is extract_tab_action:
-            self.extract_to_new_tab_requested.emit()
-        elif chosen is extract_window_action:
-            self.extract_to_new_window_requested.emit()
+        for index, group in enumerate(self._page_action_groups):
+            if index:
+                menu.addSeparator()
+            menu.addActions(group)
+        if menu.actions():
+            menu.exec(global_pos)
 
     def can_move_selection_up(self) -> bool:
         if self._model is None:
