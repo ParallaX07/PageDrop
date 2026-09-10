@@ -17,9 +17,13 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QInputDialog,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -96,7 +100,7 @@ from pagedrop.ui.theme import (
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
-from pagedrop.utils.page_jump import parse_page_jump
+from pagedrop.utils.page_jump import parse_page_ranges
 from pagedrop.utils.temp_manager import TempManager
 
 if TYPE_CHECKING:
@@ -461,9 +465,9 @@ class MainWindow(QMainWindow):
         )
         self._page_jump_action = actions.register(
             "page_jump",
-            "Select page range",
+            "Select pages",
             slot=self._page_range_jump_dialog,
-            shortcut="Ctrl+F",
+            tip="Select pages by number or range",
             add_to_window=True,
         )
         actions.register(
@@ -1737,24 +1741,87 @@ class MainWindow(QMainWindow):
         count = tab.edit_model.logical_count()
         if count <= 0:
             return
-        text, ok = QInputDialog.getText(
-            self,
-            "Jump to pages",
-            f"Page or range (e.g. 12 or 1-5), 1–{count}:",
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select pages")
+        form = QFormLayout(dialog)
+        page_input = QLineEdit(dialog)
+        page_input.setObjectName("SelectPagesInput")
+        page_input.setAccessibleName("Pages to select")
+        label = QLabel("Pages:", dialog)
+        label.setBuddy(page_input)
+        form.addRow(label, page_input)
+        description = QLabel(
+            f"Use page numbers or ranges from 1 to {count}, separated by commas "
+            "(for example, 1-3,5).",
+            dialog,
         )
-        if not ok:
-            return
-        indices = parse_page_jump(text, count)
-        if not indices:
-            self._transient_status("Enter a page number or range like 12 or 1-5")
-            return
-        tab.thumbnail_grid.jump_to_pages(indices)
-        if len(indices) == 1:
-            self._transient_status(f"Jumped to page {indices[0] + 1}")
-        else:
-            self._transient_status(
-                f"Selected pages {indices[0] + 1}–{indices[-1] + 1}"
+        description.setWordWrap(True)
+        form.addRow(description)
+        error = QLabel(dialog)
+        error.setObjectName("SelectPagesError")
+        error.setWordWrap(True)
+        error.setAccessibleName("Selection error")
+        error.hide()
+        form.addRow(error)
+        preview = QLabel("Enter pages to preview the selection.", dialog)
+        preview.setObjectName("SelectPagesCount")
+        preview.setAccessibleName("Selection count")
+        form.addRow(preview)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dialog)
+        select_button = buttons.addButton(
+            "Select", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        select_button.setObjectName("SelectPagesConfirm")
+        select_button.setEnabled(False)
+        form.addRow(buttons)
+
+        selected_indices: list[int] = []
+
+        def indices_for_text() -> list[int] | None:
+            ranges = parse_page_ranges(page_input.text(), count)
+            if ranges is None:
+                return None
+            return sorted(
+                {index for start, end in ranges for index in range(start, end + 1)}
             )
+
+        def update_preview() -> None:
+            nonlocal selected_indices
+            selected_indices = indices_for_text() or []
+            if not page_input.text().strip():
+                error.clear()
+                error.hide()
+                preview.setText("Enter pages to preview the selection.")
+            elif not selected_indices:
+                error.setText(
+                    f"Use page numbers from 1 to {count}, separated by commas or "
+                    "ranges (for example, 1-3,5)."
+                )
+                error.show()
+                preview.setText("No pages selected.")
+                page_input.setFocus()
+            else:
+                error.clear()
+                error.hide()
+                noun = "page" if len(selected_indices) == 1 else "pages"
+                preview.setText(f"{len(selected_indices)} {noun} will be selected.")
+            select_button.setEnabled(bool(selected_indices))
+
+        def select_pages() -> None:
+            if not selected_indices:
+                page_input.setFocus()
+                return
+            dialog.accept()
+
+        page_input.textChanged.connect(update_preview)
+        select_button.clicked.connect(select_pages)
+        buttons.rejected.connect(dialog.reject)
+        page_input.setFocus()
+        if dialog.exec() != QDialog.DialogCode.Accepted or not selected_indices:
+            return
+        tab.thumbnail_grid.jump_to_pages(selected_indices)
+        noun = "page" if len(selected_indices) == 1 else "pages"
+        self._transient_status(f"Selected {len(selected_indices)} {noun}")
 
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):

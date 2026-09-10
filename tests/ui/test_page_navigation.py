@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QInputDialog
+from PyQt6.QtWidgets import QDialog, QInputDialog, QLineEdit, QPushButton
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_card import PageCard
@@ -60,7 +60,15 @@ def test_page_range_jump_dialog(main_window, five_page_pdf, qtbot, monkeypatch):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
 
-    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("2-4", True))
+    def fill_and_accept(dialog: QDialog) -> int:
+        page_input = dialog.findChild(QLineEdit, "SelectPagesInput")
+        select = dialog.findChild(QPushButton, "SelectPagesConfirm")
+        assert page_input is not None and select is not None
+        page_input.setText("2-4")
+        select.click()
+        return dialog.result()
+
+    monkeypatch.setattr(QDialog, "exec", fill_and_accept)
     main_window._page_range_jump_dialog()
 
     assert main_window._thumbnail_grid.selection_manager.selection == {1, 2, 3}

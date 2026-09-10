@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.main_window import MainWindow
@@ -78,6 +79,8 @@ def test_ctrl_a_selects_all(qtbot, five_page_pdf):
     window.showMinimized()
     window._load_pdf(str(five_page_pdf))
     wait_for_pdf_loaded(qtbot, window)
+    assert window._page_jump_action.text() == "Select pages"
+    assert window._page_jump_action.shortcut().isEmpty()
 
     qtbot.keyClick(
         window,
@@ -168,4 +171,34 @@ def test_selection_toolbar_coalesces_storm(qtbot, five_page_pdf) -> None:
     assert updates == [{0}, {0, 1, 2, 3, 4}]
     assert window._selection_status.text() == "5 pages selected"
     assert window._deselect_all_action.isEnabled()
+    window.close()
+
+
+def test_select_pages_dialog_validates_and_applies_logical_selection(
+    qtbot, five_page_pdf, monkeypatch
+) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.showMinimized()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+
+    def fill_and_accept(dialog: QDialog) -> int:
+        page_input = dialog.findChild(QLineEdit, "SelectPagesInput")
+        error = dialog.findChild(QLabel, "SelectPagesError")
+        select = dialog.findChild(QPushButton, "SelectPagesConfirm")
+        assert page_input is not None and error is not None and select is not None
+        page_input.setText("bad input")
+        assert "1 to 5" in error.text()
+        assert not select.isEnabled()
+        page_input.setText("4,1-2,2")
+        assert select.isEnabled()
+        select.click()
+        return dialog.result()
+
+    monkeypatch.setattr(QDialog, "exec", fill_and_accept)
+    window._page_range_jump_dialog()
+
+    assert window._thumbnail_grid.selection_manager.selection == {0, 1, 3}
+    assert window._thumbnail_grid.focused_index == 0
     window.close()
