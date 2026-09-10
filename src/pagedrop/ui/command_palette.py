@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QDialog,
@@ -20,21 +20,52 @@ def action_label(action: QAction) -> str:
     return action.text().replace("&", "").strip()
 
 
-def fuzzy_match(query: str, text: str) -> bool:
-    """True when *query* is a substring or character subsequence of *text*."""
+def match_rank(query: str, text: str) -> int | None:
+    """Rank an exact, prefix, substring, or subsequence command match."""
     q = query.casefold().strip()
     if not q:
-        return True
+        return 4
     t = text.casefold()
+    if q == t:
+        return 0
+    if t.startswith(q):
+        return 1
     if q in t:
-        return True
+        return 2
     i = 0
     for ch in t:
         if ch == q[i]:
             i += 1
             if i == len(q):
-                return True
-    return False
+                return 3
+    return None
+
+
+def fuzzy_match(query: str, text: str) -> bool:
+    """Backward-compatible boolean form of :func:`match_rank`."""
+    return match_rank(query, text) is not None
+
+
+def ranked_actions(actions: list[QAction], query: str) -> list[QAction]:
+    """Return actions in deterministic label/synonym match order."""
+    matches: list[tuple[int, str, QAction]] = []
+    for action in actions:
+        labels = [action_label(action), *(action.property("commandSynonyms") or [])]
+        ranks = [rank for label in labels if (rank := match_rank(query, label)) is not None]
+        if ranks:
+            matches.append((min(ranks), action_label(action).casefold(), action))
+    category_order = {"Document": 0, "Pages": 1, "View": 2, "Tools": 3}
+    return [
+        action
+        for _rank, _label, action in sorted(
+            matches,
+            key=lambda match: (
+                match[0],
+                category_order.get(match[2].property("commandCategory"), 4),
+                match[1],
+            ),
+        )
+    ]
 
 
 def collect_actions(root: QWidget) -> list[QAction]:
@@ -85,8 +116,9 @@ class CommandPalette(QDialog):
         self.setWindowTitle("Command palette")
         self.setModal(True)
         self.setMinimumSize(420, 360)
-        self._actions = [a for a in actions if a.isEnabled()]
-        self._filtered: list[QAction] = []
+        self._actions = actions
+        self._item_actions: list[QAction | None] = []
+        self._return_focus = parent.focusWidget() if parent is not None else None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -113,23 +145,56 @@ class CommandPalette(QDialog):
 
     def _refilter(self, text: str) -> None:
         self._list.clear()
-        self._filtered = [
-            action
-            for action in self._actions
-            if fuzzy_match(text, action_label(action))
-        ]
-        for action in self._filtered:
-            label = action_label(action)
-            shortcut = action.shortcut().toString(
-                QKeySequence.SequenceFormat.NativeText
+        self._item_actions = []
+        query = text.strip()
+        actions = ranked_actions(self._actions, query)
+        if not query:
+            actions = [action for action in actions if action.isEnabled()]
+        else:
+            actions = [
+                action
+                for action in actions
+                if action.isEnabled() or action.property("unavailableReason")
+            ]
+        groups: dict[str, list[QAction]] = {}
+        for action in actions:
+            groups.setdefault(action.property("commandCategory") or "Document", []).append(action)
+        for category, grouped_actions in groups.items():
+            header = QListWidgetItem(category)
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            header.setData(
+                Qt.ItemDataRole.AccessibleDescriptionRole, f"{category} commands"
             )
-            item = QListWidgetItem(
-                f"{label}    {shortcut}" if shortcut else label
-            )
-            item.setToolTip(label)
-            self._list.addItem(item)
-        if self._filtered:
-            self._list.setCurrentRow(0)
+            self._list.addItem(header)
+            self._item_actions.append(None)
+            for action in grouped_actions:
+                label = action_label(action)
+                shortcut = action.shortcut().toString(
+                    QKeySequence.SequenceFormat.NativeText
+                )
+                reason = (
+                    action.property("unavailableReason") if not action.isEnabled() else ""
+                )
+                item = QListWidgetItem(f"{label}\t{shortcut}" if shortcut else label)
+                item.setToolTip(reason or label)
+                item.setData(
+                    Qt.ItemDataRole.AccessibleDescriptionRole,
+                    reason or f"{category} command",
+                )
+                if reason:
+                    item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self._list.addItem(item)
+                self._item_actions.append(action if action.isEnabled() else None)
+        for row, action in enumerate(self._item_actions):
+            if action is not None:
+                self._list.setCurrentRow(row)
+                return
+        message = "No commands available" if not query else f"No commands match “{query}”"
+        item = QListWidgetItem(message)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        item.setData(Qt.ItemDataRole.AccessibleDescriptionRole, message)
+        self._list.addItem(item)
+        self._item_actions.append(None)
 
     def keyPressEvent(self, event) -> None:  # noqa: ANN001
         key = event.key()
@@ -149,8 +214,12 @@ class CommandPalette(QDialog):
 
     def _activate_current(self) -> None:
         row = self._list.currentRow()
-        if row < 0 or row >= len(self._filtered):
+        if row < 0 or row >= len(self._item_actions):
             return
-        action = self._filtered[row]
+        action = self._item_actions[row]
+        if action is None:
+            return
         self.accept()
         action.trigger()
+        if self._return_focus is not None:
+            QTimer.singleShot(0, self._return_focus.setFocus)

@@ -1023,7 +1023,9 @@ class ThumbnailGrid(QScrollArea):
 
         refs = [self._model.page_at(index) for index in ordered]
         insert_at = ordered[-1] + 1
-        self._model.insert_pages(insert_at, refs)
+        self._model.insert_pages(
+            insert_at, refs, description=f"duplicate {len(refs)} {'page' if len(refs) == 1 else 'pages'}"
+        )
         self._sync_grid_after_insert(insert_at, len(refs))
         new_selection = set(range(insert_at, insert_at + len(refs)))
         self.selection_manager.set_selection(new_selection)

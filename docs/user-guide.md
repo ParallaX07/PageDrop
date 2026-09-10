@@ -5,10 +5,10 @@ PageDrop is built around a thumbnail grid and drag-and-drop. You open PDFs in ta
 ## Open and select
 
 1. **Open a PDF**: File → Open PDF (`Ctrl+O`). A blank tab also has an **Open PDF** button; when a document is open, related page actions appear in its toolbar. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab. File → Open Recent reopens recent paths.
-2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or select a page or range like `1-5` with **Ctrl+F**.
+2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or use **Select pages** to enter a page or range like `1-5`.
 3. **Zoom and preview**: Ctrl+scroll zooms thumbnails; Ctrl+0 resets. Double-click or press Enter for a full-page preview; arrow keys plus Space handle keyboard navigation. Escape returns to the grid from preview.
 
-The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette.
+The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette. It groups the existing commands, ranks precise matches first, and explains matching unavailable commands.
 
 ## Drag pages out
 
@@ -20,7 +20,7 @@ Right-click to extract selected pages to a folder, a new tab, or a new window. F
 
 - Reorder by dragging thumbnails or using Move up / Move down / Move to… (`Ctrl+Shift+M`)
 - Delete, duplicate (`Ctrl+D`), and rotate from the toolbar, context menu, or shortcuts
-- Undo / redo with `Ctrl+Z` / `Ctrl+Shift+Z`; deleting many pages at once can prompt for confirmation
+- Undo / redo with `Ctrl+Z` / `Ctrl+Shift+Z`; each command names the operation it will recover. In preview, return to the page grid to undo page edits. Deleting many pages at once can prompt for confirmation
 - Drop a PDF onto the grid (including a blank tab) to open or insert its pages at the cursor
 - **File → Save As** writes edits to a new file in the background. The original stays untouched; you can cancel while it is saving. Later saves continue from that saved copy, preserving prior page edits, annotations, forms, and verified redactions
 - Dirty tabs show a `*` in the title; closing one prompts Save As, Discard, or Cancel

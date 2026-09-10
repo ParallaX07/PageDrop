@@ -490,6 +490,28 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+0",
             add_to_window=True,
         )
+        categories = {
+            "Pages": {
+                "undo", "redo", "preview", "select_all", "deselect_all",
+                "move_up", "move_down", "move_to", "delete_pages",
+                "duplicate_pages", "rotate_cw", "rotate_ccw", "extract_selected",
+                "extract_selected_to_tab", "extract_selected_to_window", "go_to_page",
+                "page_jump",
+            },
+            "View": {
+                "light_theme", "chrome_visible", "quality_low", "quality_medium",
+                "quality_high", "command_palette", "reset_zoom",
+            },
+            "Tools": {"merge", "create_pdf", "tools"},
+        }
+        synonyms = {"merge": ["combine"], "create_pdf": ["images to pdf"]}
+        for key, action in actions.items():
+            action.setProperty(
+                "commandCategory",
+                next((name for name, keys in categories.items() if key in keys), "Document"),
+            )
+            if key in synonyms:
+                action.setProperty("commandSynonyms", synonyms[key])
 
     def _refresh_action_icons(self) -> None:
         """Re-tint Phosphor toolbar icons after a light/dark swap."""
@@ -1509,6 +1531,11 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         if tab is None:
             return
+        description = (
+            tab.markup_session.undo_description()
+            if tab.is_viewer_mode() and tab.markup_session.can_undo()
+            else tab.edit_model.undo_description() if tab.edit_model is not None else None
+        )
         # Grid-edit undo stays blocked while preview is up; viewer markup undo is allowed.
         if tab.is_preview_visible() and not (
             tab.is_viewer_mode() and tab.markup_session.can_undo()
@@ -1520,12 +1547,18 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(tab)
         self._update_window_title()
         self._sync_toolbar_from_active_tab()
-        self._transient_status("Undo")
+        self._update_undo_redo_actions()
+        self._transient_status(self._history_outcome(description, undo=True))
 
     def _redo(self) -> None:
         tab = self._active_tab()
         if tab is None:
             return
+        description = (
+            tab.markup_session.redo_description()
+            if tab.is_viewer_mode() and tab.markup_session.can_redo()
+            else tab.edit_model.redo_description() if tab.edit_model is not None else None
+        )
         if tab.is_preview_visible() and not (
             tab.is_viewer_mode() and tab.markup_session.can_redo()
         ):
@@ -1536,7 +1569,8 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(tab)
         self._update_window_title()
         self._sync_toolbar_from_active_tab()
-        self._transient_status("Redo")
+        self._update_undo_redo_actions()
+        self._transient_status(self._history_outcome(description, undo=False))
 
     def _update_undo_redo_actions(self) -> None:
         tab = self._active_tab()
@@ -1544,12 +1578,47 @@ class MainWindow(QMainWindow):
         preview_blocking = tab is not None and tab.is_preview_visible()
         markup_undo = tab is not None and tab.is_viewer_mode() and tab.markup_session.can_undo()
         markup_redo = tab is not None and tab.is_viewer_mode() and tab.markup_session.can_redo()
-        self._undo_action.setEnabled(
-            (markup_undo or (model is not None and model.can_undo() and not preview_blocking))
+        undo_description = (
+            tab.markup_session.undo_description() if markup_undo else model.undo_description() if model else None
         )
-        self._redo_action.setEnabled(
-            (markup_redo or (model is not None and model.can_redo() and not preview_blocking))
+        redo_description = (
+            tab.markup_session.redo_description() if markup_redo else model.redo_description() if model else None
         )
+        undo_enabled = markup_undo or (model is not None and model.can_undo() and not preview_blocking)
+        redo_enabled = markup_redo or (model is not None and model.can_redo() and not preview_blocking)
+        self._set_history_action(self._undo_action, "Undo", undo_description, undo_enabled, preview_blocking)
+        self._set_history_action(self._redo_action, "Redo", redo_description, redo_enabled, preview_blocking)
+
+    @staticmethod
+    def _set_history_action(
+        action: QAction,
+        verb: str,
+        description: str | None,
+        enabled: bool,
+        viewer_blocking: bool,
+    ) -> None:
+        action.setText(f"{verb} {description}" if description else f"&{verb}")
+        reason = (
+            f"Return to the page grid to {verb.casefold()} {description}"
+            if description and viewer_blocking and not enabled
+            else ""
+        )
+        action.setProperty("unavailableReason", reason)
+        action.setToolTip(reason)
+        action.setStatusTip(reason)
+        action.setEnabled(enabled)
+
+    @staticmethod
+    def _history_outcome(description: str | None, *, undo: bool) -> str:
+        if not description:
+            return "Undo complete" if undo else "Redo complete"
+        if undo and description.startswith("delete "):
+            return f"Restored {description.removeprefix('delete ')}"
+        if undo and description.startswith("rotate "):
+            return "Rotation undone"
+        if undo and description.startswith("add "):
+            return f"Removed {description.removeprefix('add ')}"
+        return f"{'Undid' if undo else 'Redid'} {description}"
 
     def _offer_move_undo(self, count: int, undo: Callable[[], bool]) -> None:
         self._pending_move_undo = undo

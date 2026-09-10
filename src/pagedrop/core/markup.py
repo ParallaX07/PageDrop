@@ -36,6 +36,8 @@ MarkupKind = Literal[
 @dataclass(frozen=True)
 class MarkupEntry:
     kind: MarkupKind
+    description: str = ""
+    affected_count: int = 1
     # Page-scoped work remains attached to this logical occurrence until output.
     page_instance_id: str | None = None
     annotation: AnnotationOp | None = None
@@ -83,12 +85,18 @@ class MarkupSession:
     def can_redo(self) -> bool:
         return bool(self._redo)
 
+    def undo_description(self) -> str | None:
+        return self._ops[-1].description if self._ops else None
+
+    def redo_description(self) -> str | None:
+        return self._redo[-1].description if self._redo else None
+
     def clear(self) -> None:
         self._ops.clear()
         self._redo.clear()
 
     def push_annotation(self, op: AnnotationOp, page_instance_id: str | None = None) -> None:
-        self._push(MarkupEntry(kind="annotation", page_instance_id=self._target_id(op.page_index, page_instance_id), annotation=op))
+        self._push(MarkupEntry(kind="annotation", description=f"add {op.kind}", page_instance_id=self._target_id(op.page_index, page_instance_id), annotation=op))
 
     def replace_annotation(self, old: AnnotationOp, new: AnnotationOp) -> bool:
         """Replace a pending annotation in place (edit free text, etc.)."""
@@ -111,16 +119,16 @@ class MarkupSession:
         return False
 
     def push_form_fill(self, values: Mapping[str, str]) -> None:
-        self._push(MarkupEntry(kind="form_fill", form_fill=dict(values)))
+        self._push(MarkupEntry(kind="form_fill", description="fill form", affected_count=len(values), form_fill=dict(values)))
 
     def push_form_create(self, field: FormCreateOp, page_instance_id: str | None = None) -> None:
-        self._push(MarkupEntry(kind="form_create", page_instance_id=self._target_id(field.page_index, page_instance_id), form_create=field))
+        self._push(MarkupEntry(kind="form_create", description="add form field", page_instance_id=self._target_id(field.page_index, page_instance_id), form_create=field))
 
     def push_form_flatten(self) -> None:
-        self._push(MarkupEntry(kind="form_flatten"))
+        self._push(MarkupEntry(kind="form_flatten", description="flatten forms"))
 
     def push_redaction(self, region: RedactionRegion, page_instance_id: str | None = None) -> None:
-        self._push(MarkupEntry(kind="redaction", page_instance_id=self._target_id(region.page_index, page_instance_id), redaction=region))
+        self._push(MarkupEntry(kind="redaction", description="add redaction mark", page_instance_id=self._target_id(region.page_index, page_instance_id), redaction=region))
 
     def redaction_regions(self, model: PdfEditModel | None = None) -> list[RedactionRegion]:
         if model is None:

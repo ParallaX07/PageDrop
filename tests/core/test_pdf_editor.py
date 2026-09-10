@@ -127,7 +127,6 @@ def test_undo_redo_restore_pages_and_dirty():
     assert model.can_undo()
     assert [model.page_at(i).source_index for i in range(3)] == [0, 2, 4]
     assert model.is_dirty()
-
     assert model.undo()
     assert [model.page_at(i).source_index for i in range(5)] == [0, 1, 2, 3, 4]
     assert not model.is_dirty()
@@ -136,6 +135,18 @@ def test_undo_redo_restore_pages_and_dirty():
     assert model.redo()
     assert [model.page_at(i).source_index for i in range(3)] == [0, 2, 4]
     assert model.is_dirty()
+
+
+def test_undo_redo_descriptions_follow_history():
+    model = PdfEditModel("/a.pdf", 5)
+    model.remove_pages([1, 3])
+    assert model.undo_description() == "delete 2 pages"
+    assert model.undo_affected_count() == 2
+    assert model.undo()
+    assert model.redo_description() == "delete 2 pages"
+    assert model.redo_affected_count() == 2
+    assert model.redo()
+    assert model.undo_description() == "delete 2 pages"
 
 
 def test_undo_covers_insert_and_reorder():

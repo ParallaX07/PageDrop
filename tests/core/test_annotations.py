@@ -328,6 +328,19 @@ def test_markup_session_undo_capped_at_max_undo() -> None:
     assert ops[-1].annotation.text == str(MAX_UNDO)
 
 
+def test_markup_history_describes_annotation_and_form_changes() -> None:
+    session = MarkupSession()
+    session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((10, 10),), text="Note")
+    )
+    assert session.undo_description() == "add comment"
+    assert session.undo()
+    assert session.redo_description() == "add comment"
+    session.push_form_fill({"Name": "Ada", "Title": "Engineer"})
+    assert session.undo_description() == "fill form"
+    assert session.ops()[-1].affected_count == 2
+
+
 def test_apply_box_transform_move_and_resize() -> None:
     moved = _apply_box_transform((10, 20, 50, 60), "move", 5, -3)
     assert moved == (15, 17, 55, 57)

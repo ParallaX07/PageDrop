@@ -395,3 +395,23 @@ def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pd
     assert main_window._selection_status.isHidden()
     assert main_window.windowTitle() == "PageDrop: Test tool"
     assert main_window.statusBar().currentMessage() != pdf_status
+
+
+def test_undo_labels_and_viewer_guidance_follow_current_history(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    tab = main_window._active_tab()
+    assert tab is not None
+    qtbot.waitUntil(lambda: tab.edit_model is not None)
+    tab.edit_model.remove_pages([0, 1])
+    main_window._update_undo_redo_actions()
+    assert main_window._undo_action.text() == "Undo delete 2 pages"
+
+    main_window._open_preview()
+    qtbot.waitUntil(tab.is_viewer_mode)
+    main_window._update_undo_redo_actions()
+    assert not main_window._undo_action.isEnabled()
+    assert main_window._undo_action.toolTip() == (
+        "Return to the page grid to undo delete 2 pages"
+    )
