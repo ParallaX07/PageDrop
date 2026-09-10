@@ -24,6 +24,9 @@ KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_VIEWER_PANEL_STATE = "view/viewer_panel_state"
 KEY_VIEWER_PANEL_EXPLICIT = "view/viewer_panel_explicit"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
+KEY_CONTEXT_HINT_SELECTION_EXPORT = "onboarding/context_hint_selection_export"
+KEY_CONTEXT_HINT_TRANSFER = "onboarding/context_hint_transfer"
+KEY_CONTEXT_HINT_BACK_TO_GRID = "onboarding/context_hint_back_to_grid"
 KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
 KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
 KEY_TESSDATA_PATH = "ocr/tessdata_path"
@@ -369,6 +372,14 @@ def has_seen_tips() -> bool:
 
 def set_has_seen_tips(seen: bool = True) -> None:
     _settings().setValue(KEY_HAS_SEEN_TIPS, bool(seen))
+
+
+def has_seen_context_hint(key: str) -> bool:
+    return _settings().value(key, False, type=bool)
+
+
+def set_has_seen_context_hint(key: str) -> None:
+    _settings().setValue(key, True)
 
 
 def office_preferred_backend() -> OfficePreferredBackend:

@@ -465,7 +465,7 @@ def run_tool_job(
         message = success_toast or f"Saved {name}"
         end(
             status=message,
-            toast=message,
+            toast="Completed",
             toast_kind="success",
             result_path=result_path,
         )
@@ -671,6 +671,12 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._actions_layout = QHBoxLayout(self._actions_host)
         self._actions_layout.setContentsMargins(0, 0, 0, 0)
         self._actions_layout.setSpacing(8)
+        self._job_error = QLabel()
+        self._job_error.setObjectName("ToolsErrorHint")
+        self._job_error.setWordWrap(True)
+        self._job_error.setAccessibleName("Job error")
+        self._job_error.hide()
+        self._actions_layout.addWidget(self._job_error, 1)
         self._actions_layout.addStretch(1)
 
         self._run_btn = QPushButton("Run")
@@ -696,6 +702,16 @@ class ToolShellWindow(JobChromeMixin, QWidget):
 
     def statusBar(self) -> StatusFooter:  # noqa: N802
         return self._status
+
+    def show_job_error(self, message: str) -> None:
+        """Keep recoverable job failures next to Run after the toast expires."""
+        self._job_error.setText(message)
+        self._job_error.setAccessibleDescription(message)
+        self._job_error.show()
+
+    def clear_job_error(self) -> None:
+        self._job_error.clear()
+        self._job_error.hide()
 
     def set_editor(self, editor: QWidget | None) -> None:
         self._editor = editor

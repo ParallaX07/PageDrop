@@ -69,7 +69,11 @@ from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
 )
-from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
+from pagedrop.ui.onboarding import (
+    KeyboardShortcutsDialog,
+    TipsOverlay,
+    show_context_hint,
+)
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui import icons
@@ -88,6 +92,9 @@ from pagedrop.ui.settings import (
     set_light_theme,
     set_thumbnail_quality,
     set_thumbnail_zoom,
+    KEY_CONTEXT_HINT_BACK_TO_GRID,
+    KEY_CONTEXT_HINT_SELECTION_EXPORT,
+    KEY_CONTEXT_HINT_TRANSFER,
     thumbnail_quality,
     thumbnail_zoom,
 )
@@ -791,7 +798,15 @@ class MainWindow(QMainWindow):
         overlay = BusyOverlay(tab)
         overlay.set_cancellable(True)
         token = CancelToken()
-        overlay.cancelled.connect(token.cancel)
+        overlay.set_progress(None)
+
+        def cancel() -> None:
+            token.cancel()
+            overlay.set_cancelling()
+            if tab is self._active_tab():
+                self._persistent_status("Cancelling…")
+
+        overlay.cancelled.connect(cancel)
         overlay.show_message(message)
         tab.setProperty("editorJobRunning", True)
         self._editor_busy[tab] = (overlay, token)
@@ -1726,6 +1741,22 @@ class MainWindow(QMainWindow):
         tab.show_preview_at(page_index)
         self._update_preview_mode_ui()
         self._update_preview_status()
+        button = self._toolbar.widgetForAction(self._preview_action)
+        if isinstance(button, QWidget):
+            show_context_hint(
+                self,
+                button,
+                KEY_CONTEXT_HINT_BACK_TO_GRID,
+                "Use Back to grid to return to your thumbnails.",
+            )
+
+    def _show_transfer_hint(self, anchor: QWidget) -> None:
+        show_context_hint(
+            self,
+            anchor,
+            KEY_CONTEXT_HINT_TRANSFER,
+            "Drag to another document to copy pages. Hold Shift to move them.",
+        )
 
     def _update_preview_mode_ui(self) -> None:
         tab = self._active_tab()
@@ -3215,6 +3246,13 @@ class MainWindow(QMainWindow):
         self._update_page_op_actions()
         self._update_selection_status(selection)
         self._sync_contextual_toolbar(selection)
+        if selection:
+            show_context_hint(
+                self,
+                self._selection_status,
+                KEY_CONTEXT_HINT_SELECTION_EXPORT,
+                "Drag selected pages to a folder to export them as PDF files.",
+            )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._window_manager is not None:

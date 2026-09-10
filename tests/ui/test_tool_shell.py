@@ -302,6 +302,7 @@ def test_migrated_tool_runs_job_and_shows_result_actions(
     assert out.is_file()
     assert shell._result_bar.isVisible()
     assert shell._result_bar._path == str(out)
+    assert str(out) in shell._result_bar._label.text()
     assert shell._run_btn.text() == "Run"
     assert shell._busy_overlay._cancel_btn.text() == "Cancel"
     assert shell._result_bar._preview_btn.text() == "Preview"
@@ -352,7 +353,9 @@ def test_split_multi_file_success_copy_mentions_showing_first(
     toast = shell._toast._message.text()
     bar = shell._result_bar._label.text()
     assert status == "Saved 3 files. Showing first"
-    assert status == toast == bar
+    assert toast == "Completed"
+    assert status in bar
+    assert str(first) in bar
     assert shell._result_bar._path == str(first)
     assert shell.editor is None
 

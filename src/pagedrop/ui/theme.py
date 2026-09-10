@@ -1568,6 +1568,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 13px;
     }}
 
+    QWidget#ContextHint {{
+        background-color: {bg_surface};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QLabel#ContextHintText {{
+        color: {text_primary};
+        font-size: 13px;
+    }}
+
     QLabel#ShortcutCategory {{
         color: {text_primary};
         font-size: 14px;

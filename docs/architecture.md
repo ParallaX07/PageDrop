@@ -44,7 +44,7 @@ Inbound drops (PDF onto the grid, images onto Create PDF, files onto tool shells
 
 ## Jobs and capabilities
 
-Batch Tools and editor Save As work through a **serialized job runner** (`SerializedJobRunner`): stage under temp, validate, promote to the user path, support cooperative cancel. Editor folder export uses the same single-threaded worker flow with the I2 staged batch extractor. Workers receive paths and immutable edit/markup snapshots — never live `fitz.Document` handles or tab loaders from the UI. A save completion rebases only when its snapshot still matches the tab; otherwise the earlier copy remains saved and newer tab edits stay dirty.
+Batch Tools and editor Save As work through a **serialized job runner** (`SerializedJobRunner`): stage under temp, validate, promote to the user path, support cooperative cancel. Editor folder export uses the same single-threaded worker flow with the I2 staged batch extractor. Workers receive paths and immutable edit/markup snapshots — never live `fitz.Document` handles or tab loaders from the UI. A save completion rebases only when its snapshot still matches the tab; otherwise the earlier copy remains saved and newer tab edits stay dirty. `BusyOverlay` is indeterminate unless a caller can honestly provide a total; after Cancel it stays in a **Cancelling…** state until cooperative cleanup completes.
 
 Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI can configure / recheck without crashing the app. Core thumbnail / edit / merge / Create PDF must remain usable when optional backends are absent.
 
@@ -58,7 +58,7 @@ UI render pools stay at max thread count 1 and still share the same lock across 
 
 ## Result UX
 
-Tool pages use the same order: title and purpose, input, options, one valid execution action, then progress or result. A selected shell input contracts to a filename summary with **Change file** access. Tool and conversion success surfaces status + toast and the result summary by default; the rerun action becomes secondary. Opening a result in the editor or file manager is always an explicit Preview / Open / Show in folder choice (`result_actions`), never an automatic tab open.
+Tool pages use the same order: title and purpose, input, options, one valid execution action, then progress or result. A selected shell input contracts to a filename summary with **Change file** access. Status, toast, and result surface serve different jobs: the persistent result summary exposes a selectable filename and destination, while Preview / Open / Show in folder remain explicit choices (`result_actions`), never an automatic tab open. Recoverable tool errors also remain beside Run after transient feedback ends.
 
 ## Windows updates
 

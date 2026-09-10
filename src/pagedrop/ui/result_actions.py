@@ -43,6 +43,9 @@ class ResultActionsBar(QWidget):
         self._label = QLabel()
         self._label.setObjectName("ResultActionsLabel")
         self._label.setWordWrap(True)
+        self._label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         layout.addWidget(self._label, stretch=1)
 
         self._preview_btn = QPushButton("Preview")
@@ -65,8 +68,11 @@ class ResultActionsBar(QWidget):
         self._path = resolved
         name = Path(resolved).name
         status = message or f"Saved {name}"
-        self._label.setText(status)
-        self.setAccessibleName(status)
+        detail = f"{status}\n{resolved}"
+        self._label.setText(detail)
+        self._label.setToolTip(resolved)
+        self._label.setAccessibleName(detail)
+        self.setAccessibleName(detail)
         self._preview_btn.setEnabled(is_pdf_path(resolved))
         self._open_btn.setEnabled(is_pdf_path(resolved))
         self.show()

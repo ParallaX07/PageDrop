@@ -52,12 +52,12 @@ macOS and Linux binaries aren't published yet. Run from source (below) or build 
 ## Quick start
 
 1. **Open a PDF**: File → Open PDF (`Ctrl+O`), or the toolbar Open button. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab.
-2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or select a range like `1-5` with **Ctrl+F**.
-3. **Drag to a folder**: drag selected thumbnails into your file manager. Each page becomes its own PDF.
+2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or use **Select pages** in the Pages menu for a range like `1-5`.
+3. **Drag to a folder**: drag selected thumbnails into your file manager. Each page becomes its own PDF; PageDrop explains this on your first selection.
 4. **Edit across PDFs**: reorder, delete, duplicate (`Ctrl+D`), or rotate. Drop another PDF onto the grid to insert pages. Drag between windows; hold Shift to move instead of copy. Undo with `Ctrl+Z`. Then File → Save As.
 5. **Merge, Create PDF, or Tools**: Merge and Create PDF open as editor tabs. **Tools** (`Ctrl+Shift+O`) is the searchable hub for organize, convert, modify, optimize, and secure jobs.
 
-The first launch shows short tips. Press **Ctrl+/** for shortcuts, or **Ctrl+Shift+P** for the command palette.
+The first launch shows a brief orientation. PageDrop then gives one-time, dismissible hints for drag-out export, Shift-to-move transfers, and returning from Preview. Press **Ctrl+/** for shortcuts, or **Ctrl+Shift+P** for the command palette.
 
 Full walkthrough: [docs/user-guide.md](docs/user-guide.md).
 
@@ -112,7 +112,6 @@ Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platfo
 | Move to page | Ctrl+Shift+M |
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 | Go to page | Ctrl+G |
-| Select page / range | Ctrl+F |
 | Reset zoom / fit width (preview) | Ctrl+0 |
 | Thumbnail zoom | Ctrl+scroll |
 | Preview focused page | Enter |

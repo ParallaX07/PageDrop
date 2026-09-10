@@ -281,9 +281,33 @@ def test_busy_overlay_cancel_aborts_job(qtbot):
 
     window._busy_overlay._cancel_btn.click()
     assert token.is_cancelled()
+    assert window._busy_overlay._message.text() == "Cancelling…"
+    assert window._busy_overlay._cancel_btn.text() == "Cancelling…"
     assert window.is_job_running()  # overlay cancel does not end_job by itself
     window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
     assert not window.is_job_running()
+    window.close()
+
+
+def test_job_progress_is_determinate_only_with_a_real_total(qtbot):
+    window = _job_chrome_host(qtbot)
+    window.begin_job("Working…")
+    window.set_job_progress(0.5, "Working…")
+    assert window._busy_overlay._progress.maximum() == 0
+    window.set_job_progress(0.5, "Working…", total_known=True)
+    assert window._busy_overlay._progress.maximum() == 100
+    assert window._busy_overlay._progress.value() == 50
+    window.end_job(status="Done")
+    window.close()
+
+
+def test_job_failure_stays_beside_run(qtbot, monkeypatch):
+    window = _job_chrome_host(qtbot)
+    monkeypatch.setattr("pagedrop.ui.job_chrome.QMessageBox.critical", lambda *args: 0)
+    window.begin_job("Working…")
+    window.end_job(error="Choose a different output path.")
+    assert window._job_error.isVisible()
+    assert window._job_error.text() == "Choose a different output path."
     window.close()
 
 
@@ -436,9 +460,11 @@ def test_result_actions_bar_emits_explicit_only(qtbot, tmp_path):
     assert not bar.isVisible()
     bar.show_for(path)
     assert bar.isVisible()
-    assert bar.accessibleName() == f"Saved {path.name}"
+    assert f"Saved {path.name}" in bar.accessibleName()
+    assert str(path) in bar.accessibleName()
     bar.show_for(path, message="Merged 3 files")
-    assert bar.accessibleName() == "Merged 3 files"
+    assert "Merged 3 files" in bar.accessibleName()
+    assert str(path) in bar.accessibleName()
     bar.clear()
     assert bar.accessibleName() == ""
     bar.show_for(path)

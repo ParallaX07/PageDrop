@@ -487,6 +487,9 @@ class PageCard(BaseFileCard):
 
         QApplication.setOverrideCursor(Qt.CursorShape.DragCopyCursor)
         window = self.window()
+        show_hint = getattr(window, "_show_transfer_hint", None)
+        if callable(show_hint):
+            show_hint(self)
         status_bar = getattr(window, "statusBar", None)
         if callable(status_bar):
             status_bar().showMessage("Release to place pages")

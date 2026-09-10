@@ -97,15 +97,22 @@ class JobChromeMixin:
         self._job_running = True
         self._cancel_token = CancelToken()
         self._result_bar.clear()
+        clear_error = getattr(self, "clear_job_error", None)
+        if callable(clear_error):
+            clear_error()
         set_precedence = getattr(self, "_set_result_precedence", None)
         if callable(set_precedence):
             set_precedence(False)
         self._busy_overlay.show_message(message)
+        self._busy_overlay.set_cancel_ready()
+        self._busy_overlay.set_progress(None)
         self.statusBar().showMessage(message)
         self._set_job_controls_enabled(False)
         return self._cancel_token
 
-    def set_job_progress(self, _fraction: float, message: str) -> None:
+    def set_job_progress(
+        self, fraction: float, message: str, *, total_known: bool = False
+    ) -> None:
         if not self._job_running:
             return
         if message and message != "Done":
@@ -113,6 +120,7 @@ class JobChromeMixin:
         if message == "Done":
             return
         self._busy_overlay.show_message(message or "Working…")
+        self._busy_overlay.set_progress(fraction if total_known else None)
         self.statusBar().showMessage(message or "Working…")
 
     def end_job(
@@ -131,6 +139,9 @@ class JobChromeMixin:
         self._set_job_controls_enabled(True)
         if error:
             self.statusBar().showMessage("Job failed")
+            show_error = getattr(self, "show_job_error", None)
+            if callable(show_error):
+                show_error(error)
             self._toast.show_toast(toast or "Job failed", kind="error")
             QMessageBox.critical(self, self.WINDOW_TITLE, error)
             return
@@ -139,7 +150,6 @@ class JobChromeMixin:
         if toast:
             self._toast.show_toast(toast, kind=toast_kind)
         if result_path:
-            # Same copy as status when provided (multi-output honesty, O12).
             self._result_bar.show_for(result_path, message=status)
         set_precedence = getattr(self, "_set_result_precedence", None)
         if callable(set_precedence):
@@ -148,6 +158,8 @@ class JobChromeMixin:
     def cancel_active_job(self) -> None:
         if self._cancel_token is not None:
             self._cancel_token.cancel()
+            self._busy_overlay.set_cancelling()
+            self.statusBar().showMessage("Cancelling…")
 
     def request_close(self) -> bool:
         """Return False to abort closing this tab while a job is running."""

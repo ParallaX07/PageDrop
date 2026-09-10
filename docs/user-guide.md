@@ -10,7 +10,7 @@ PageDrop is built around a thumbnail grid and drag-and-drop. You open PDFs in ta
 
 In preview, the markup hint states the gesture for the active tool. Redaction marks remain pending until confirmed and are only permanently removed in a newly saved, fresh-process-verified copy. Flattening forms likewise makes their fields part of the page content and no longer editable. Empty Bookmarks, Layers, and Attachments panels explain what is absent; when all three are empty, navigation yields its space to the document until you reopen it.
 
-The first launch shows short tips. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette. It groups the existing commands, ranks precise matches first, and explains matching unavailable commands.
+The first launch gives a brief orientation. PageDrop then gives dismissible one-time hints when you first select pages, transfer pages, or open Preview. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette. It groups the existing commands, ranks precise matches first, and explains matching unavailable commands.
 
 ## Drag pages out
 
@@ -30,7 +30,7 @@ Right-click to extract selected pages to a folder, a new tab, or a new window. F
 ## Multi-window
 
 - Open PDFs in new windows, tear tabs off the tab bar, or use File → New Window (`Ctrl+Shift+N`)
-- Drag pages between windows to **copy** by default; hold **Shift** while dropping to **move** them (a short Undo toast appears after a move)
+- Drag pages between windows to **copy** by default; hold **Shift** while dropping to **move** them (the first transfer explains the modifier, and a short Undo toast appears after a move)
 - Each window has its own tab strip, so Merge, Create PDF, and Tools can stay open beside editor tabs
 
 ## Merge PDFs
@@ -41,7 +41,7 @@ Open via the menu bar **Merge PDFs** or the Tools hub tile. It is an editor tab 
 - Add folder recursively adds PDFs from a directory
 - Double-click or press Enter on a file to preview all its pages
 - Merge writes one combined PDF and leaves source files unchanged
-- Success prioritizes the output summary and offers Preview / Open in editor / Show in folder — results do **not** auto-open
+- Success keeps the output filename and location selectable beside Preview / Open in editor / Show in folder; results do **not** auto-open
 
 ## Create PDF
 
@@ -139,7 +139,6 @@ close every old PageDrop process manually before upgrading.
 | Move to page | Ctrl+Shift+M |
 | Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
 | Go to page | Ctrl+G |
-| Select page / range | Ctrl+F |
 | Reset zoom / fit width (preview) | Ctrl+0 |
 | Thumbnail zoom | Ctrl+scroll |
 | Preview focused page | Enter |

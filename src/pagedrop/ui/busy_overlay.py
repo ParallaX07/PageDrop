@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -82,6 +83,13 @@ class BusyOverlay(QWidget):
         self._message.setWordWrap(True)
         panel_layout.addWidget(self._message)
 
+        self._progress = QProgressBar()
+        self._progress.setObjectName("BusyOverlayProgress")
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 0)
+        self._progress.setAccessibleName("Progress")
+        panel_layout.addWidget(self._progress)
+
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setObjectName("BusyOverlayCancel")
         self._cancel_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -98,6 +106,11 @@ class BusyOverlay(QWidget):
     def set_cancellable(self, enabled: bool) -> None:
         """Show or hide the inline Cancel button (Tools jobs enable this)."""
         self._cancel_btn.setVisible(enabled)
+
+    def set_cancel_ready(self) -> None:
+        self._cancel_btn.setText("Cancel")
+        self._cancel_btn.setAccessibleName("Cancel")
+        self._cancel_btn.setEnabled(True)
 
     def show_message(self, message: str) -> None:
         self._message.setText(message)
@@ -121,6 +134,24 @@ class BusyOverlay(QWidget):
             self._fade.setEndValue(1.0)
             self._fade.start()
         self._grab_focus()
+
+    def set_progress(self, fraction: float | None) -> None:
+        """Show a determinate bar only when the caller has a real total."""
+        if fraction is None:
+            self._progress.setRange(0, 0)
+            self._progress.setAccessibleDescription("Progress is unavailable")
+            return
+        self._progress.setRange(0, 100)
+        self._progress.setValue(max(0, min(100, round(fraction * 100))))
+        self._progress.setAccessibleDescription(f"{self._progress.value()}% complete")
+
+    def set_cancelling(self) -> None:
+        """Keep cancellation visible until the worker acknowledges it."""
+        self._message.setText("Cancelling…")
+        self.setAccessibleDescription("Cancelling…")
+        self._cancel_btn.setText("Cancelling…")
+        self._cancel_btn.setAccessibleName("Cancelling")
+        self._cancel_btn.setEnabled(False)
 
     def hide_overlay(self) -> None:
         if not self.isVisible() and not self._hiding:

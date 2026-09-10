@@ -4,14 +4,20 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QStatusTipEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QToolBar
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QToolBar, QWidget
 
 from pagedrop.ui.onboarding import (
     FIRST_RUN_TIPS,
     KeyboardShortcutsDialog,
     SHORTCUT_GROUPS,
+    show_context_hint,
 )
-from pagedrop.ui.settings import has_seen_tips, set_has_seen_tips
+from pagedrop.ui.settings import (
+    KEY_CONTEXT_HINT_SELECTION_EXPORT,
+    has_seen_context_hint,
+    has_seen_tips,
+    set_has_seen_tips,
+)
 
 
 def test_has_seen_tips_pref_round_trip(isolated_settings):
@@ -20,9 +26,30 @@ def test_has_seen_tips_pref_round_trip(isolated_settings):
     assert has_seen_tips() is True
 
 
-def test_first_run_tips_content_covers_required_callouts():
+def test_first_run_tips_stay_essential():
     names = {name for name, _body in FIRST_RUN_TIPS}
-    assert names == {"Open", "Drop zone", "Zoom", "Preview", "Tabs"}
+    assert names == {"Open", "Drop zone"}
+
+
+def test_context_hint_shows_once_without_taking_focus(isolated_settings, qtbot):
+    host = QWidget()
+    host.resize(400, 240)
+    anchor = QPushButton("Export", host)
+    anchor.move(20, 20)
+    qtbot.addWidget(host)
+    host.show()
+    qtbot.waitExposed(host)
+
+    hint = show_context_hint(
+        host,
+        anchor,
+        KEY_CONTEXT_HINT_SELECTION_EXPORT,
+        "Drag selected pages to a folder to export them as PDF files.",
+    )
+    assert hint is not None and hint.isVisible()
+    assert hint.focusPolicy() == Qt.FocusPolicy.NoFocus
+    assert has_seen_context_hint(KEY_CONTEXT_HINT_SELECTION_EXPORT)
+    assert show_context_hint(host, anchor, KEY_CONTEXT_HINT_SELECTION_EXPORT, "Again") is None
 
 
 def test_tips_overlay_dismiss_persists(isolated_settings, main_window, qtbot):
