@@ -340,6 +340,44 @@ def test_viewer_search_next_prev(qtbot, viewer_pdf: Path) -> None:
         loader.close()
 
 
+def test_viewer_search_outcomes_preserve_find_state(qtbot, viewer_pdf: Path) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer._search_edit.setText("missing")
+        generation = viewer._search_generation
+        viewer._on_search_finished(generation, [], True)
+        assert viewer._hit_label.text() == "No matches"
+        assert not viewer._ocr_button.isVisible()
+
+        viewer._on_search_finished(generation, [], False)
+        assert viewer._hit_label.text() == "No searchable text detected"
+        assert viewer._ocr_button.isVisible()
+        assert viewer._search_edit.text() == "missing"
+
+        viewer._on_search_error(generation, "temporary reader issue")
+        assert viewer._hit_label.text() == "Search failed: temporary reader issue"
+        assert viewer._search_edit.text() == "missing"
+    finally:
+        loader.close()
+
+
+def test_viewer_search_detects_textless_document(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "scan.pdf"
+    _text_pdf(path, [""])
+    viewer, _model, loader = _bind_viewer(qtbot, path)
+    try:
+        viewer.search("missing")
+        qtbot.waitUntil(
+            lambda: viewer._hit_label.text() == "No searchable text detected",
+            timeout=5000,
+        )
+        assert viewer._ocr_button.isVisible()
+        with qtbot.waitSignal(viewer.ocr_requested):
+            viewer._ocr_button.click()
+    finally:
+        loader.close()
+
+
 def test_viewer_selection_copy(qtbot, viewer_pdf: Path) -> None:
     viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
     try:

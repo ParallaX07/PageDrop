@@ -101,6 +101,7 @@ from pagedrop.core.pdf_service import (
     extract_attachment,
     layers_for_path,
     logical_index_for_source,
+    model_has_searchable_text,
     outline_for_paths,
     page_geometry,
     page_links,
@@ -409,7 +410,7 @@ class _ViewerRenderWorker(QRunnable):
 
 class _ViewerSearchWorker(QRunnable):
     class Signals(QObject):
-        finished = pyqtSignal(int, object)  # gen, list[SearchHit]
+        finished = pyqtSignal(int, object, object)  # gen, hits, has text
         error = pyqtSignal(int, str)
 
     def __init__(
@@ -440,7 +441,15 @@ class _ViewerSearchWorker(QRunnable):
             )
             if self._is_cancelled(self._generation):
                 return
-            self.signals.finished.emit(self._generation, hits)
+            has_text = True
+            if not hits:
+                has_text = model_has_searchable_text(
+                    self._model,
+                    passwords=self._passwords,
+                    is_cancelled=lambda: self._is_cancelled(self._generation),
+                )
+            if not self._is_cancelled(self._generation):
+                self.signals.finished.emit(self._generation, hits, has_text)
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))
@@ -1483,6 +1492,7 @@ class PdfViewerWidget(QWidget):
     closed = pyqtSignal()
     busy_changed = pyqtSignal(bool, str)
     status_message = pyqtSignal(str)
+    ocr_requested = pyqtSignal()
     render_error = pyqtSignal(str)
     markup_changed = pyqtSignal()
 
@@ -1935,6 +1945,7 @@ class PdfViewerWidget(QWidget):
         gen = self._search_generation
         self._hits = []
         self._hit_index = -1
+        self._ocr_button.hide()
         self._apply_hits_to_tiles()
         if not query:
             self._hit_label.setText("")
@@ -2078,6 +2089,13 @@ class PdfViewerWidget(QWidget):
         self._hit_label.setObjectName("PdfViewerHitLabel")
         self._hit_label.setAccessibleName("Search results")
         find_layout.addWidget(self._hit_label)
+        self._ocr_button = QToolButton()
+        self._ocr_button.setText("Use OCR")
+        self._ocr_button.setToolTip("Create a searchable copy with OCR")
+        self._ocr_button.setAccessibleName("Create a searchable copy with OCR")
+        self._ocr_button.clicked.connect(self.ocr_requested.emit)
+        self._ocr_button.hide()
+        find_layout.addWidget(self._ocr_button)
         self._find_group.setMinimumWidth(180)
         layout.addWidget(self._find_group, stretch=1)
 
@@ -3604,7 +3622,9 @@ class PdfViewerWidget(QWidget):
     def _on_search_submit(self) -> None:
         self.search(self._search_edit.text())
 
-    def _on_search_finished(self, generation: int, hits: object) -> None:
+    def _on_search_finished(
+        self, generation: int, hits: object, has_searchable_text: object = None
+    ) -> None:
         if self._search_cancelled(generation):
             return
         if self._pool.activeThreadCount() == 0:
@@ -3616,10 +3636,15 @@ class PdfViewerWidget(QWidget):
         self._hits = list(hits) if isinstance(hits, list) else []
         self._hit_index = 0 if self._hits else -1
         n = len(self._hits)
-        self._hit_label.setText(f"{n} result{'s' if n != 1 else ''}" if n else "No results")
-        self._hit_label.setAccessibleName(
-            f"{n} search results" if n else "No search results"
-        )
+        if n:
+            label = f"{n} result{'s' if n != 1 else ''}"
+        elif has_searchable_text is False:
+            label = "No searchable text detected"
+        else:
+            label = "No matches"
+        self._hit_label.setText(label)
+        self._hit_label.setAccessibleName(label)
+        self._ocr_button.setVisible(has_searchable_text is False)
         self._apply_hits_to_tiles()
         if self._hits:
             self._reveal_current_hit()
@@ -3633,7 +3658,10 @@ class PdfViewerWidget(QWidget):
         else:
             self._overlay.show_message("Rendering…")
             self.busy_changed.emit(True, "Rendering…")
-        self._hit_label.setText("Search failed")
+        reason = message.strip() or "try again"
+        self._hit_label.setText(f"Search failed: {reason}")
+        self._hit_label.setAccessibleName(f"Search failed: {reason}")
+        self._ocr_button.hide()
         self.render_error.emit(message)
 
     def _apply_hits_to_tiles(self) -> None:

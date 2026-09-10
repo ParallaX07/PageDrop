@@ -344,6 +344,29 @@ def search_model(
     return hits
 
 
+def model_has_searchable_text(
+    model: PdfEditModel,
+    *,
+    passwords: Mapping[str, str] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> bool:
+    """Return whether any logical page has extractable text."""
+    for ref in model.iter_pages():
+        if is_cancelled is not None and is_cancelled():
+            return False
+
+        def _page(ref: PageRef = ref) -> bool:
+            doc = _cache_get(
+                ref.source_path, _password_for(passwords, ref.source_path)
+            )
+            return bool(doc[ref.source_index].get_text("text").strip())
+
+        if call(_page):
+            return True
+        time.sleep(0.001)
+    return False
+
+
 def page_text_dict(
     ref: PageRef,
     *,

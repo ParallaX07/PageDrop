@@ -957,6 +957,7 @@ class MainWindow(QMainWindow):
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
         tab.preview_widget.closed.connect(self._on_viewer_closed)
         tab.preview_widget.status_message.connect(self._transient_status)
+        tab.preview_widget.ocr_requested.connect(self._open_ocr_from_viewer)
         tab.dirty_changed.connect(self._on_tab_dirty_changed)
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
@@ -990,6 +991,7 @@ class MainWindow(QMainWindow):
             (preview.render_error, self._on_preview_render_error),
             (preview.closed, self._on_viewer_closed),
             (preview.status_message, self._transient_status),
+            (preview.ocr_requested, self._open_ocr_from_viewer),
             (tab.dirty_changed, self._on_tab_dirty_changed),
         ):
             try:
@@ -2491,6 +2493,12 @@ class MainWindow(QMainWindow):
             self._tools_window.set_editor(self)
         assert self._tools_window is not None
         self.open_tool_page(self._tools_window, page_id=ToolsWindow.PAGE_ID)
+
+    def _open_ocr_from_viewer(self) -> None:
+        """Open the existing OCR shell; it pre-fills the active document."""
+        self._open_tools_window()
+        if self._tools_window is not None:
+            self._tools_window._on_tile_activated("ocr_pdf")
 
     def _open_pdf(self) -> None:
         start_dir = last_directory()

@@ -247,6 +247,20 @@ def test_window_title_uses_logical_count_after_delete(main_window, five_page_pdf
     assert main_window._active_tab().edit_model.logical_count() == 3
 
 
+def test_thumbnail_followup_ignores_deleted_page_indices(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: len(main_window._thumbnail_grid._cards) == 5, timeout=10000)
+    grid = main_window._thumbnail_grid
+    assert grid._model is not None
+    grid._model.remove_pages([4])
+    # A completion queued before delete can retain the old render-width entry.
+    grid._page_render_width.append(0)
+    grid._start_rendering(silent=True, page_indices=[4])
+    assert grid._model.logical_count() == 4
+
+
 def test_exit_action_closes(main_window, qtbot):
     main_window.show()
     exit_action = _find_action_by_text(_file_menu_actions(main_window), "E&xit", "Exit")

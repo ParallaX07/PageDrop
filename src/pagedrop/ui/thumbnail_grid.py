@@ -591,7 +591,8 @@ class ThumbnailGrid(QScrollArea):
             page_indices = [
                 i
                 for i in page_indices
-                if 0 <= i < len(self._page_render_width)
+                if 0 <= i < self._model.logical_count()
+                and i < len(self._page_render_width)
                 and self._page_render_width[i] < target
             ]
 
