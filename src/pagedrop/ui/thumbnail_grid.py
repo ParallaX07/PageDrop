@@ -19,6 +19,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
+    QAction,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDragMoveEvent,
@@ -34,6 +35,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -212,35 +214,6 @@ class _CrossWindowMoveUndo:
         return True
 
 
-class EmptyStateOpenButton(QLabel):
-    """Keyboard-operable, button-styled label for the scroll-grid empty state."""
-
-    clicked = pyqtSignal()
-
-    def __init__(self) -> None:
-        super().__init__("Open PDF")
-        self.setObjectName("EmptyStateOpenButton")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setAccessibleName("Open PDF")
-        self.setToolTip("Open a PDF")
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-    def click(self) -> None:
-        self.clicked.emit()
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.click()
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.click()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
 class ThumbnailGrid(QScrollArea):
     rendering_started = pyqtSignal(int)
     rendering_progress = pyqtSignal(int, int)
@@ -319,8 +292,13 @@ class ThumbnailGrid(QScrollArea):
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_hint.setWordWrap(True)
 
-        self._empty_open_button = EmptyStateOpenButton()
+        self._empty_open_button = QPushButton("Open PDF")
+        self._empty_open_button.setObjectName("EmptyStateOpenButton")
+        self._empty_open_button.setAccessibleName("Open PDF")
+        self._empty_open_button.setToolTip("Open a PDF")
+        self._empty_open_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._empty_open_button.clicked.connect(self.open_pdf_requested)
+        self._open_action: QAction | None = None
 
         self._empty_kbd = QLabel("or drop a file here")
         self._empty_kbd.setObjectName("GridEmptyKbd")
@@ -436,6 +414,22 @@ class ThumbnailGrid(QScrollArea):
             self._empty_kbd.hide()
         if self._empty_open_button is not None:
             self._empty_open_button.setVisible(show_open_button)
+
+    def bind_open_action(self, action: QAction) -> None:
+        """Make the empty-state control a projection of the window Open action."""
+        self._open_action = action
+        self._empty_open_button.clicked.connect(action.trigger)
+        action.changed.connect(self._sync_empty_open_action)
+        self._sync_empty_open_action()
+
+    def _sync_empty_open_action(self) -> None:
+        action = self._open_action
+        if action is None:
+            return
+        self._empty_open_button.setText(action.text().replace("&", ""))
+        self._empty_open_button.setEnabled(action.isEnabled())
+        self._empty_open_button.setToolTip(action.toolTip() or "Open a PDF")
+        self._empty_open_button.setAccessibleName(action.text().replace("&", ""))
 
     def load_model(
         self,

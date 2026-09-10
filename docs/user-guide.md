@@ -4,7 +4,7 @@ PageDrop is built around a thumbnail grid and drag-and-drop. You open PDFs in ta
 
 ## Open and select
 
-1. **Open a PDF**: File → Open PDF (`Ctrl+O`), or the toolbar Open button. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab. File → Open Recent reopens recent paths.
+1. **Open a PDF**: File → Open PDF (`Ctrl+O`). A blank tab also has an **Open PDF** button; when a document is open, related page actions appear in its toolbar. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab. File → Open Recent reopens recent paths.
 2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or select a page or range like `1-5` with **Ctrl+F**.
 3. **Zoom and preview**: Ctrl+scroll zooms thumbnails; Ctrl+0 resets. Double-click or press Enter for a full-page preview; arrow keys plus Space handle keyboard navigation. Escape returns to the grid from preview.
 

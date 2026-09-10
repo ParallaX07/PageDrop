@@ -133,6 +133,8 @@ def fit_message_box_buttons(message: QMessageBox) -> None:
     widest = max(button.sizeHint().width() for button in buttons)
     for button in buttons:
         button.setMinimumWidth(widest)
+        if message.buttonRole(button) == QMessageBox.ButtonRole.DestructiveRole:
+            button.setProperty("destructive", True)
     message.setMinimumWidth(message.sizeHint().width())
 
 

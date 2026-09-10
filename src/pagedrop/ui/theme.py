@@ -567,15 +567,16 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {ACCENT};
     }}
 
+    /* Checked layout modes are a quiet state, not a second primary action. */
     QToolButton:checked {{
-        background-color: {ACCENT};
-        color: {TEXT_ON_ACCENT};
-        border: 1px solid {ACCENT_PRESSED};
+        background-color: {bg_card_hover};
+        color: {text_primary};
+        border: 1px solid {ACCENT};
         font-weight: 600;
     }}
 
     QToolButton:checked:hover {{
-        background-color: {ACCENT_HOVER};
+        background-color: {bg_pressed};
         border-color: {ACCENT_HOVER};
     }}
 
@@ -587,6 +588,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton#ToolbarPrimary,
+    QPushButton#EmptyStateOpenButton,
     QToolBar QToolButton#ToolbarPrimary {{
         background-color: {ACCENT};
         color: {TEXT_ON_ACCENT};
@@ -596,23 +598,27 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton#ToolbarPrimary:hover,
+    QPushButton#EmptyStateOpenButton:hover,
     QToolBar QToolButton#ToolbarPrimary:hover {{
         background-color: {ACCENT_HOVER};
         border-color: {ACCENT_HOVER};
     }}
 
     QPushButton#ToolbarPrimary:pressed,
+    QPushButton#EmptyStateOpenButton:pressed,
     QToolBar QToolButton#ToolbarPrimary:pressed {{
         background-color: {ACCENT_PRESSED};
         border-color: {ACCENT_PRESSED};
     }}
 
     QPushButton#ToolbarPrimary:focus,
+    QPushButton#EmptyStateOpenButton:focus,
     QToolBar QToolButton#ToolbarPrimary:focus {{
         border: {focus_width}px solid {TEXT_ON_ACCENT};
     }}
 
-    QPushButton#ToolbarPrimary:disabled {{
+    QPushButton#ToolbarPrimary:disabled,
+    QPushButton#EmptyStateOpenButton:disabled {{
         background-color: {bg_card_hover};
         color: {text_muted};
         border-color: {border_subtle};
@@ -665,6 +671,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         border-color: {border_subtle};
         background-color: transparent;
+    }}
+
+    /* Destructive controls use text, role, and a distinct color treatment. */
+    QPushButton[destructive="true"] {{
+        color: {close_tab};
+        border-color: {close_tab};
+        background-color: transparent;
+    }}
+
+    QPushButton[destructive="true"]:hover {{
+        color: {TEXT_ON_ACCENT};
+        border-color: {close_tab};
+        background-color: {close_tab};
     }}
 
     QToolButton#NewTabButton {{
@@ -939,10 +958,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 0;
     }}
 
-    QLabel#EmptyStateOpenButton {{
-        color: {TEXT_ON_ACCENT};
-        background-color: {ACCENT};
-        border-radius: {RADIUS_CONTROL}px;
+    QPushButton#EmptyStateOpenButton {{
         min-height: 30px;
         padding: 3px {SPACE_4}px;
     }}

@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         self._transient_status_timer = QTimer(self)
         self._transient_status_timer.setSingleShot(True)
         self._transient_status_timer.timeout.connect(self._restore_active_status)
+        self._updating_responsive_shell = False
 
         self.setWindowTitle(self.APP_TITLE)
         # Offscreen Qt has no window manager and does not support custom chrome.
@@ -539,19 +540,24 @@ class MainWindow(QMainWindow):
         self._application_overflow_menu = menubar.addMenu("M&ore")
         self._application_overflow_menu.setToolTip("More application actions")
         self._application_overflow_menu.setAccessibleName("More application actions")
-        for action in (
-            self._merge_menu_action,
-            self._create_pdf_menu_action,
-            self._tools_menu_action,
-            self._help_menu_action,
-        ):
-            self._application_overflow_menu.addAction(action)
         self._responsive_menu_actions = (
             self._merge_menu_action,
             self._create_pdf_menu_action,
             self._tools_menu_action,
             self._help_menu_action,
         )
+        self._application_overflow_menu.menuAction().setVisible(False)
+
+        for menu in (
+            file_menu,
+            self._open_recent_menu,
+            edit_menu,
+            view_menu,
+            quality_menu,
+            help_menu,
+            self._application_overflow_menu,
+        ):
+            self._install_menu_focus_restore(menu)
 
         window_controls = QWidget(menubar)
         window_controls.setObjectName("WindowControls")
@@ -578,6 +584,7 @@ class MainWindow(QMainWindow):
                 self._maximize_button = button
         menubar.setCornerWidget(window_controls, Qt.Corner.TopRightCorner)
         self._menu_bar = menubar
+        self._window_controls = window_controls
         self._title_drag_widgets = (window_controls, self._title_label)
         QTimer.singleShot(0, self._update_responsive_shell)
 
@@ -610,7 +617,6 @@ class MainWindow(QMainWindow):
         toolbar.addAction(a["rotate_ccw"])
         toolbar.addAction(a["move_up"])
         toolbar.addAction(a["move_down"])
-        toolbar.addAction(a["move_to"])
         toolbar.addAction(a["extract_selected"])
         toolbar.addSeparator()
         toolbar.addAction(a["delete_pages"])
@@ -642,10 +648,9 @@ class MainWindow(QMainWindow):
         self._toolbar_overflow.setToolTip("More page actions")
         self._toolbar_overflow.setAccessibleName("More page actions")
         self._toolbar_overflow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        overflow = QMenu(self._toolbar_overflow)
-        for action in (a["export_all"], a["deselect_all"], a["move_to"]):
-            overflow.addAction(action)
-        self._toolbar_overflow.setMenu(overflow)
+        self._toolbar_overflow_menu = QMenu(self._toolbar_overflow)
+        self._install_menu_focus_restore(self._toolbar_overflow_menu)
+        self._toolbar_overflow.setMenu(self._toolbar_overflow_menu)
         toolbar.addWidget(self._toolbar_overflow)
 
         for action in (a["open"], a["save_as"], a["extract_selected"]):
@@ -885,7 +890,7 @@ class MainWindow(QMainWindow):
             self._extract_selected_to_new_window
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
-        grid.open_pdf_requested.connect(self._actions["open"].trigger)
+        grid.bind_open_action(self._actions["open"])
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
@@ -924,7 +929,6 @@ class MainWindow(QMainWindow):
                 self._extract_selected_to_new_window,
             ),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
-            (grid.open_pdf_requested, self._actions["open"].trigger),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
@@ -1184,8 +1188,38 @@ class MainWindow(QMainWindow):
         ):
             self._set_toolbar_action_visible(action, has_selection)
         self._set_toolbar_action_visible(self._select_all_action, not has_selection)
-        self._toolbar_overflow.setVisible(True)
+        self._sync_toolbar_overflow(has_selection)
         self._set_toolbar_primary()
+
+    def _sync_toolbar_overflow(self, has_selection: bool) -> None:
+        """Project only page commands without a direct toolbar presentation."""
+        menu = self._toolbar_overflow_menu
+        menu.clear()
+        if self._export_all_action.isEnabled():
+            menu.addAction(self._export_all_action)
+        if has_selection and self._move_to_action.isEnabled():
+            menu.addAction(self._move_to_action)
+        self._toolbar_overflow.setVisible(bool(menu.actions()))
+
+    def _install_menu_focus_restore(self, menu: QMenu) -> None:
+        """Return keyboard focus to the control that opened a transient menu."""
+        menu.aboutToShow.connect(
+            lambda: setattr(menu, "_pagedrop_focus_target", QApplication.focusWidget())
+        )
+        menu.aboutToHide.connect(
+            lambda: QTimer.singleShot(0, lambda: self._restore_menu_focus(menu))
+        )
+
+    def _restore_menu_focus(self, menu: QMenu) -> None:
+        target = getattr(menu, "_pagedrop_focus_target", None)
+        if (
+            isinstance(target, QWidget)
+            and target.isVisible()
+            and target.isEnabled()
+            and target.window() is self
+            and QApplication.activeModalWidget() is None
+        ):
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _set_toolbar_primary(self) -> None:
         for action in (self._actions["open"], self._save_as_action):
@@ -1251,7 +1285,7 @@ class MainWindow(QMainWindow):
             self._delete_pages_action,
         ):
             self._set_toolbar_action_visible(action, False)
-        self._toolbar_overflow.hide()
+        self._toolbar.hide()
         self._update_thumbnail_zoom_host()
 
     def _reset_toolbar_for_tool_page(self) -> None:
@@ -1760,6 +1794,7 @@ class MainWindow(QMainWindow):
     def _on_light_theme_toggled(self, enabled: bool) -> None:
         set_light_theme(enabled)
         refresh_themed_widgets()
+        QTimer.singleShot(0, self._update_responsive_shell)
         # Keep other windows' checkboxes in sync.
         if self._window_manager is not None:
             for window in self._window_manager.windows:
@@ -1946,35 +1981,66 @@ class MainWindow(QMainWindow):
         self._update_responsive_shell()
 
     def _update_responsive_shell(self) -> None:
-        """Give navigation priority over the decorative document title."""
-        if not hasattr(self, "_menu_bar"):
+        """Move destinations between the menu bar and More as one ownership set."""
+        if not hasattr(self, "_menu_bar") or self._updating_responsive_shell:
             return
-        menu_width = self._menu_bar.fontMetrics()
-        action_width = lambda action: menu_width.horizontalAdvance(
-            action.text().replace("&", "")
-        ) + 28
-        controls_width = self._maximize_button.sizeHint().width() * 3 + 12
-        base_actions = [
-            action for action in self._menu_bar.actions()
-            if action not in self._responsive_menu_actions
-        ]
-        available = self.width() - controls_width - sum(
-            action_width(action) for action in base_actions
-        ) - sum(action_width(action) for action in self._responsive_menu_actions)
-        shown = list(self._responsive_menu_actions)
-        while available < 0 and shown:
-            action = shown.pop()
-            available += action_width(action)
+        self._updating_responsive_shell = True
+        try:
+            # Start with no title reservation: filename identity gives way before
+            # any destination moves. Geometry, rather than text-width guesses,
+            # accounts for the active font, display scale, and corner controls.
+            self._title_label.setFixedWidth(0)
+            direct = list(self._responsive_menu_actions)
+            overflowed: list[QAction] = []
+            self._relocate_application_actions(direct, overflowed)
+            self._flush_menu_layout()
+
+            while direct and not self._menu_actions_fit():
+                overflowed.insert(0, direct.pop())
+                self._relocate_application_actions(direct, overflowed)
+                self._flush_menu_layout()
+
+            title_width = min(180, max(0, self._menu_action_slack()))
+            self._title_label.setFixedWidth(title_width)
+            self._sync_custom_title()
+        finally:
+            self._updating_responsive_shell = False
+        self._update_thumbnail_zoom_host()
+
+    def _relocate_application_actions(
+        self, direct: list[QAction], overflowed: list[QAction]
+    ) -> None:
+        """Give every responsive destination exactly one current presentation."""
         for action in self._responsive_menu_actions:
             self._menu_bar.removeAction(action)
-        for action in shown:
-            self._menu_bar.insertAction(
-                self._application_overflow_menu.menuAction(), action
-            )
-        title_width = max(0, min(220, available))
-        self._title_label.setFixedWidth(title_width)
-        self._sync_custom_title()
-        self._update_thumbnail_zoom_host()
+            self._application_overflow_menu.removeAction(action)
+        more = self._application_overflow_menu.menuAction()
+        more.setVisible(bool(overflowed))
+        for action in direct:
+            self._menu_bar.insertAction(more, action)
+        for action in overflowed:
+            self._application_overflow_menu.addAction(action)
+
+    def _flush_menu_layout(self) -> None:
+        self._menu_bar.updateGeometry()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _menu_action_slack(self) -> int:
+        """Return room between the final rendered menu action and title controls."""
+        actions = [
+            action for action in self._menu_bar.actions() if action.isVisible()
+        ]
+        right = max(
+            (self._menu_bar.actionGeometry(action).right() + 1 for action in actions),
+            default=0,
+        )
+        controls_left = self._window_controls.geometry().left()
+        if controls_left <= 0 or self._menu_bar.width() < self.minimumWidth():
+            controls_left = self.width() - self._window_controls.sizeHint().width()
+        return controls_left - right
+
+    def _menu_actions_fit(self) -> bool:
+        return self._menu_action_slack() >= 0
 
     def _update_thumbnail_zoom_host(self) -> None:
         if not hasattr(self, "_thumbnail_zoom_host"):
@@ -1998,6 +2064,8 @@ class MainWindow(QMainWindow):
                 button.setText("❐" if maximized else "□")
                 button.setToolTip("Restore window" if maximized else "Maximize window")
                 button.setAccessibleName(button.toolTip())
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            QTimer.singleShot(0, self._update_responsive_shell)
         super().changeEvent(event)
 
     def _extract_selected_to_folder(self) -> None:

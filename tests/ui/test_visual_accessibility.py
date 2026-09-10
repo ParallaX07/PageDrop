@@ -274,7 +274,7 @@ def test_r10a_prefs_dialog_has_section_dividers(qtbot, isolated_settings):
 
 def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
     """R10b: editor empty dashed/dropActive; queue kbd; logo-only editor."""
-    from PyQt6.QtWidgets import QLabel
+    from PyQt6.QtWidgets import QLabel, QPushButton
 
     from pagedrop.ui.convert_file_grid import ConvertFileGrid
     from pagedrop.ui.merge_file_grid import MergeFileGrid
@@ -305,9 +305,9 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
         grid._empty_logo,
         grid._empty_title,
         grid._empty_hint,
-        grid._empty_open_button,
         grid._empty_kbd,
     ]
+    assert isinstance(grid._empty_open_button, QPushButton)
 
     merge = MergeFileGrid()
     convert = ConvertFileGrid()

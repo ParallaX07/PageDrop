@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QLabel,
+    QPushButton,
     QToolBar,
     QWidget,
 )
@@ -161,15 +162,22 @@ def test_contextual_toolbar_promotes_save_as_after_edit(main_window, five_page_p
     assert preview_button is not None and preview_button.text() == "Pages / Preview"
 
 
-def test_toolbar_overflow_reuses_registered_actions(main_window):
+def test_toolbar_overflow_owns_only_actions_displaced_from_the_toolbar(
+    main_window, five_page_pdf, qtbot
+):
     overflow = main_window._toolbar_overflow.menu()
     assert overflow is not None
     actions = main_window._actions
-    assert overflow.actions() == [
-        actions["export_all"],
-        actions["deselect_all"],
-        actions["move_to"],
-    ]
+    assert overflow.actions() == []
+    assert main_window._toolbar_overflow.isHidden()
+
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None)
+    assert overflow.actions() == [actions["export_all"]]
+
+    main_window._active_tab().thumbnail_grid.selection_manager.select_single(0)
+    qtbot.waitUntil(lambda: overflow.actions() == [actions["export_all"], actions["move_to"]])
+    assert main_window._toolbar.widgetForAction(actions["move_to"]) is None
     rotate = main_window._toolbar.widgetForAction(actions["rotate_cw"])
     assert rotate is not None
     assert rotate.accessibleName() == "Rotate clockwise"
@@ -285,24 +293,50 @@ def test_narrow_shell_elides_title_and_keeps_application_actions_reachable(main_
 
 
 def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_window):
-    for width, height in ((960, 680), (720, 480)):
+    for width, height in ((960, 680), (800, 600), (720, 480)):
         main_window.resize(width, height)
         QApplication.processEvents()
         top_level_actions = main_window.menuBar().actions()
         overflow_actions = main_window._application_overflow_menu.actions()
         assert main_window._actions["open"] in _file_menu_actions(main_window)
         for action in (
+            main_window._actions["merge"],
             main_window._actions["create_pdf"],
             main_window._actions["tools"],
             main_window._help_menu_action,
         ):
-            assert action in top_level_actions or action in overflow_actions
+            assert (action in top_level_actions) + (action in overflow_actions) == 1
+        assert main_window._application_overflow_menu.menuAction().isVisible() == bool(
+            overflow_actions
+        )
         assert main_window._title_label.toolTip() == main_window.windowTitle()
+
+
+def test_shell_uses_rendered_geometry_after_menu_font_growth(main_window, qtbot):
+    main_window.resize(720, 480)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    menu_bar = main_window.menuBar()
+    font = QFont(menu_bar.font())
+    font.setPointSize(max(font.pointSize() + 8, 20))
+    menu_bar.setFont(font)
+    QApplication.processEvents()
+    main_window._update_responsive_shell()
+
+    top_level = menu_bar.actions()
+    overflow = main_window._application_overflow_menu.actions()
+    for action in main_window._responsive_menu_actions:
+        assert (action in top_level) + (action in overflow) == 1
+    assert main_window._application_overflow_menu.menuAction().isVisible() == bool(
+        overflow
+    )
+    rendered_right = max(menu_bar.actionGeometry(action).right() + 1 for action in top_level)
+    assert rendered_right <= main_window._window_controls.geometry().left()
 
 
 def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, monkeypatch):
     grid = main_window._active_tab().thumbnail_grid
-    button = grid.findChild(QLabel, "EmptyStateOpenButton")
+    button = grid.findChild(QPushButton, "EmptyStateOpenButton")
     assert button is not None
     assert not button.isHidden()
     assert button.accessibleName() == "Open PDF"
@@ -311,6 +345,7 @@ def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, mon
     assert grid._empty_kbd.text() == "or drop a file here"
     assert "select" not in grid._empty_kbd.text().lower()
     assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert main_window._toolbar.isHidden()
     for action in (
         main_window._actions["select_all"],
         main_window._actions["extract_selected"],
