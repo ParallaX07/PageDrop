@@ -314,7 +314,7 @@ def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtb
     viewer = tab.viewer_widget
     assert viewer.current_page == 0
     assert model.page_at(viewer.current_page).source_index == 4
-    assert viewer._page_label.text() == "Page 1 of 5"
+    assert viewer._page_edit.text() == "Page 1 of 5"
 
     # Search finds the moved page's text at logical index 0.
     viewer.search("Marker4")
@@ -323,4 +323,4 @@ def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtb
 
     viewer.go_to_page(1)
     assert model.page_at(viewer.current_page).source_index == 0
-    assert viewer._page_label.text() == "Page 2 of 5"
+    assert viewer._page_edit.text() == "Page 2 of 5"

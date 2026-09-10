@@ -147,6 +147,73 @@ def test_viewer_layouts_and_zoom(qtbot, viewer_pdf: Path) -> None:
         loader.close()
 
 
+def test_viewer_toolbar_groups_and_page_position(qtbot, viewer_pdf: Path) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        groups = viewer._toolbar.findChildren(
+            type(viewer._find_group), "PdfViewerToolbarGroup"
+        )
+        assert [group.accessibleName() for group in groups] == [
+            "Find",
+            "Page position",
+            "Page layout",
+            "Zoom",
+            "Secondary actions",
+        ]
+        assert viewer._page_edit.text() == "Page 1 of 3"
+
+        viewer._page_edit.setText("3")
+        viewer._on_page_edit_submit()
+        assert viewer.current_page == 2
+        assert viewer._page_edit.text() == "Page 3 of 3"
+
+        viewer._page_edit.setText("Page 4 of 3")
+        viewer._on_page_edit_submit()
+        assert viewer._page_edit.text() == "Page 4 of 3"
+        assert viewer._page_edit.property("invalid") is True
+        assert "1 to 3" in viewer._page_edit.accessibleDescription()
+    finally:
+        loader.close()
+
+
+def test_viewer_toolbar_layout_zoom_and_print_actions(qtbot, viewer_pdf: Path) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer._layout_actions[ViewerLayout.SINGLE].trigger()
+        assert viewer.layout_mode == ViewerLayout.SINGLE
+        assert viewer._layout_action_group.checkedAction() is viewer._layout_actions[
+            ViewerLayout.SINGLE
+        ]
+
+        viewer.set_zoom_mode(ZoomMode.PERCENT, 125)
+        assert viewer._zoom_button.text() == "125%"
+        viewer._fit_page_action.trigger()
+        assert viewer.zoom_mode == ZoomMode.FIT_PAGE
+        assert viewer._zoom_button.text() == "Fit page"
+
+        viewer.setFixedSize(720, 700)
+        qtbot.waitUntil(lambda: viewer.width() == 720, timeout=1000)
+        viewer._update_toolbar_layout()
+        assert viewer._layout_menu_button.isVisible()
+        assert not viewer._layout_buttons.isVisible()
+
+        narrow_width = viewer._toolbar_width_for(viewer._layout_menu_button, True) - 1
+        viewer.setFixedSize(narrow_width, 700)
+        qtbot.waitUntil(lambda: viewer.width() == narrow_width, timeout=1000)
+        viewer._update_toolbar_layout()
+        assert viewer._secondary_overflow.isVisible()
+        assert viewer._secondary_overflow_menu.actions() == [viewer._print_action]
+
+        viewer.setFixedSize(1200, 700)
+        qtbot.waitUntil(lambda: viewer.width() == 1200, timeout=1000)
+        viewer._update_toolbar_layout()
+        assert viewer._print_button.isVisible()
+        assert not viewer._secondary_overflow.isVisible()
+        assert not viewer._secondary_overflow_menu.actions()
+    finally:
+        loader.close()
+
+
 def test_fit_page_spread_uses_viewport_height(qtbot, viewer_pdf: Path) -> None:
     """Fit page in two-page mode must not double-halve render width."""
     from pagedrop.ui.pdf_viewer import PAGE_GAP_PX

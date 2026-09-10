@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import replace
@@ -31,10 +32,13 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
     QColor,
     QDesktopServices,
     QGuiApplication,
     QKeyEvent,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -1641,12 +1645,15 @@ class PdfViewerWidget(QWidget):
         self._search_edit.clear()
         self._hit_label.setText("")
         if model is None:
+            self._page_edit.clear()
+            self._page_edit.setEnabled(False)
             self._side_panel_timer.stop()
             self._side_panel_dirty = False
             self._outline.clear()
             self._layers.clear()
             self._attachments.clear()
             return
+        self._page_edit.setEnabled(True)
         self._load_page_sizes()
         self._refresh_side_panel(outline=False)
         # Large TOCs are built on the next event-loop turn so the first canvas
@@ -1655,6 +1662,7 @@ class PdfViewerWidget(QWidget):
         self._side_panel_timer.start()
         self._rebuild_canvas()
         self._update_render_width()
+        self._update_page_label()
         self._schedule_render()
 
     def _passwords(self) -> dict[str, str] | None:
@@ -1790,9 +1798,7 @@ class PdfViewerWidget(QWidget):
         self._cancel_all()
         self._layout = mode
         self._invalidate_offsets()
-        self._layout_continuous.setChecked(mode == ViewerLayout.CONTINUOUS)
-        self._layout_single.setChecked(mode == ViewerLayout.SINGLE)
-        self._layout_spread.setChecked(mode == ViewerLayout.SPREAD)
+        self._layout_actions[mode].setChecked(True)
         self._rebuild_canvas()
         self._update_render_width()
         self._schedule_render()
@@ -1802,6 +1808,7 @@ class PdfViewerWidget(QWidget):
         self._zoom_mode = mode
         if percent is not None:
             self._zoom_percent = max(MIN_ZOOM_PERCENT, min(MAX_ZOOM_PERCENT, percent))
+        self._update_zoom_control()
         self._cache.clear()
         self._invalidate_offsets()
         self._update_render_width()
@@ -2025,80 +2032,225 @@ class PdfViewerWidget(QWidget):
         bar.setObjectName("PdfViewerToolbar")
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
+        self._find_group = self._toolbar_group("Find")
+        find_layout = self._find_group.layout()
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Find in document")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setAccessibleName("Find in document")
         self._search_edit.returnPressed.connect(self._on_search_submit)
-        layout.addWidget(self._search_edit, stretch=1)
+        find_layout.addWidget(self._search_edit, stretch=1)
 
         prev_btn = QToolButton()
         prev_btn.setText("Prev")
         prev_btn.setToolTip("Previous result")
         prev_btn.setAccessibleName("Previous search result")
         prev_btn.clicked.connect(self.find_prev)
-        layout.addWidget(prev_btn)
+        find_layout.addWidget(prev_btn)
 
         next_btn = QToolButton()
         next_btn.setText("Next")
         next_btn.setToolTip("Next result")
         next_btn.setAccessibleName("Next search result")
         next_btn.clicked.connect(self.find_next)
-        layout.addWidget(next_btn)
+        find_layout.addWidget(next_btn)
 
         self._hit_label = QLabel("")
         self._hit_label.setObjectName("PdfViewerHitLabel")
         self._hit_label.setAccessibleName("Search results")
-        layout.addWidget(self._hit_label)
+        find_layout.addWidget(self._hit_label)
+        self._find_group.setMinimumWidth(180)
+        layout.addWidget(self._find_group, stretch=1)
 
-        self._page_label = QLabel("")
-        self._page_label.setObjectName("PdfViewerPageLabel")
-        layout.addWidget(self._page_label)
+        self._page_group = self._toolbar_group("Page position")
+        page_layout = self._page_group.layout()
+        self._page_edit = QLineEdit()
+        self._page_edit.setObjectName("PdfViewerPageEdit")
+        self._page_edit.setAccessibleName("Current page")
+        self._page_edit.setToolTip("Enter a page number")
+        self._page_edit.setMinimumWidth(112)
+        self._page_edit.setMaximumWidth(160)
+        self._page_edit.setEnabled(False)
+        self._page_edit.returnPressed.connect(self._on_page_edit_submit)
+        self._page_edit.installEventFilter(self)
+        page_layout.addWidget(self._page_edit)
+        layout.addWidget(self._page_group)
 
-        self._layout_continuous = QToolButton()
-        self._layout_continuous.setText("Continuous")
-        self._layout_continuous.setCheckable(True)
-        self._layout_continuous.setChecked(True)
-        self._layout_continuous.clicked.connect(
-            lambda: self.set_layout_mode(ViewerLayout.CONTINUOUS)
+        self._layout_group = self._toolbar_group("Page layout")
+        layout_buttons = QWidget()
+        layout_buttons.setObjectName("PdfViewerLayoutButtons")
+        layout_buttons_layout = QHBoxLayout(layout_buttons)
+        layout_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        layout_buttons_layout.setSpacing(2)
+        self._layout_actions = {}
+        self._layout_action_group = QActionGroup(self)
+        self._layout_action_group.setExclusive(True)
+        for mode, label, attr in (
+            (ViewerLayout.CONTINUOUS, "Continuous", "_layout_continuous"),
+            (ViewerLayout.SINGLE, "Single", "_layout_single"),
+            (ViewerLayout.SPREAD, "Two-page", "_layout_spread"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(mode == ViewerLayout.CONTINUOUS)
+            action.setData(mode)
+            self._layout_action_group.addAction(action)
+            self._layout_actions[mode] = action
+            button = QToolButton()
+            button.setDefaultAction(action)
+            button.setAccessibleName(f"{label} page layout")
+            setattr(self, attr, button)
+            layout_buttons_layout.addWidget(button)
+        self._layout_action_group.triggered.connect(
+            lambda action: self.set_layout_mode(action.data())
         )
-        layout.addWidget(self._layout_continuous)
+        self._layout_group.layout().addWidget(layout_buttons)
+        self._layout_buttons = layout_buttons
 
-        self._layout_single = QToolButton()
-        self._layout_single.setText("Single")
-        self._layout_single.setCheckable(True)
-        self._layout_single.clicked.connect(
-            lambda: self.set_layout_mode(ViewerLayout.SINGLE)
+        self._layout_menu = QMenu(self._layout_group)
+        self._layout_menu.setTitle("Page layout")
+        self._layout_menu.addActions(self._layout_action_group.actions())
+        self._layout_menu_button = QToolButton()
+        self._layout_menu_button.setText("Page layout")
+        self._layout_menu_button.setAccessibleName("Page layout")
+        self._layout_menu_button.setToolTip("Choose page layout")
+        self._layout_menu_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
         )
-        layout.addWidget(self._layout_single)
+        self._layout_menu_button.setMenu(self._layout_menu)
+        self._layout_group.layout().addWidget(self._layout_menu_button)
+        layout.addWidget(self._layout_group)
 
-        self._layout_spread = QToolButton()
-        self._layout_spread.setText("Two-page")
-        self._layout_spread.setCheckable(True)
-        self._layout_spread.clicked.connect(
-            lambda: self.set_layout_mode(ViewerLayout.SPREAD)
+        self._zoom_group = self._toolbar_group("Zoom")
+        self._zoom_menu = QMenu(self._zoom_group)
+        self._fit_width_action = QAction("Fit width", self)
+        self._fit_width_action.triggered.connect(
+            lambda: self.set_zoom_mode(ZoomMode.FIT_WIDTH)
         )
-        layout.addWidget(self._layout_spread)
+        self._fit_page_action = QAction("Fit page", self)
+        self._fit_page_action.triggered.connect(
+            lambda: self.set_zoom_mode(ZoomMode.FIT_PAGE)
+        )
+        self._zoom_menu.addActions((self._fit_width_action, self._fit_page_action))
+        self._zoom_button = QToolButton()
+        self._zoom_button.setAccessibleName("Zoom")
+        self._zoom_button.setToolTip("Choose zoom; Ctrl+scroll adjusts percentage")
+        self._zoom_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._zoom_button.setMenu(self._zoom_menu)
+        self._zoom_group.layout().addWidget(self._zoom_button)
+        self._update_zoom_control()
+        layout.addWidget(self._zoom_group)
 
-        fit_w = QToolButton()
-        fit_w.setText("Fit width")
-        fit_w.clicked.connect(lambda: self.set_zoom_mode(ZoomMode.FIT_WIDTH))
-        layout.addWidget(fit_w)
+        self._secondary_group = self._toolbar_group("Secondary actions")
+        secondary_layout = self._secondary_group.layout()
+        self._print_action = QAction("Print", self)
+        self._print_action.setShortcut(QKeySequence.StandardKey.Print)
+        self._print_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._print_action.triggered.connect(self.print_document)
+        self.addAction(self._print_action)
+        self._print_button = QToolButton()
+        self._print_button.setDefaultAction(self._print_action)
+        self._print_button.setAccessibleName("Print")
+        secondary_layout.addWidget(self._print_button)
 
-        fit_p = QToolButton()
-        fit_p.setText("Fit page")
-        fit_p.clicked.connect(lambda: self.set_zoom_mode(ZoomMode.FIT_PAGE))
-        layout.addWidget(fit_p)
-
-        print_btn = QToolButton()
-        print_btn.setText("Print")
-        print_btn.setAccessibleName("Print")
-        print_btn.clicked.connect(self.print_document)
-        layout.addWidget(print_btn)
+        self._secondary_overflow = QToolButton()
+        self._secondary_overflow.setText("More")
+        self._secondary_overflow.setAccessibleName("More viewer actions")
+        self._secondary_overflow.setToolTip("More viewer actions")
+        self._secondary_overflow.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._secondary_overflow_menu = QMenu(self._secondary_overflow)
+        self._secondary_overflow.setMenu(self._secondary_overflow_menu)
+        secondary_layout.addWidget(self._secondary_overflow)
+        layout.addWidget(self._secondary_group)
 
         return bar
+
+    @staticmethod
+    def _toolbar_group(name: str) -> QFrame:
+        group = QFrame()
+        group.setObjectName("PdfViewerToolbarGroup")
+        group.setAccessibleName(name)
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(2)
+        return group
+
+    def _update_zoom_control(self) -> None:
+        label = {
+            ZoomMode.FIT_WIDTH: "Fit width",
+            ZoomMode.FIT_PAGE: "Fit page",
+        }.get(self._zoom_mode, f"{self._zoom_percent}%")
+        self._zoom_button.setText(label)
+        self._zoom_button.setAccessibleName(f"Zoom: {label}")
+
+    def _toolbar_width_for(self, layout_widget: QWidget, show_print: bool) -> int:
+        toolbar_layout = self._toolbar.layout()
+        assert isinstance(toolbar_layout, QHBoxLayout)
+        margins = toolbar_layout.contentsMargins()
+        groups = (
+            self._find_group.minimumSizeHint().width(),
+            self._page_group.sizeHint().width(),
+            layout_widget.sizeHint().width() + 8,
+            self._zoom_group.sizeHint().width(),
+            self._print_button.sizeHint().width()
+            if show_print
+            else self._secondary_overflow.sizeHint().width(),
+        )
+        return (
+            margins.left()
+            + margins.right()
+            + sum(groups)
+            + toolbar_layout.spacing() * (len(groups) - 1)
+        )
+
+    def _update_toolbar_layout(self) -> None:
+        if not hasattr(self, "_toolbar"):
+            return
+        available_width = self.width()
+        compact_layout = available_width < max(
+            800, self._toolbar_width_for(self._layout_buttons, True)
+        )
+        layout_widget = self._layout_menu_button if compact_layout else self._layout_buttons
+        overflow_print = available_width < self._toolbar_width_for(
+            layout_widget, True
+        )
+        self._layout_buttons.setVisible(not compact_layout)
+        self._layout_menu_button.setVisible(compact_layout)
+        self._print_button.setVisible(not overflow_print)
+        if overflow_print:
+            if not self._secondary_overflow_menu.actions():
+                self._secondary_overflow_menu.addAction(self._print_action)
+        else:
+            self._secondary_overflow_menu.removeAction(self._print_action)
+        self._secondary_overflow.setVisible(overflow_print)
+
+    def _on_page_edit_submit(self) -> None:
+        if self._model is None:
+            return
+        text = self._page_edit.text().strip()
+        match = re.fullmatch(r"Page\s+(\d+)\s+of\s+\d+", text, re.IGNORECASE)
+        page_text = match.group(1) if match else text
+        total = self._model.logical_count()
+        if not page_text.isdigit() or not 1 <= int(page_text) <= total:
+            message = f"Enter a page number from 1 to {total}."
+            self._page_edit.setProperty("invalid", True)
+            self._page_edit.setAccessibleDescription(message)
+            self._page_edit.setToolTip(message)
+            self._page_edit.style().unpolish(self._page_edit)
+            self._page_edit.style().polish(self._page_edit)
+            self.status_message.emit(message)
+            self._page_edit.setFocus()
+            return
+        self._page_edit.setProperty("invalid", False)
+        self._page_edit.setAccessibleDescription("")
+        self._page_edit.setToolTip("Enter a page number")
+        self.go_to_page(int(page_text) - 1)
+        self.setFocus()
+        self._update_page_label()
 
     def _build_annot_rail(self) -> QWidget:
         rail = QFrame()
@@ -3510,26 +3662,31 @@ class PdfViewerWidget(QWidget):
 
     def _update_page_label(self) -> None:
         if self._model is None:
-            self._page_label.setText("")
+            self._page_edit.clear()
             return
         total = self._model.logical_count()
-        self._page_label.setText(f"Page {self._current_page + 1} of {total}")
-        self._page_label.setAccessibleName(
-            f"Page {self._current_page + 1} of {total}"
-        )
+        text = f"Page {self._current_page + 1} of {total}"
+        if not self._page_edit.hasFocus():
+            self._page_edit.setText(text)
+            self._page_edit.setProperty("invalid", False)
+        self._page_edit.setAccessibleName(f"Current page, {text}")
 
     # --- events -------------------------------------------------------------
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self._update_toolbar_layout()
         if self._model is not None:
             self._update_render_width()
             self._schedule_render()
         self.setFocus()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self._page_edit and event.type() == QEvent.Type.FocusIn:
+            QTimer.singleShot(0, self._page_edit.selectAll)
         if (
-            watched is self._scroll.viewport()
+            hasattr(self, "_scroll")
+            and watched is self._scroll.viewport()
             and event.type() == QEvent.Type.Resize
             and self.isVisible()
             and self._model is not None
@@ -3545,6 +3702,7 @@ class PdfViewerWidget(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._update_toolbar_layout()
         self._overlay._sync_geometry()
         if self.isVisible() and self._model is not None:
             previous = self._render_width_px

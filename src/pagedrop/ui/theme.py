@@ -1196,6 +1196,15 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-bottom: 1px solid {border_subtle};
     }}
 
+    QFrame#PdfViewerToolbarGroup {{
+        border: 1px solid {border_subtle};
+        border-radius: 6px;
+    }}
+
+    QLineEdit#PdfViewerPageEdit[invalid="true"] {{
+        border-color: {close_tab};
+    }}
+
     QFrame#PdfViewerAnnotRail {{
         background-color: {bg_surface};
         border-left: 1px solid {border_subtle};
