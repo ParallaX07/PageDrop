@@ -293,6 +293,37 @@ def test_viewer_find_shortcuts_not_stolen(
     assert main_window._go_to_page_action.isEnabled()
 
 
+def test_viewer_narrow_reflow_keeps_actions_reachable(
+    main_window, viewer_text_pdf, qtbot
+):
+    """Narrow viewer uses the layout menu and moves the one Print action."""
+    main_window._load_pdf(str(viewer_text_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window._open_preview()
+    tab = _active_tab(main_window)
+    _wait_viewer_tiles(qtbot, tab)
+    viewer = tab.viewer_widget
+
+    viewer.setFixedWidth(720)
+    qtbot.waitUntil(lambda: viewer.width() == 720, timeout=2000)
+    viewer._update_toolbar_layout()
+
+    assert viewer._layout_menu_button.isVisible()
+    assert not viewer._layout_buttons.isVisible()
+    assert viewer._print_button.isVisible()
+    assert not viewer._secondary_overflow.isVisible()
+
+    overflow_width = viewer._toolbar_width_for(viewer._layout_menu_button, True) - 1
+    viewer.setFixedWidth(overflow_width)
+    qtbot.waitUntil(lambda: viewer.width() == overflow_width, timeout=2000)
+    viewer._update_toolbar_layout()
+    assert viewer._secondary_overflow.isVisible()
+    assert viewer._secondary_overflow_menu.actions() == [viewer._print_action]
+    assert viewer._print_button.isHidden()
+
+
 def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtbot):
     """After reorder, grid labels and viewer logical order follow the model."""
     main_window._load_pdf(str(reorder_pdf))
