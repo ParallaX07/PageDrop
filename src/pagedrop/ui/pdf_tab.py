@@ -76,6 +76,9 @@ class PdfTab(QWidget):
         self._content_stack.setObjectName("TabContentStack")
 
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
+        self._thumbnail_grid.set_annotation_provider(
+            self._pending_annotations_for_page
+        )
         self._thumbnail_grid.set_empty_state_message(
             "Open a PDF",
             hint="Arrange pages, extract selections, or combine documents",
@@ -315,7 +318,21 @@ class PdfTab(QWidget):
         if not self.is_viewer_mode():
             return
         self._content_stack.setCurrentWidget(self._thumbnail_grid)
+        self._thumbnail_grid.refresh_markup_thumbnails()
         self._preview_widget.clear_caches()
+
+    def _pending_annotations_for_page(self, logical: int):
+        if (
+            self._edit_model is None
+            or not 0 <= logical < self._edit_model.logical_count()
+        ):
+            return ()
+        instance_id = self._edit_model.instance_id_at(logical)
+        return tuple(
+            entry.annotation
+            for entry in self._markup.entries_for_instance(instance_id)
+            if entry.annotation is not None
+        )
 
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""

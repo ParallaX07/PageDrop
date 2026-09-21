@@ -772,7 +772,13 @@ class _PageTile(QWidget):
                         AnnotTool.IMAGE,
                         AnnotTool.REDACT,
                     ):
-                        painter.setPen(QPen(accent_qcolor(), 1))
+                        stroke = (
+                            QColor.fromRgbF(*self._markup_color)
+                            if self._tool
+                            in (AnnotTool.RECT, AnnotTool.CIRCLE, AnnotTool.LINE)
+                            else accent_qcolor()
+                        )
+                        painter.setPen(QPen(stroke, 2))
                         if self._tool == AnnotTool.CIRCLE:
                             painter.drawEllipse(QRectF(x0, y0, x1 - x0, y1 - y0))
                         elif self._tool == AnnotTool.LINE:
@@ -788,7 +794,7 @@ class _PageTile(QWidget):
                             painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
 
             if len(self._ink_points) >= 2:
-                painter.setPen(QPen(token_qcolor(PAGE_INK), 2))
+                painter.setPen(QPen(QColor.fromRgbF(*self._markup_color), 2))
                 for i in range(1, len(self._ink_points)):
                     a = self._pdf_to_widget_point(self._ink_points[i - 1])
                     b = self._pdf_to_widget_point(self._ink_points[i])
@@ -946,7 +952,7 @@ class _PageTile(QWidget):
                     self._pdf_to_widget_point(op.points[1]),
                 )
             if op.kind == "ink":
-                painter.setPen(QPen(token_qcolor(PAGE_INK, 180), 2))
+                painter.setPen(QPen(color, 2))
                 for stroke in op.strokes:
                     for i in range(1, len(stroke)):
                         painter.drawLine(
@@ -2876,7 +2882,7 @@ class PdfViewerWidget(QWidget):
                 kind=tool.value,  # type: ignore[arg-type]
                 page_index=logical,
                 rects=(rect,),
-                color=(0.9, 0.2, 0.2),
+                color=self._markup_color,
             )
             self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.LINE:
@@ -2887,7 +2893,7 @@ class PdfViewerWidget(QWidget):
                 kind="line",
                 page_index=logical,
                 points=tuple(points),
-                color=(0.9, 0.2, 0.2),
+                color=self._markup_color,
             )
             self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.STAMP:

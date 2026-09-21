@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.assets import empty_state_logo_pixmap
+from pagedrop.core.annotations import AnnotationOp
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
     PAGE_TRANSFER_MIME,
@@ -117,6 +118,7 @@ class ThumbnailWorker(QRunnable):
         is_cancelled: Callable[[int], bool],
         *,
         passwords: dict[str, str] | None = None,
+        annotations: dict[int, tuple[AnnotationOp, ...]] | None = None,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
@@ -125,6 +127,7 @@ class ThumbnailWorker(QRunnable):
         self._width_px = width_px
         self._is_cancelled = is_cancelled
         self._passwords = passwords
+        self._annotations = annotations or {}
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -145,6 +148,7 @@ class ThumbnailWorker(QRunnable):
                     ref,
                     self._width_px,
                     passwords=self._passwords,
+                    annotations=self._annotations.get(logical_index, ()),
                 )
                 if self._is_cancelled(self._generation):
                     return
@@ -245,6 +249,10 @@ class ThumbnailGrid(QScrollArea):
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager or TempManager()
+        self._annotation_provider: (
+            Callable[[int], tuple[AnnotationOp, ...]] | None
+        ) = None
+        self._markup_rendered_pages: set[int] = set()
         self.setObjectName("ThumbnailGrid")
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -482,6 +490,27 @@ class ThumbnailGrid(QScrollArea):
 
         self.load_model(model, get_loader)
 
+    def set_annotation_provider(
+        self, provider: Callable[[int], tuple[AnnotationOp, ...]]
+    ) -> None:
+        self._annotation_provider = provider
+
+    def refresh_markup_thumbnails(self) -> None:
+        """Rerender pages whose pending annotation preview changed."""
+        if self._model is None or self._annotation_provider is None:
+            return
+        current = {
+            index
+            for index in range(self._model.logical_count())
+            if self._annotation_provider(index)
+        }
+        affected = current | self._markup_rendered_pages
+        self._markup_rendered_pages = current
+        for index in affected:
+            if index < len(self._page_render_width):
+                self._page_render_width[index] = 0
+        self._start_rendering(silent=True, page_indices=list(affected))
+
     def reload_from_model(self) -> None:
         """Rebuild cards from the current model (e.g. after undo/redo)."""
         if self._model is None or self._get_loader is None:
@@ -603,6 +632,11 @@ class ThumbnailGrid(QScrollArea):
 
         page_indices = self._priority_render_order(page_indices)
         pages = [(i, self._model.page_at(i)) for i in page_indices]
+        annotations = (
+            {i: self._annotation_provider(i) for i in page_indices}
+            if self._annotation_provider is not None
+            else None
+        )
 
         self._generation += 1
         self._silent_render = silent
@@ -617,6 +651,7 @@ class ThumbnailGrid(QScrollArea):
             render_width,
             self._is_cancelled,
             passwords=self._source_passwords(),
+            annotations=annotations,
         )
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)

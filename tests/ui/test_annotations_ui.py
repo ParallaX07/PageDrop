@@ -432,6 +432,93 @@ def test_color_on_select_stores_color_cancel_keeps_tool(
         assert btn.isChecked() == (tool == AnnotTool.INK)
 
 
+def test_chosen_color_is_used_by_drawn_markup_preview(
+    qtbot, main_window, markup_pdf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+    viewer = tab.viewer_widget
+    qtbot.waitUntil(
+        lambda: 0 in viewer._tiles
+        and viewer._tiles[0].isVisible()
+        and viewer._tiles[0]._pixmap is not None,
+        timeout=RENDER_TIMEOUT_MS,
+    )
+    monkeypatch.setattr(
+        QColorDialog,
+        "getColor",
+        staticmethod(lambda *_a, **_k: QColor(220, 30, 40)),
+    )
+
+    viewer.set_annot_tool(AnnotTool.INK)
+    viewer._on_markup_gesture(
+        0,
+        "ink",
+        {"strokes": [((40.0, 60.0), (120.0, 100.0))]},
+    )
+    for tool, payload in (
+        ("rect", {"rect": (40.0, 120.0, 120.0, 160.0)}),
+        ("circle", {"rect": (140.0, 120.0, 220.0, 160.0)}),
+        ("line", {"points": ((40.0, 180.0), (120.0, 200.0))}),
+    ):
+        viewer._on_markup_gesture(0, tool, payload)
+
+    annotations = [
+        entry.annotation
+        for entry in tab.markup_session.ops()
+        if entry.annotation is not None
+    ]
+    expected = (220 / 255, 30 / 255, 40 / 255)
+    assert [op.kind for op in annotations] == ["ink", "rect", "circle", "line"]
+    assert all(op.color == pytest.approx(expected) for op in annotations)
+
+    tile = viewer._tiles[0]
+    image = tile.grab().toImage()
+    assert any(
+        image.pixelColor(x, y).red() > 170
+        and image.pixelColor(x, y).green() < 100
+        and image.pixelColor(x, y).blue() < 110
+        for y in range(image.height())
+        for x in range(image.width())
+    )
+
+
+def test_closing_preview_refreshes_pending_markup_thumbnail(
+    qtbot, main_window, markup_pdf: Path
+) -> None:
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    card = tab.thumbnail_grid._cards[0]
+
+    def pixels() -> bytes:
+        assert card._source_pixmap is not None
+        image = card._source_pixmap.toImage()
+        return bytes(image.constBits().asstring(image.sizeInBytes()))
+
+    before = pixels()
+    source_before = markup_pdf.read_bytes()
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+    tab.viewer_widget._markup_color = (0.85, 0.1, 0.15)
+    tab.viewer_widget._on_markup_gesture(
+        0,
+        "ink",
+        {"strokes": [((30.0, 40.0), (260.0, 350.0))]},
+    )
+
+    window._close_preview()
+    qtbot.waitUntil(lambda: pixels() != before, timeout=RENDER_TIMEOUT_MS)
+    assert markup_pdf.read_bytes() == source_before
+
+
 def test_viewer_markup_undo_redo_via_main_window(
     qtbot, main_window, markup_pdf: Path
 ) -> None:
