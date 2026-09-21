@@ -1101,7 +1101,6 @@ class ThumbnailGrid(QScrollArea):
             card = self._cards.pop(idx)
             if card._is_skeleton and self._skeleton_count > 0:
                 self._skeleton_count -= 1
-            card.setParent(None)
             card.deleteLater()
             if idx < len(self._page_render_width):
                 self._page_render_width.pop(idx)
