@@ -75,6 +75,7 @@ from pagedrop.ui.onboarding import (
     show_context_hint,
 )
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
 from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui import icons
 from pagedrop.ui.settings import (
@@ -88,6 +89,7 @@ from pagedrop.ui.settings import (
     remember_directory,
     remember_recent_file,
     save_window_geometry,
+    settings_file_path,
     set_chrome_visible,
     set_light_theme,
     set_thumbnail_quality,
@@ -109,7 +111,7 @@ from pagedrop.ui.theme import (
 )
 from pagedrop.ui.zoom_controls import ZoomControls
 from pagedrop.utils.page_jump import parse_page_ranges
-from pagedrop.utils.temp_manager import TempManager
+from pagedrop.utils.temp_manager import TempManager, process_is_alive
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -706,7 +708,11 @@ class MainWindow(QMainWindow):
         enable_toolbar_keyboard_navigation(toolbar)
 
     def _build_central_widget(self) -> None:
-        self._tab_manager = TabManager(temp_manager=self._temp_manager)
+        self._recovery_dir = recovery_directory(settings_file_path())
+        self._tab_manager = TabManager(
+            temp_manager=self._temp_manager,
+            recovery_dir=self._recovery_dir,
+        )
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
         self._tab_manager.currentChanged.connect(self._on_tab_index_changed)
         self._tab_manager.tab_added.connect(self._connect_tab_signals)
@@ -974,6 +980,73 @@ class MainWindow(QMainWindow):
         tab.preview_widget.status_message.connect(self._transient_status)
         tab.preview_widget.ocr_requested.connect(self._open_ocr_from_viewer)
         tab.dirty_changed.connect(self._on_tab_dirty_changed)
+        tab.recovery_failed.connect(self._on_recovery_failed)
+
+    def _on_recovery_failed(self, message: str) -> None:
+        self._transient_status("Draft recovery unavailable")
+        self._show_toast(message, kind="error")
+
+    def restore_recovery_drafts(self) -> int:
+        """Offer stale crash drafts and restore accepted documents as tabs."""
+        try:
+            drafts = [
+                path
+                for path in sorted(self._recovery_dir.glob("*.json"))
+                if (owner := draft_owner_pid(path)) is None
+                or not process_is_alive(owner)
+            ]
+        except OSError:
+            return 0
+        if not drafts:
+            return 0
+        reply = QMessageBox.question(
+            self,
+            "Recover unsaved changes",
+            f"PageDrop found unsaved changes from an earlier session "
+            f"({len(drafts)} {'document' if len(drafts) == 1 else 'documents'}). "
+            "Recover them now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            for path in drafts:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return 0
+
+        restored = 0
+        failures: list[str] = []
+        for path in drafts:
+            tab = self._tab_manager.active_tab
+            if tab is None or not tab.is_blank or restored:
+                tab = self._tab_manager.add_blank_tab()
+            try:
+                tab.restore_recovery_draft(path)
+            except (RecoveryError, PdfLoadError, OSError) as exc:
+                failures.append(str(exc))
+                if tab.is_blank and self._tab_manager.count() > 1:
+                    self._tab_manager.close_tab(self._tab_manager.indexOf(tab))
+                continue
+            tab.set_zoom_level(thumbnail_zoom())
+            self._tab_manager.setCurrentWidget(tab)
+            restored += 1
+        if restored:
+            message = (
+                "Recovered 1 unsaved document"
+                if restored == 1
+                else f"Recovered {restored} unsaved documents"
+            )
+            self._transient_status(message)
+            self._show_toast(message, kind="success")
+        if failures:
+            QMessageBox.warning(
+                self,
+                "Recovery incomplete",
+                "Some drafts could not be recovered:\n" + "\n".join(failures),
+            )
+        return restored
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -1008,6 +1081,7 @@ class MainWindow(QMainWindow):
             (preview.status_message, self._transient_status),
             (preview.ocr_requested, self._open_ocr_from_viewer),
             (tab.dirty_changed, self._on_tab_dirty_changed),
+            (tab.recovery_failed, self._on_recovery_failed),
         ):
             try:
                 signal.disconnect(slot)

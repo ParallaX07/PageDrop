@@ -64,6 +64,11 @@ def _settings() -> QSettings:
     return QSettings(ORGANIZATION, APPLICATION)
 
 
+def settings_file_path() -> str:
+    """Backing settings path, used to colocate small app-owned state files."""
+    return _settings().fileName()
+
+
 def _utc_timestamp(value: object) -> datetime | None:
     """Parse persisted updater timestamps, treating invalid data as unset."""
     if not isinstance(value, str):

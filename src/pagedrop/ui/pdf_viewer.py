@@ -1184,8 +1184,11 @@ class _PageTile(QWidget):
         else:
             self._update_cursor(pos)
         if self._drawing and self._tool == AnnotTool.INK:
-            self._ink_points.append(self._widget_to_pdf(pos))
-            self.update()
+            point = self._widget_to_pdf(pos)
+            previous = self._ink_points[-1]
+            if abs(point[0] - previous[0]) + abs(point[1] - previous[1]) >= 0.5:
+                self._ink_points.append(point)
+                self.update()
             event.accept()
             return
         if self._selecting:
@@ -1263,7 +1266,7 @@ class _PageTile(QWidget):
             return {"points": (p0, p1)}
         x0, x1 = sorted((p0[0], p1[0]))
         y0, y1 = sorted((p0[1], p1[1]))
-        if x1 - x0 < 2 and y1 - y0 < 2:
+        if x1 - x0 < 2 or y1 - y0 < 2:
             return None
         rect = (x0, y0, x1, y1)
         if self._tool in _TEXT_MARKUP_TOOLS:
@@ -2845,7 +2848,11 @@ class PdfViewerWidget(QWidget):
             self._sync_freetext_format_bar(focus_text=True)
             return
 
-        tool = AnnotTool(tool_value)
+        try:
+            tool = AnnotTool(tool_value)
+        except ValueError:
+            self.status_message.emit("Unknown markup tool")
+            return
         created: AnnotationOp | None = None
         if tool in _TEXT_MARKUP_TOOLS:
             rects = payload.get("rects") or ()

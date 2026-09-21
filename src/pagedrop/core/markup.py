@@ -29,8 +29,8 @@ MarkupKind = Literal[
     "annotation", "form_fill", "form_create", "form_flatten", "redaction"
 ]
 
-# ponytail: undo depth shares PdfEditModel.MAX_UNDO (50). Each entry is a
-# pending markup op; raise only with measured memory pain (or coalescing).
+# Undo depth shares PdfEditModel.MAX_UNDO (50). Pending document operations are
+# never discarded merely because they are older than the undo window.
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,7 @@ class MarkupSession:
     def __init__(self) -> None:
         self._ops: list[MarkupEntry] = []
         self._redo: list[MarkupEntry] = []
+        self._undo_floor = 0
         self._model: PdfEditModel | None = None
 
     def bind_model(self, model: PdfEditModel | None) -> None:
@@ -80,13 +81,13 @@ class MarkupSession:
         return bool(self.ops(model))
 
     def can_undo(self) -> bool:
-        return bool(self._ops)
+        return len(self._ops) > self._undo_floor
 
     def can_redo(self) -> bool:
         return bool(self._redo)
 
     def undo_description(self) -> str | None:
-        return self._ops[-1].description if self._ops else None
+        return self._ops[-1].description if self.can_undo() else None
 
     def redo_description(self) -> str | None:
         return self._redo[-1].description if self._redo else None
@@ -94,6 +95,13 @@ class MarkupSession:
     def clear(self) -> None:
         self._ops.clear()
         self._redo.clear()
+        self._undo_floor = 0
+
+    def restore(self, entries: Sequence[MarkupEntry]) -> None:
+        """Restore pending operations from a validated recovery draft."""
+        self._ops = list(entries)
+        self._redo.clear()
+        self._undo_floor = max(0, len(self._ops) - MAX_UNDO)
 
     def push_annotation(self, op: AnnotationOp, page_instance_id: str | None = None) -> None:
         self._push(MarkupEntry(kind="annotation", description=f"add {op.kind}", page_instance_id=self._target_id(op.page_index, page_instance_id), annotation=op))
@@ -111,9 +119,11 @@ class MarkupSession:
         """Remove a pending annotation (Delete on a selected text/image box)."""
         for i, entry in enumerate(self._ops):
             if entry.kind == "annotation" and entry.annotation == op:
-                if i == len(self._ops) - 1:
+                if i == len(self._ops) - 1 and self.can_undo():
                     return self.undo()
                 self._ops.pop(i)
+                if i < self._undo_floor:
+                    self._undo_floor -= 1
                 self._redo.clear()
                 return True
         return False
@@ -160,14 +170,16 @@ class MarkupSession:
     def clear_redactions(self) -> None:
         self._ops = [entry for entry in self._ops if entry.kind != "redaction"]
         self._redo.clear()
+        self._undo_floor = max(0, len(self._ops) - MAX_UNDO)
 
     def clear_non_redactions(self) -> None:
         """Drop annotation/form ops after Save As; keep pending redaction marks."""
         self._ops = [entry for entry in self._ops if entry.kind == "redaction"]
         self._redo.clear()
+        self._undo_floor = max(0, len(self._ops) - MAX_UNDO)
 
     def undo(self) -> bool:
-        if not self._ops:
+        if not self.can_undo():
             return False
         self._redo.append(self._ops.pop())
         return True
@@ -181,8 +193,7 @@ class MarkupSession:
     def _push(self, entry: MarkupEntry) -> None:
         self._ops.append(entry)
         self._redo.clear()
-        if len(self._ops) > MAX_UNDO:
-            del self._ops[0 : len(self._ops) - MAX_UNDO]
+        self._undo_floor = max(self._undo_floor, len(self._ops) - MAX_UNDO)
 
 
 def apply_markup_entries(doc: fitz.Document, entries: Sequence[MarkupEntry]) -> None:

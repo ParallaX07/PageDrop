@@ -634,6 +634,25 @@ def test_text_markup_uses_char_rects_not_drag_box(qtbot) -> None:
     assert tile._drag_payload() == {"rects": ()}
 
 
+def test_shape_drag_rejects_zero_width_or_height(qtbot) -> None:
+    from PyQt6.QtCore import QPointF
+
+    from pagedrop.ui.pdf_viewer import AnnotTool, _PageTile
+
+    tile = _PageTile(0)
+    qtbot.addWidget(tile)
+    tile.resize(300, 400)
+    tile._page_w = 300.0
+    tile._page_h = 400.0
+    tile.set_tool(AnnotTool.RECT)
+
+    tile._sel_start = QPointF(40, 40)
+    tile._sel_end = QPointF(40, 180)
+    assert tile._drag_payload() is None
+    tile._sel_end = QPointF(180, 40)
+    assert tile._drag_payload() is None
+
+
 def test_freetext_place_defaults_and_format_bar(
     qtbot, main_window, markup_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QStackedWidget, QToolBar, QVBoxLayout, QWidget
@@ -14,6 +15,7 @@ from pagedrop.core.pdf_service import invalidate_doc_cache
 from pagedrop.ui.dialogs import confirm_delete_pages
 from pagedrop.ui.pdf_viewer import PdfViewerWidget
 from pagedrop.ui.settings import thumbnail_quality
+from pagedrop.ui.recovery import RecoveryError, read_draft, write_draft
 from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
@@ -43,11 +45,13 @@ class PdfTab(QWidget):
     pdf_closed = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
     tab_title_changed = pyqtSignal()
+    recovery_failed = pyqtSignal(str)
 
     def __init__(
         self,
         temp_manager: TempManager,
         parent: QWidget | None = None,
+        recovery_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager
@@ -67,6 +71,10 @@ class PdfTab(QWidget):
         self._drop_initialized = False
         self._custom_tab_title: str | None = None
         self._quality_guidance_shown = False
+        self._recovery_path = (
+            recovery_dir / f"{uuid4().hex}.json" if recovery_dir is not None else None
+        )
+        self._recovery_error_reported = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -173,6 +181,38 @@ class PdfTab(QWidget):
         self._sync_dirty_from_model()
 
     @property
+    def recovery_path(self) -> Path | None:
+        return self._recovery_path
+
+    def restore_recovery_draft(self, path: Path) -> None:
+        """Load one persisted draft into this blank tab."""
+        if self._edit_model is not None:
+            raise RecoveryError("Recovery needs a blank tab")
+        recovered = read_draft(path)
+        for source in recovered.model.current_reference_paths():
+            loader = PdfLoader(source)
+            try:
+                if any(
+                    page.source_path == source
+                    and not 0 <= page.source_index < loader.page_count
+                    for page in recovered.model.iter_pages()
+                ):
+                    raise RecoveryError(f"Recovery refers to a missing page in {source}")
+            finally:
+                loader.close()
+        self._edit_model = recovered.model
+        self._markup.bind_model(self._edit_model)
+        self._markup.restore(recovered.markup)
+        self._pdf_path = self._edit_model.original_path
+        self._drop_initialized = recovered.drop_initialized
+        self._custom_tab_title = recovered.custom_title
+        self._recovery_path = path
+        self._preview_widget.set_model(None, None)
+        self._thumbnail_grid.load_model(self._edit_model, self.get_loader)
+        self._sync_dirty_from_model()
+        self.pdf_loaded.emit()
+
+    @property
     def loader(self) -> PdfLoader | None:
         if self._edit_model is None:
             return None
@@ -271,6 +311,7 @@ class PdfTab(QWidget):
             return False
 
         self._custom_tab_title = cleaned
+        self._sync_recovery()
         self.tab_title_changed.emit()
         return True
 
@@ -278,6 +319,7 @@ class PdfTab(QWidget):
         if self._custom_tab_title is None:
             return
         self._custom_tab_title = None
+        self._sync_recovery()
         self.tab_title_changed.emit()
 
     @property
@@ -555,6 +597,7 @@ class PdfTab(QWidget):
             self._dirty = False
             self.dirty_changed.emit(False)
         self._preview_widget.set_model(None, None)
+        self._clear_recovery()
         self.pdf_closed.emit()
 
     def quality_scale_guidance(self) -> str | None:
@@ -610,4 +653,36 @@ class PdfTab(QWidget):
         if dirty != self._dirty:
             self._dirty = dirty
             self.dirty_changed.emit(dirty)
+        self._sync_recovery()
         self._evict_idle_loaders()
+
+    def _sync_recovery(self) -> None:
+        if self._recovery_path is None:
+            return
+        if not self._dirty or self._edit_model is None:
+            self._clear_recovery()
+            return
+        try:
+            write_draft(
+                self._recovery_path,
+                self._edit_model,
+                self._markup.ops(self._edit_model),
+                custom_title=self._custom_tab_title,
+                drop_initialized=self._drop_initialized,
+            )
+            self._recovery_error_reported = False
+        except RecoveryError as exc:
+            if not self._recovery_error_reported:
+                self._recovery_error_reported = True
+                self.recovery_failed.emit(str(exc))
+
+    def _clear_recovery(self) -> None:
+        if self._recovery_path is None:
+            return
+        try:
+            self._recovery_path.unlink(missing_ok=True)
+            self._recovery_path.with_suffix(".tmp").unlink(missing_ok=True)
+        except OSError as exc:
+            if not self._recovery_error_reported:
+                self._recovery_error_reported = True
+                self.recovery_failed.emit(f"Could not remove the recovery draft: {exc}")

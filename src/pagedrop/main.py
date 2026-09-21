@@ -30,7 +30,7 @@ def main() -> int:
         argv = [a for a in sys.argv[1:] if a != REDACT_VERIFY_FLAG]
         return redact_main(argv)
 
-    from PyQt6.QtCore import QEvent
+    from PyQt6.QtCore import QEvent, QTimer
     from PyQt6.QtWidgets import QApplication
 
     from pagedrop.assets import app_icon
@@ -61,6 +61,7 @@ def main() -> int:
     win = manager.open_new_window()
     win.restore_saved_geometry()
     win.setWindowIcon(icon)
+    QTimer.singleShot(0, win.restore_recovery_drafts)
     exit_code = app.exec()
 
     # Flush top-level widgets before interpreter shutdown. Leaving the viewer's

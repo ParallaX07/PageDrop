@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtCore import QFileInfo, QPoint, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
@@ -266,9 +268,11 @@ class TabManager(QTabWidget):
         self,
         temp_manager: TempManager,
         parent: QWidget | None = None,
+        recovery_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager
+        self._recovery_dir = recovery_dir
         self.setObjectName("TabManager")
         self.setDocumentMode(True)
         self.setMovable(True)
@@ -320,7 +324,10 @@ class TabManager(QTabWidget):
 
     def add_tab(self, tab: PdfTab | None = None) -> PdfTab:
         if tab is None:
-            tab = PdfTab(temp_manager=self._temp_manager)
+            tab = PdfTab(
+                temp_manager=self._temp_manager,
+                recovery_dir=self._recovery_dir,
+            )
         index = self.addTab(tab, tab.tab_title)
         self._connect_tab(tab, index)
         self._style_close_button(index)

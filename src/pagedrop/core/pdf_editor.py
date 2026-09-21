@@ -54,6 +54,22 @@ class PdfEditModel:
         model._redo_stack = []
         return model
 
+    @classmethod
+    def from_recovery(cls, primary_path: str, pages: list[PageRef]) -> PdfEditModel:
+        """Restore an unsaved logical page list while preserving occurrence IDs."""
+        model = cls.__new__(cls)
+        model._original_path = primary_path
+        model._save_path = None
+        model._pages = list(pages)
+        model._protected_sources = {
+            primary_path,
+            *(page.source_path for page in pages),
+        }
+        model._dirty = True
+        model._undo_stack = []
+        model._redo_stack = []
+        return model
+
     @property
     def original_path(self) -> str:
         return self._original_path
