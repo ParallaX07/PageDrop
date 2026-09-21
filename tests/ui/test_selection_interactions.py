@@ -58,6 +58,7 @@ def test_ctrl_click_toggles(qtbot, five_page_pdf):
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
     assert _selected_indices(cards) == {0, 2, 4}
+    assert all(not cards[index]._focus_ring.isHidden() for index in (0, 2, 4))
 
 
 def test_shift_click_selects_range(qtbot, five_page_pdf):

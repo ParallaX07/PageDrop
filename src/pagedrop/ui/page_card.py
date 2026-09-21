@@ -165,14 +165,17 @@ class PageCard(BaseFileCard):
     def set_selected(self, selected: bool) -> None:
         super().set_selected(selected)
         self._selection_indicator.setVisible(selected)
+        self._focus_ring.setVisible(selected or self._keyboard_focused)
+        if not self._focus_ring.isHidden():
+            self._sync_focus_ring_geometry()
         if selected:
             self._sync_selection_indicator_geometry()
         self._sync_accessible()
 
     def set_keyboard_focused(self, focused: bool) -> None:
         super().set_keyboard_focused(focused)
-        self._focus_ring.setVisible(focused)
-        if focused:
+        self._focus_ring.setVisible(focused or self._selected)
+        if not self._focus_ring.isHidden():
             self._sync_focus_ring_geometry()
 
     def release_thumbnail(self) -> bool:
