@@ -121,6 +121,8 @@ if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
     from pagedrop.ui.window_manager import WindowManager
 
+from pagedrop.utils.diagnostics import log_failure
+
 
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
@@ -691,6 +693,7 @@ class MainWindow(QMainWindow):
         self._toolbar_overflow.setText("More")
         self._toolbar_overflow.setToolTip("More page actions")
         self._toolbar_overflow.setAccessibleName("More page actions")
+        self._toolbar_overflow.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._toolbar_overflow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._toolbar_overflow_menu = QMenu(self._toolbar_overflow)
         self._install_menu_focus_restore(self._toolbar_overflow_menu)
@@ -2841,7 +2844,8 @@ class MainWindow(QMainWindow):
                         self._sync_toolbar_from_active_tab()
                         self._persistent_status("Ready")
                     return
-            except PdfEmptyError:
+            except PdfEmptyError as exc:
+                log_failure("Open PDF", exc, path=path)
                 QMessageBox.warning(
                     self,
                     "Open PDF",
@@ -2852,6 +2856,7 @@ class MainWindow(QMainWindow):
                     self._persistent_status("Ready")
                 return
             except PdfLoadError as exc:
+                log_failure("Open PDF", exc, path=path)
                 QMessageBox.critical(
                     self,
                     "Open PDF",

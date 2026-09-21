@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 
 from pagedrop.core.jobs import CancelToken, JobCancelledError, JobSpec, SerializedJobRunner
 from pagedrop.core.page_extractor import extract_page_refs_to_folder
+from pagedrop.utils.diagnostics import log_failure
 
 _POOL: QThreadPool | None = None
 _SIGNALS: list[QObject] = []
@@ -68,6 +69,7 @@ class EditorJobWorker(QRunnable):
         except JobCancelledError:
             self.signals.cancelled.emit()
         except Exception as exc:
+            log_failure("Editor job", exc)
             self.signals.failed.emit(str(exc))
         else:
             self.signals.succeeded.emit(result)

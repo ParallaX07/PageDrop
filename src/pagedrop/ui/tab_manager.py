@@ -391,9 +391,13 @@ class TabManager(QTabWidget):
 
     def _apply_page_title(self, index: int, title: str) -> None:
         metrics = self.tabBar().fontMetrics()
+        compact_title = f"{title[:8]}…{title[-12:]}"
+        display_title = title
+        if len(title) > 20 and metrics.horizontalAdvance(compact_title) <= 185:
+            display_title = compact_title
         self.setTabText(
             index,
-            metrics.elidedText(title, Qt.TextElideMode.ElideMiddle, 185),
+            metrics.elidedText(display_title, Qt.TextElideMode.ElideMiddle, 185),
         )
         self.setTabToolTip(index, title)
 

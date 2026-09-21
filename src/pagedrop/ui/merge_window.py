@@ -48,6 +48,7 @@ from pagedrop.ui.theme import (
 )
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.zoom_controls import ZoomControls
+from pagedrop.utils.diagnostics import log_failure
 
 # Show a progress dialog once folder validation exceeds this many candidates.
 _FOLDER_PROGRESS_THRESHOLD = 8
@@ -84,10 +85,28 @@ class _MergeWorker(QRunnable):
                     passwords=self._passwords,
                 )
         except PdfLoadError as exc:
+            log_failure(
+                "Merge PDFs",
+                exc,
+                inputs=", ".join(self._file_paths),
+                output=self._output_path,
+            )
             self.signals.failed.emit(f"Could not read a source PDF:\n{exc}")
         except OSError as exc:
+            log_failure(
+                "Merge PDFs",
+                exc,
+                inputs=", ".join(self._file_paths),
+                output=self._output_path,
+            )
             self.signals.failed.emit(f"Could not write PDF:\n{exc}")
         except Exception as exc:
+            log_failure(
+                "Merge PDFs",
+                exc,
+                inputs=", ".join(self._file_paths),
+                output=self._output_path,
+            )
             self.signals.failed.emit(f"Could not merge PDFs:\n{exc}")
         else:
             self.signals.succeeded.emit(self._output_path)

@@ -57,6 +57,7 @@ from pagedrop.ui.theme import (
 )
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.zoom_controls import ZoomControls
+from pagedrop.utils.diagnostics import log_failure
 
 _PREVIEW_FOOTER_HINT = (
     "← → or ↑ ↓ change image  ·  Ctrl+scroll zoom  ·  Ctrl+0 fit width  ·  Esc back to grid"
@@ -312,10 +313,28 @@ class _ConvertWorker(QRunnable):
                     )
             self.signals.succeeded.emit(result)
         except ImageConvertError as exc:
+            log_failure(
+                "Create PDF",
+                exc,
+                inputs=", ".join(self._paths),
+                output=self._output_path or self._output_dir,
+            )
             self.signals.failed.emit(str(exc))
         except OSError as exc:
+            log_failure(
+                "Create PDF",
+                exc,
+                inputs=", ".join(self._paths),
+                output=self._output_path or self._output_dir,
+            )
             self.signals.failed.emit(f"Could not write PDF:\n{exc}")
         except Exception as exc:
+            log_failure(
+                "Create PDF",
+                exc,
+                inputs=", ".join(self._paths),
+                output=self._output_path or self._output_dir,
+            )
             self.signals.failed.emit(f"Could not create PDF:\n{exc}")
 
 
