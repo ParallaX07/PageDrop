@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import (
@@ -345,11 +347,18 @@ def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_w
         assert main_window._title_label.toolTip() == main_window.windowTitle()
 
 
-def test_shell_uses_rendered_geometry_after_menu_font_growth(main_window, qtbot):
+@pytest.mark.parametrize("menu_width", [None, 660])
+def test_shell_uses_rendered_geometry_after_menu_font_growth(
+    main_window, qtbot, menu_width
+):
     main_window.resize(720, 480)
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     menu_bar = main_window.menuBar()
+    # Exercise a menu bar narrower than the window, too: all measurements must
+    # stay in menu-bar coordinates, including after a platform layout change.
+    if menu_width is not None:
+        menu_bar.setFixedWidth(menu_width)
     font = QFont(menu_bar.font())
     font.setPointSize(max(font.pointSize() + 8, 20))
     menu_bar.setFont(font)

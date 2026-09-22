@@ -2307,23 +2307,6 @@ class MainWindow(QMainWindow):
             )
             self._window_controls.updateGeometry()
             self._flush_menu_layout()
-            # A menu font change can update action geometry after the initial
-            # title-space calculation (notably with the Windows menu style).
-            # Give that rendered width priority over the optional title.
-            rendered_slack = self._menu_action_slack()
-            if rendered_slack < 0:
-                self._title_label.setFixedWidth(max(0, title_width + rendered_slack))
-                self._window_controls.setMinimumWidth(0)
-                self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
-                self._window_controls.layout().invalidate()
-                self._window_controls.setFixedWidth(
-                    self._window_controls.layout().sizeHint().width()
-                )
-                self._menu_bar.setCornerWidget(
-                    self._window_controls, Qt.Corner.TopRightCorner
-                )
-                self._window_controls.updateGeometry()
-                self._flush_menu_layout()
             self._sync_custom_title()
         finally:
             self._updating_responsive_shell = False
@@ -2356,9 +2339,14 @@ class MainWindow(QMainWindow):
             (self._menu_bar.actionGeometry(action).right() + 1 for action in actions),
             default=0,
         )
-        controls_left = self._window_controls.geometry().left()
-        if controls_left <= 0 or self._menu_bar.width() < self.minimumWidth():
-            controls_left = self.width() - self._window_controls.sizeHint().width()
+        # QMenuBar may not have repositioned its corner widget after a font or
+        # title-width change. Budget its assigned width in menu-bar coordinates;
+        # the window width and the corner's sizeHint can both overstate the room.
+        menu_right = self._menu_bar.contentsRect().right() + 1
+        if not self.isVisible():
+            # Before first show, QMainWindow has not laid out the menu bar yet.
+            menu_right = self.contentsRect().right() + 1
+        controls_left = menu_right - self._window_controls.width()
         return controls_left - right
 
     def _menu_actions_fit(self) -> bool:
