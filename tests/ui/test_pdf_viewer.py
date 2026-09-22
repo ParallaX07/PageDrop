@@ -306,8 +306,12 @@ def test_viewer_narrow_reflow_keeps_actions_reachable(
     _wait_viewer_tiles(qtbot, tab)
     viewer = tab.viewer_widget
 
-    viewer.setFixedWidth(720)
-    qtbot.waitUntil(lambda: viewer.width() == 720, timeout=2000)
+    direct_print_width = min(
+        viewer._toolbar_compact_breakpoint() - 1,
+        viewer._toolbar_width_for(viewer._layout_menu_button, True),
+    )
+    viewer.setFixedWidth(direct_print_width)
+    qtbot.waitUntil(lambda: viewer.width() == direct_print_width, timeout=2000)
     viewer._update_toolbar_layout()
 
     assert viewer._layout_menu_button.isVisible()
@@ -315,7 +319,7 @@ def test_viewer_narrow_reflow_keeps_actions_reachable(
     assert viewer._print_button.isVisible()
     assert not viewer._secondary_overflow.isVisible()
 
-    overflow_width = viewer._toolbar_width_for(viewer._layout_menu_button, True) - 1
+    overflow_width = direct_print_width - 1
     viewer.setFixedWidth(overflow_width)
     qtbot.waitUntil(lambda: viewer.width() == overflow_width, timeout=2000)
     viewer._update_toolbar_layout()

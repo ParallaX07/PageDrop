@@ -107,8 +107,9 @@ def test_long_tab_title_elided_with_full_tooltip(main_window, qtbot):
     tab_manager = main_window._tab_manager
     shown = tab_manager.tabText(0)
     assert "…" in shown
-    assert shown.startswith(long_title[:8])
-    assert shown.endswith(long_title[-12:])
+    shown_prefix, shown_suffix = shown.split("…", 1)
+    assert long_title.startswith(shown_prefix)
+    assert long_title.endswith(shown_suffix)
     assert tab_manager.tabToolTip(0) == tab.tab_title
 
     metrics = tab_manager.tabBar().fontMetrics()

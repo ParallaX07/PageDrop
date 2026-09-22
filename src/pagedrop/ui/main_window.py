@@ -2271,6 +2271,13 @@ class MainWindow(QMainWindow):
             # any destination moves. Geometry, rather than text-width guesses,
             # accounts for the active font, display scale, and corner controls.
             self._title_label.setFixedWidth(0)
+            self._window_controls.setFixedWidth(
+                self._window_controls.layout().sizeHint().width()
+            )
+            self._menu_bar.setCornerWidget(
+                self._window_controls, Qt.Corner.TopRightCorner
+            )
+            self._flush_menu_layout()
             direct = list(self._responsive_menu_actions)
             overflowed: list[QAction] = []
             self._relocate_application_actions(direct, overflowed)
