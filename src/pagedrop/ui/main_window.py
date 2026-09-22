@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QToolBar,
     QToolButton,
+    QWIDGETSIZE_MAX,
     QWidget,
 )
 
@@ -2271,6 +2272,9 @@ class MainWindow(QMainWindow):
             # any destination moves. Geometry, rather than text-width guesses,
             # accounts for the active font, display scale, and corner controls.
             self._title_label.setFixedWidth(0)
+            self._window_controls.setMinimumWidth(0)
+            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
+            self._window_controls.layout().invalidate()
             self._window_controls.setFixedWidth(
                 self._window_controls.layout().sizeHint().width()
             )
@@ -2292,6 +2296,9 @@ class MainWindow(QMainWindow):
             self._title_label.setFixedWidth(title_width)
             # The corner widget was sized while the title reservation was zero.
             # Refresh it before painting so the label cannot spill into controls.
+            self._window_controls.setMinimumWidth(0)
+            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
+            self._window_controls.layout().invalidate()
             self._window_controls.setFixedWidth(
                 self._window_controls.layout().sizeHint().width()
             )

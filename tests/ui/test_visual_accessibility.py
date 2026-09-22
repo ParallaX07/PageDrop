@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QEnterEvent
-from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit, QScrollArea, QToolButton
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QLineEdit,
+    QScrollArea,
+    QToolButton,
+)
 
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
@@ -78,10 +84,18 @@ def test_p1_semantic_roles_and_shared_metrics(qtbot):
         assert f"border-radius: {RADIUS_CONTROL}px" in sheet
         assert f"border-radius: {RADIUS_SURFACE}px" in sheet
 
-    field = QLineEdit()
-    qtbot.addWidget(field)
-    field.setStyleSheet("font-size: 24px;")
-    assert field.minimumSizeHint().height() > FORM_CONTROL_HEIGHT
+    app = QApplication.instance()
+    assert app is not None
+    previous_stylesheet = app.styleSheet()
+    try:
+        app.setStyleSheet(app_stylesheet())
+        field = QLineEdit()
+        qtbot.addWidget(field)
+        field.setStyleSheet("font-size: 24px;")
+        field.ensurePolished()
+        assert field.minimumSizeHint().height() > FORM_CONTROL_HEIGHT
+    finally:
+        app.setStyleSheet(previous_stylesheet)
 
 
 def test_text_muted_meets_wcag_aa_on_bg_base():

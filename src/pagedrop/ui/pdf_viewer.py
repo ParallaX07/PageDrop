@@ -3555,11 +3555,13 @@ class PdfViewerWidget(QWidget):
         self._render_timer.start()
 
     def _visible_pages(self) -> list[int]:
+        if self._model is None or self._model.logical_count() == 0:
+            return []
         if self._layout != ViewerLayout.CONTINUOUS:
             return self._pages_to_show()
         if self._tiles:
             return sorted(self._tiles)
-        return [self._current_page] if self._model else []
+        return [self._current_page]
 
     def _device_pixel_ratio(self) -> float:
         return max(1.0, float(self.devicePixelRatioF()))
