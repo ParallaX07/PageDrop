@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPointF, Qt, QTimer
 from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -25,6 +25,19 @@ def _file_menu_actions(window: MainWindow):
         if action.text().replace("&", "") == "File":
             return list(action.menu().actions())
     raise AssertionError("File menu not found")
+
+
+def test_menu_layout_does_not_dispatch_unrelated_timers(main_window, qtbot):
+    fired = []
+    timer = QTimer(main_window)
+    timer.setSingleShot(True)
+    timer.timeout.connect(lambda: fired.append(True))
+    timer.start(0)
+
+    main_window._update_responsive_shell()
+
+    assert not fired
+    qtbot.waitUntil(lambda: bool(fired))
 
 
 def _find_action_by_text(actions, *candidates: str):

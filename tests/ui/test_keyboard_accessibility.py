@@ -109,6 +109,8 @@ def test_toolbar_overflow_menu_restores_focus_to_its_invoker(
 ):
     main_window._load_pdf(str(five_page_pdf))
     qtbot.waitUntil(lambda: main_window._active_tab().loader is not None)
+    # Keep More on the toolbar, outside Qt's width-dependent extension menu.
+    main_window.resize(main_window._toolbar.sizeHint().width() + 100, 680)
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
 

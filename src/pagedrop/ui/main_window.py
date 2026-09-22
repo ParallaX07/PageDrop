@@ -2332,7 +2332,9 @@ class MainWindow(QMainWindow):
 
     def _flush_menu_layout(self) -> None:
         self._menu_bar.updateGeometry()
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        # Refresh only this layout; pumping the application here can dispatch
+        # timers/deletions while Qt is still applying a stylesheet or resizing.
+        QApplication.sendEvent(self._menu_bar, QEvent(QEvent.Type.LayoutRequest))
 
     def _menu_action_slack(self) -> int:
         """Return room between the final rendered menu action and title controls."""

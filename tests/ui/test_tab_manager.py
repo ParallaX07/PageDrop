@@ -126,6 +126,8 @@ def test_crowded_tabs_have_an_open_tabs_menu(main_window, qtbot):
     for title in ("One", "Two", "Three", "Four"):
         tab = manager.add_blank_tab()
         assert tab.set_custom_tab_title(title)
+    # Exercise tab overflow independently of the application's minimum width.
+    main_window.setMinimumWidth(360)
     main_window.resize(360, 500)
     main_window.show()
     qtbot.waitUntil(lambda: manager._open_tabs_button.isVisible(), timeout=3000)
