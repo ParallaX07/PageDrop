@@ -348,8 +348,9 @@ def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_w
 
 
 @pytest.mark.parametrize("menu_width", [None, 660])
+@pytest.mark.parametrize("control_width", [None, 90])
 def test_shell_uses_rendered_geometry_after_menu_font_growth(
-    main_window, qtbot, menu_width
+    main_window, qtbot, menu_width, control_width
 ):
     main_window.resize(720, 480)
     main_window.show()
@@ -359,6 +360,11 @@ def test_shell_uses_rendered_geometry_after_menu_font_growth(
     # stay in menu-bar coordinates, including after a platform layout change.
     if menu_width is not None:
         menu_bar.setFixedWidth(menu_width)
+    # Windows' offscreen font produces wide caption buttons. Also exercise
+    # that pressure on platforms whose default caption font is narrower.
+    if control_width is not None:
+        for button in main_window._window_controls.findChildren(QToolButton):
+            button.setFixedWidth(control_width)
     font = QFont(menu_bar.font())
     font.setPointSize(max(font.pointSize() + 8, 20))
     menu_bar.setFont(font)
@@ -374,6 +380,7 @@ def test_shell_uses_rendered_geometry_after_menu_font_growth(
     )
     rendered_right = max(menu_bar.actionGeometry(action).right() + 1 for action in top_level)
     assert rendered_right <= main_window._window_controls.geometry().left()
+    assert main_window._actions["open"] in _file_menu_actions(main_window)
 
 
 def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, monkeypatch):

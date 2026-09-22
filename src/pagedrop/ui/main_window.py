@@ -592,6 +592,10 @@ class MainWindow(QMainWindow):
         self._application_overflow_menu.setToolTip("More application actions")
         self._application_overflow_menu.setAccessibleName("More application actions")
         self._responsive_menu_actions = (
+            # Keep File direct; at large fonts even File/Edit/View/More plus
+            # the window controls may not fit. Move View and Edit last.
+            edit_menu.menuAction(),
+            view_menu.menuAction(),
             self._merge_menu_action,
             self._create_pdf_menu_action,
             self._tools_menu_action,
