@@ -2307,6 +2307,23 @@ class MainWindow(QMainWindow):
             )
             self._window_controls.updateGeometry()
             self._flush_menu_layout()
+            # A menu font change can update action geometry after the initial
+            # title-space calculation (notably with the Windows menu style).
+            # Give that rendered width priority over the optional title.
+            rendered_slack = self._menu_action_slack()
+            if rendered_slack < 0:
+                self._title_label.setFixedWidth(max(0, title_width + rendered_slack))
+                self._window_controls.setMinimumWidth(0)
+                self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
+                self._window_controls.layout().invalidate()
+                self._window_controls.setFixedWidth(
+                    self._window_controls.layout().sizeHint().width()
+                )
+                self._menu_bar.setCornerWidget(
+                    self._window_controls, Qt.Corner.TopRightCorner
+                )
+                self._window_controls.updateGeometry()
+                self._flush_menu_layout()
             self._sync_custom_title()
         finally:
             self._updating_responsive_shell = False
