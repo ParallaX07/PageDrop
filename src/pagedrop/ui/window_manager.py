@@ -83,6 +83,12 @@ class WindowManager(QObject):
                 if not window._save_as(tab):
                     self._preparation_failed(parent)
                     return False
+                # Installation preparation is the one lifecycle that needs a
+                # completed save, rather than merely a dispatched editor job.
+                window.wait_for_editor_job(tab)
+                if tab.is_dirty:
+                    self._preparation_failed(parent, "Could not save an open document")
+                    return False
             else:
                 # Discard authorizes the later prepared shutdown only. Keeping
                 # the tab dirty makes a cancelled handoff fully reversible.

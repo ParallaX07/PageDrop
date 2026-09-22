@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Literal
 
@@ -131,10 +132,25 @@ def _save(doc: fitz.Document, output_path: str) -> None:
     doc.save(output_path, garbage=3, deflate=True)
 
 
+def _validated_rect(kind: str, values: tuple[float, float, float, float]) -> fitz.Rect:
+    if len(values) != 4 or not all(isfinite(float(value)) for value in values):
+        raise AnnotationError(f"{kind} requires a finite rect")
+    rect = fitz.Rect(*values)
+    if rect.is_empty or not rect.is_valid:
+        raise AnnotationError(f"{kind} requires a non-empty rect")
+    return rect
+
+
 def _rect(op: AnnotationOp) -> fitz.Rect:
     if not op.rects:
         raise AnnotationError(f"{op.kind} requires a rect")
-    return fitz.Rect(*op.rects[0])
+    return _validated_rect(op.kind, op.rects[0])
+
+
+def _point(kind: str, value: tuple[float, float]) -> fitz.Point:
+    if len(value) != 2 or not all(isfinite(float(part)) for part in value):
+        raise AnnotationError(f"{kind} requires a finite point")
+    return fitz.Point(*value)
 
 
 def apply_annotation_op(page: fitz.Page, op: AnnotationOp) -> fitz.Annot | None:
@@ -142,22 +158,39 @@ def apply_annotation_op(page: fitz.Page, op: AnnotationOp) -> fitz.Annot | None:
     if op.kind == "highlight":
         if not op.rects:
             raise AnnotationError("highlight requires at least one rect")
-        annot = page.add_highlight_annot([fitz.Rect(*r) for r in op.rects])
+        annot = page.add_highlight_annot(
+            [_validated_rect(op.kind, rect) for rect in op.rects]
+        )
     elif op.kind == "underline":
         if not op.rects:
             raise AnnotationError("underline requires at least one rect")
-        annot = page.add_underline_annot([fitz.Rect(*r) for r in op.rects])
+        annot = page.add_underline_annot(
+            [_validated_rect(op.kind, rect) for rect in op.rects]
+        )
     elif op.kind == "strikeout":
         if not op.rects:
             raise AnnotationError("strikeout requires at least one rect")
-        annot = page.add_strikeout_annot([fitz.Rect(*r) for r in op.rects])
+        annot = page.add_strikeout_annot(
+            [_validated_rect(op.kind, rect) for rect in op.rects]
+        )
     elif op.kind == "ink":
         if not op.strokes:
             raise AnnotationError("ink requires strokes")
+        strokes = []
+        for stroke in op.strokes:
+            clean: list[tuple[float, float]] = []
+            for x, y in stroke:
+                point = (float(x), float(y))
+                if not all(isfinite(value) for value in point):
+                    raise AnnotationError("ink requires finite points")
+                if not clean or point != clean[-1]:
+                    clean.append(point)
+            if len(clean) >= 2:
+                strokes.append(clean)
+        if not strokes:
+            raise AnnotationError("ink requires at least two distinct points")
         # PyMuPDF wants seq of seq of float pairs (not Point objects).
-        annot = page.add_ink_annot(
-            [[(float(x), float(y)) for x, y in stroke] for stroke in op.strokes]
-        )
+        annot = page.add_ink_annot(strokes)
     elif op.kind == "rect":
         annot = page.add_rect_annot(_rect(op))
     elif op.kind == "circle":
@@ -166,7 +199,11 @@ def apply_annotation_op(page: fitz.Page, op: AnnotationOp) -> fitz.Annot | None:
         if len(op.points) < 2:
             raise AnnotationError("line requires two points")
         p0, p1 = op.points[0], op.points[1]
-        annot = page.add_line_annot(fitz.Point(*p0), fitz.Point(*p1))
+        first = _point(op.kind, p0)
+        second = _point(op.kind, p1)
+        if first == second:
+            raise AnnotationError("line requires two distinct points")
+        annot = page.add_line_annot(first, second)
     elif op.kind == "stamp":
         annot = page.add_stamp_annot(_rect(op), stamp=int(op.stamp_id))
     elif op.kind == "freetext":
@@ -199,10 +236,10 @@ def apply_annotation_op(page: fitz.Page, op: AnnotationOp) -> fitz.Annot | None:
             )
     elif op.kind == "comment":
         if op.points:
-            point = fitz.Point(*op.points[0])
+            point = _point(op.kind, op.points[0])
         elif op.rects:
-            r = op.rects[0]
-            point = fitz.Point(r[0], r[1])
+            rect = _validated_rect(op.kind, op.rects[0])
+            point = fitz.Point(rect.x0, rect.y0)
         else:
             raise AnnotationError("comment requires a point or rect")
         annot = page.add_text_annot(point, op.text or "")

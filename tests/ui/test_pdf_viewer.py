@@ -293,6 +293,41 @@ def test_viewer_find_shortcuts_not_stolen(
     assert main_window._go_to_page_action.isEnabled()
 
 
+def test_viewer_narrow_reflow_keeps_actions_reachable(
+    main_window, viewer_text_pdf, qtbot
+):
+    """Narrow viewer uses the layout menu and moves the one Print action."""
+    main_window._load_pdf(str(viewer_text_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window._open_preview()
+    tab = _active_tab(main_window)
+    _wait_viewer_tiles(qtbot, tab)
+    viewer = tab.viewer_widget
+
+    direct_print_width = min(
+        viewer._toolbar_compact_breakpoint() - 1,
+        viewer._toolbar_width_for(viewer._layout_menu_button, True),
+    )
+    viewer.setFixedWidth(direct_print_width)
+    qtbot.waitUntil(lambda: viewer.width() == direct_print_width, timeout=2000)
+    viewer._update_toolbar_layout()
+
+    assert viewer._layout_menu_button.isVisible()
+    assert not viewer._layout_buttons.isVisible()
+    assert viewer._print_button.isVisible()
+    assert not viewer._secondary_overflow.isVisible()
+
+    overflow_width = direct_print_width - 1
+    viewer.setFixedWidth(overflow_width)
+    qtbot.waitUntil(lambda: viewer.width() == overflow_width, timeout=2000)
+    viewer._update_toolbar_layout()
+    assert viewer._secondary_overflow.isVisible()
+    assert viewer._secondary_overflow_menu.actions() == [viewer._print_action]
+    assert viewer._print_button.isHidden()
+
+
 def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtbot):
     """After reorder, grid labels and viewer logical order follow the model."""
     main_window._load_pdf(str(reorder_pdf))
@@ -314,7 +349,7 @@ def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtb
     viewer = tab.viewer_widget
     assert viewer.current_page == 0
     assert model.page_at(viewer.current_page).source_index == 4
-    assert viewer._page_label.text() == "Page 1 of 5"
+    assert viewer._page_edit.text() == "Page 1 of 5"
 
     # Search finds the moved page's text at logical index 0.
     viewer.search("Marker4")
@@ -323,4 +358,4 @@ def test_reordered_model_viewer_order_matches_grid(main_window, reorder_pdf, qtb
 
     viewer.go_to_page(1)
     assert model.page_at(viewer.current_page).source_index == 0
-    assert viewer._page_label.text() == "Page 2 of 5"
+    assert viewer._page_edit.text() == "Page 2 of 5"

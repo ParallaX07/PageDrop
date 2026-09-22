@@ -24,12 +24,14 @@ def test_skeleton_cards_before_thumbnails(qtbot, five_page_pdf):
     assert all(card._is_skeleton for card in grid._cards)
     assert all(not card._page_overlay.isHidden() for card in grid._cards)
     assert grid._skeleton_pulse_active
+    placeholder_heights = [card.height() for card in grid._cards]
 
     qtbot.waitUntil(
         lambda: all(not card._is_skeleton for card in grid._cards),
         timeout=15000,
     )
     assert not grid._skeleton_pulse_active
+    assert [card.height() for card in grid._cards] == placeholder_heights
     loader.close()
 
 

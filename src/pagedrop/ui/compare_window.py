@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QObject, Qt, QRectF, QRunnable, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, Qt, QRectF, QRunnable, QThreadPool, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QPainter,
@@ -60,6 +60,7 @@ from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     CLOSE_TAB,
+    ICON_SIZE,
     STATUS_SUCCESS,
     STATUS_WARNING,
     chrome_card_qcolor,
@@ -340,6 +341,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         toolbar = QToolBar("Compare", self)
         toolbar.setObjectName("CompareToolbar")
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         # R13: mode/nav/zoom/sync/export stay hidden until a report exists.
         toolbar.setVisible(False)
         root.addWidget(toolbar)

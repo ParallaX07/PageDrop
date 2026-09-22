@@ -11,7 +11,7 @@ import fitz
 import pytest
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
-from PyQt6.QtWidgets import QFileDialog, QLineEdit
+from PyQt6.QtWidgets import QFileDialog, QFormLayout, QLabel, QLineEdit, QWidget
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import CancelToken
@@ -24,6 +24,7 @@ from pagedrop.ui.organize_tools import (
 from pagedrop.ui.tool_shell import (
     FileDropZone,
     ToolShellWindow,
+    show_field_error,
     run_tool_job,
 )
 from pagedrop.ui.tools_window import ToolsWindow
@@ -42,6 +43,23 @@ def _write_pdf(path: Path, pages: int = 3) -> None:
         doc.save(str(path))
     finally:
         doc.close()
+
+
+def test_tool_forms_wrap_and_keep_validation_local(qtbot):
+    shell = ToolShellWindow(title="Test tool", description="Test tool.")
+    qtbot.addWidget(shell)
+    options = QWidget()
+    form = QFormLayout(options)
+    field = QLineEdit()
+    form.addRow("A deliberately long option label", field)
+    shell.set_options_widget(options)
+
+    assert form.rowWrapPolicy() is QFormLayout.RowWrapPolicy.WrapLongRows
+    error = show_field_error(field, "Enter a value.")
+    assert error.isVisible() is False  # The shell is not shown yet.
+    shell.show()
+    assert error.isVisible()
+    assert error.text() == "Enter a value."
 
 
 def _prime_shell_for_run(
@@ -237,6 +255,26 @@ def test_run_button_tooltip_matches_description(qtbot):
     assert shell._run_btn.statusTip() == tip
 
 
+def test_shell_sequence_collapses_selected_input_and_demotes_rerun(qtbot, tmp_path):
+    source = tmp_path / "report.pdf"
+    _write_pdf(source)
+    shell = ToolShellWindow(title="Reverse", description="Reverse every page")
+    qtbot.addWidget(shell)
+
+    layout = shell.layout()
+    assert layout.indexOf(shell._workflow_header) < layout.indexOf(shell.drop_zone)
+    assert shell._workflow_header.findChild(QLabel, "ToolWorkflowTitle").text() == "Reverse"
+
+    shell.drop_zone.set_paths([str(source)])
+    assert shell.drop_zone._prompt.text() == "Input file"
+    assert shell.drop_zone._files_label.text() == "report.pdf"
+    assert not shell.drop_zone._change_btn.isHidden()
+    assert shell.drop_zone._privacy.isHidden()
+
+    shell._set_result_precedence(True)
+    assert shell._run_btn.property("resultAvailable") is True
+
+
 def test_migrated_tool_runs_job_and_shows_result_actions(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):
@@ -264,6 +302,7 @@ def test_migrated_tool_runs_job_and_shows_result_actions(
     assert out.is_file()
     assert shell._result_bar.isVisible()
     assert shell._result_bar._path == str(out)
+    assert str(out) in shell._result_bar._label.text()
     assert shell._run_btn.text() == "Run"
     assert shell._busy_overlay._cancel_btn.text() == "Cancel"
     assert shell._result_bar._preview_btn.text() == "Preview"
@@ -314,7 +353,9 @@ def test_split_multi_file_success_copy_mentions_showing_first(
     toast = shell._toast._message.text()
     bar = shell._result_bar._label.text()
     assert status == "Saved 3 files. Showing first"
-    assert status == toast == bar
+    assert toast == "Completed"
+    assert status in bar
+    assert str(first) in bar
     assert shell._result_bar._path == str(first)
     assert shell.editor is None
 

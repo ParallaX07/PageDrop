@@ -24,7 +24,8 @@ from pagedrop.core.pdf_service import (
     render_ref_png,
     search_model,
 )
-from pagedrop.ui.pdf_viewer import PdfViewerWidget, ViewerLayout, ZoomMode
+from pagedrop.ui.pdf_viewer import AnnotTool, PdfViewerWidget, ViewerLayout, ZoomMode
+from pagedrop.ui.settings import set_viewer_panel_collapsed
 
 
 def _text_pdf(path: Path, pages: list[str]) -> None:
@@ -147,6 +148,158 @@ def test_viewer_layouts_and_zoom(qtbot, viewer_pdf: Path) -> None:
         loader.close()
 
 
+def test_viewer_toolbar_groups_and_page_position(qtbot, viewer_pdf: Path) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        groups = viewer._toolbar.findChildren(
+            type(viewer._find_group), "PdfViewerToolbarGroup"
+        )
+        assert [group.accessibleName() for group in groups] == [
+            "Find",
+            "Page position",
+            "Page layout",
+            "Zoom",
+            "Secondary actions",
+        ]
+        assert viewer._page_edit.text() == "Page 1 of 3"
+
+        viewer._page_edit.setText("3")
+        viewer._on_page_edit_submit()
+        assert viewer.current_page == 2
+        assert viewer._page_edit.text() == "Page 3 of 3"
+
+        viewer._page_edit.setText("Page 4 of 3")
+        viewer._on_page_edit_submit()
+        assert viewer._page_edit.text() == "Page 4 of 3"
+        assert viewer._page_edit.property("invalid") is True
+        assert "1 to 3" in viewer._page_edit.accessibleDescription()
+    finally:
+        loader.close()
+
+
+def test_viewer_toolbar_layout_zoom_and_print_actions(qtbot, viewer_pdf: Path) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer._layout_actions[ViewerLayout.SINGLE].trigger()
+        assert viewer.layout_mode == ViewerLayout.SINGLE
+        assert viewer._layout_action_group.checkedAction() is viewer._layout_actions[
+            ViewerLayout.SINGLE
+        ]
+
+        viewer.set_zoom_mode(ZoomMode.PERCENT, 125)
+        assert viewer._zoom_button.text() == "125%"
+        viewer._fit_page_action.trigger()
+        assert viewer.zoom_mode == ZoomMode.FIT_PAGE
+        assert viewer._zoom_button.text() == "Fit page"
+
+        viewer.setFixedSize(720, 700)
+        qtbot.waitUntil(lambda: viewer.width() == 720, timeout=1000)
+        viewer._update_toolbar_layout()
+        assert viewer._layout_menu_button.isVisible()
+        assert not viewer._layout_buttons.isVisible()
+
+        narrow_width = viewer._toolbar_width_for(viewer._layout_menu_button, True) - 1
+        viewer.setFixedSize(narrow_width, 700)
+        qtbot.waitUntil(lambda: viewer.width() == narrow_width, timeout=1000)
+        viewer._update_toolbar_layout()
+        assert viewer._secondary_overflow.isVisible()
+        assert viewer._secondary_overflow_menu.actions() == [viewer._print_action]
+
+        viewer.setFixedSize(1200, 700)
+        qtbot.waitUntil(lambda: viewer.width() == 1200, timeout=1000)
+        viewer._update_toolbar_layout()
+        assert viewer._print_button.isVisible()
+        assert not viewer._secondary_overflow.isVisible()
+        assert not viewer._secondary_overflow_menu.actions()
+    finally:
+        loader.close()
+
+
+def test_viewer_panels_preserve_reader_state(qtbot, viewer_pdf: Path, isolated_settings) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        assert viewer._navigation_panel_collapsed
+        assert viewer._annot_rail_collapsed
+        assert "collapsed" in viewer._annot_rail.accessibleDescription()
+
+        viewer._side_expand_btn.setFocus()
+        viewer._side_expand_btn.click()
+        assert not viewer._navigation_panel_collapsed
+
+        viewer.set_annot_tool(AnnotTool.COMMENT)
+        assert "Comment" in viewer._annot_expand_btn.text()
+        assert "active tool: Comment" in viewer._annot_expand_btn.accessibleName()
+
+        viewer.go_to_page(2)
+        viewer.set_layout_mode(ViewerLayout.SINGLE)
+        viewer.set_zoom_mode(ZoomMode.PERCENT, 125)
+        viewer._search_edit.setText("Alpha")
+        viewer.setFocus()
+        viewer._side_collapse_btn.setFocus()
+        viewer._side_collapse_btn.click()
+        assert viewer._side_expand_btn.hasFocus()
+        viewer._annot_expand_btn.setFocus()
+        viewer._annot_expand_btn.click()
+        assert viewer._annot_collapse_btn.hasFocus()
+        assert viewer._navigation_panel_collapsed
+        assert not viewer._annot_rail_collapsed
+        assert viewer.current_page == 2
+        assert viewer.layout_mode == ViewerLayout.SINGLE
+        assert viewer.zoom_mode == ZoomMode.PERCENT
+        assert viewer._search_edit.text() == "Alpha"
+        assert viewer._annot_collapse_btn.hasFocus()
+
+        breakpoint = viewer._toolbar_compact_breakpoint()
+        viewer.setFixedSize(breakpoint - 1, 700)
+        viewer._update_toolbar_layout()
+        assert viewer._layout_menu_button.isVisible()
+    finally:
+        loader.close()
+
+
+def test_viewer_markup_guidance_and_empty_navigation(
+    qtbot, viewer_pdf: Path, isolated_settings, monkeypatch
+) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        monkeypatch.setattr(viewer, "_prompt_markup_color", lambda: True)
+        assert viewer._hint.text() == (
+            "Select: drag across text; click an annotation to edit it."
+        )
+        for tool, expected in (
+            (AnnotTool.HIGHLIGHT, "Highlight: drag across text."),
+            (AnnotTool.UNDERLINE, "Underline: drag across text."),
+            (AnnotTool.STRIKEOUT, "Strikeout: drag across text."),
+            (AnnotTool.FREETEXT, "Text: click to place text."),
+            (
+                AnnotTool.REDACT,
+                "Redact: draw a region, then confirm. Save As permanently removes it.",
+            ),
+        ):
+            viewer.set_annot_tool(tool)
+            assert viewer._hint.text() == expected
+            assert expected in viewer._hint.accessibleName()
+
+        assert viewer._outline.topLevelItem(0).text(0) == "This PDF has no bookmarks"
+        assert viewer._layers.item(0).text() == "This PDF has no optional layers"
+        assert viewer._attachments.item(0).text() == "This PDF has no attachments"
+        assert viewer._extract_attachment_btn.isHidden()
+        assert viewer._navigation_panel_collapsed
+    finally:
+        loader.close()
+
+
+def test_empty_navigation_does_not_override_explicit_preference(
+    qtbot, viewer_pdf: Path, isolated_settings
+) -> None:
+    set_viewer_panel_collapsed("navigation", False)
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        assert not viewer._navigation_panel_collapsed
+    finally:
+        loader.close()
+
+
 def test_fit_page_spread_uses_viewport_height(qtbot, viewer_pdf: Path) -> None:
     """Fit page in two-page mode must not double-halve render width."""
     from pagedrop.ui.pdf_viewer import PAGE_GAP_PX
@@ -231,6 +384,44 @@ def test_viewer_search_next_prev(qtbot, viewer_pdf: Path) -> None:
         viewer.find_prev()
         assert viewer._hit_index == 0
         qtbot.waitUntil(lambda: _active_matches(first), timeout=5000)
+    finally:
+        loader.close()
+
+
+def test_viewer_search_outcomes_preserve_find_state(qtbot, viewer_pdf: Path) -> None:
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer._search_edit.setText("missing")
+        generation = viewer._search_generation
+        viewer._on_search_finished(generation, [], True)
+        assert viewer._hit_label.text() == "No matches"
+        assert not viewer._ocr_button.isVisible()
+
+        viewer._on_search_finished(generation, [], False)
+        assert viewer._hit_label.text() == "No searchable text detected"
+        assert viewer._ocr_button.isVisible()
+        assert viewer._search_edit.text() == "missing"
+
+        viewer._on_search_error(generation, "temporary reader issue")
+        assert viewer._hit_label.text() == "Search failed: temporary reader issue"
+        assert viewer._search_edit.text() == "missing"
+    finally:
+        loader.close()
+
+
+def test_viewer_search_detects_textless_document(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "scan.pdf"
+    _text_pdf(path, [""])
+    viewer, _model, loader = _bind_viewer(qtbot, path)
+    try:
+        viewer.search("missing")
+        qtbot.waitUntil(
+            lambda: viewer._hit_label.text() == "No searchable text detected",
+            timeout=5000,
+        )
+        assert viewer._ocr_button.isVisible()
+        with qtbot.waitSignal(viewer.ocr_requested):
+            viewer._ocr_button.click()
     finally:
         loader.close()
 

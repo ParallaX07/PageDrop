@@ -6,13 +6,15 @@ from pathlib import Path
 
 import fitz
 import pytest
+from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QColorDialog, QToolButton
+from PyQt6.QtWidgets import QColorDialog, QFileDialog, QToolButton
 
 from pagedrop.core.annotations import AnnotationOp, list_annotation_summaries
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool
+from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool, _map_pdf_rect_to_widget
 from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
+from tests.ui.test_save_as import _file_hash, _load_and_dirty, _wait_for_editor_job
 
 
 def _text_pdf(path: Path) -> None:
@@ -73,10 +75,11 @@ def test_annot_tools_and_markup_dirty_undo_save(
     assert hasattr(viewer, "_annot_rail")
     assert not viewer._annot_rail.isHidden()
     assert getattr(viewer, "_annot_bar", None) is None
-    viewer._toggle_annot_rail()
     assert viewer._annot_rail_collapsed
     viewer._toggle_annot_rail()
     assert not viewer._annot_rail_collapsed
+    viewer._toggle_annot_rail()
+    assert viewer._annot_rail_collapsed
 
     for _label, tool in ANNOT_TOOL_ITEMS:
         if tool == AnnotTool.SELECT:
@@ -159,6 +162,7 @@ def test_redact_confirm_cancel_chrome(
     assert session.redaction_regions() == []
     assert not session.is_dirty()
     assert not viewer._redact_confirm.isHidden()
+    assert "Pending redaction mark" in viewer._redact_confirm.accessibleDescription()
     assert viewer.findChild(QToolButton, "PdfViewerRedactConfirmBtn") is not None
     assert viewer.findChild(QToolButton, "PdfViewerRedactCancelBtn") is not None
 
@@ -175,6 +179,10 @@ def test_redact_confirm_cancel_chrome(
     assert regions[0].rect == (50.0, 70.0, 130.0, 100.0)
     assert session.is_dirty()
     assert viewer._redact_confirm.isHidden()
+    assert (
+        viewer._redact_confirm.accessibleDescription()
+        == "Confirmed redaction mark pending Save As"
+    )
     qtbot.waitUntil(lambda: tab.is_dirty, timeout=2000)
 
 
@@ -223,6 +231,7 @@ def test_save_as_with_redaction_uses_verify_path(
     assert tab.is_dirty
 
     out = tmp_path / "verified.pdf"
+    second = tmp_path / "verified-again.pdf"
     calls: list[dict] = []
     real_redact = redact_edit_model
 
@@ -232,14 +241,16 @@ def test_save_as_with_redaction_uses_verify_path(
         assert kwargs.get("scope") is not None
         return real_redact(*args, **kwargs)
 
+    outputs = iter((out, second))
     monkeypatch.setattr(
         QFileDialog,
         "getSaveFileName",
-        lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
+        lambda *a, **k: (str(next(outputs)), "PDF Files (*.pdf)"),
     )
-    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _spy)
+    monkeypatch.setattr("pagedrop.core.editor_jobs.redact_edit_model", _spy)
 
     assert window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, window, tab)
     assert len(calls) == 1
     assert out.is_file()
     assert hashlib.sha256(src.read_bytes()).hexdigest() == before
@@ -249,6 +260,46 @@ def test_save_as_with_redaction_uses_verify_path(
     assert not tab.is_dirty
     assert tab.edit_model is not None
     assert tab.edit_model.save_path == str(out)
+
+    # The next save starts from the verified redacted baseline, not the source.
+    assert window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, window, tab)
+    assert inspect_redaction_result(second, absent_text=[secret]).ok
+    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+
+
+def test_repeated_save_rebases_comments_and_preserves_sources(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+) -> None:
+    source_hash = _file_hash(five_page_pdf)
+    tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="First")
+    )
+    tab._sync_dirty_from_model()
+    first, second = tmp_path / "first.pdf", tmp_path / "second.pdf"
+    outputs = iter((first, second))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(next(outputs)), "PDF Files (*.pdf)"),
+    )
+
+    assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 110),), text="Second")
+    )
+    tab._sync_dirty_from_model()
+    assert main_window._save_as(tab)
+    _wait_for_editor_job(qtbot, main_window, tab)
+
+    assert _file_hash(five_page_pdf) == source_hash
+    assert [summary[2] for summary in list_annotation_summaries(str(first))] == ["First"]
+    assert [summary[2] for summary in list_annotation_summaries(str(second))] == ["First", "Second"]
+    assert tab.edit_model is not None
+    assert {str(five_page_pdf), str(first), str(second)} <= tab.edit_model.source_paths()
+    assert {page.source_path for page in tab.edit_model.iter_pages()} == {str(second)}
 
 
 def test_save_as_redaction_verify_fail_keeps_marks(
@@ -287,9 +338,10 @@ def test_save_as_redaction_verify_fail_keeps_marks(
         "getSaveFileName",
         lambda *a, **k: (str(out), "PDF Files (*.pdf)"),
     )
-    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _fail)
+    monkeypatch.setattr("pagedrop.core.editor_jobs.redact_edit_model", _fail)
 
-    assert window._save_as(tab) is False
+    assert window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, window, tab)
     assert not out.exists()
     assert len(session.redaction_regions()) == 1
     assert tab.is_dirty
@@ -324,11 +376,6 @@ def test_save_as_redaction_scope_cancel_aborts(
         "pagedrop.ui.main_window.prompt_redaction_scope",
         lambda *_a, **_k: None,
     )
-
-    def _must_not_run(*_a, **_k):
-        raise AssertionError("redact_edit_model must not run when scope is cancelled")
-
-    monkeypatch.setattr("pagedrop.ui.main_window.redact_edit_model", _must_not_run)
 
     assert window._save_as(tab) is False
     assert not out.exists()
@@ -385,6 +432,93 @@ def test_color_on_select_stores_color_cancel_keeps_tool(
         assert btn.isChecked() == (tool == AnnotTool.INK)
 
 
+def test_chosen_color_is_used_by_drawn_markup_preview(
+    qtbot, main_window, markup_pdf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    tab = _active_tab(window)
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+    viewer = tab.viewer_widget
+    qtbot.waitUntil(
+        lambda: 0 in viewer._tiles
+        and viewer._tiles[0].isVisible()
+        and viewer._tiles[0]._pixmap is not None,
+        timeout=RENDER_TIMEOUT_MS,
+    )
+    monkeypatch.setattr(
+        QColorDialog,
+        "getColor",
+        staticmethod(lambda *_a, **_k: QColor(220, 30, 40)),
+    )
+
+    viewer.set_annot_tool(AnnotTool.INK)
+    viewer._on_markup_gesture(
+        0,
+        "ink",
+        {"strokes": [((40.0, 60.0), (120.0, 100.0))]},
+    )
+    for tool, payload in (
+        ("rect", {"rect": (40.0, 120.0, 120.0, 160.0)}),
+        ("circle", {"rect": (140.0, 120.0, 220.0, 160.0)}),
+        ("line", {"points": ((40.0, 180.0), (120.0, 200.0))}),
+    ):
+        viewer._on_markup_gesture(0, tool, payload)
+
+    annotations = [
+        entry.annotation
+        for entry in tab.markup_session.ops()
+        if entry.annotation is not None
+    ]
+    expected = (220 / 255, 30 / 255, 40 / 255)
+    assert [op.kind for op in annotations] == ["ink", "rect", "circle", "line"]
+    assert all(op.color == pytest.approx(expected) for op in annotations)
+
+    tile = viewer._tiles[0]
+    image = tile.grab().toImage()
+    assert any(
+        image.pixelColor(x, y).red() > 170
+        and image.pixelColor(x, y).green() < 100
+        and image.pixelColor(x, y).blue() < 110
+        for y in range(image.height())
+        for x in range(image.width())
+    )
+
+
+def test_closing_preview_refreshes_pending_markup_thumbnail(
+    qtbot, main_window, markup_pdf: Path
+) -> None:
+    window = main_window
+    window._load_pdf(str(markup_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    card = tab.thumbnail_grid._cards[0]
+
+    def pixels() -> bytes:
+        assert card._source_pixmap is not None
+        image = card._source_pixmap.toImage()
+        return bytes(image.constBits().asstring(image.sizeInBytes()))
+
+    before = pixels()
+    source_before = markup_pdf.read_bytes()
+    window._open_preview()
+    qtbot.waitUntil(lambda: tab.is_viewer_mode(), timeout=RENDER_TIMEOUT_MS)
+    tab.viewer_widget._markup_color = (0.85, 0.1, 0.15)
+    tab.viewer_widget._on_markup_gesture(
+        0,
+        "ink",
+        {"strokes": [((30.0, 40.0), (260.0, 350.0))]},
+    )
+
+    window._close_preview()
+    qtbot.waitUntil(lambda: pixels() != before, timeout=RENDER_TIMEOUT_MS)
+    assert markup_pdf.read_bytes() == source_before
+
+
 def test_viewer_markup_undo_redo_via_main_window(
     qtbot, main_window, markup_pdf: Path
 ) -> None:
@@ -424,6 +558,36 @@ def test_viewer_markup_undo_redo_via_main_window(
     assert session.can_undo()
     assert not session.can_redo()
     assert tab.is_viewer_mode()
+
+
+def test_comment_stays_with_first_page_after_grid_reorder(
+    qtbot, main_window, tmp_path: Path
+) -> None:
+    """Regression: moving First after Second must not retarget its comment."""
+    source = tmp_path / "ordered.pdf"
+    doc = fitz.open()
+    try:
+        for text in ("First", "Second"):
+            doc.new_page(width=300, height=400).insert_text((40, 80), text)
+        doc.save(str(source))
+    finally:
+        doc.close()
+
+    window = main_window
+    window._load_pdf(str(source))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = _active_tab(window)
+    tab.markup_session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="First note")
+    )
+    tab.thumbnail_grid.selection_manager.set_selection({0})
+    assert tab.move_selected_pages_down()
+
+    out = tmp_path / "reordered.pdf"
+    from pagedrop.core.pdf_writer import write_pdf
+
+    write_pdf(tab.edit_model, str(out), markup=tab.peek_markup_ops())
+    assert (1, "Text", "First note") in list_annotation_summaries(str(out))
 
 
 def test_text_markup_uses_char_rects_not_drag_box(qtbot) -> None:
@@ -470,6 +634,25 @@ def test_text_markup_uses_char_rects_not_drag_box(qtbot) -> None:
     assert tile._drag_payload() == {"rects": ()}
 
 
+def test_shape_drag_rejects_zero_width_or_height(qtbot) -> None:
+    from PyQt6.QtCore import QPointF
+
+    from pagedrop.ui.pdf_viewer import AnnotTool, _PageTile
+
+    tile = _PageTile(0)
+    qtbot.addWidget(tile)
+    tile.resize(300, 400)
+    tile._page_w = 300.0
+    tile._page_h = 400.0
+    tile.set_tool(AnnotTool.RECT)
+
+    tile._sel_start = QPointF(40, 40)
+    tile._sel_end = QPointF(40, 180)
+    assert tile._drag_payload() is None
+    tile._sel_end = QPointF(180, 40)
+    assert tile._drag_payload() is None
+
+
 def test_freetext_place_defaults_and_format_bar(
     qtbot, main_window, markup_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -501,6 +684,20 @@ def test_freetext_place_defaults_and_format_bar(
     assert viewer._selected_overlay == op
     bar = viewer.findChild(QFrame, "FreeTextFormatBar")
     assert bar is not None and not bar.isHidden()
+    tile = viewer._tiles[0]
+    mapped = _map_pdf_rect_to_widget(
+        op.rects[0],
+        tile._page_w,
+        tile._page_h,
+        tile.width(),
+        tile.height(),
+        tile._rotation,
+    )
+    target = QRect(
+        tile.mapTo(viewer, QPoint(int(mapped.left()), int(mapped.top()))),
+        mapped.size().toSize(),
+    )
+    assert not bar.geometry().intersects(target)
 
     viewer._ft_bold.setChecked(True)
     viewer._ft_italic.setChecked(True)

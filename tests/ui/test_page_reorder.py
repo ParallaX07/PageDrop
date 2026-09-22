@@ -60,6 +60,24 @@ def test_delete_all_pages_shows_empty_state(qtbot, five_page_pdf):
     assert tab.is_dirty
 
 
+def test_delete_key_removes_selected_page(qtbot, five_page_pdf):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+
+    tab = window._tab_manager.active_tab
+    assert tab is not None
+    grid = tab.thumbnail_grid
+    qtbot.mouseClick(grid._cards[1], Qt.MouseButton.LeftButton)
+    qtbot.keyClick(grid, Qt.Key.Key_Delete)
+
+    assert tab.edit_model is not None
+    assert tab.edit_model.logical_count() == 4
+    assert _source_indices(tab) == [0, 2, 3, 4]
+
+
 def test_move_up_down_buttons(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)

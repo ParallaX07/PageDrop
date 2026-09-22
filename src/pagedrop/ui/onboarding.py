@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
@@ -14,15 +14,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pagedrop.ui.settings import set_has_seen_tips
+from pagedrop.ui.settings import (
+    has_seen_context_hint,
+    set_has_seen_context_hint,
+    set_has_seen_tips,
+)
 
-# Callouts shown once on first launch (Open, drop zone, zoom, preview, tabs).
+# A tiny orientation only; detailed shortcuts remain available in Help.
 FIRST_RUN_TIPS: tuple[tuple[str, str], ...] = (
     ("Open", "Toolbar Open or File → Open PDF (Ctrl+O)."),
     ("Drop zone", "Drop a PDF onto an empty tab to open it."),
-    ("Zoom", "Resize thumbnails with the zoom controls or Ctrl+scroll."),
-    ("Preview", "Double-click a page or press Enter to preview."),
-    ("Tabs", "Ctrl+T opens a tab. Ctrl+Tab returns to the previous tab (MRU)."),
 )
 
 # Grouped for Help → Keyboard Shortcuts. Ctrl+Tab is documented as MRU.
@@ -54,7 +55,7 @@ SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("Preview page", "Enter · double-click"),
             ("Go to page", "Ctrl+G"),
-            ("Select page range", "Ctrl+F"),
+            ("Select pages", "Use Pages menu"),
             ("Reset zoom", "Ctrl+0"),
             ("Thumbnail zoom", "Ctrl+scroll"),
             ("Command palette", "Ctrl+Shift+P"),
@@ -156,6 +157,57 @@ class TipsOverlay(QWidget):
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
+
+
+class ContextHint(QWidget):
+    """Small non-modal, one-time cue anchored beside the relevant control."""
+
+    def __init__(self, parent: QWidget, anchor: QWidget, key: str, text: str) -> None:
+        super().__init__(parent)
+        self.setObjectName("ContextHint")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._key = key
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 8, 8)
+        layout.setSpacing(8)
+        label = QLabel(text)
+        label.setObjectName("ContextHintText")
+        label.setWordWrap(True)
+        label.setMaximumWidth(300)
+        layout.addWidget(label)
+        dismiss = QPushButton("Got it")
+        dismiss.setObjectName("ContextHintDismiss")
+        dismiss.clicked.connect(self.dismiss)
+        layout.addWidget(dismiss)
+        self.setAccessibleName(text)
+        self.adjustSize()
+        self._place(anchor)
+
+    def _place(self, anchor: QWidget) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        point = anchor.mapTo(parent, QPoint(anchor.width(), anchor.height()))
+        x = min(max(8, point.x() - self.width()), max(8, parent.width() - self.width() - 8))
+        y = min(max(8, point.y() + 8), max(8, parent.height() - self.height() - 8))
+        self.move(x, y)
+
+    def dismiss(self) -> None:
+        set_has_seen_context_hint(self._key)
+        self.deleteLater()
+
+
+def show_context_hint(parent: QWidget, anchor: QWidget, key: str, text: str) -> ContextHint | None:
+    """Show a cue at most once without taking focus or blocking interaction."""
+    if has_seen_context_hint(key):
+        return None
+    # Mark on presentation so an ignored cue cannot nag on every later action.
+    set_has_seen_context_hint(key)
+    hint = ContextHint(parent, anchor, key, text)
+    hint.show()
+    hint.raise_()
+    return hint
 
 
 class KeyboardShortcutsDialog(QDialog):

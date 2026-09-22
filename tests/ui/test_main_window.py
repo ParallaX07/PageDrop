@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 from PyQt6.QtCore import QEvent, QPointF, Qt
-from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar
+from PyQt6.QtGui import QFont, QMouseEvent
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QLabel,
+    QPushButton,
+    QToolBar,
+    QToolButton,
+    QWidget,
+)
 
 from pagedrop.ui.main_window import MainWindow
 
@@ -117,6 +127,66 @@ def test_toolbar_open_button(main_window):
     assert open_action.isEnabled()
 
 
+def test_contextual_toolbar_lives_in_active_pdf_tab_and_hides_for_tools(main_window):
+    """The window owns actions; the active PDF tab only hosts their toolbar."""
+    tab = main_window._active_tab()
+    assert tab is not None
+    assert main_window._toolbar.parentWidget() is tab
+    assert main_window.toolBarArea(main_window._toolbar) == Qt.ToolBarArea.NoToolBarArea
+
+    tool_page = QWidget()
+    tool_page.tool_page_id = "test-tool"
+    main_window._tab_manager.add_page(tool_page, "Test tool")
+
+    assert main_window._active_tab() is None
+    assert main_window._toolbar.isHidden()
+
+
+def test_contextual_toolbar_promotes_save_as_after_edit(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None, timeout=15000)
+    tab = main_window._active_tab()
+    assert tab is not None
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    main_window._duplicate_selected_pages()
+    tab.thumbnail_grid.selection_manager.select_single(0)
+
+    save_button = main_window._toolbar.widgetForAction(main_window._actions["save_as"])
+    extract_button = main_window._toolbar.widgetForAction(
+        main_window._actions["extract_selected"]
+    )
+    assert save_button is not None and save_button.objectName() == "ToolbarPrimary"
+    assert save_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    qtbot.waitUntil(lambda: extract_button is not None and not extract_button.isHidden())
+    assert extract_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    assert main_window._selection_toolbar_label.text() == "Page 2 selected"
+
+    preview_button = main_window._toolbar.widgetForAction(main_window._actions["preview"])
+    assert preview_button is not None and preview_button.text() == "Pages / Preview"
+
+
+def test_toolbar_overflow_owns_only_actions_displaced_from_the_toolbar(
+    main_window, five_page_pdf, qtbot
+):
+    overflow = main_window._toolbar_overflow.menu()
+    assert overflow is not None
+    actions = main_window._actions
+    assert overflow.actions() == []
+    assert main_window._toolbar_overflow.isHidden()
+
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None)
+    assert overflow.actions() == [actions["export_all"]]
+
+    main_window._active_tab().thumbnail_grid.selection_manager.select_single(0)
+    qtbot.waitUntil(lambda: overflow.actions() == [actions["export_all"], actions["move_to"]])
+    assert main_window._toolbar.widgetForAction(actions["move_to"]) is None
+    rotate = main_window._toolbar.widgetForAction(actions["rotate_cw"])
+    assert rotate is not None
+    assert rotate.accessibleName() == "Rotate clockwise"
+    assert actions["move_to"].shortcut().toString()
+
+
 def test_open_pdf_updates_title(main_window, five_page_pdf, monkeypatch, qtbot):
     monkeypatch.setattr(
         QFileDialog,
@@ -179,6 +249,20 @@ def test_window_title_uses_logical_count_after_delete(main_window, five_page_pdf
     assert main_window._active_tab().edit_model.logical_count() == 3
 
 
+def test_thumbnail_followup_ignores_deleted_page_indices(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: len(main_window._thumbnail_grid._cards) == 5, timeout=10000)
+    grid = main_window._thumbnail_grid
+    assert grid._model is not None
+    grid._model.remove_pages([4])
+    # A completion queued before delete can retain the old render-width entry.
+    grid._page_render_width.append(0)
+    grid._start_rendering(silent=True, page_indices=[4])
+    assert grid._model.logical_count() == 4
+
+
 def test_exit_action_closes(main_window, qtbot):
     main_window.show()
     exit_action = _find_action_by_text(_file_menu_actions(main_window), "E&xit", "Exit")
@@ -186,18 +270,11 @@ def test_exit_action_closes(main_window, qtbot):
     qtbot.waitUntil(lambda: not main_window.isVisible(), timeout=5000)
 
 
-def test_toolbar_filename_elides_with_full_path_tooltip(
+def test_document_identity_is_in_the_title_not_the_toolbar(
     main_window, tmp_path, qtbot
 ):
-    """R14: long PDF names must not expand the mid-toolbar label."""
+    """The title keeps discoverable identity without a redundant toolbar label."""
     import fitz
-
-    from pagedrop.ui.theme import TOOLBAR_FILENAME_MAX_WIDTH
-
-    label = main_window._filename_label
-    assert label.objectName() == "ToolbarFilename"
-    assert label.maximumWidth() == TOOLBAR_FILENAME_MAX_WIDTH
-    assert not label.wordWrap()
 
     long_name = "a" * 80 + ".pdf"
     pdf = tmp_path / long_name
@@ -209,6 +286,162 @@ def test_toolbar_filename_elides_with_full_path_tooltip(
         doc.close()
 
     main_window._load_pdf(str(pdf))
-    qtbot.waitUntil(lambda: label.toolTip() == str(pdf), timeout=15000)
-    assert len(label.text()) < len(long_name)
-    assert "…" in label.text()
+    qtbot.waitUntil(lambda: main_window.windowTitle().endswith("(1 page)"), timeout=15000)
+    assert main_window.findChild(QLabel, "ToolbarFilename") is None
+    assert main_window._title_label.toolTip() == main_window.windowTitle()
+    assert "…" in main_window._title_label.text()
+
+
+def test_narrow_shell_elides_title_and_keeps_application_actions_reachable(main_window):
+    main_window.resize(720, 480)
+    main_window.show()
+    QApplication.processEvents()
+
+    assert main_window._title_label.toolTip() == main_window.windowTitle()
+    assert main_window._title_label.width() < 220
+    overflow_actions = main_window._application_overflow_menu.actions()
+    top_level_actions = main_window.menuBar().actions()
+    for action in (
+        main_window._actions["create_pdf"],
+        main_window._actions["tools"],
+        main_window._help_menu_action,
+    ):
+        assert action in top_level_actions or action in overflow_actions
+
+
+def test_title_does_not_overlap_window_controls(main_window, qtbot):
+    main_window.resize(960, 680)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window._update_responsive_shell()
+
+    buttons = main_window._window_controls.findChildren(QToolButton)
+    assert buttons
+    assert (
+        main_window._window_controls.geometry().right()
+        <= main_window.menuBar().rect().right()
+    )
+    assert all(button.isVisible() and button.width() > 0 for button in buttons)
+    assert main_window._title_label.geometry().right() < min(
+        button.geometry().left() for button in buttons
+    )
+
+
+def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_window):
+    for width, height in ((960, 680), (800, 600), (720, 480)):
+        main_window.resize(width, height)
+        QApplication.processEvents()
+        top_level_actions = main_window.menuBar().actions()
+        overflow_actions = main_window._application_overflow_menu.actions()
+        assert main_window._actions["open"] in _file_menu_actions(main_window)
+        for action in (
+            main_window._actions["merge"],
+            main_window._actions["create_pdf"],
+            main_window._actions["tools"],
+            main_window._help_menu_action,
+        ):
+            assert (action in top_level_actions) + (action in overflow_actions) == 1
+        assert main_window._application_overflow_menu.menuAction().isVisible() == bool(
+            overflow_actions
+        )
+        assert main_window._title_label.toolTip() == main_window.windowTitle()
+
+
+@pytest.mark.parametrize("menu_width", [None, 660])
+@pytest.mark.parametrize("control_width", [None, 90])
+def test_shell_uses_rendered_geometry_after_menu_font_growth(
+    main_window, qtbot, menu_width, control_width
+):
+    main_window.resize(720, 480)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    menu_bar = main_window.menuBar()
+    # Exercise a menu bar narrower than the window, too: all measurements must
+    # stay in menu-bar coordinates, including after a platform layout change.
+    if menu_width is not None:
+        menu_bar.setFixedWidth(menu_width)
+    # Windows' offscreen font produces wide caption buttons. Also exercise
+    # that pressure on platforms whose default caption font is narrower.
+    if control_width is not None:
+        for button in main_window._window_controls.findChildren(QToolButton):
+            button.setFixedWidth(control_width)
+    font = QFont(menu_bar.font())
+    font.setPointSize(max(font.pointSize() + 8, 20))
+    menu_bar.setFont(font)
+    QApplication.processEvents()
+    main_window._update_responsive_shell()
+
+    top_level = menu_bar.actions()
+    overflow = main_window._application_overflow_menu.actions()
+    for action in main_window._responsive_menu_actions:
+        assert (action in top_level) + (action in overflow) == 1
+    assert main_window._application_overflow_menu.menuAction().isVisible() == bool(
+        overflow
+    )
+    rendered_right = max(menu_bar.actionGeometry(action).right() + 1 for action in top_level)
+    assert rendered_right <= main_window._window_controls.geometry().left()
+    assert main_window._actions["open"] in _file_menu_actions(main_window)
+
+
+def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, monkeypatch):
+    grid = main_window._active_tab().thumbnail_grid
+    button = grid.findChild(QPushButton, "EmptyStateOpenButton")
+    assert button is not None
+    assert not button.isHidden()
+    assert button.accessibleName() == "Open PDF"
+    assert grid._empty_title.text() == "Open a PDF"
+    assert grid._empty_hint.text() == "Arrange pages, extract selections, or combine documents"
+    assert grid._empty_kbd.text() == "or drop a file here"
+    assert "select" not in grid._empty_kbd.text().lower()
+    assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert main_window._toolbar.isHidden()
+    for action in (
+        main_window._actions["select_all"],
+        main_window._actions["extract_selected"],
+        main_window._actions["delete_pages"],
+    ):
+        assert main_window._toolbar.widgetForAction(action).isHidden()
+
+    triggered: list[bool] = []
+    main_window._actions["open"].triggered.connect(lambda: triggered.append(True))
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileNames", lambda *args, **kwargs: ([], "")
+    )
+    button.click()
+    assert triggered == [True]
+
+
+def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: "Loaded" in main_window.statusBar().currentMessage())
+    pdf_status = main_window.statusBar().currentMessage()
+
+    tool_page = QWidget()
+    tool_page.tool_page_id = "test-tool-status"
+    tool_page.WINDOW_TITLE = "Test tool"
+    main_window._tab_manager.add_page(tool_page, "Test tool")
+
+    assert main_window._toolbar.isHidden()
+    assert main_window._selection_status.isHidden()
+    assert main_window.windowTitle() == "PageDrop: Test tool"
+    assert main_window.statusBar().currentMessage() != pdf_status
+
+
+def test_undo_labels_and_viewer_guidance_follow_current_history(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    tab = main_window._active_tab()
+    assert tab is not None
+    qtbot.waitUntil(lambda: tab.edit_model is not None)
+    tab.edit_model.remove_pages([0, 1])
+    main_window._update_undo_redo_actions()
+    assert main_window._undo_action.text() == "Undo delete 2 pages"
+
+    main_window._open_preview()
+    qtbot.waitUntil(tab.is_viewer_mode)
+    main_window._update_undo_redo_actions()
+    assert not main_window._undo_action.isEnabled()
+    assert main_window._undo_action.toolTip() == (
+        "Return to the page grid to undo delete 2 pages"
+    )

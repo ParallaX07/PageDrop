@@ -21,7 +21,12 @@ KEY_LIGHT_THEME = "view/light_theme"
 KEY_CHROME_VISIBLE = "view/chrome_visible"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
+KEY_VIEWER_PANEL_STATE = "view/viewer_panel_state"
+KEY_VIEWER_PANEL_EXPLICIT = "view/viewer_panel_explicit"
 KEY_HAS_SEEN_TIPS = "onboarding/has_seen_tips"
+KEY_CONTEXT_HINT_SELECTION_EXPORT = "onboarding/context_hint_selection_export"
+KEY_CONTEXT_HINT_TRANSFER = "onboarding/context_hint_transfer"
+KEY_CONTEXT_HINT_BACK_TO_GRID = "onboarding/context_hint_back_to_grid"
 KEY_OFFICE_PREFERRED_BACKEND = "office/preferred_backend"
 KEY_OFFICE_SOFFICE_PATH = "office/soffice_path"
 KEY_TESSDATA_PATH = "ocr/tessdata_path"
@@ -57,6 +62,11 @@ THUMBNAIL_QUALITY_CAP_PX: dict[ThumbnailQuality, int] = {
 
 def _settings() -> QSettings:
     return QSettings(ORGANIZATION, APPLICATION)
+
+
+def settings_file_path() -> str:
+    """Backing settings path, used to colocate small app-owned state files."""
+    return _settings().fileName()
 
 
 def _utc_timestamp(value: object) -> datetime | None:
@@ -330,6 +340,36 @@ def set_thumbnail_zoom(width_px: int) -> None:
     _settings().setValue(KEY_THUMBNAIL_ZOOM, clamped)
 
 
+def viewer_panel_collapsed(panel: str) -> bool:
+    """Return the saved viewer-panel state (markup starts collapsed)."""
+    bits = {"navigation": 1, "markup": 2}
+    if panel not in bits:
+        raise ValueError(f"Unknown viewer panel: {panel!r}")
+    state = _settings().value(KEY_VIEWER_PANEL_STATE, 2, type=int)
+    return bool(state & bits[panel])
+
+
+def set_viewer_panel_collapsed(panel: str, collapsed: bool) -> None:
+    """Persist one explicit viewer-panel choice in the shared state value."""
+    bits = {"navigation": 1, "markup": 2}
+    if panel not in bits:
+        raise ValueError(f"Unknown viewer panel: {panel!r}")
+    settings = _settings()
+    state = settings.value(KEY_VIEWER_PANEL_STATE, 2, type=int)
+    state = state | bits[panel] if collapsed else state & ~bits[panel]
+    settings.setValue(KEY_VIEWER_PANEL_STATE, state)
+    explicit = settings.value(KEY_VIEWER_PANEL_EXPLICIT, 0, type=int) | bits[panel]
+    settings.setValue(KEY_VIEWER_PANEL_EXPLICIT, explicit)
+
+
+def viewer_panel_preference_explicit(panel: str) -> bool:
+    """Whether the user, rather than the viewer default, chose this state."""
+    bits = {"navigation": 1, "markup": 2}
+    if panel not in bits:
+        raise ValueError(f"Unknown viewer panel: {panel!r}")
+    return bool(_settings().value(KEY_VIEWER_PANEL_EXPLICIT, 0, type=int) & bits[panel])
+
+
 def has_seen_tips() -> bool:
     """True after the first-run tips overlay has been dismissed."""
     return _settings().value(KEY_HAS_SEEN_TIPS, False, type=bool)
@@ -337,6 +377,14 @@ def has_seen_tips() -> bool:
 
 def set_has_seen_tips(seen: bool = True) -> None:
     _settings().setValue(KEY_HAS_SEEN_TIPS, bool(seen))
+
+
+def has_seen_context_hint(key: str) -> bool:
+    return _settings().value(key, False, type=bool)
+
+
+def set_has_seen_context_hint(key: str) -> None:
+    _settings().setValue(key, True)
 
 
 def office_preferred_backend() -> OfficePreferredBackend:

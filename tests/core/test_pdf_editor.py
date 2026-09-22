@@ -32,6 +32,15 @@ def test_insert_pages_at_index():
     assert model.page_at(4).source_index == 1
 
 
+def test_source_paths_protect_removed_imports_without_pinning_loader_refs():
+    model = PdfEditModel("/a.pdf", 2)
+    model.insert_pages(1, [PageRef("/b.pdf", 0)])
+    model.remove_pages([1])
+
+    assert model.source_paths() == {"/a.pdf", "/b.pdf"}
+    assert model.current_reference_paths() == {"/a.pdf"}
+
+
 def test_remove_pages():
     model = PdfEditModel("/a.pdf", 5)
     model.remove_pages([1, 3])
@@ -86,8 +95,27 @@ def test_mark_saved_clears_undo_redo_stacks():
     assert model.can_undo()
     assert model.undo()
     assert not model.is_dirty()
-    assert [model.page_at(i).source_index for i in range(2)] == [1, 2]
+    assert [model.page_at(i).source_index for i in range(2)] == [0, 1]
     assert not model.can_undo()
+
+
+def test_rebase_saved_output_uses_new_baseline_and_keeps_source_protection():
+    model = PdfEditModel("/a.pdf", 2)
+    model.insert_pages(1, [PageRef("/b.pdf", 0)])
+    model.rotate_pages([0], 90)
+
+    model.rebase_saved_output("/saved.pdf")
+
+    assert model.original_path == "/saved.pdf"
+    assert model.save_path == "/saved.pdf"
+    assert model.source_paths() == {"/a.pdf", "/b.pdf", "/saved.pdf"}
+    assert model.current_reference_paths() == {"/saved.pdf"}
+    assert [(page.source_path, page.source_index, page.rotation) for page in model.iter_pages()] == [
+        ("/saved.pdf", 0, 0),
+        ("/saved.pdf", 1, 0),
+        ("/saved.pdf", 2, 0),
+    ]
+    assert not model.can_redo()
 
 
 def test_undo_redo_restore_pages_and_dirty():
@@ -99,7 +127,6 @@ def test_undo_redo_restore_pages_and_dirty():
     assert model.can_undo()
     assert [model.page_at(i).source_index for i in range(3)] == [0, 2, 4]
     assert model.is_dirty()
-
     assert model.undo()
     assert [model.page_at(i).source_index for i in range(5)] == [0, 1, 2, 3, 4]
     assert not model.is_dirty()
@@ -108,6 +135,18 @@ def test_undo_redo_restore_pages_and_dirty():
     assert model.redo()
     assert [model.page_at(i).source_index for i in range(3)] == [0, 2, 4]
     assert model.is_dirty()
+
+
+def test_undo_redo_descriptions_follow_history():
+    model = PdfEditModel("/a.pdf", 5)
+    model.remove_pages([1, 3])
+    assert model.undo_description() == "delete 2 pages"
+    assert model.undo_affected_count() == 2
+    assert model.undo()
+    assert model.redo_description() == "delete 2 pages"
+    assert model.redo_affected_count() == 2
+    assert model.redo()
+    assert model.undo_description() == "delete 2 pages"
 
 
 def test_undo_covers_insert_and_reorder():
@@ -182,3 +221,23 @@ def test_duplicate_via_insert_after_last_selected():
     model.insert_pages(selected[-1] + 1, refs)
     assert model.logical_count() == 6
     assert [model.page_at(i).source_index for i in range(6)] == [0, 1, 2, 3, 1, 3]
+
+
+def test_page_instance_identity_survives_edits_and_is_fresh_on_insert() -> None:
+    model = PdfEditModel("/a.pdf", 2)
+    first_id = model.instance_id_at(0)
+    second_id = model.instance_id_at(1)
+    model.move_pages([0], 2)
+    assert model.instance_id_at(1) == first_id
+    model.rotate_pages([1], 90)
+    assert model.instance_id_at(1) == first_id
+    assert model.undo()
+    assert model.instance_id_at(1) == first_id
+    assert model.undo()
+    assert model.instance_id_at(0) == first_id
+    assert model.redo() and model.redo()
+    assert model.instance_id_at(1) == first_id
+
+    model.insert_pages(0, [model.page_at(1)])
+    assert model.instance_id_at(0) not in {first_id, second_id}
+    assert model.logical_index_for_instance(first_id) == 2

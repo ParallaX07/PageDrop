@@ -54,6 +54,7 @@ def test_smoke_edit_save_as_preserves_original(
     )
 
     assert window._save_as(tab) is True
+    qtbot.waitUntil(lambda: tab not in window._editor_busy, timeout=15_000)
     assert not tab.is_dirty
 
     assert _page_count(output) == model.logical_count()

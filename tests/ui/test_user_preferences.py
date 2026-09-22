@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QCheckBox
+from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -17,6 +17,7 @@ from pagedrop.ui.settings import (
     KEY_CONFIRM_CLOSE_DIRTY,
     KEY_CONFIRM_DELETE_MULTIPLE,
     KEY_REMEMBER_GEOMETRY,
+    KEY_VIEWER_PANEL_STATE,
     chrome_visible,
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
@@ -29,9 +30,11 @@ from pagedrop.ui.settings import (
     set_remember_window_geometry,
     set_thumbnail_quality,
     set_thumbnail_zoom,
+    set_viewer_panel_collapsed,
     thumbnail_quality,
     thumbnail_render_width,
     thumbnail_zoom,
+    viewer_panel_collapsed,
 )
 from datetime import UTC, datetime
 from pagedrop.ui.theme import (
@@ -83,6 +86,16 @@ def test_thumbnail_zoom_pref_round_trip(isolated_settings):
     assert thumbnail_zoom() == 240
     set_thumbnail_zoom(MAX_THUMBNAIL_WIDTH + 50)
     assert thumbnail_zoom() == MAX_THUMBNAIL_WIDTH
+
+
+def test_viewer_panel_preference_round_trip(isolated_settings):
+    assert viewer_panel_collapsed("navigation") is False
+    assert viewer_panel_collapsed("markup") is True
+    set_viewer_panel_collapsed("navigation", True)
+    set_viewer_panel_collapsed("markup", False)
+    assert viewer_panel_collapsed("navigation") is True
+    assert viewer_panel_collapsed("markup") is False
+    assert settings_mod._settings().value(KEY_VIEWER_PANEL_STATE, type=int) == 1
 
 
 def test_update_preferences_use_strict_utc_timestamps(isolated_settings):
@@ -174,6 +187,23 @@ def test_preferences_safety_geometry_persist_same_keys(qtbot, isolated_settings)
     assert dialog2._confirm_delete.isChecked() is True
     assert dialog2._confirm_close_dirty.isChecked() is True
     assert dialog2._remember_geometry.isChecked() is True
+
+
+def test_preferences_scrolls_content_with_a_persistent_footer(qtbot, isolated_settings):
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+    scroll = dialog.findChild(QScrollArea, "PreferencesScroll")
+    footer = dialog.findChild(QDialogButtonBox)
+    assert scroll is not None
+    assert footer is not None
+    assert dialog.layout().indexOf(footer) > dialog.layout().indexOf(scroll)
+    assert "dirty tabs" not in dialog._confirm_close_dirty.text().lower()
+    assert dialog._download_eng_btn.text() == "Download English language data…"
+    assert dialog._soffice.placeholderText() == "Find automatically"
+    assert dialog._advanced.isHidden()
+    dialog._advanced_button.click()
+    assert dialog._advanced.isVisible()
 
 
 def test_view_menu_theme_and_quality(isolated_settings, main_window, qtbot):

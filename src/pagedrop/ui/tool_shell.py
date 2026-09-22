@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QBoxLayout,
     QFileDialog,
     QFrame,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -38,7 +39,7 @@ from pagedrop.ui.dialogs import (
 )
 from pagedrop.ui.job_chrome import JobChromeMixin
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 
 _PRIVACY_LINE = "Files stay on this computer. Nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
@@ -188,6 +189,15 @@ class FileDropZone(QFrame):
         self._privacy.setSizePolicy(label_policy)
         layout.addWidget(self._privacy)
 
+        self._change_btn = QPushButton("Change file")
+        self._change_btn.setObjectName("ToolbarSecondary")
+        self._change_btn.clicked.connect(self.open_picker)
+        self._change_btn.hide()
+        change_row = QHBoxLayout()
+        change_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        change_row.addWidget(self._change_btn)
+        layout.addLayout(change_row)
+
         clear_row = QHBoxLayout()
         clear_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._clear_btn = QPushButton("Clear")
@@ -242,13 +252,19 @@ class FileDropZone(QFrame):
         if not self._paths:
             self._prompt.setText(self._empty_prompt)
             self._files_label.hide()
+            self._privacy.show()
             self._clear_btn.setVisible(False)
+            self._change_btn.hide()
         else:
             names = ", ".join(Path(p).name for p in self._paths)
-            self._prompt.setText("Click to replace, or drop another file")
+            count = len(self._paths)
+            self._prompt.setText("Input file" if count == 1 else f"{count} input files")
             self._files_label.setText(names)
             self._files_label.show()
-            self._clear_btn.setVisible(True)
+            self._privacy.hide()
+            self._clear_btn.setVisible(False)
+            self._change_btn.setText("Change file" if count == 1 else "Change files")
+            self._change_btn.show()
         self._fit_wrapped_labels()
 
     def _fit_wrapped_labels(self) -> None:
@@ -266,7 +282,7 @@ class FileDropZone(QFrame):
                 label.setMinimumHeight(h)
         # Parent layouts honor Minimum; keep the floor at the empty-state default.
         hint = self.layout().sizeHint().height() if self.layout() else 96
-        self.setMinimumHeight(max(96, hint))
+        self.setMinimumHeight(max(56 if self._paths else 96, hint))
         self.updateGeometry()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
@@ -449,7 +465,7 @@ def run_tool_job(
         message = success_toast or f"Saved {name}"
         end(
             status=message,
-            toast=message,
+            toast="Completed",
             toast_kind="success",
             result_path=result_path,
         )
@@ -479,6 +495,48 @@ def _options_has_controls(widget: QWidget) -> bool:
     if lay is not None:
         return lay.count() > 0
     return any(isinstance(c, QWidget) for c in widget.children())
+
+
+def _polish_form_layouts(widget: QWidget) -> None:
+    """Apply the shared, wrapping form composition to a tool's options."""
+    layouts = [widget.layout(), *(child.layout() for child in widget.findChildren(QWidget))]
+    for layout in layouts:
+        if not isinstance(layout, QFormLayout):
+            continue
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(8)
+        layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+
+def show_field_error(field: QWidget, message: str) -> QLabel:
+    """Show one local, persistent validation message beside *field*."""
+    error = field.property("toolFieldError")
+    if isinstance(error, QLabel):
+        error.setText(message)
+        error.show()
+        field.setFocus(Qt.FocusReason.OtherFocusReason)
+        return error
+    error = QLabel(message, field.parentWidget())
+    error.setObjectName("ToolsErrorHint")
+    error.setWordWrap(True)
+    error.setAccessibleName(message)
+    field.setProperty("toolFieldError", error)
+    for layout in [field.parentWidget().layout() if field.parentWidget() else None]:
+        if isinstance(layout, QFormLayout):
+            row, _role = layout.getWidgetPosition(field)
+            if row >= 0:
+                layout.insertRow(row + 1, "", error)
+                break
+    field.setFocus(Qt.FocusReason.OtherFocusReason)
+    return error
+
+
+def clear_field_error(field: QWidget) -> None:
+    error = field.property("toolFieldError")
+    if isinstance(error, QLabel):
+        error.hide()
 
 
 class _ToolHelpPopup(QFrame):
@@ -537,6 +595,9 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
 
+        self._workflow_header = ToolWorkflowHeader(title, description)
+        root.addWidget(self._workflow_header)
+
         # Optional chrome above the drop zone (e.g. Change File after pick).
         self._chrome_host = QWidget()
         self._chrome_host.setObjectName("ToolShellChrome")
@@ -578,7 +639,8 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._options_layout.setContentsMargins(0, 0, 0, 0)
         self._options_layout.setSpacing(8)
 
-        # R18/R19: title + ? in the options region (no persistent description band).
+        # The workflow header owns the visible title/purpose. Keep help available
+        # beside options without repeating the title below the selected input.
         self._header_host = QWidget()
         self._header_host.setObjectName("ToolShellHeader")
         header_lay = QHBoxLayout(self._header_host)
@@ -586,6 +648,7 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         header_lay.setSpacing(6)
         self._title_label = QLabel(title)
         self._title_label.setObjectName("ToolShellTitle")
+        self._title_label.hide()
         header_lay.addWidget(self._title_label, stretch=0)
         self._help_btn = QToolButton()
         self._help_btn.setObjectName("ToolShellHelp")
@@ -608,6 +671,12 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._actions_layout = QHBoxLayout(self._actions_host)
         self._actions_layout.setContentsMargins(0, 0, 0, 0)
         self._actions_layout.setSpacing(8)
+        self._job_error = QLabel()
+        self._job_error.setObjectName("ToolsErrorHint")
+        self._job_error.setWordWrap(True)
+        self._job_error.setAccessibleName("Job error")
+        self._job_error.hide()
+        self._actions_layout.addWidget(self._job_error, 1)
         self._actions_layout.addStretch(1)
 
         self._run_btn = QPushButton("Run")
@@ -633,6 +702,16 @@ class ToolShellWindow(JobChromeMixin, QWidget):
 
     def statusBar(self) -> StatusFooter:  # noqa: N802
         return self._status
+
+    def show_job_error(self, message: str) -> None:
+        """Keep recoverable job failures next to Run after the toast expires."""
+        self._job_error.setText(message)
+        self._job_error.setAccessibleDescription(message)
+        self._job_error.show()
+
+    def clear_job_error(self) -> None:
+        self._job_error.clear()
+        self._job_error.hide()
 
     def set_editor(self, editor: QWidget | None) -> None:
         self._editor = editor
@@ -669,6 +748,8 @@ class ToolShellWindow(JobChromeMixin, QWidget):
             if scroll_idx >= 0:
                 root.setStretch(scroll_idx, 0)
             return
+
+        _polish_form_layouts(widget)
 
         if header_in_options:
             self._options_layout.addWidget(self._header_host)
@@ -749,6 +830,11 @@ class ToolShellWindow(JobChromeMixin, QWidget):
             self._update_run_enabled()
         else:
             self._run_btn.setEnabled(False)
+
+    def _set_result_precedence(self, available: bool) -> None:
+        self._run_btn.setProperty("resultAvailable", available)
+        self._run_btn.style().unpolish(self._run_btn)
+        self._run_btn.style().polish(self._run_btn)
 
     def _update_run_enabled(self) -> None:
         ok = bool(self._drop_zone.paths()) and not self._job_running

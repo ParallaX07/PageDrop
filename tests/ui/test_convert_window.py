@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QLabel, QWidget
 
 from pagedrop.ui.convert_window import ConvertWindow
 from pagedrop.ui.main_window import MainWindow
@@ -76,6 +76,13 @@ def test_convert_disabled_when_empty(qtbot, tmp_path):
 
     window._add_paths([str(png)])
     assert window._create_action.isEnabled()
+
+
+def test_create_pdf_has_workflow_header(qtbot):
+    window = _convert_window(qtbot)
+    header = window.findChild(QWidget, "ToolWorkflowHeader")
+    assert header is not None
+    assert header.findChild(QLabel, "ToolWorkflowTitle").text() == "Create PDF"
 
 
 def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):

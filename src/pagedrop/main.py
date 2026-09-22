@@ -1,5 +1,4 @@
 import sys
-from importlib.metadata import PackageNotFoundError, version
 
 _APP_NAME = "PageDrop"
 _ORG_NAME = "PageDrop"
@@ -9,13 +8,20 @@ _OFFICE_COM_WORKER_FLAG = "--pagedrop-office-com-worker"
 
 
 def _app_version() -> str:
-    try:
-        return version("pagedrop")
-    except PackageNotFoundError:
-        return "0.0.0"
+    from pagedrop.utils.diagnostics import installed_version
+
+    return installed_version()
 
 
 def main() -> int:
+    from pagedrop.utils.diagnostics import (
+        configure_terminal_logging,
+        install_qt_message_handler,
+        log_startup,
+    )
+
+    configure_terminal_logging()
+    log_startup(app_version=_app_version())
     if _OFFICE_COM_WORKER_FLAG in sys.argv:
         from pagedrop.helpers.office_com_worker import main as worker_main
 
@@ -30,7 +36,7 @@ def main() -> int:
         argv = [a for a in sys.argv[1:] if a != REDACT_VERIFY_FLAG]
         return redact_main(argv)
 
-    from PyQt6.QtCore import QEvent
+    from PyQt6.QtCore import QEvent, QTimer
     from PyQt6.QtWidgets import QApplication
 
     from pagedrop.assets import app_icon
@@ -38,6 +44,7 @@ def main() -> int:
     from pagedrop.ui.window_manager import WindowManager
     from pagedrop.utils.update_windows import UpdateMutex, WindowsUpdateError
 
+    install_qt_message_handler()
     app = QApplication(sys.argv)
     app.setOrganizationName(_ORG_NAME)
     app.setApplicationName(_APP_NAME)
@@ -61,6 +68,7 @@ def main() -> int:
     win = manager.open_new_window()
     win.restore_saved_geometry()
     win.setWindowIcon(icon)
+    QTimer.singleShot(0, win.restore_recovery_drafts)
     exit_code = app.exec()
 
     # Flush top-level widgets before interpreter shutdown. Leaving the viewer's

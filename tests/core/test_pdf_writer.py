@@ -8,6 +8,7 @@ from pathlib import Path
 import fitz
 import pytest
 
+from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.pdf_writer import merge_pdf_files, write_pdf
@@ -81,6 +82,47 @@ def test_write_multi_source_refs(tmp_path):
     write_pdf(model, str(output))
 
     assert [_page_width(output, i) for i in range(5)] == [111, 444, 555, 222, 333]
+
+
+def test_write_rejects_imported_source_without_mutating_sources(tmp_path):
+    doc_a = tmp_path / "a.pdf"
+    doc_b = tmp_path / "b.pdf"
+    _write_distinct_pdf(doc_a, [111])
+    _write_distinct_pdf(doc_b, [222])
+    hash_a = _file_hash(doc_a)
+    hash_b = _file_hash(doc_b)
+    model = PdfEditModel(str(doc_a), 1)
+    model.insert_pages(1, [PageRef(str(doc_b), 0)])
+    model.remove_pages([1])
+
+    with pytest.raises(SourceOverwriteError):
+        write_pdf(model, str(doc_b))
+
+    assert _file_hash(doc_a) == hash_a
+    assert _file_hash(doc_b) == hash_b
+
+
+def test_write_rejects_hard_link_to_imported_source(tmp_path):
+    doc_a = tmp_path / "a.pdf"
+    doc_b = tmp_path / "b.pdf"
+    alias = tmp_path / "b-alias.pdf"
+    _write_distinct_pdf(doc_a, [111])
+    _write_distinct_pdf(doc_b, [222])
+    try:
+        alias.hardlink_to(doc_b)
+    except OSError as exc:
+        pytest.skip(f"hard links unavailable: {exc}")
+    hash_a = _file_hash(doc_a)
+    hash_b = _file_hash(doc_b)
+    model = PdfEditModel(str(doc_a), 1)
+    model.insert_pages(1, [PageRef(str(doc_b), 0)])
+    model.remove_pages([1])
+
+    with pytest.raises(SourceOverwriteError):
+        write_pdf(model, str(alias))
+
+    assert _file_hash(doc_a) == hash_a
+    assert _file_hash(doc_b) == hash_b
 
 
 def test_merge_pdf_files_preserves_file_order(tmp_path):

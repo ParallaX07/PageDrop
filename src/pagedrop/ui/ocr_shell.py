@@ -34,7 +34,12 @@ from pagedrop.ui.settings import (
     remember_directory,
 )
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import (
+    ToolShellWindow,
+    clear_field_error,
+    run_tool_job,
+    show_field_error,
+)
 from pagedrop.utils.page_jump import parse_page_ranges
 
 if TYPE_CHECKING:
@@ -137,6 +142,7 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
     ranges.setPlaceholderText("All pages")
     ranges.setClearButtonEnabled(True)
     form.addRow("Page range", ranges)
+    ranges.textChanged.connect(lambda _text: clear_field_error(ranges))
     range_hint = QLabel("Leave blank for all pages, or use 1-3,5 (selection prefills).")
     range_hint.setObjectName("ToolsHint")
     range_hint.setWordWrap(True)
@@ -229,9 +235,8 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
 
         page_indices = _page_indices_from_text(ranges.text(), page_count)
         if page_indices is not None and len(page_indices) == 0:
-            QMessageBox.warning(
-                shell,
-                shell.WINDOW_TITLE,
+            show_field_error(
+                ranges,
                 "Enter page ranges like 1-3,5,7-9, or leave blank for all pages.",
             )
             return
@@ -299,6 +304,7 @@ def _configure_extract_tables(
     ranges.setPlaceholderText("All pages")
     ranges.setClearButtonEnabled(True)
     form.addRow("Page range", ranges)
+    ranges.textChanged.connect(lambda _text: clear_field_error(ranges))
     range_hint = QLabel("Leave blank for all pages, or use 1-3,5 (selection prefills).")
     range_hint.setObjectName("ToolsHint")
     range_hint.setWordWrap(True)
@@ -328,9 +334,8 @@ def _configure_extract_tables(
 
         page_indices = _page_indices_from_text(ranges.text(), page_count)
         if page_indices is not None and len(page_indices) == 0:
-            QMessageBox.warning(
-                shell,
-                shell.WINDOW_TITLE,
+            show_field_error(
+                ranges,
                 "Enter page ranges like 1-3,5,7-9, or leave blank for all pages.",
             )
             return

@@ -525,10 +525,7 @@ def redact_edit_model(
     from pagedrop.core.pdf_writer import write_pdf
 
     output = Path(output_path)
-    for i in range(model.logical_count()):
-        reject_source_overwrite(output, model.page_at(i).source_path)
-    if model.original_path:
-        reject_source_overwrite(output, model.original_path)
+    reject_source_overwrite(output, *model.source_paths())
     if not regions:
         raise RedactionError("No redaction regions to apply")
 

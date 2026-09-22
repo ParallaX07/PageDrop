@@ -4,7 +4,7 @@ The Tools hub (`Ctrl+Shift+O`, or the Tools menu) is a searchable catalogue tab 
 
 ## How a tool runs
 
-Typical flow: drop zone → options → Run → cancelable progress → toast, then **Preview / Open / Show in folder**.
+Typical flow: drop zone → options → Run → cancelable progress → a persistent output summary, then **Preview / Open / Show in folder**. The output location is selectable after the toast disappears.
 
 PageDrop does **not** auto-open job results into PDF editor tabs. You choose Preview, Open, or Show in folder when you want them.
 
@@ -40,4 +40,4 @@ Office conversions name the engine in status. If a COM run fails, fallback to an
 
 ## Cancel and cleanup
 
-Cancel stops the owned job and, for helper processes (Office / LibreOffice), kills only the owned process trees. Partial outputs under temp staging are removed; promoted results stay where you saved them.
+Cancel immediately changes the progress state to **Cancelling…** until the worker finishes. It stops the owned job and, for helper processes (Office / LibreOffice), kills only the owned process trees. Partial outputs under temp staging are removed; promoted results stay where you saved them. Recoverable errors remain beside **Run** as well as appearing in a dialog and notification.

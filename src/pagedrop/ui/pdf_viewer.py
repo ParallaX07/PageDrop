@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import replace
@@ -31,10 +32,13 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
     QColor,
     QDesktopServices,
     QGuiApplication,
     QKeyEvent,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -48,6 +52,7 @@ from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QApplication,
     QColorDialog,
     QComboBox,
     QDoubleSpinBox,
@@ -96,6 +101,7 @@ from pagedrop.core.pdf_service import (
     extract_attachment,
     layers_for_path,
     logical_index_for_source,
+    model_has_searchable_text,
     outline_for_paths,
     page_geometry,
     page_links,
@@ -126,11 +132,17 @@ from pagedrop.ui.theme import (
     status_success_hex,
     token_qcolor,
 )
+from pagedrop.ui.settings import (
+    set_viewer_panel_collapsed,
+    viewer_panel_collapsed,
+    viewer_panel_preference_explicit,
+)
 
 PAGE_GAP_PX = 16
 SIDE_PANEL_WIDTH = 240
+SIDE_PANEL_COLLAPSED = 64
 ANNOT_RAIL_WIDTH = 120
-ANNOT_RAIL_COLLAPSED = 28
+ANNOT_RAIL_COLLAPSED = 88
 CACHE_MAX_PIXMAPS = 48
 RENDER_DEBOUNCE_MS = 80
 DEFAULT_ZOOM_PERCENT = 100
@@ -402,7 +414,7 @@ class _ViewerRenderWorker(QRunnable):
 
 class _ViewerSearchWorker(QRunnable):
     class Signals(QObject):
-        finished = pyqtSignal(int, object)  # gen, list[SearchHit]
+        finished = pyqtSignal(int, object, object)  # gen, hits, has text
         error = pyqtSignal(int, str)
 
     def __init__(
@@ -433,7 +445,15 @@ class _ViewerSearchWorker(QRunnable):
             )
             if self._is_cancelled(self._generation):
                 return
-            self.signals.finished.emit(self._generation, hits)
+            has_text = True
+            if not hits:
+                has_text = model_has_searchable_text(
+                    self._model,
+                    passwords=self._passwords,
+                    is_cancelled=lambda: self._is_cancelled(self._generation),
+                )
+            if not self._is_cancelled(self._generation):
+                self.signals.finished.emit(self._generation, hits, has_text)
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))
@@ -752,7 +772,13 @@ class _PageTile(QWidget):
                         AnnotTool.IMAGE,
                         AnnotTool.REDACT,
                     ):
-                        painter.setPen(QPen(accent_qcolor(), 1))
+                        stroke = (
+                            QColor.fromRgbF(*self._markup_color)
+                            if self._tool
+                            in (AnnotTool.RECT, AnnotTool.CIRCLE, AnnotTool.LINE)
+                            else accent_qcolor()
+                        )
+                        painter.setPen(QPen(stroke, 2))
                         if self._tool == AnnotTool.CIRCLE:
                             painter.drawEllipse(QRectF(x0, y0, x1 - x0, y1 - y0))
                         elif self._tool == AnnotTool.LINE:
@@ -768,7 +794,7 @@ class _PageTile(QWidget):
                             painter.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
 
             if len(self._ink_points) >= 2:
-                painter.setPen(QPen(token_qcolor(PAGE_INK), 2))
+                painter.setPen(QPen(QColor.fromRgbF(*self._markup_color), 2))
                 for i in range(1, len(self._ink_points)):
                     a = self._pdf_to_widget_point(self._ink_points[i - 1])
                     b = self._pdf_to_widget_point(self._ink_points[i])
@@ -817,8 +843,6 @@ class _PageTile(QWidget):
         for entry in self._overlay_entries:
             if entry.kind == "redaction" and entry.redaction is not None:
                 region = entry.redaction
-                if region.page_index != self.logical_page:
-                    continue
                 wr = _map_pdf_rect_to_widget(
                     region.rect,
                     self._page_w,
@@ -834,8 +858,6 @@ class _PageTile(QWidget):
             if entry.kind != "annotation" or entry.annotation is None:
                 continue
             op = entry.annotation
-            if op.page_index != self.logical_page:
-                continue
             color = QColor(
                 int(op.color[0] * 255),
                 int(op.color[1] * 255),
@@ -930,7 +952,7 @@ class _PageTile(QWidget):
                     self._pdf_to_widget_point(op.points[1]),
                 )
             if op.kind == "ink":
-                painter.setPen(QPen(token_qcolor(PAGE_INK, 180), 2))
+                painter.setPen(QPen(color, 2))
                 for stroke in op.strokes:
                     for i in range(1, len(stroke)):
                         painter.drawLine(
@@ -1162,8 +1184,11 @@ class _PageTile(QWidget):
         else:
             self._update_cursor(pos)
         if self._drawing and self._tool == AnnotTool.INK:
-            self._ink_points.append(self._widget_to_pdf(pos))
-            self.update()
+            point = self._widget_to_pdf(pos)
+            previous = self._ink_points[-1]
+            if abs(point[0] - previous[0]) + abs(point[1] - previous[1]) >= 0.5:
+                self._ink_points.append(point)
+                self.update()
             event.accept()
             return
         if self._selecting:
@@ -1241,7 +1266,7 @@ class _PageTile(QWidget):
             return {"points": (p0, p1)}
         x0, x1 = sorted((p0[0], p1[0]))
         y0, y1 = sorted((p0[1], p1[1]))
-        if x1 - x0 < 2 and y1 - y0 < 2:
+        if x1 - x0 < 2 or y1 - y0 < 2:
             return None
         rect = (x0, y0, x1, y1)
         if self._tool in _TEXT_MARKUP_TOOLS:
@@ -1480,6 +1505,7 @@ class PdfViewerWidget(QWidget):
     closed = pyqtSignal()
     busy_changed = pyqtSignal(bool, str)
     status_message = pyqtSignal(str)
+    ocr_requested = pyqtSignal()
     render_error = pyqtSignal(str)
     markup_changed = pyqtSignal()
 
@@ -1513,6 +1539,8 @@ class PdfViewerWidget(QWidget):
         self._hit_index = -1
         self._ocg_on: dict[str, frozenset[int]] = {}
         self._ocg_source: str | None = None
+        self._navigation_panel_collapsed = viewer_panel_collapsed("navigation")
+        self._annot_rail_collapsed = viewer_panel_collapsed("markup")
 
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
@@ -1566,15 +1594,13 @@ class PdfViewerWidget(QWidget):
         center_layout.addWidget(self._scroll, stretch=1)
         self._overlay = BusyOverlay(self._scroll.viewport())
 
-        self._hint = QLabel(
-            "Right-click for markup tools  ·  PgUp/PgDn  ·  Ctrl+scroll zoom  ·  Esc grid"
-        )
+        self._hint = QLabel()
         self._hint.setObjectName("PdfViewerHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center_layout.addWidget(self._hint)
+        self._update_markup_hint()
 
         self._annot_rail = self._build_annot_rail()
-        self._annot_rail_collapsed = False
 
         self._splitter.addWidget(center)
         self._splitter.addWidget(self._annot_rail)
@@ -1583,6 +1609,10 @@ class PdfViewerWidget(QWidget):
         self._splitter.setStretchFactor(2, 0)
         self._splitter.setSizes([SIDE_PANEL_WIDTH, 800, ANNOT_RAIL_WIDTH])
         root.addWidget(self._splitter, stretch=1)
+        self._set_navigation_panel_collapsed(
+            self._navigation_panel_collapsed, persist=False
+        )
+        self._set_annot_rail_collapsed(self._annot_rail_collapsed, persist=False)
 
         self._redact_confirm = self._build_redact_confirm_chrome()
         # ponytail: lazy — QComboBox/spinbox in an unshown tree segfault on
@@ -1631,6 +1661,7 @@ class PdfViewerWidget(QWidget):
         self._markup = markup
         self._tool = AnnotTool.SELECT
         self._sync_annot_tool_ui()
+        self._update_markup_hint()
         self._cancel_pending_redact(status=False)
         self._set_selected_overlay(None)
         self._current_page = 0
@@ -1645,12 +1676,15 @@ class PdfViewerWidget(QWidget):
         self._search_edit.clear()
         self._hit_label.setText("")
         if model is None:
+            self._page_edit.clear()
+            self._page_edit.setEnabled(False)
             self._side_panel_timer.stop()
             self._side_panel_dirty = False
             self._outline.clear()
             self._layers.clear()
             self._attachments.clear()
             return
+        self._page_edit.setEnabled(True)
         self._load_page_sizes()
         self._refresh_side_panel(outline=False)
         # Large TOCs are built on the next event-loop turn so the first canvas
@@ -1659,6 +1693,7 @@ class PdfViewerWidget(QWidget):
         self._side_panel_timer.start()
         self._rebuild_canvas()
         self._update_render_width()
+        self._update_page_label()
         self._schedule_render()
 
     def _passwords(self) -> dict[str, str] | None:
@@ -1689,6 +1724,7 @@ class PdfViewerWidget(QWidget):
             return
         self._tool = tool
         self._sync_annot_tool_ui()
+        self._update_markup_hint()
         for tile in self._tiles.values():
             tile.set_tool(tool)
             tile.clear_selection()
@@ -1712,6 +1748,32 @@ class PdfViewerWidget(QWidget):
         }
         self.status_message.emit(labels.get(tool, tool.value))
 
+    def _update_markup_hint(self) -> None:
+        """Keep the next markup gesture visible without opening the rail."""
+        guidance = {
+            AnnotTool.SELECT: "Select: drag across text; click an annotation to edit it.",
+            AnnotTool.HIGHLIGHT: "Highlight: drag across text.",
+            AnnotTool.UNDERLINE: "Underline: drag across text.",
+            AnnotTool.STRIKEOUT: "Strikeout: drag across text.",
+            AnnotTool.INK: "Ink: draw freehand.",
+            AnnotTool.RECT: "Rectangle: drag to draw.",
+            AnnotTool.CIRCLE: "Circle: drag to draw.",
+            AnnotTool.LINE: "Line: drag to draw.",
+            AnnotTool.STAMP: "Stamp: click to place.",
+            AnnotTool.FREETEXT: "Text: click to place text.",
+            AnnotTool.IMAGE: "Image: drag a box, then choose a file.",
+            AnnotTool.COMMENT: "Comment: click to place.",
+            AnnotTool.REDACT: (
+                "Redact: draw a region, then confirm. Save As permanently removes it."
+            ),
+            AnnotTool.FORM_FILL: "Fill form: click a field.",
+            AnnotTool.FORM_TEXT: "Add text field: drag.",
+            AnnotTool.FORM_CHECK: "Add checkbox: drag.",
+        }
+        text = guidance[self._tool]
+        self._hint.setText(text)
+        self._hint.setAccessibleName(f"Active markup tool: {text}")
+
     def _prompt_markup_color(self) -> bool:
         """Ask for markup color; return False if cancelled (caller keeps prior tool)."""
         r, g, b = (
@@ -1734,17 +1796,25 @@ class PdfViewerWidget(QWidget):
             btn = self._annot_group.button(i)
             if btn is not None:
                 btn.setChecked(tool == self._tool)
+        if hasattr(self, "_annot_expand_btn"):
+            label = next(label for label, tool in ANNOT_TOOL_ITEMS if tool == self._tool)
+            self._annot_expand_btn.setText(f"‹ {label}")
+            self._annot_expand_btn.setAccessibleName(
+                f"Show markup tools; active tool: {label}"
+            )
+            self._annot_expand_btn.setToolTip(
+                f"Show markup tools (active: {label})"
+            )
 
     def refresh_markup_overlays(self) -> None:
-        entries = self._markup.ops() if self._markup is not None else []
         for tile in self._tiles.values():
-            tile.set_overlay_entries(entries)
+            tile.set_overlay_entries(self._markup_entries_for(tile.logical_page))
             tile.set_markup_color(self._markup_color)
             tile.set_pending_redaction(self._pending_redact)
             tile.set_selected_op(
                 self._selected_overlay
                 if self._selected_overlay is not None
-                and self._selected_overlay.page_index == tile.logical_page
+                and self._selected_overlay_is_on(tile.logical_page)
                 else None
             )
         self._sync_floating_chrome()
@@ -1754,9 +1824,25 @@ class PdfViewerWidget(QWidget):
         self._selected_overlay = op
         for tile in self._tiles.values():
             tile.set_selected_op(
-                op if op is not None and op.page_index == tile.logical_page else None
+                op if op is not None and self._selected_overlay_is_on(tile.logical_page) else None
             )
         self._sync_freetext_format_bar()
+
+    def _page_instance_id(self, logical: int) -> str | None:
+        if self._model is None or not 0 <= logical < self._model.logical_count():
+            return None
+        return self._model.instance_id_at(logical)
+
+    def _markup_entries_for(self, logical: int) -> list[MarkupEntry]:
+        instance_id = self._page_instance_id(logical)
+        if self._markup is None or instance_id is None:
+            return []
+        return self._markup.entries_for_instance(instance_id)
+
+    def _selected_overlay_is_on(self, logical: int) -> bool:
+        if self._markup is None or self._selected_overlay is None:
+            return False
+        return self._markup.annotation_instance_id(self._selected_overlay) == self._page_instance_id(logical)
 
     def _delete_overlay(self, op: AnnotationOp | None = None) -> bool:
         if self._markup is None:
@@ -1779,9 +1865,7 @@ class PdfViewerWidget(QWidget):
         self._cancel_all()
         self._layout = mode
         self._invalidate_offsets()
-        self._layout_continuous.setChecked(mode == ViewerLayout.CONTINUOUS)
-        self._layout_single.setChecked(mode == ViewerLayout.SINGLE)
-        self._layout_spread.setChecked(mode == ViewerLayout.SPREAD)
+        self._layout_actions[mode].setChecked(True)
         self._rebuild_canvas()
         self._update_render_width()
         self._schedule_render()
@@ -1791,6 +1875,7 @@ class PdfViewerWidget(QWidget):
         self._zoom_mode = mode
         if percent is not None:
             self._zoom_percent = max(MIN_ZOOM_PERCENT, min(MAX_ZOOM_PERCENT, percent))
+        self._update_zoom_control()
         self._cache.clear()
         self._invalidate_offsets()
         self._update_render_width()
@@ -1900,6 +1985,7 @@ class PdfViewerWidget(QWidget):
         gen = self._search_generation
         self._hits = []
         self._hit_index = -1
+        self._ocr_button.hide()
         self._apply_hits_to_tiles()
         if not query:
             self._hit_label.setText("")
@@ -2014,80 +2100,234 @@ class PdfViewerWidget(QWidget):
         bar.setObjectName("PdfViewerToolbar")
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
+        self._find_group = self._toolbar_group("Find")
+        find_layout = self._find_group.layout()
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Find in document")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setAccessibleName("Find in document")
         self._search_edit.returnPressed.connect(self._on_search_submit)
-        layout.addWidget(self._search_edit, stretch=1)
+        find_layout.addWidget(self._search_edit, stretch=1)
 
         prev_btn = QToolButton()
         prev_btn.setText("Prev")
         prev_btn.setToolTip("Previous result")
         prev_btn.setAccessibleName("Previous search result")
         prev_btn.clicked.connect(self.find_prev)
-        layout.addWidget(prev_btn)
+        find_layout.addWidget(prev_btn)
 
         next_btn = QToolButton()
         next_btn.setText("Next")
         next_btn.setToolTip("Next result")
         next_btn.setAccessibleName("Next search result")
         next_btn.clicked.connect(self.find_next)
-        layout.addWidget(next_btn)
+        find_layout.addWidget(next_btn)
 
         self._hit_label = QLabel("")
         self._hit_label.setObjectName("PdfViewerHitLabel")
         self._hit_label.setAccessibleName("Search results")
-        layout.addWidget(self._hit_label)
+        find_layout.addWidget(self._hit_label)
+        self._ocr_button = QToolButton()
+        self._ocr_button.setText("Use OCR")
+        self._ocr_button.setToolTip("Create a searchable copy with OCR")
+        self._ocr_button.setAccessibleName("Create a searchable copy with OCR")
+        self._ocr_button.clicked.connect(self.ocr_requested.emit)
+        self._ocr_button.hide()
+        find_layout.addWidget(self._ocr_button)
+        self._find_group.setMinimumWidth(180)
+        layout.addWidget(self._find_group, stretch=1)
 
-        self._page_label = QLabel("")
-        self._page_label.setObjectName("PdfViewerPageLabel")
-        layout.addWidget(self._page_label)
+        self._page_group = self._toolbar_group("Page position")
+        page_layout = self._page_group.layout()
+        self._page_edit = QLineEdit()
+        self._page_edit.setObjectName("PdfViewerPageEdit")
+        self._page_edit.setAccessibleName("Current page")
+        self._page_edit.setToolTip("Enter a page number")
+        self._page_edit.setMinimumWidth(112)
+        self._page_edit.setMaximumWidth(160)
+        self._page_edit.setEnabled(False)
+        self._page_edit.returnPressed.connect(self._on_page_edit_submit)
+        self._page_edit.installEventFilter(self)
+        page_layout.addWidget(self._page_edit)
+        layout.addWidget(self._page_group)
 
-        self._layout_continuous = QToolButton()
-        self._layout_continuous.setText("Continuous")
-        self._layout_continuous.setCheckable(True)
-        self._layout_continuous.setChecked(True)
-        self._layout_continuous.clicked.connect(
-            lambda: self.set_layout_mode(ViewerLayout.CONTINUOUS)
+        self._layout_group = self._toolbar_group("Page layout")
+        layout_buttons = QWidget()
+        layout_buttons.setObjectName("PdfViewerLayoutButtons")
+        layout_buttons_layout = QHBoxLayout(layout_buttons)
+        layout_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        layout_buttons_layout.setSpacing(2)
+        self._layout_actions = {}
+        self._layout_action_group = QActionGroup(self)
+        self._layout_action_group.setExclusive(True)
+        for mode, label, attr in (
+            (ViewerLayout.CONTINUOUS, "Continuous", "_layout_continuous"),
+            (ViewerLayout.SINGLE, "Single", "_layout_single"),
+            (ViewerLayout.SPREAD, "Two-page", "_layout_spread"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(mode == ViewerLayout.CONTINUOUS)
+            action.setData(mode)
+            self._layout_action_group.addAction(action)
+            self._layout_actions[mode] = action
+            button = QToolButton()
+            button.setDefaultAction(action)
+            button.setAccessibleName(f"{label} page layout")
+            setattr(self, attr, button)
+            layout_buttons_layout.addWidget(button)
+        self._layout_action_group.triggered.connect(
+            lambda action: self.set_layout_mode(action.data())
         )
-        layout.addWidget(self._layout_continuous)
+        self._layout_group.layout().addWidget(layout_buttons)
+        self._layout_buttons = layout_buttons
 
-        self._layout_single = QToolButton()
-        self._layout_single.setText("Single")
-        self._layout_single.setCheckable(True)
-        self._layout_single.clicked.connect(
-            lambda: self.set_layout_mode(ViewerLayout.SINGLE)
+        self._layout_menu = QMenu(self._layout_group)
+        self._layout_menu.setTitle("Page layout")
+        self._layout_menu.addActions(self._layout_action_group.actions())
+        self._layout_menu_button = QToolButton()
+        self._layout_menu_button.setText("Page layout")
+        self._layout_menu_button.setAccessibleName("Page layout")
+        self._layout_menu_button.setToolTip("Choose page layout")
+        self._layout_menu_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
         )
-        layout.addWidget(self._layout_single)
+        self._layout_menu_button.setMenu(self._layout_menu)
+        self._layout_group.layout().addWidget(self._layout_menu_button)
+        layout.addWidget(self._layout_group)
 
-        self._layout_spread = QToolButton()
-        self._layout_spread.setText("Two-page")
-        self._layout_spread.setCheckable(True)
-        self._layout_spread.clicked.connect(
-            lambda: self.set_layout_mode(ViewerLayout.SPREAD)
+        self._zoom_group = self._toolbar_group("Zoom")
+        self._zoom_menu = QMenu(self._zoom_group)
+        self._fit_width_action = QAction("Fit width", self)
+        self._fit_width_action.triggered.connect(
+            lambda: self.set_zoom_mode(ZoomMode.FIT_WIDTH)
         )
-        layout.addWidget(self._layout_spread)
+        self._fit_page_action = QAction("Fit page", self)
+        self._fit_page_action.triggered.connect(
+            lambda: self.set_zoom_mode(ZoomMode.FIT_PAGE)
+        )
+        self._zoom_menu.addActions((self._fit_width_action, self._fit_page_action))
+        self._zoom_button = QToolButton()
+        self._zoom_button.setAccessibleName("Zoom")
+        self._zoom_button.setToolTip("Choose zoom; Ctrl+scroll adjusts percentage")
+        self._zoom_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._zoom_button.setMenu(self._zoom_menu)
+        self._zoom_group.layout().addWidget(self._zoom_button)
+        self._update_zoom_control()
+        layout.addWidget(self._zoom_group)
 
-        fit_w = QToolButton()
-        fit_w.setText("Fit width")
-        fit_w.clicked.connect(lambda: self.set_zoom_mode(ZoomMode.FIT_WIDTH))
-        layout.addWidget(fit_w)
+        self._secondary_group = self._toolbar_group("Secondary actions")
+        secondary_layout = self._secondary_group.layout()
+        self._print_action = QAction("Print", self)
+        self._print_action.setShortcut(QKeySequence.StandardKey.Print)
+        self._print_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._print_action.triggered.connect(self.print_document)
+        self.addAction(self._print_action)
+        self._print_button = QToolButton()
+        self._print_button.setDefaultAction(self._print_action)
+        self._print_button.setAccessibleName("Print")
+        secondary_layout.addWidget(self._print_button)
 
-        fit_p = QToolButton()
-        fit_p.setText("Fit page")
-        fit_p.clicked.connect(lambda: self.set_zoom_mode(ZoomMode.FIT_PAGE))
-        layout.addWidget(fit_p)
-
-        print_btn = QToolButton()
-        print_btn.setText("Print")
-        print_btn.setAccessibleName("Print")
-        print_btn.clicked.connect(self.print_document)
-        layout.addWidget(print_btn)
+        self._secondary_overflow = QToolButton()
+        self._secondary_overflow.setText("More")
+        self._secondary_overflow.setAccessibleName("More viewer actions")
+        self._secondary_overflow.setToolTip("More viewer actions")
+        self._secondary_overflow.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._secondary_overflow_menu = QMenu(self._secondary_overflow)
+        self._secondary_overflow.setMenu(self._secondary_overflow_menu)
+        secondary_layout.addWidget(self._secondary_overflow)
+        layout.addWidget(self._secondary_group)
 
         return bar
+
+    @staticmethod
+    def _toolbar_group(name: str) -> QFrame:
+        group = QFrame()
+        group.setObjectName("PdfViewerToolbarGroup")
+        group.setAccessibleName(name)
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(2)
+        return group
+
+    def _update_zoom_control(self) -> None:
+        label = {
+            ZoomMode.FIT_WIDTH: "Fit width",
+            ZoomMode.FIT_PAGE: "Fit page",
+        }.get(self._zoom_mode, f"{self._zoom_percent}%")
+        self._zoom_button.setText(label)
+        self._zoom_button.setAccessibleName(f"Zoom: {label}")
+
+    def _toolbar_width_for(self, layout_widget: QWidget, show_print: bool) -> int:
+        toolbar_layout = self._toolbar.layout()
+        assert isinstance(toolbar_layout, QHBoxLayout)
+        margins = toolbar_layout.contentsMargins()
+        groups = (
+            self._find_group.minimumSizeHint().width(),
+            self._page_group.sizeHint().width(),
+            layout_widget.sizeHint().width() + 8,
+            self._zoom_group.sizeHint().width(),
+            self._print_button.sizeHint().width()
+            if show_print
+            else self._secondary_overflow.sizeHint().width(),
+        )
+        return (
+            margins.left()
+            + margins.right()
+            + sum(groups)
+            + toolbar_layout.spacing() * (len(groups) - 1)
+        )
+
+    def _update_toolbar_layout(self) -> None:
+        if not hasattr(self, "_toolbar"):
+            return
+        available_width = self.width()
+        compact_layout = available_width < self._toolbar_compact_breakpoint()
+        layout_widget = self._layout_menu_button if compact_layout else self._layout_buttons
+        overflow_print = available_width < self._toolbar_width_for(
+            layout_widget, True
+        )
+        self._layout_buttons.setVisible(not compact_layout)
+        self._layout_menu_button.setVisible(compact_layout)
+        self._print_button.setVisible(not overflow_print)
+        if overflow_print:
+            if not self._secondary_overflow_menu.actions():
+                self._secondary_overflow_menu.addAction(self._print_action)
+        else:
+            self._secondary_overflow_menu.removeAction(self._print_action)
+        self._secondary_overflow.setVisible(overflow_print)
+
+    def _toolbar_compact_breakpoint(self) -> int:
+        """Measured width at which the layout actions become one menu."""
+        return max(800, self._toolbar_width_for(self._layout_buttons, True))
+
+    def _on_page_edit_submit(self) -> None:
+        if self._model is None:
+            return
+        text = self._page_edit.text().strip()
+        match = re.fullmatch(r"Page\s+(\d+)\s+of\s+\d+", text, re.IGNORECASE)
+        page_text = match.group(1) if match else text
+        total = self._model.logical_count()
+        if not page_text.isdigit() or not 1 <= int(page_text) <= total:
+            message = f"Enter a page number from 1 to {total}."
+            self._page_edit.setProperty("invalid", True)
+            self._page_edit.setAccessibleDescription(message)
+            self._page_edit.setToolTip(message)
+            self._page_edit.style().unpolish(self._page_edit)
+            self._page_edit.style().polish(self._page_edit)
+            self.status_message.emit(message)
+            self._page_edit.setFocus()
+            return
+        self._page_edit.setProperty("invalid", False)
+        self._page_edit.setAccessibleDescription("")
+        self._page_edit.setToolTip("Enter a page number")
+        self.go_to_page(int(page_text) - 1)
+        self.setFocus()
+        self._update_page_label()
 
     def _build_annot_rail(self) -> QWidget:
         rail = QFrame()
@@ -2110,7 +2350,7 @@ class PdfViewerWidget(QWidget):
 
         self._annot_collapse_btn = QToolButton()
         self._annot_collapse_btn.setObjectName("PdfViewerAnnotCollapse")
-        self._annot_collapse_btn.setText("»")
+        self._annot_collapse_btn.setText("Hide")
         self._annot_collapse_btn.setToolTip("Collapse markup tools")
         self._annot_collapse_btn.setAccessibleName("Collapse markup tools")
         self._annot_collapse_btn.clicked.connect(self._toggle_annot_rail)
@@ -2151,9 +2391,6 @@ class PdfViewerWidget(QWidget):
 
         self._annot_expand_btn = QToolButton()
         self._annot_expand_btn.setObjectName("PdfViewerAnnotExpand")
-        self._annot_expand_btn.setText("«")
-        self._annot_expand_btn.setToolTip("Show markup tools")
-        self._annot_expand_btn.setAccessibleName("Show markup tools")
         self._annot_expand_btn.clicked.connect(self._toggle_annot_rail)
         self._annot_expand_btn.hide()
         outer.addWidget(self._annot_expand_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -2161,12 +2398,21 @@ class PdfViewerWidget(QWidget):
         return rail
 
     def _toggle_annot_rail(self) -> None:
-        self._annot_rail_collapsed = not self._annot_rail_collapsed
+        self._set_annot_rail_collapsed(not self._annot_rail_collapsed)
+
+    def _set_annot_rail_collapsed(self, collapsed: bool, *, persist: bool = True) -> None:
+        focused = QApplication.focusWidget()
+        focus_in_rail = focused is not None and (
+            focused is self._annot_rail or self._annot_rail.isAncestorOf(focused)
+        )
+        self._annot_rail_collapsed = collapsed
         collapsed = self._annot_rail_collapsed
         self._annot_tools_host.setVisible(not collapsed)
         self._annot_rail_title.setVisible(not collapsed)
         self._annot_collapse_btn.setVisible(not collapsed)
         self._annot_expand_btn.setVisible(collapsed)
+        if focus_in_rail:
+            (self._annot_expand_btn if collapsed else self._annot_collapse_btn).setFocus()
         width = ANNOT_RAIL_COLLAPSED if collapsed else ANNOT_RAIL_WIDTH
         self._annot_rail.setMaximumWidth(width)
         self._annot_rail.setMinimumWidth(width)
@@ -2178,6 +2424,11 @@ class PdfViewerWidget(QWidget):
             left = sizes[0]
             center = max(200, total - left - rail)
             self._splitter.setSizes([left, center, rail])
+        self._annot_rail.setAccessibleDescription(
+            "Markup panel collapsed" if collapsed else "Markup panel expanded"
+        )
+        if persist:
+            set_viewer_panel_collapsed("markup", collapsed)
         tip = "Show markup tools" if collapsed else "Collapse markup tools"
         self.status_message.emit(tip)
 
@@ -2229,7 +2480,8 @@ class PdfViewerWidget(QWidget):
                     page_index=tile.logical_page,
                     rects=rects,
                     color=self._markup_color,
-                )
+                ),
+                self._page_instance_id(tile.logical_page),
             )
             tile.clear_selection()
             applied = True
@@ -2250,7 +2502,8 @@ class PdfViewerWidget(QWidget):
         reply = QMessageBox.question(
             self,
             "Flatten forms",
-            "Form fields will be baked into page content when you Save As. Continue?",
+            "Saving will flatten form fields into page content. They will no longer "
+            "be editable. Continue?",
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -2435,7 +2688,11 @@ class PdfViewerWidget(QWidget):
             )
             anchor = tile.mapTo(self, QPoint(int(wr.left()), int(wr.bottom()) + 6))
             x = min(max(0, anchor.x()), max(0, self.width() - bar_w))
-            y = min(max(0, anchor.y()), max(0, self.height() - bar_h))
+            below = anchor.y()
+            above = tile.mapTo(
+                self, QPoint(int(wr.left()), int(wr.top()) - 6 - bar_h)
+            ).y()
+            y = below if below + bar_h <= self.height() else max(0, above)
         else:
             x = max(0, (self.width() - bar_w) // 2)
             y = max(0, self.height() - bar_h - 12)
@@ -2495,18 +2752,26 @@ class PdfViewerWidget(QWidget):
     def _begin_pending_redact(self, region: RedactionRegion) -> None:
         self._pending_redact = region
         self.refresh_markup_overlays()
-        self.status_message.emit("Confirm or cancel the redaction mark")
+        self._redact_confirm.setAccessibleDescription(
+            "Pending redaction mark. Confirm it, then Save As permanently removes "
+            "the marked content and verifies the new copy in a fresh process."
+        )
+        self.status_message.emit("Pending redaction mark. Confirm or cancel it")
 
     def _confirm_pending_redact(self) -> None:
         if self._markup is None or self._pending_redact is None:
             return
-        self._markup.push_redaction(self._pending_redact)
+        self._markup.push_redaction(
+            self._pending_redact,
+            self._page_instance_id(self._pending_redact.page_index),
+        )
         self._pending_redact = None
         self.refresh_markup_overlays()
-        self.markup_changed.emit()
-        self.status_message.emit(
-            "Redaction marked. Save As to permanently remove"
+        self._redact_confirm.setAccessibleDescription(
+            "Confirmed redaction mark pending Save As"
         )
+        self.markup_changed.emit()
+        self.status_message.emit("Redaction mark pending. Save As permanently removes it")
 
     def _cancel_pending_redact(self, *, status: bool = False) -> None:
         if self._pending_redact is None and (
@@ -2515,6 +2780,7 @@ class PdfViewerWidget(QWidget):
             return
         self._pending_redact = None
         self.refresh_markup_overlays()
+        self._redact_confirm.setAccessibleDescription("No pending redaction mark")
         if status:
             self.status_message.emit("Redaction cancelled")
 
@@ -2582,7 +2848,11 @@ class PdfViewerWidget(QWidget):
             self._sync_freetext_format_bar(focus_text=True)
             return
 
-        tool = AnnotTool(tool_value)
+        try:
+            tool = AnnotTool(tool_value)
+        except ValueError:
+            self.status_message.emit("Unknown markup tool")
+            return
         created: AnnotationOp | None = None
         if tool in _TEXT_MARKUP_TOOLS:
             rects = payload.get("rects") or ()
@@ -2599,7 +2869,7 @@ class PdfViewerWidget(QWidget):
                 rects=tuple(rects),
                 color=self._markup_color,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.INK:
             strokes = payload.get("strokes") or ()
             if not strokes:
@@ -2610,7 +2880,7 @@ class PdfViewerWidget(QWidget):
             created = AnnotationOp(
                 kind="ink", page_index=logical, strokes=normalized, color=self._markup_color
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool in (AnnotTool.RECT, AnnotTool.CIRCLE):
             rect = payload.get("rect")
             if not rect:
@@ -2619,9 +2889,9 @@ class PdfViewerWidget(QWidget):
                 kind=tool.value,  # type: ignore[arg-type]
                 page_index=logical,
                 rects=(rect,),
-                color=(0.9, 0.2, 0.2),
+                color=self._markup_color,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.LINE:
             points = payload.get("points")
             if not points:
@@ -2630,9 +2900,9 @@ class PdfViewerWidget(QWidget):
                 kind="line",
                 page_index=logical,
                 points=tuple(points),
-                color=(0.9, 0.2, 0.2),
+                color=self._markup_color,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.STAMP:
             point = payload.get("point")
             if not point:
@@ -2645,7 +2915,7 @@ class PdfViewerWidget(QWidget):
                 rects=(rect,),
                 stamp_id=STAMP_APPROVED,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.FREETEXT:
             point = payload.get("point")
             if not point:
@@ -2667,7 +2937,7 @@ class PdfViewerWidget(QWidget):
                 italic=False,
                 border=False,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
             self._set_selected_overlay(created)
             self.refresh_markup_overlays()
             self.markup_changed.emit()
@@ -2689,7 +2959,7 @@ class PdfViewerWidget(QWidget):
                 rects=(tuple(rect),),  # type: ignore[arg-type]
                 image_path=path,
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
             self._set_selected_overlay(created)
         elif tool == AnnotTool.COMMENT:
             point = payload.get("point")
@@ -2704,7 +2974,7 @@ class PdfViewerWidget(QWidget):
                 points=(tuple(point),),  # type: ignore[arg-type]
                 text=text.strip(),
             )
-            self._markup.push_annotation(created)
+            self._markup.push_annotation(created, self._page_instance_id(logical))
         elif tool == AnnotTool.REDACT:
             rect = payload.get("rect")
             if not rect:
@@ -2725,7 +2995,8 @@ class PdfViewerWidget(QWidget):
                     field_name=name.strip(),
                     field_type="checkbox" if tool == AnnotTool.FORM_CHECK else "text",
                     rect=tuple(rect),  # type: ignore[arg-type]
-                )
+                ),
+                self._page_instance_id(logical),
             )
         else:
             return
@@ -2751,10 +3022,31 @@ class PdfViewerWidget(QWidget):
         self.markup_changed.emit()
         self.status_message.emit(f"Queued fill for “{widget.name}”. Save As to keep")
 
-    def _build_side_panel(self) -> QTabWidget:
+    def _build_side_panel(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("PdfViewerNavigationPanel")
+        panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(4, 6, 4, 6)
+        outer.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._side_title = QLabel("Navigation")
+        self._side_title.setAccessibleName("Navigation panel")
+        header.addWidget(self._side_title, stretch=1)
+        self._side_collapse_btn = QToolButton()
+        self._side_collapse_btn.setObjectName("PdfViewerSideCollapse")
+        self._side_collapse_btn.setText("Hide")
+        self._side_collapse_btn.setToolTip("Collapse navigation")
+        self._side_collapse_btn.setAccessibleName("Collapse navigation")
+        self._side_collapse_btn.clicked.connect(self._toggle_navigation_panel)
+        header.addWidget(self._side_collapse_btn)
+        outer.addLayout(header)
+
         tabs = QTabWidget()
         tabs.setObjectName("PdfViewerSide")
-        tabs.setMinimumWidth(160)
+        self._side_tabs = tabs
 
         self._outline = QTreeWidget()
         self._outline.setHeaderHidden(True)
@@ -2780,10 +3072,79 @@ class PdfViewerWidget(QWidget):
         extract_btn = QPushButton("Extract to folder…")
         extract_btn.setObjectName("ToolbarSecondary")
         extract_btn.clicked.connect(self._extract_selected_attachment)
+        self._extract_attachment_btn = extract_btn
         att_layout.addWidget(extract_btn)
         tabs.addTab(att_host, "Attachments")
 
-        return tabs
+        outer.addWidget(tabs, stretch=1)
+        self._side_expand_btn = QToolButton()
+        self._side_expand_btn.setObjectName("PdfViewerSideExpand")
+        self._side_expand_btn.setText("Show")
+        self._side_expand_btn.setToolTip("Show navigation")
+        self._side_expand_btn.setAccessibleName("Show navigation")
+        self._side_expand_btn.clicked.connect(self._toggle_navigation_panel)
+        self._side_expand_btn.hide()
+        outer.addWidget(self._side_expand_btn)
+        return panel
+
+    def _toggle_navigation_panel(self) -> None:
+        self._set_navigation_panel_collapsed(not self._navigation_panel_collapsed)
+
+    def _set_navigation_panel_collapsed(
+        self, collapsed: bool, *, persist: bool = True
+    ) -> None:
+        focused = QApplication.focusWidget()
+        focus_in_panel = focused is not None and (
+            focused is self._side or self._side.isAncestorOf(focused)
+        )
+        self._navigation_panel_collapsed = collapsed
+        self._side_tabs.setVisible(not collapsed)
+        self._side_title.setVisible(not collapsed)
+        self._side_collapse_btn.setVisible(not collapsed)
+        self._side_expand_btn.setVisible(collapsed)
+        if focus_in_panel:
+            (self._side_expand_btn if collapsed else self._side_collapse_btn).setFocus()
+        width = SIDE_PANEL_COLLAPSED if collapsed else SIDE_PANEL_WIDTH
+        self._side.setMinimumWidth(width)
+        self._side.setMaximumWidth(width)
+        sizes = self._splitter.sizes()
+        if len(sizes) >= 3:
+            total = sum(sizes)
+            center = max(200, total - width - sizes[2])
+            self._splitter.setSizes([width, center, sizes[2]])
+        self._side.setAccessibleDescription(
+            "Navigation panel collapsed" if collapsed else "Navigation panel expanded"
+        )
+        if persist:
+            set_viewer_panel_collapsed("navigation", collapsed)
+        self.status_message.emit(
+            "Show navigation" if collapsed else "Collapse navigation"
+        )
+
+    def _sync_navigation_empty_state(self) -> None:
+        """Default empty documents to the canvas, without overriding a user choice."""
+        if (
+            not viewer_panel_preference_explicit("navigation")
+            and self._outline.topLevelItemCount() == 1
+            and self._layers.count() == 1
+            and self._attachments.count() == 1
+        ):
+            self._set_navigation_panel_collapsed(True, persist=False)
+
+    @staticmethod
+    def _set_empty_list_state(widget: QListWidget, text: str) -> None:
+        widget.clear()
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        widget.addItem(item)
+        widget.setAccessibleDescription(text)
+
+    def _set_empty_outline_state(self) -> None:
+        self._outline.clear()
+        item = QTreeWidgetItem(["This PDF has no bookmarks"])
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._outline.addTopLevelItem(item)
+        self._outline.setAccessibleDescription("This PDF has no bookmarks")
 
     # --- model / layout -----------------------------------------------------
 
@@ -2845,6 +3206,12 @@ class PdfViewerWidget(QWidget):
             list_item.setSizeHint(row.sizeHint())
             self._layers.addItem(list_item)
             self._layers.setItemWidget(list_item, row)
+        if not layer_infos:
+            self._set_empty_list_state(
+                self._layers, "This PDF has no optional layers"
+            )
+        else:
+            self._layers.setAccessibleDescription("")
 
         self._attachments.clear()
         try:
@@ -2859,10 +3226,19 @@ class PdfViewerWidget(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, att)
             self._attachments.addItem(item)
+        if not atts:
+            self._set_empty_list_state(
+                self._attachments, "This PDF has no attachments"
+            )
+            self._extract_attachment_btn.hide()
+        else:
+            self._attachments.setAccessibleDescription("")
+            self._extract_attachment_btn.show()
+        self._sync_navigation_empty_state()
 
     def _populate_outline(self) -> None:
         assert self._model is not None
-        paths = sorted(self._model.source_paths())
+        paths = sorted(self._model.current_reference_paths())
         self._outline.clear()
         try:
             items = outline_for_paths(paths, passwords=self._passwords())
@@ -2883,6 +3259,11 @@ class PdfViewerWidget(QWidget):
                 parent.addChild(node)
             parents[item.level] = node
         self._outline.expandToDepth(1)
+        if not items:
+            self._set_empty_outline_state()
+        else:
+            self._outline.setAccessibleDescription("")
+        self._sync_navigation_empty_state()
 
     def _toggle_layer(self, number: int, on: bool) -> None:
         if self._ocg_source is None:
@@ -3049,11 +3430,11 @@ class PdfViewerWidget(QWidget):
         tile.set_tool(self._tool)
         tile.set_markup_color(self._markup_color)
         if self._markup is not None:
-            tile.set_overlay_entries(self._markup.ops())
+            tile.set_overlay_entries(self._markup_entries_for(logical))
         tile.set_pending_redaction(self._pending_redact)
         if (
             self._selected_overlay is not None
-            and self._selected_overlay.page_index == logical
+            and self._selected_overlay_is_on(logical)
         ):
             tile.set_selected_op(self._selected_overlay)
         self._tiles[logical] = tile
@@ -3174,11 +3555,13 @@ class PdfViewerWidget(QWidget):
         self._render_timer.start()
 
     def _visible_pages(self) -> list[int]:
+        if self._model is None or self._model.logical_count() == 0:
+            return []
         if self._layout != ViewerLayout.CONTINUOUS:
             return self._pages_to_show()
         if self._tiles:
             return sorted(self._tiles)
-        return [self._current_page] if self._model else []
+        return [self._current_page]
 
     def _device_pixel_ratio(self) -> float:
         return max(1.0, float(self.devicePixelRatioF()))
@@ -3279,7 +3662,7 @@ class PdfViewerWidget(QWidget):
                     widgets=widgets,
                 )
                 if self._markup is not None:
-                    tile.set_overlay_entries(self._markup.ops())
+                    tile.set_overlay_entries(self._markup_entries_for(logical))
             self._pending_meta.discard(logical)
 
     def _on_render_finished(
@@ -3342,7 +3725,9 @@ class PdfViewerWidget(QWidget):
     def _on_search_submit(self) -> None:
         self.search(self._search_edit.text())
 
-    def _on_search_finished(self, generation: int, hits: object) -> None:
+    def _on_search_finished(
+        self, generation: int, hits: object, has_searchable_text: object = None
+    ) -> None:
         if self._search_cancelled(generation):
             return
         if self._pool.activeThreadCount() == 0:
@@ -3354,10 +3739,15 @@ class PdfViewerWidget(QWidget):
         self._hits = list(hits) if isinstance(hits, list) else []
         self._hit_index = 0 if self._hits else -1
         n = len(self._hits)
-        self._hit_label.setText(f"{n} result{'s' if n != 1 else ''}" if n else "No results")
-        self._hit_label.setAccessibleName(
-            f"{n} search results" if n else "No search results"
-        )
+        if n:
+            label = f"{n} result{'s' if n != 1 else ''}"
+        elif has_searchable_text is False:
+            label = "No searchable text detected"
+        else:
+            label = "No matches"
+        self._hit_label.setText(label)
+        self._hit_label.setAccessibleName(label)
+        self._ocr_button.setVisible(has_searchable_text is False)
         self._apply_hits_to_tiles()
         if self._hits:
             self._reveal_current_hit()
@@ -3371,7 +3761,10 @@ class PdfViewerWidget(QWidget):
         else:
             self._overlay.show_message("Rendering…")
             self.busy_changed.emit(True, "Rendering…")
-        self._hit_label.setText("Search failed")
+        reason = message.strip() or "try again"
+        self._hit_label.setText(f"Search failed: {reason}")
+        self._hit_label.setAccessibleName(f"Search failed: {reason}")
+        self._ocr_button.hide()
         self.render_error.emit(message)
 
     def _apply_hits_to_tiles(self) -> None:
@@ -3494,26 +3887,31 @@ class PdfViewerWidget(QWidget):
 
     def _update_page_label(self) -> None:
         if self._model is None:
-            self._page_label.setText("")
+            self._page_edit.clear()
             return
         total = self._model.logical_count()
-        self._page_label.setText(f"Page {self._current_page + 1} of {total}")
-        self._page_label.setAccessibleName(
-            f"Page {self._current_page + 1} of {total}"
-        )
+        text = f"Page {self._current_page + 1} of {total}"
+        if not self._page_edit.hasFocus():
+            self._page_edit.setText(text)
+            self._page_edit.setProperty("invalid", False)
+        self._page_edit.setAccessibleName(f"Current page, {text}")
 
     # --- events -------------------------------------------------------------
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self._update_toolbar_layout()
         if self._model is not None:
             self._update_render_width()
             self._schedule_render()
         self.setFocus()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self._page_edit and event.type() == QEvent.Type.FocusIn:
+            QTimer.singleShot(0, self._page_edit.selectAll)
         if (
-            watched is self._scroll.viewport()
+            hasattr(self, "_scroll")
+            and watched is self._scroll.viewport()
             and event.type() == QEvent.Type.Resize
             and self.isVisible()
             and self._model is not None
@@ -3529,6 +3927,7 @@ class PdfViewerWidget(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._update_toolbar_layout()
         self._overlay._sync_geometry()
         if self.isVisible() and self._model is not None:
             previous = self._render_width_px

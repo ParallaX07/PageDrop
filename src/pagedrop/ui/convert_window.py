@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEvent
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -48,13 +48,16 @@ from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_PREVIEW_RENDER_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
 )
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.zoom_controls import ZoomControls
+from pagedrop.utils.diagnostics import log_failure
 
 _PREVIEW_FOOTER_HINT = (
     "← → or ↑ ↓ change image  ·  Ctrl+scroll zoom  ·  Ctrl+0 fit width  ·  Esc back to grid"
@@ -310,10 +313,28 @@ class _ConvertWorker(QRunnable):
                     )
             self.signals.succeeded.emit(result)
         except ImageConvertError as exc:
+            log_failure(
+                "Create PDF",
+                exc,
+                inputs=", ".join(self._paths),
+                output=self._output_path or self._output_dir,
+            )
             self.signals.failed.emit(str(exc))
         except OSError as exc:
+            log_failure(
+                "Create PDF",
+                exc,
+                inputs=", ".join(self._paths),
+                output=self._output_path or self._output_dir,
+            )
             self.signals.failed.emit(f"Could not write PDF:\n{exc}")
         except Exception as exc:
+            log_failure(
+                "Create PDF",
+                exc,
+                inputs=", ".join(self._paths),
+                output=self._output_path or self._output_dir,
+            )
             self.signals.failed.emit(f"Could not create PDF:\n{exc}")
 
 
@@ -348,8 +369,15 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._build_central_widget()
         self._build_toolbar()
         self._root.insertWidget(0, self._toolbar)
+        self._root.insertWidget(
+            0,
+            ToolWorkflowHeader(
+                self.WINDOW_TITLE,
+                "Arrange images, choose an output mode, then create a new PDF.",
+            ),
+        )
         self._result_bar = ResultActionsBar()
-        self._root.addWidget(self._result_bar)
+        self._root.insertWidget(self._root.indexOf(self._stack), self._result_bar)
         self._root.addWidget(self._status)
         self._toast = ToastOverlay(self)
         refresh_cb = self._refresh_toolbar_icons
@@ -389,6 +417,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Create PDF", self)
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._toolbar = toolbar
 
         def tip(action, text: str) -> None:
@@ -451,7 +480,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         toolbar.addWidget(self._zoom_controls)
 
         self._create_action = toolbar.addAction(
-            icons.icon("floppy-disk"),
+            icons.icon("floppy-disk", color=ON_PRIMARY),
             "Save PDF…",
         )
         self._create_action.triggered.connect(self._create_pdfs)
@@ -502,7 +531,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._remove_action.setIcon(icons.icon("trash"))
         self._move_up_action.setIcon(icons.icon("arrow-up"))
         self._move_down_action.setIcon(icons.icon("arrow-down"))
-        self._create_action.setIcon(icons.icon("floppy-disk"))
+        self._create_action.setIcon(icons.icon("floppy-disk", color=ON_PRIMARY))
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)
@@ -570,6 +599,15 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._create_action.setEnabled(has_files and not self._converting)
         self._zoom_controls.setEnabled(has_files and not in_preview and not self._converting)
         self._output_mode_host.setEnabled(toolbar_enabled)
+        self._set_result_precedence(self._result_bar.isVisible())
+
+    def _set_result_precedence(self, available: bool) -> None:
+        button = self._toolbar.widgetForAction(self._create_action)
+        if button is None:
+            return
+        button.setProperty("resultAvailable", available)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -871,6 +909,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
             self.statusBar().showMessage(status)
             self._toast.show_toast(status, kind="success")
             self._result_bar.show_for(result, message=status)
+            self._set_result_precedence(True)
             return
 
         written = list(result)
@@ -884,7 +923,12 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         if written:
-            self._result_bar.show_for(written[0], message=status)
+            self._result_bar.show_for(
+                written[0],
+                message=status,
+                show_path=len(written) == 1,
+            )
+            self._set_result_precedence(True)
 
     def _on_convert_failed(self, message: str) -> None:
         self._finish_convert()

@@ -13,10 +13,16 @@ from pagedrop.core.annotations import (
     AnnotationError,
     AnnotationOp,
     add_annotations,
+    apply_annotation_op,
     list_annotation_summaries,
 )
 from pagedrop.core.jobs.errors import SourceOverwriteError
-from pagedrop.core.markup import MarkupSession
+from pagedrop.core.markup import (
+    MarkupEntry,
+    MarkupSession,
+    MarkupTargetError,
+    resolve_markup_entries,
+)
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.pdf_viewer import _apply_box_transform
@@ -86,13 +92,38 @@ def test_all_annot_kinds_persist_source_unchanged(tmp_path: Path) -> None:
         add_annotations(str(src), str(src), ops[:1])
 
 
+def test_invalid_native_annotation_geometry_is_rejected() -> None:
+    doc = fitz.open()
+    try:
+        page = doc.new_page()
+        for kind in ("highlight", "rect", "circle", "freetext"):
+            with pytest.raises(AnnotationError, match="non-empty rect"):
+                apply_annotation_op(
+                    page,
+                    AnnotationOp(kind=kind, page_index=0, rects=((20, 20, 20, 80),)),
+                )
+        with pytest.raises(AnnotationError, match="distinct points"):
+            apply_annotation_op(
+                page,
+                AnnotationOp(kind="ink", page_index=0, strokes=(((20, 20), (20, 20)),)),
+            )
+        with pytest.raises(AnnotationError, match="distinct points"):
+            apply_annotation_op(
+                page,
+                AnnotationOp(kind="line", page_index=0, points=((20, 20), (20, 20))),
+            )
+    finally:
+        doc.close()
+
+
 def test_highlight_survives_write_pdf_markup(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
     source_hash = _file_hash(src)
     model = PdfEditModel(str(src), 1)
     session = MarkupSession()
     session.push_annotation(
-        AnnotationOp(kind="highlight", page_index=0, rects=((40, 60, 120, 90),))
+        AnnotationOp(kind="highlight", page_index=0, rects=((40, 60, 120, 90),)),
+        model.instance_id_at(0),
     )
     assert session.is_dirty()
     assert session.can_undo()
@@ -106,6 +137,98 @@ def test_highlight_survives_write_pdf_markup(tmp_path: Path) -> None:
     assert not session.is_dirty()
     session.redo()
     assert session.is_dirty()
+
+
+def test_many_mixed_marks_survive_across_six_pages(tmp_path: Path) -> None:
+    src = tmp_path / "six-pages.pdf"
+    doc = fitz.open()
+    try:
+        for page_number in range(6):
+            page = doc.new_page(width=300, height=400)
+            page.insert_text((40, 40), f"Page {page_number + 1}")
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = _file_hash(src)
+    model = PdfEditModel(str(src), 6)
+    session = MarkupSession()
+    kinds = ("ink", "freetext", "circle", "rect")
+    for index in range(60):
+        page_index = index % 6
+        kind = kinds[index % len(kinds)]
+        y = 55.0 + (index % 10) * 25.0
+        if kind == "ink":
+            op = AnnotationOp(
+                kind="ink",
+                page_index=page_index,
+                strokes=(((30.0, y), (60.0, y + 8.0), (90.0, y)),),
+            )
+        elif kind == "freetext":
+            op = AnnotationOp(
+                kind="freetext",
+                page_index=page_index,
+                rects=((30.0, y, 110.0, y + 20.0),),
+                text=f"Note {index}",
+            )
+        else:
+            op = AnnotationOp(
+                kind=kind,
+                page_index=page_index,
+                rects=((30.0, y, 90.0, y + 20.0),),
+            )
+        session.push_annotation(op, model.instance_id_at(page_index))
+
+    assert len(session.ops()) == 60
+    out = tmp_path / "many-marks.pdf"
+    write_pdf(model, str(out), markup=session.ops())
+    assert len(list_annotation_summaries(str(out))) == 60
+    assert _file_hash(src) == source_hash
+
+
+def test_markup_resolves_identity_and_hides_deleted_targets() -> None:
+    model = PdfEditModel("/a.pdf", 2)
+    first_id = model.instance_id_at(0)
+    session = MarkupSession()
+    session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((10, 10),), text="First"),
+        first_id,
+    )
+
+    model.move_pages([0], 2)
+    resolved = resolve_markup_entries(session.ops(model), model)
+    assert resolved[0].annotation is not None
+    assert resolved[0].annotation.page_index == 1
+
+    model.remove_pages([1])
+    assert session.ops(model) == []
+    assert not session.is_dirty(model)
+    assert model.undo()
+    assert len(session.ops(model)) == 1
+
+
+def test_duplicate_markup_isolated_and_missing_target_rejected() -> None:
+    model = PdfEditModel("/a.pdf", 1)
+    original_id = model.instance_id_at(0)
+    session = MarkupSession()
+    session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((10, 10),), text="Original"),
+        original_id,
+    )
+    model.insert_pages(1, [model.page_at(0)])
+    assert model.instance_id_at(1) != original_id
+    assert len(session.entries_for_instance(model.instance_id_at(1))) == 0
+
+    with pytest.raises(MarkupTargetError):
+        resolve_markup_entries(
+            [
+                session.ops()[0],
+                MarkupEntry(
+                    kind="annotation",
+                    annotation=AnnotationOp(kind="comment", page_index=0, points=((1, 1),)),
+                ),
+            ],
+            model,
+        )
 
 
 def test_underline_strikeout_color_and_freetext_border(tmp_path: Path) -> None:
@@ -255,7 +378,7 @@ def test_markup_session_remove_annotation() -> None:
 
 
 def test_markup_session_undo_capped_at_max_undo() -> None:
-    """O16: MarkupSession shares PdfEditModel.MAX_UNDO depth."""
+    """Undo is capped without deleting older pending document content."""
     from pagedrop.core.pdf_editor import MAX_UNDO
 
     session = MarkupSession()
@@ -269,11 +392,29 @@ def test_markup_session_undo_capped_at_max_undo() -> None:
             )
         )
     ops = session.ops()
-    assert len(ops) == MAX_UNDO
+    assert len(ops) == MAX_UNDO + 1
     assert ops[0].annotation is not None
-    assert ops[0].annotation.text == "1"
+    assert ops[0].annotation.text == "0"
     assert ops[-1].annotation is not None
     assert ops[-1].annotation.text == str(MAX_UNDO)
+    for _ in range(MAX_UNDO):
+        assert session.undo()
+    assert not session.can_undo()
+    assert not session.undo()
+    assert len(session.ops()) == 1
+
+
+def test_markup_history_describes_annotation_and_form_changes() -> None:
+    session = MarkupSession()
+    session.push_annotation(
+        AnnotationOp(kind="comment", page_index=0, points=((10, 10),), text="Note")
+    )
+    assert session.undo_description() == "add comment"
+    assert session.undo()
+    assert session.redo_description() == "add comment"
+    session.push_form_fill({"Name": "Ada", "Title": "Engineer"})
+    assert session.undo_description() == "fill form"
+    assert session.ops()[-1].affected_count == 2
 
 
 def test_apply_box_transform_move_and_resize() -> None:

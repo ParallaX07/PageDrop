@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
@@ -19,6 +18,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
+    QAction,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDragMoveEvent,
@@ -34,19 +34,24 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from pagedrop.assets import empty_state_logo_pixmap
+from pagedrop.core.annotations import AnnotationOp
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
     PAGE_TRANSFER_MIME,
     decode_page_indices,
     decode_page_refs,
 )
-from pagedrop.core.page_extractor import extract_page_refs_to_files
+from pagedrop.core.page_extractor import (
+    extract_page_refs_to_files,
+    extract_page_refs_to_folder,
+)
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, PdfLoader
 from pagedrop.core.pdf_service import render_ref_png
@@ -113,6 +118,7 @@ class ThumbnailWorker(QRunnable):
         is_cancelled: Callable[[int], bool],
         *,
         passwords: dict[str, str] | None = None,
+        annotations: dict[int, tuple[AnnotationOp, ...]] | None = None,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
@@ -121,6 +127,7 @@ class ThumbnailWorker(QRunnable):
         self._width_px = width_px
         self._is_cancelled = is_cancelled
         self._passwords = passwords
+        self._annotations = annotations or {}
         self.setAutoDelete(True)
 
     def run(self) -> None:
@@ -141,6 +148,7 @@ class ThumbnailWorker(QRunnable):
                     ref,
                     self._width_px,
                     passwords=self._passwords,
+                    annotations=self._annotations.get(logical_index, ()),
                 )
                 if self._is_cancelled(self._generation):
                     return
@@ -232,6 +240,7 @@ class ThumbnailGrid(QScrollArea):
     page_transfer_failed = pyqtSignal(str)
     pdf_drop_failed = pyqtSignal(object)
     open_pdfs_requested = pyqtSignal(list)  # blank-tab file-manager drops
+    open_pdf_requested = pyqtSignal()  # blank-tab empty-state button
 
     def __init__(
         self,
@@ -240,6 +249,10 @@ class ThumbnailGrid(QScrollArea):
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager or TempManager()
+        self._annotation_provider: (
+            Callable[[int], tuple[AnnotationOp, ...]] | None
+        ) = None
+        self._markup_rendered_pages: set[int] = set()
         self.setObjectName("ThumbnailGrid")
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -259,9 +272,9 @@ class ThumbnailGrid(QScrollArea):
 
         self._empty_state = QWidget()
         self._empty_state.setObjectName("EmptyStatePanel")
-        self._empty_state.setAccessibleName("No document open")
+        self._empty_state.setAccessibleName("Open a PDF")
         self._empty_state.setAccessibleDescription(
-            "Choose a file or drop one onto the grid"
+            "Arrange pages, extract selections, or combine documents"
         )
         empty_layout = QVBoxLayout(self._empty_state)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -275,23 +288,37 @@ class ThumbnailGrid(QScrollArea):
         self._empty_logo.setAccessibleName("PageDrop logo")
         self._refresh_empty_logo()
 
-        self._empty_title = QLabel("No document open")
+        self._empty_title = QLabel("Open a PDF")
         self._empty_title.setObjectName("GridEmptyState")
         self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._empty_hint = QLabel("Choose a file or drop one onto the grid")
+        self._empty_hint = QLabel(
+            "Arrange pages, extract selections, or combine documents"
+        )
         self._empty_hint.setObjectName("GridEmptyHint")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_hint.setWordWrap(True)
 
-        self._empty_kbd = QLabel("Ctrl+O open  ·  Ctrl+A select all  ·  drag pages to export")
+        self._empty_open_button = QPushButton("Open PDF")
+        self._empty_open_button.setObjectName("EmptyStateOpenButton")
+        self._empty_open_button.setAccessibleName("Open PDF")
+        self._empty_open_button.setToolTip("Open a PDF")
+        self._empty_open_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._empty_open_button.clicked.connect(self.open_pdf_requested)
+        self._open_action: QAction | None = None
+
+        self._empty_kbd = QLabel("or drop a file here")
         self._empty_kbd.setObjectName("GridEmptyKbd")
         self._empty_kbd.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # More space below keeps this short start task just above visual center.
+        empty_layout.addStretch(1)
         empty_layout.addWidget(self._empty_logo)
         empty_layout.addWidget(self._empty_title)
         empty_layout.addWidget(self._empty_hint)
+        empty_layout.addWidget(self._empty_open_button, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addWidget(self._empty_kbd)
+        empty_layout.addStretch(2)
         self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
         self.setWidget(self._container)
@@ -369,6 +396,7 @@ class ThumbnailGrid(QScrollArea):
         )
         self._painted_selection: set[int] = set()
         self._page_overlay_on = self._page_overlay_visible()
+        self._page_action_groups: tuple[tuple[QAction, ...], ...] = ()
 
     def set_empty_state_message(
         self,
@@ -377,6 +405,7 @@ class ThumbnailGrid(QScrollArea):
         hint: str | None = None,
         show_hint: bool = True,
         show_shortcuts: bool = True,
+        show_open_button: bool = False,
     ) -> None:
         self._empty_title.setText(title)
         self._empty_state.setAccessibleName(title)
@@ -391,6 +420,28 @@ class ThumbnailGrid(QScrollArea):
             self._empty_kbd.show()
         else:
             self._empty_kbd.hide()
+        if self._empty_open_button is not None:
+            self._empty_open_button.setVisible(show_open_button)
+
+    def bind_open_action(self, action: QAction) -> None:
+        """Make the empty-state control a projection of the window Open action."""
+        self._open_action = action
+        self._empty_open_button.clicked.connect(action.trigger)
+        action.changed.connect(self._sync_empty_open_action)
+        self._sync_empty_open_action()
+
+    def bind_page_actions(self, *groups: tuple[QAction, ...]) -> None:
+        """Project window-owned page commands into this grid's context menu."""
+        self._page_action_groups = groups
+
+    def _sync_empty_open_action(self) -> None:
+        action = self._open_action
+        if action is None:
+            return
+        self._empty_open_button.setText(action.text().replace("&", ""))
+        self._empty_open_button.setEnabled(action.isEnabled())
+        self._empty_open_button.setToolTip(action.toolTip() or "Open a PDF")
+        self._empty_open_button.setAccessibleName(action.text().replace("&", ""))
 
     def load_model(
         self,
@@ -439,6 +490,27 @@ class ThumbnailGrid(QScrollArea):
 
         self.load_model(model, get_loader)
 
+    def set_annotation_provider(
+        self, provider: Callable[[int], tuple[AnnotationOp, ...]]
+    ) -> None:
+        self._annotation_provider = provider
+
+    def refresh_markup_thumbnails(self) -> None:
+        """Rerender pages whose pending annotation preview changed."""
+        if self._model is None or self._annotation_provider is None:
+            return
+        current = {
+            index
+            for index in range(self._model.logical_count())
+            if self._annotation_provider(index)
+        }
+        affected = current | self._markup_rendered_pages
+        self._markup_rendered_pages = current
+        for index in affected:
+            if index < len(self._page_render_width):
+                self._page_render_width[index] = 0
+        self._start_rendering(silent=True, page_indices=list(affected))
+
     def reload_from_model(self) -> None:
         """Rebuild cards from the current model (e.g. after undo/redo)."""
         if self._model is None or self._get_loader is None:
@@ -450,6 +522,7 @@ class ThumbnailGrid(QScrollArea):
                 hint="Open another PDF or add pages to continue",
                 show_hint=True,
                 show_shortcuts=False,
+                show_open_button=False,
             )
         self.load_model(self._model, self._get_loader)
 
@@ -547,7 +620,8 @@ class ThumbnailGrid(QScrollArea):
             page_indices = [
                 i
                 for i in page_indices
-                if 0 <= i < len(self._page_render_width)
+                if 0 <= i < self._model.logical_count()
+                and i < len(self._page_render_width)
                 and self._page_render_width[i] < target
             ]
 
@@ -558,6 +632,11 @@ class ThumbnailGrid(QScrollArea):
 
         page_indices = self._priority_render_order(page_indices)
         pages = [(i, self._model.page_at(i)) for i in page_indices]
+        annotations = (
+            {i: self._annotation_provider(i) for i in page_indices}
+            if self._annotation_provider is not None
+            else None
+        )
 
         self._generation += 1
         self._silent_render = silent
@@ -572,6 +651,7 @@ class ThumbnailGrid(QScrollArea):
             render_width,
             self._is_cancelled,
             passwords=self._source_passwords(),
+            annotations=annotations,
         )
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)
@@ -908,83 +988,12 @@ class ThumbnailGrid(QScrollArea):
 
     def _show_context_menu(self, global_pos) -> None:
         menu = QMenu(self)
-        has_pdf = self._model is not None
-        has_selection = bool(self.selection_manager.selection)
-
-        move_up_action = menu.addAction("Move up")
-        move_up_action.setEnabled(has_pdf and self.can_move_selection_up())
-        move_down_action = menu.addAction("Move down")
-        move_down_action.setEnabled(has_pdf and self.can_move_selection_down())
-        move_to_action = menu.addAction("Move to…")
-        move_to_action.setEnabled(has_pdf and self.can_move_selection_to())
-
-        menu.addSeparator()
-
-        duplicate_action = menu.addAction("Duplicate selected pages")
-        duplicate_action.setEnabled(has_pdf and has_selection)
-        rotate_cw_action = menu.addAction("Rotate clockwise")
-        rotate_cw_action.setEnabled(has_pdf and has_selection)
-        rotate_ccw_action = menu.addAction("Rotate counter-clockwise")
-        rotate_ccw_action.setEnabled(has_pdf and has_selection)
-
-        menu.addSeparator()
-
-        delete_action = menu.addAction("Delete selected pages")
-        delete_action.setEnabled(has_pdf and has_selection)
-
-        menu.addSeparator()
-        extract_action = menu.addAction("Extract selected pages to folder")
-        extract_action.setEnabled(has_pdf and has_selection)
-        extract_tab_action = menu.addAction("Extract selected to new tab")
-        extract_tab_action.setEnabled(has_pdf and has_selection)
-        extract_window_action = menu.addAction("Extract selected to new window")
-        extract_window_action.setEnabled(has_pdf and has_selection)
-
-        if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get(
-            "PAGEDROP_TESTING"
-        ):
-            chosen = None
-        else:
-            chosen = menu.exec(global_pos)
-        if chosen is move_up_action:
-            self.move_selection_up()
-        elif chosen is move_down_action:
-            self.move_selection_down()
-        elif chosen is move_to_action:
-            window = self.window()
-            move_to = getattr(window, "_move_selected_pages_to", None)
-            if callable(move_to):
-                move_to()
-        elif chosen is duplicate_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.duplicate_selected_pages()
-            else:
-                self.duplicate_selected_pages()
-        elif chosen is rotate_cw_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.rotate_selected_pages(90)
-            else:
-                self.rotate_selected_pages(90)
-        elif chosen is rotate_ccw_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.rotate_selected_pages(-90)
-            else:
-                self.rotate_selected_pages(-90)
-        elif chosen is delete_action:
-            tab = self._parent_tab()
-            if tab is not None:
-                tab.delete_selected_pages()
-            else:
-                self.delete_selected_pages()
-        elif chosen is extract_action:
-            self.extract_to_folder_requested.emit()
-        elif chosen is extract_tab_action:
-            self.extract_to_new_tab_requested.emit()
-        elif chosen is extract_window_action:
-            self.extract_to_new_window_requested.emit()
+        for index, group in enumerate(self._page_action_groups):
+            if index:
+                menu.addSeparator()
+            menu.addActions(group)
+        if menu.actions():
+            menu.exec(global_pos)
 
     def can_move_selection_up(self) -> bool:
         if self._model is None:
@@ -1050,7 +1059,9 @@ class ThumbnailGrid(QScrollArea):
 
         refs = [self._model.page_at(index) for index in ordered]
         insert_at = ordered[-1] + 1
-        self._model.insert_pages(insert_at, refs)
+        self._model.insert_pages(
+            insert_at, refs, description=f"duplicate {len(refs)} {'page' if len(refs) == 1 else 'pages'}"
+        )
         self._sync_grid_after_insert(insert_at, len(refs))
         new_selection = set(range(insert_at, insert_at + len(refs)))
         self.selection_manager.set_selection(new_selection)
@@ -1125,7 +1136,6 @@ class ThumbnailGrid(QScrollArea):
             card = self._cards.pop(idx)
             if card._is_skeleton and self._skeleton_count > 0:
                 self._skeleton_count -= 1
-            card.setParent(None)
             card.deleteLater()
             if idx < len(self._page_render_width):
                 self._page_render_width.pop(idx)
@@ -1733,6 +1743,7 @@ class ThumbnailGrid(QScrollArea):
                 hint="Open another PDF or add pages to continue",
                 show_hint=True,
                 show_shortcuts=False,
+                show_open_button=False,
             )
 
         self._sync_grid_after_delete(logical_indices)
@@ -1747,7 +1758,7 @@ class ThumbnailGrid(QScrollArea):
             return []
         refs = [self._model.page_at(i) for i in logical_indices]
         base_name = Path(self._model.original_path).stem
-        return extract_page_refs_to_files(
+        return extract_page_refs_to_folder(
             refs,
             output_dir,
             base_name,
@@ -1763,7 +1774,7 @@ class ThumbnailGrid(QScrollArea):
             return []
         refs = [self._model.page_at(i) for i in range(total)]
         base_name = Path(self._model.original_path).stem
-        return extract_page_refs_to_files(
+        return extract_page_refs_to_folder(
             refs,
             output_dir,
             base_name,

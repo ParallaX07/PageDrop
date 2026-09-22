@@ -26,7 +26,12 @@ from pagedrop.ui.dialogs import prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import (
+    ToolShellWindow,
+    clear_field_error,
+    run_tool_job,
+    show_field_error,
+)
 from pagedrop.utils.page_jump import parse_page_ranges
 
 if TYPE_CHECKING:
@@ -143,6 +148,7 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
     ranges = QLineEdit()
     ranges.setPlaceholderText("e.g. 1-3,5,7-9")
     form.addRow("Page ranges", ranges)
+    ranges.textChanged.connect(lambda _text: clear_field_error(ranges))
     hint = QLabel("1-based ranges; selection from the editor is used when possible.")
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
@@ -177,7 +183,7 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
         out_folder = folder.text().strip()
         ranges_text = ranges.text().strip()
         if not out_folder:
-            QMessageBox.warning(shell, shell.WINDOW_TITLE, "Choose an output folder.")
+            show_field_error(folder, "Choose an output folder.")
             return
         try:
             page_count = pdf_page_count(source)
@@ -188,11 +194,7 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
             return
         parsed = parse_page_ranges(ranges_text, page_count)
         if not parsed:
-            QMessageBox.warning(
-                shell,
-                shell.WINDOW_TITLE,
-                "Enter page ranges like 1-3,5,7-9.",
-            )
+            show_field_error(ranges, "Enter page ranges like 1-3,5,7-9.")
             return
         base_name = Path(source).stem
         predicted = pdf_tools.predicted_range_output_paths(

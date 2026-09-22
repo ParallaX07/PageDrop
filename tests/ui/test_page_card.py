@@ -36,14 +36,36 @@ def test_set_selected_styles(qtbot):
     card.set_selected(True)
     assert card.property("selected") is True
     assert card.property("focused") is False
+    assert not card._selection_indicator.isHidden()
+    assert "selected" in card.accessibleDescription().casefold()
 
     card.set_keyboard_focused(True)
     assert card.property("focused") is True
+    assert not card._focus_ring.isHidden()
 
     sheet = app_stylesheet()
-    assert 'QFrame#PageCard[selected="true"]' in sheet
+    assert 'QFrame#PageCard[selected="true"] QLabel#PageCardThumbnail' in sheet
     assert "QFrame#PageCard:hover" in sheet
-    assert 'QFrame#PageCard[focused="true"]' in sheet
+    assert "QLabel#PageCardFocusRing" in sheet
+    assert "QLabel#PageCardSelectionIndicator" in sheet
+
+
+def test_thumbnail_frame_is_stable_for_mixed_page_shapes(qtbot):
+    """Loading a landscape page must not move its caption or reflow the grid."""
+    card = PageCard(0)
+    qtbot.addWidget(card)
+    card.set_card_width(176)
+    final_height = card._thumbnail_label.height()
+
+    landscape = QPixmap(200, 100)
+    landscape.fill(QColor("red"))
+    card.set_thumbnail(landscape)
+
+    shown = card._thumbnail_label.pixmap()
+    assert shown is not None
+    assert card._thumbnail_label.height() == final_height
+    assert shown.width() <= card._thumbnail_label.width()
+    assert shown.height() <= final_height
 
 
 def test_theme_toggle_keeps_property_based_card_chrome(qtbot, isolated_settings):

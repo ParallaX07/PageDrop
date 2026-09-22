@@ -43,6 +43,9 @@ class ResultActionsBar(QWidget):
         self._label = QLabel()
         self._label.setObjectName("ResultActionsLabel")
         self._label.setWordWrap(True)
+        self._label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         layout.addWidget(self._label, stretch=1)
 
         self._preview_btn = QPushButton("Preview")
@@ -60,13 +63,22 @@ class ResultActionsBar(QWidget):
         self._folder_btn.clicked.connect(self._emit_folder)
         layout.addWidget(self._folder_btn)
 
-    def show_for(self, path: str | Path, *, message: str | None = None) -> None:
+    def show_for(
+        self,
+        path: str | Path,
+        *,
+        message: str | None = None,
+        show_path: bool = True,
+    ) -> None:
         resolved = str(Path(path))
         self._path = resolved
         name = Path(resolved).name
         status = message or f"Saved {name}"
-        self._label.setText(status)
-        self.setAccessibleName(status)
+        detail = f"{status}\n{resolved}"
+        self._label.setText(detail if show_path else status)
+        self._label.setToolTip(resolved)
+        self._label.setAccessibleName(detail)
+        self.setAccessibleName(detail)
         self._preview_btn.setEnabled(is_pdf_path(resolved))
         self._open_btn.setEnabled(is_pdf_path(resolved))
         self.show()

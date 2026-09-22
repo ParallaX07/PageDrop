@@ -163,6 +163,10 @@ def test_smoke_multi_window_copy_move_detach_save_as(
 
     assert window_a._save_as(tab_a) is True
     assert window_c._save_as(tab_c) is True
+    qtbot.waitUntil(
+        lambda: tab_a not in window_a._editor_busy and tab_c not in window_c._editor_busy,
+        timeout=15_000,
+    )
 
     assert output_a.exists()
     assert output_c.exists()

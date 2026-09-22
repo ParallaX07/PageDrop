@@ -109,6 +109,10 @@ class ZoomControls(QWidget):
         self._update_button_states(clamped)
         self._syncing = False
 
+    def set_slider_visible(self, visible: bool) -> None:
+        """Keep essential zoom controls reachable when the status bar is narrow."""
+        self._slider.setVisible(visible)
+
     def _emit_zoom(self, width_px: int) -> None:
         """Update the readout immediately, then request the grid change."""
         if width_px == self._current:

@@ -30,7 +30,13 @@ from pagedrop.core.supported_formats import (
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import EMPTY_PROMPT_DOCUMENTS, ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import (
+    EMPTY_PROMPT_DOCUMENTS,
+    ToolShellWindow,
+    clear_field_error,
+    run_tool_job,
+    show_field_error,
+)
 from pagedrop.utils.page_jump import parse_page_ranges
 
 if TYPE_CHECKING:
@@ -161,6 +167,7 @@ def _build_export_options() -> tuple[QWidget, QComboBox, QLineEdit, QDoubleSpinB
     ranges = QLineEdit()
     ranges.setPlaceholderText("e.g. 1-3,5; leave blank for all pages")
     form.addRow("Pages", ranges)
+    ranges.textChanged.connect(lambda _text: clear_field_error(ranges))
     hint = QLabel("1-based ranges; selection from the editor is used when possible.")
     hint.setObjectName("ToolsHint")
     hint.setWordWrap(True)
@@ -214,9 +221,8 @@ def _configure_export_from_pdf(
 
         page_indices = _page_indices_from_text(ranges.text(), page_count)
         if page_indices is not None and len(page_indices) == 0:
-            QMessageBox.warning(
-                shell,
-                shell.WINDOW_TITLE,
+            show_field_error(
+                ranges,
                 "Enter page ranges like 1-3,5,7-9, or leave blank for all pages.",
             )
             return

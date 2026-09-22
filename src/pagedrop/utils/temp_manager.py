@@ -79,6 +79,11 @@ def _owner_process_alive(path: Path) -> bool:
     return _pid_alive(pid)
 
 
+def process_is_alive(pid: int) -> bool:
+    """Cross-platform process liveness probe without signalling Windows consoles."""
+    return _pid_alive(pid)
+
+
 def claim_backend_temp(path: Path) -> Path:
     """Mark a backend mkdtemp tree live so orphan scrub will not delete it."""
     resolved = path.resolve()

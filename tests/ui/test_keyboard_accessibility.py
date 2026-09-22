@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QToolButton
 from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
+from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
 
 
 def _toolbar_tool_buttons(toolbar) -> list[QToolButton]:
@@ -57,10 +58,10 @@ def test_menu_mnemonics_are_unambiguous(main_window):
     assert len(file_mnemonics) == len(set(file_mnemonics))
 
 
-def test_toolbar_arrow_keys_move_focus(main_window, qtbot):
+def test_toolbar_arrow_keys_move_focus(main_window, five_page_pdf, qtbot):
     toolbar = main_window._toolbar
-    # Blank tab only enables Open; enable Preview so two arrow targets exist.
-    main_window._preview_action.setEnabled(True)
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None)
 
     # show() — showMinimized can leave toolbar children !isVisible() on some WPAs.
     main_window.show()
@@ -86,7 +87,7 @@ def test_status_bar_is_not_tab_focusable(main_window):
     assert main_window._progress_bar.focusPolicy() == Qt.FocusPolicy.NoFocus
 
 
-def test_toolbar_buttons_use_strong_focus(main_window, qtbot):
+def test_toolbar_buttons_use_strong_focus(main_window, five_page_pdf, qtbot):
     toolbar = main_window._toolbar
     assert hasattr(toolbar, "_pagedrop_arrow_nav")
 
@@ -95,9 +96,60 @@ def test_toolbar_buttons_use_strong_focus(main_window, qtbot):
     for button in buttons:
         assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
 
+    assert toolbar.isHidden()
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None)
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     assert focusable_toolbar_widgets(toolbar)
+
+
+def test_toolbar_overflow_menu_restores_focus_to_its_invoker(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    qtbot.waitUntil(lambda: main_window._active_tab().loader is not None)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+
+    invoker = main_window._toolbar_overflow
+    invoker.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.waitUntil(invoker.hasFocus)
+    menu = invoker.menu()
+    assert menu is not None
+    menu.popup(invoker.mapToGlobal(invoker.rect().bottomLeft()))
+    qtbot.waitUntil(menu.isVisible)
+    menu.hide()
+    qtbot.waitUntil(invoker.hasFocus)
+
+
+def test_viewer_tab_order_and_escape_returns_to_grid(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    tab = main_window._active_tab()
+    assert tab is not None
+    main_window._open_preview()
+    qtbot.waitUntil(
+        lambda: tab.is_viewer_mode() and len(tab.viewer_widget._tiles) >= 1,
+        timeout=RENDER_TIMEOUT_MS,
+    )
+    viewer = tab.viewer_widget
+
+    viewer._search_edit.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.keyClick(viewer._search_edit, Qt.Key.Key_Tab)
+    previous = next(
+        button
+        for button in viewer._find_group.findChildren(QToolButton)
+        if button.accessibleName() == "Previous search result"
+    )
+    qtbot.waitUntil(previous.hasFocus, timeout=2000)
+
+    viewer.setFocus(Qt.FocusReason.OtherFocusReason)
+    qtbot.keyClick(viewer, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode(), timeout=2000)
+    assert tab.content_stack.currentWidget() is tab.thumbnail_grid
 
 
 def test_tools_hub_toolbar_arrow_keys(qtbot):

@@ -23,13 +23,16 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import fitz
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import open_pdf, render_page_png
 from pagedrop.core.thread_policy import ensure_no_fitz_document
+
+if TYPE_CHECKING:
+    from pagedrop.core.annotations import AnnotationOp
 
 
 def _password_for(
@@ -234,6 +237,7 @@ def render_ref_png(
     *,
     passwords: Mapping[str, str] | None = None,
     ocg_on: frozenset[int] | None = None,
+    annotations: Sequence[AnnotationOp] = (),
 ) -> bytes:
     """Render one ``PageRef`` to PNG under the fitz lock.
 
@@ -251,7 +255,24 @@ def render_ref_png(
             # layer_ui_configs + set_layer_ui_config (PDF_OC_ON/OFF).
             prior = _snapshot_ocg_ui(doc)
             _apply_ocg_visibility(doc, ocg_on)
+        preview_doc: fitz.Document | None = None
         try:
+            if annotations:
+                from pagedrop.core.annotations import apply_annotation_op
+
+                preview_doc = fitz.open()
+                preview_doc.insert_pdf(
+                    doc, from_page=ref.source_index, to_page=ref.source_index
+                )
+                page = preview_doc[0]
+                for op in annotations:
+                    apply_annotation_op(page, op)
+                return render_page_png(
+                    preview_doc,
+                    0,
+                    width_px=width_px,
+                    rotation=ref.rotation,
+                )
             return render_page_png(
                 doc,
                 ref.source_index,
@@ -259,6 +280,8 @@ def render_ref_png(
                 rotation=ref.rotation,
             )
         finally:
+            if preview_doc is not None:
+                preview_doc.close()
             if prior is not None:
                 _restore_ocg_ui(doc, prior)
 
@@ -342,6 +365,29 @@ def search_model(
         # between pages — sleep(0) is not enough on CPython.
         time.sleep(0.001)
     return hits
+
+
+def model_has_searchable_text(
+    model: PdfEditModel,
+    *,
+    passwords: Mapping[str, str] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> bool:
+    """Return whether any logical page has extractable text."""
+    for ref in model.iter_pages():
+        if is_cancelled is not None and is_cancelled():
+            return False
+
+        def _page(ref: PageRef = ref) -> bool:
+            doc = _cache_get(
+                ref.source_path, _password_for(passwords, ref.source_path)
+            )
+            return bool(doc[ref.source_index].get_text("text").strip())
+
+        if call(_page):
+            return True
+        time.sleep(0.001)
+    return False
 
 
 def page_text_dict(

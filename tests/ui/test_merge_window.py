@@ -7,7 +7,7 @@ from pathlib import Path
 
 import fitz
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 
 from pagedrop.ui.merge_window import MergeWindow
 from tests.core.test_jobs import _encrypted_pdf
@@ -59,6 +59,26 @@ def test_merge_disabled_when_empty(qtbot, one_page_pdf):
 
     window._add_paths([str(one_page_pdf)])
     assert window._merge_action.isEnabled()
+
+
+def test_merge_has_workflow_header_and_demotes_rerun_after_success(
+    qtbot, one_page_pdf, tmp_path, monkeypatch
+):
+    output = tmp_path / "merged.pdf"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+    window = _merge_window(qtbot)
+    header = window.findChild(QWidget, "ToolWorkflowHeader")
+    assert header is not None
+    assert header.findChild(QLabel, "ToolWorkflowTitle").text() == "Merge PDFs"
+    window._add_paths([str(one_page_pdf)])
+    window._merge_pdfs()
+    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+    button = window._toolbar.widgetForAction(window._merge_action)
+    assert button.property("resultAvailable") is True
 
 
 def test_merge_runs_in_background_without_blocking_ui(qtbot, one_page_pdf, five_page_pdf, tmp_path, monkeypatch):

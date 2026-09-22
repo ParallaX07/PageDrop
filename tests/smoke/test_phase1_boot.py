@@ -75,3 +75,4 @@ sys.exit(main())
         f"CLI entry point failed (code {result.returncode})\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
+    assert "Starting PageDrop version=" in result.stderr

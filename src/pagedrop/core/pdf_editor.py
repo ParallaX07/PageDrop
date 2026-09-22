@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from uuid import uuid4
 
 from pagedrop.utils.list_utils import move_items
 
@@ -14,6 +15,11 @@ class PageRef:
     source_path: str
     source_index: int  # 0-based in that file
     rotation: int = 0  # additional degrees: 0, 90, 180, or 270
+    instance_id: str = field(default_factory=lambda: uuid4().hex, compare=False)
+
+    def new_instance(self) -> PageRef:
+        """Copy this source reference as a distinct logical page occurrence."""
+        return replace(self, instance_id=uuid4().hex)
 
 
 def normalize_rotation(degrees: int) -> int:
@@ -30,9 +36,10 @@ class PdfEditModel:
         self._pages: list[PageRef] = [
             PageRef(source_path, index) for index in range(page_count)
         ]
+        self._protected_sources: set[str] = {source_path}
         self._dirty = False
-        self._undo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
-        self._redo_stack: list[tuple[tuple[PageRef, ...], bool]] = []
+        self._undo_stack: list[_HistoryEntry] = []
+        self._redo_stack: list[_HistoryEntry] = []
 
     @classmethod
     def with_pages(cls, primary_path: str, pages: list[PageRef]) -> PdfEditModel:
@@ -40,7 +47,24 @@ class PdfEditModel:
         model = cls.__new__(cls)
         model._original_path = primary_path
         model._save_path = None
+        model._pages = [page.new_instance() for page in pages]
+        model._protected_sources = {primary_path, *(page.source_path for page in pages)}
+        model._dirty = True
+        model._undo_stack = []
+        model._redo_stack = []
+        return model
+
+    @classmethod
+    def from_recovery(cls, primary_path: str, pages: list[PageRef]) -> PdfEditModel:
+        """Restore an unsaved logical page list while preserving occurrence IDs."""
+        model = cls.__new__(cls)
+        model._original_path = primary_path
+        model._save_path = None
         model._pages = list(pages)
+        model._protected_sources = {
+            primary_path,
+            *(page.source_path for page in pages),
+        }
         model._dirty = True
         model._undo_stack = []
         model._redo_stack = []
@@ -60,12 +84,38 @@ class PdfEditModel:
     def page_at(self, logical_index: int) -> PageRef:
         return self._pages[logical_index]
 
+    def logical_index_for_instance(self, instance_id: str) -> int | None:
+        """Return a page occurrence's current logical position, if it remains."""
+        return next(
+            (i for i, page in enumerate(self._pages) if page.instance_id == instance_id),
+            None,
+        )
+
+    def instance_id_at(self, logical_index: int) -> str:
+        return self._pages[logical_index].instance_id
+
     def iter_pages(self) -> list[PageRef]:
         """Current logical page list (copy — safe to iterate while reading)."""
         return list(self._pages)
 
+    def snapshot_for_write(self) -> PdfEditModel:
+        """Return a detached, immutable-in-practice model for a background write."""
+        snapshot = self.__class__.__new__(self.__class__)
+        snapshot._original_path = self._original_path
+        snapshot._save_path = self._save_path
+        snapshot._pages = list(self._pages)
+        snapshot._protected_sources = set(self._protected_sources)
+        snapshot._dirty = self._dirty
+        snapshot._undo_stack = []
+        snapshot._redo_stack = []
+        return snapshot
+
     def source_paths(self) -> set[str]:
-        """Paths still needed for the current page list (plus original)."""
+        """Every source path ever admitted to this tab, protected from overwrite."""
+        return set(self._protected_sources)
+
+    def current_reference_paths(self) -> set[str]:
+        """Paths still needed to render the current page list (plus original)."""
         paths = {self._original_path}
         paths.update(page.source_path for page in self._pages)
         return paths
@@ -79,35 +129,64 @@ class PdfEditModel:
     def undo_depth(self) -> int:
         return len(self._undo_stack)
 
+    def undo_description(self) -> str | None:
+        return self._undo_stack[-1].description if self._undo_stack else None
+
+    def redo_description(self) -> str | None:
+        return self._redo_stack[-1].description if self._redo_stack else None
+
+    def undo_affected_count(self) -> int | None:
+        return self._undo_stack[-1].affected_count if self._undo_stack else None
+
+    def redo_affected_count(self) -> int | None:
+        return self._redo_stack[-1].affected_count if self._redo_stack else None
+
     def insert_pages(
-        self, index: int, refs: list[PageRef], *, record_undo: bool = True
+        self, index: int, refs: list[PageRef], *, record_undo: bool = True,
+        description: str | None = None,
     ) -> None:
         if not refs:
             return
         if record_undo:
-            self._push_undo()
+            self._push_undo(
+                description or _operation_description("insert", len(refs)), len(refs)
+            )
         clamped = max(0, min(index, len(self._pages)))
-        self._pages[clamped:clamped] = list(refs)
+        # Every insertion is a new occurrence, including duplicate/cross-tab refs.
+        self._pages[clamped:clamped] = [ref.new_instance() for ref in refs]
+        self._protected_sources.update(ref.source_path for ref in refs)
         self._dirty = True
 
     def remove_pages(
-        self, logical_indices: list[int], *, record_undo: bool = True
-    ) -> None:
+        self, logical_indices: list[int], *, record_undo: bool = True,
+        description: str | None = None,
+    ) -> set[str]:
         if not logical_indices:
-            return
+            return set()
         if record_undo:
-            self._push_undo()
+            self._push_undo(
+                description or _operation_description("delete", len(set(logical_indices))),
+                len(set(logical_indices)),
+            )
         remove = set(logical_indices)
+        removed = {
+            page.instance_id for i, page in enumerate(self._pages) if i in remove
+        }
         self._pages = [page for i, page in enumerate(self._pages) if i not in remove]
         self._dirty = True
+        return removed
 
     def move_pages(
-        self, indices: list[int], to_index: int, *, record_undo: bool = True
+        self, indices: list[int], to_index: int, *, record_undo: bool = True,
+        description: str | None = None,
     ) -> None:
         if not indices:
             return
         if record_undo:
-            self._push_undo()
+            self._push_undo(
+                description or _operation_description("move", len(set(indices))),
+                len(set(indices)),
+            )
         self._pages, _ = move_items(self._pages, indices, to_index)
         self._dirty = True
 
@@ -135,51 +214,85 @@ class PdfEditModel:
             return
         ordered = sorted(set(logical_indices))
         if record_undo:
-            self._push_undo()
+            direction = "clockwise" if delta_degrees >= 0 else "counterclockwise"
+            self._push_undo(
+                _operation_description(f"rotate {direction}", len(ordered)), len(ordered)
+            )
         for index in ordered:
             old = self._pages[index]
             self._pages[index] = PageRef(
                 old.source_path,
                 old.source_index,
                 normalize_rotation(old.rotation + delta_degrees),
+                old.instance_id,
             )
         self._dirty = True
 
     def undo(self) -> bool:
         if not self._undo_stack:
             return False
-        self._redo_stack.append((tuple(self._pages), self._dirty))
-        pages, dirty = self._undo_stack.pop()
-        self._pages = list(pages)
-        self._dirty = dirty
+        entry = self._undo_stack.pop()
+        self._redo_stack.append(
+            _HistoryEntry(
+                tuple(self._pages), self._dirty, entry.description, entry.affected_count
+            )
+        )
+        self._pages = list(entry.pages)
+        self._dirty = entry.dirty
         return True
 
     def redo(self) -> bool:
         if not self._redo_stack:
             return False
-        self._append_undo_snapshot((tuple(self._pages), self._dirty))
-        pages, dirty = self._redo_stack.pop()
-        self._pages = list(pages)
-        self._dirty = dirty
+        entry = self._redo_stack.pop()
+        self._append_undo_snapshot(
+            _HistoryEntry(
+                tuple(self._pages), self._dirty, entry.description, entry.affected_count
+            )
+        )
+        self._pages = list(entry.pages)
+        self._dirty = entry.dirty
         return True
 
     def is_dirty(self) -> bool:
         return self._dirty
 
-    def mark_saved(self, save_path: str) -> None:
-        """Record save path, clear dirty, and establish a savepoint (no undo past save)."""
+    def rebase_saved_output(self, save_path: str) -> None:
+        """Make a successfully written copy this model's new page baseline."""
+        page_count = len(self._pages)
+        self._original_path = save_path
         self._save_path = save_path
+        self._protected_sources.add(save_path)
+        self._pages = [PageRef(save_path, index) for index in range(page_count)]
         self._dirty = False
         self._undo_stack.clear()
         self._redo_stack.clear()
 
+    def mark_saved(self, save_path: str) -> None:
+        """Backward-compatible name for rebasing a successfully saved output."""
+        self.rebase_saved_output(save_path)
+
     def _append_undo_snapshot(
-        self, snapshot: tuple[tuple[PageRef, ...], bool]
+        self, snapshot: _HistoryEntry
     ) -> None:
         self._undo_stack.append(snapshot)
         if len(self._undo_stack) > MAX_UNDO:
             del self._undo_stack[0 : len(self._undo_stack) - MAX_UNDO]
 
-    def _push_undo(self) -> None:
-        self._append_undo_snapshot((tuple(self._pages), self._dirty))
+    def _push_undo(self, description: str, affected_count: int) -> None:
+        self._append_undo_snapshot(
+            _HistoryEntry(tuple(self._pages), self._dirty, description, affected_count)
+        )
         self._redo_stack.clear()
+
+
+@dataclass(frozen=True)
+class _HistoryEntry:
+    pages: tuple[PageRef, ...]
+    dirty: bool
+    description: str
+    affected_count: int
+
+
+def _operation_description(verb: str, count: int) -> str:
+    return f"{verb} {count} {'page' if count == 1 else 'pages'}"

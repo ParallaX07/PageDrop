@@ -71,6 +71,7 @@ class UpdateDialog(QDialog):
         self._button("Remind me tomorrow", self._remind)
         self._button("Skip this version", self._skip)
         self.setMinimumWidth(max(self.minimumWidth(), self.minimumSizeHint().width()))
+        self._center_buttons()
 
     def show_downloading(self, done: int = 0, total: int = 0, *, cancelling: bool = False) -> None:
         self.message.setText("Cancelling update download…" if cancelling else "Downloading update…")
@@ -90,7 +91,25 @@ class UpdateDialog(QDialog):
     def _button(self, text: str, slot):
         button = self.buttons.addButton(text, QDialogButtonBox.ButtonRole.ActionRole)
         button.clicked.connect(slot)
+        self.buttons.setCenterButtons(True)
+        self.buttons.layout().setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._center_buttons()
+        QTimer.singleShot(0, self._center_buttons)
         return button
+
+    def _center_buttons(self) -> None:
+        """Keep ActionRole buttons centered on styles that ignore centerButtons."""
+        actions = self.buttons.buttons()
+        if not actions or self.buttons.width() <= 0:
+            return
+        self.buttons.layout().activate()
+        first = actions[0].geometry().left()
+        last = actions[-1].geometry().right()
+        target = (self.buttons.width() - (last - first + 1)) // 2
+        offset = target - first
+        if offset:
+            for action in actions:
+                action.move(action.x() + offset, action.y())
 
     def _clear_buttons(self) -> None:
         for button in self.buttons.buttons():

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QSize, pyqtSignal
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -40,12 +40,15 @@ from pagedrop.ui.result_actions import ResultActionsBar
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
+    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
 )
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.zoom_controls import ZoomControls
+from pagedrop.utils.diagnostics import log_failure
 
 # Show a progress dialog once folder validation exceeds this many candidates.
 _FOLDER_PROGRESS_THRESHOLD = 8
@@ -82,10 +85,28 @@ class _MergeWorker(QRunnable):
                     passwords=self._passwords,
                 )
         except PdfLoadError as exc:
+            log_failure(
+                "Merge PDFs",
+                exc,
+                inputs=", ".join(self._file_paths),
+                output=self._output_path,
+            )
             self.signals.failed.emit(f"Could not read a source PDF:\n{exc}")
         except OSError as exc:
+            log_failure(
+                "Merge PDFs",
+                exc,
+                inputs=", ".join(self._file_paths),
+                output=self._output_path,
+            )
             self.signals.failed.emit(f"Could not write PDF:\n{exc}")
         except Exception as exc:
+            log_failure(
+                "Merge PDFs",
+                exc,
+                inputs=", ".join(self._file_paths),
+                output=self._output_path,
+            )
             self.signals.failed.emit(f"Could not merge PDFs:\n{exc}")
         else:
             self.signals.succeeded.emit(self._output_path)
@@ -125,8 +146,15 @@ class MergeWindow(JobChromeMixin, QWidget):
         # Toolbar must sit above the stack: insert at top after stack exists.
         self._build_toolbar()
         self._root.insertWidget(0, self._toolbar)
+        self._root.insertWidget(
+            0,
+            ToolWorkflowHeader(
+                self.WINDOW_TITLE,
+                "Combine PDFs in the order shown. Your original files stay unchanged.",
+            ),
+        )
         self._result_bar = ResultActionsBar()
-        self._root.addWidget(self._result_bar)
+        self._root.insertWidget(self._root.indexOf(self._stack), self._result_bar)
         self._root.addWidget(self._status)
         self._toast = ToastOverlay(self)
         refresh_cb = self._refresh_toolbar_icons
@@ -167,6 +195,7 @@ class MergeWindow(JobChromeMixin, QWidget):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Merge", self)
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._toolbar = toolbar
 
         def tip(action, text: str) -> None:
@@ -240,7 +269,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         toolbar.addWidget(self._zoom_controls)
 
         self._merge_action = toolbar.addAction(
-            icons.icon("floppy-disk"),
+            icons.icon("floppy-disk", color=ON_PRIMARY),
             "Merge",
         )
         self._merge_action.triggered.connect(self._merge_pdfs)
@@ -260,7 +289,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._remove_action.setIcon(icons.icon("trash"))
         self._move_up_action.setIcon(icons.icon("arrow-up"))
         self._move_down_action.setIcon(icons.icon("arrow-down"))
-        self._merge_action.setIcon(icons.icon("floppy-disk"))
+        self._merge_action.setIcon(icons.icon("floppy-disk", color=ON_PRIMARY))
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)
@@ -316,6 +345,15 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._zoom_controls.setEnabled(
             has_files and not in_preview and not self._merging and not self._folder_checking
         )
+        self._set_result_precedence(self._result_bar.isVisible())
+
+    def _set_result_precedence(self, available: bool) -> None:
+        button = self._toolbar.widgetForAction(self._merge_action)
+        if button is None:
+            return
+        button.setProperty("resultAvailable", available)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _is_preview_visible(self) -> bool:
         return self._stack.currentWidget() is self._preview_widget
@@ -716,6 +754,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self.statusBar().showMessage(status)
         self._toast.show_toast(status, kind="success")
         self._result_bar.show_for(path, message=status)
+        self._set_result_precedence(True)
 
     def _on_merge_failed(self, message: str) -> None:
         self._finish_merge()

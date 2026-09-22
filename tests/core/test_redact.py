@@ -13,7 +13,7 @@ import pytest
 
 from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.markup import MarkupSession
-from pagedrop.core.pdf_editor import PdfEditModel
+from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.redact import (
     REDACT_VERIFY_FLAG,
     RedactionError,
@@ -359,17 +359,53 @@ def test_redact_edit_model_with_markup_session(tmp_path: Path) -> None:
     model = PdfEditModel(str(src), 1)
     session = MarkupSession()
     rect = _secret_rect(src)
-    session.push_redaction(RedactionRegion(0, rect))
+    session.push_redaction(RedactionRegion(0, rect), model.instance_id_at(0))
     out = tmp_path / "model-out.pdf"
     redact_edit_model(
         model,
         out,
-        session.redaction_regions(),
-        markup=session.non_redaction_ops(),
+        session.redaction_regions(model),
+        markup=session.non_redaction_ops(model),
         verify=True,
     )
     assert _file_hash(src) == before
     assert inspect_redaction_result(out, absent_text=[SECRET]).ok
+
+
+def test_redaction_target_resolves_after_reorder_and_is_dropped_on_delete(tmp_path: Path) -> None:
+    source = _text_pdf(tmp_path / "source.pdf")
+    model = PdfEditModel(str(source), 1)
+    model.insert_pages(0, [model.page_at(0)])
+    session = MarkupSession()
+    secret_id = model.instance_id_at(1)
+    session.push_redaction(RedactionRegion(1, _secret_rect(source)), secret_id)
+    model.move_pages([1], 0)
+    assert session.redaction_regions(model)[0].page_index == 0
+    model.remove_pages([0])
+    assert session.redaction_regions(model) == []
+    assert model.undo()
+    assert session.redaction_regions(model)[0].page_index == 0
+
+
+def test_redact_edit_model_rejects_imported_source(tmp_path: Path) -> None:
+    source_a = _text_pdf(tmp_path / "a.pdf")
+    source_b = _text_pdf(tmp_path / "b.pdf")
+    hash_a = _file_hash(source_a)
+    hash_b = _file_hash(source_b)
+    model = PdfEditModel(str(source_a), 1)
+    model.insert_pages(1, [PageRef(str(source_b), 0)])
+    model.remove_pages([1])
+
+    with pytest.raises(SourceOverwriteError):
+        redact_edit_model(
+            model,
+            source_b,
+            [RedactionRegion(0, _secret_rect(source_a))],
+            verify=False,
+        )
+
+    assert _file_hash(source_a) == hash_a
+    assert _file_hash(source_b) == hash_b
 
 
 def test_redact_edit_model_encrypted_with_passwords(tmp_path: Path) -> None:

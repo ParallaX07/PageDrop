@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
+from pathlib import Path
+
+from PyQt6.QtCore import QFileInfo, QPoint, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QDragEnterEvent,
@@ -266,9 +268,11 @@ class TabManager(QTabWidget):
         self,
         temp_manager: TempManager,
         parent: QWidget | None = None,
+        recovery_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager
+        self._recovery_dir = recovery_dir
         self.setObjectName("TabManager")
         self.setDocumentMode(True)
         self.setMovable(True)
@@ -288,6 +292,19 @@ class TabManager(QTabWidget):
         self._detachable_tab_bar.tab_rename_requested.connect(
             self.tab_rename_requested.emit
         )
+        self._open_tabs_button = QToolButton(self)
+        self._open_tabs_button.setObjectName("OpenTabsButton")
+        self._open_tabs_button.setText("Open tabs")
+        self._open_tabs_button.setToolTip("Show open tabs")
+        self._open_tabs_button.setAccessibleName("Open tabs")
+        self._open_tabs_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._open_tabs_menu = QMenu(self._open_tabs_button)
+        self._open_tabs_menu.aboutToShow.connect(self._populate_open_tabs_menu)
+        self._open_tabs_button.setMenu(self._open_tabs_menu)
+        self.setCornerWidget(self._open_tabs_button, Qt.Corner.TopRightCorner)
+        self._open_tabs_button.hide()
 
         self.tabCloseRequested.connect(self.close_tab)
         self.currentChanged.connect(self._on_current_changed)
@@ -307,10 +324,15 @@ class TabManager(QTabWidget):
 
     def add_tab(self, tab: PdfTab | None = None) -> PdfTab:
         if tab is None:
-            tab = PdfTab(temp_manager=self._temp_manager)
+            tab = PdfTab(
+                temp_manager=self._temp_manager,
+                recovery_dir=self._recovery_dir,
+            )
         index = self.addTab(tab, tab.tab_title)
         self._connect_tab(tab, index)
         self._style_close_button(index)
+        self._apply_tab_icon(index, tab)
+        self._schedule_open_tabs_update()
         self.tab_added.emit(tab)
         return tab
 
@@ -325,7 +347,9 @@ class TabManager(QTabWidget):
         index = self.addTab(page, str(resolved))
         self._style_close_button(index)
         self._apply_page_title(index, str(resolved))
+        self._apply_tab_icon(index, page)
         self.setCurrentWidget(page)
+        self._schedule_open_tabs_update()
         return page
 
     def find_page_id(self, page_id: str) -> QWidget | None:
@@ -355,6 +379,7 @@ class TabManager(QTabWidget):
         if self.count() == 0:
             self.all_tabs_closed.emit()
             self.add_blank_tab()
+        self._schedule_open_tabs_update()
 
     def update_tab_title(self, tab: PdfTab) -> None:
         try:
@@ -366,9 +391,13 @@ class TabManager(QTabWidget):
 
     def _apply_page_title(self, index: int, title: str) -> None:
         metrics = self.tabBar().fontMetrics()
+        compact_title = f"{title[:8]}…{title[-12:]}"
+        display_title = title
+        if len(title) > 20 and metrics.horizontalAdvance(compact_title) <= 185:
+            display_title = compact_title
         self.setTabText(
             index,
-            metrics.elidedText(title, Qt.TextElideMode.ElideRight, 185),
+            metrics.elidedText(display_title, Qt.TextElideMode.ElideMiddle, 185),
         )
         self.setTabToolTip(index, title)
 
@@ -383,7 +412,12 @@ class TabManager(QTabWidget):
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self.setTabToolTip(index, f"{title} ({count} {noun})")
+            self.setTabToolTip(index, f"{tab.identity_tooltip}\n{count} {noun}")
+        accessible = tab.display_name
+        if tab.is_dirty:
+            accessible += ", unsaved changes"
+        self.tabBar().setAccessibleTabName(index, accessible)
+        self._schedule_open_tabs_update()
 
     def _connect_tab(self, tab: PdfTab, index: int) -> None:
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))
@@ -424,7 +458,68 @@ class TabManager(QTabWidget):
                 self.tabCloseRequested.emit(index)
                 return
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._schedule_open_tabs_update()
+
+    def _schedule_open_tabs_update(self) -> None:
+        QTimer.singleShot(0, self._update_open_tabs_button)
+
+    def _update_open_tabs_button(self) -> None:
+        bar = self.tabBar()
+        crowded = self.count() > 1 and any(
+            bar.tabRect(index).right() >= bar.width()
+            for index in range(self.count())
+        )
+        self._open_tabs_button.setVisible(crowded)
+
+    def _populate_open_tabs_menu(self) -> None:
+        self._open_tabs_menu.clear()
+        names: dict[str, int] = {}
+        for index in range(self.count()):
+            widget = self.widget(index)
+            if isinstance(widget, PdfTab):
+                filename = (
+                    QFileInfo(widget.display_path).fileName()
+                    if widget.display_path is not None
+                    else widget.display_name
+                )
+                names[filename] = names.get(filename, 0) + 1
+        for index in range(self.count()):
+            widget = self.widget(index)
+            if widget is None:
+                continue
+            if isinstance(widget, PdfTab):
+                label = widget.display_name
+                filename = (
+                    QFileInfo(widget.display_path).fileName()
+                    if widget.display_path is not None
+                    else widget.display_name
+                )
+                if names[filename] > 1 and widget.display_path is not None:
+                    folder = QFileInfo(widget.display_path).dir().dirName()
+                    label = f"{label} — {folder}"
+                if widget.is_dirty:
+                    label += " *"
+                action = self._open_tabs_menu.addAction(icons.icon("file-doc"), label)
+                action.setToolTip(self.tabToolTip(index))
+            else:
+                label = getattr(widget, "tab_title", None) or self.tabText(index)
+                action = self._open_tabs_menu.addAction(icons.icon("wrench"), str(label))
+            action.setCheckable(True)
+            action.setChecked(index == self.currentIndex())
+            action.triggered.connect(
+                lambda _checked=False, page=widget: self.setCurrentWidget(page)
+            )
+
+    def _apply_tab_icon(self, index: int, widget: QWidget) -> None:
+        name = "file-doc" if isinstance(widget, PdfTab) else "wrench"
+        self.setTabIcon(index, icons.icon(name))
+
     def _refresh_close_icons(self) -> None:
         """Re-tint tab close × after a light/dark swap."""
         for index in range(self.count()):
             self._style_close_button(index)
+            widget = self.widget(index)
+            if widget is not None:
+                self._apply_tab_icon(index, widget)

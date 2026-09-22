@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QFileDialog, QTabBar
+from PyQt6.QtWidgets import QFileDialog, QTabBar, QWidget
 
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
@@ -106,8 +106,10 @@ def test_long_tab_title_elided_with_full_tooltip(main_window, qtbot):
 
     tab_manager = main_window._tab_manager
     shown = tab_manager.tabText(0)
-    assert shown.endswith("…")
-    assert long_title.startswith(shown[:-1])
+    assert "…" in shown
+    shown_prefix, shown_suffix = shown.split("…", 1)
+    assert long_title.startswith(shown_prefix)
+    assert long_title.endswith(shown_suffix)
     assert tab_manager.tabToolTip(0) == tab.tab_title
 
     metrics = tab_manager.tabBar().fontMetrics()
@@ -119,24 +121,98 @@ def test_long_tab_title_elided_with_full_tooltip(main_window, qtbot):
     assert tab_manager.tabToolTip(0) == "Short"
 
 
+def test_crowded_tabs_have_an_open_tabs_menu(main_window, qtbot):
+    manager = main_window._tab_manager
+    for title in ("One", "Two", "Three", "Four"):
+        tab = manager.add_blank_tab()
+        assert tab.set_custom_tab_title(title)
+    main_window.resize(360, 500)
+    main_window.show()
+    qtbot.waitUntil(lambda: manager._open_tabs_button.isVisible(), timeout=3000)
+
+    manager._populate_open_tabs_menu()
+    actions = manager._open_tabs_menu.actions()
+    assert [action.text() for action in actions] == ["New tab", "One", "Two", "Three", "Four"]
+    actions[2].trigger()
+    assert manager.currentIndex() == 2
+    main_window.resize(1200, 500)
+    qtbot.waitUntil(lambda: manager._open_tabs_button.isHidden(), timeout=3000)
+
+
+def test_open_tabs_menu_disambiguates_duplicate_filenames(main_window, tmp_path):
+    paths = []
+    for folder in ("first", "second"):
+        path = tmp_path / folder / "report.pdf"
+        path.parent.mkdir()
+        generate_n_page(path, 1)
+        paths.append(path)
+    first = _tab_at(main_window, 0)
+    main_window._load_pdf(str(paths[0]), tab=first)
+    second = main_window._tab_manager.add_blank_tab()
+    main_window._load_pdf(str(paths[1]), tab=second)
+
+    manager = main_window._tab_manager
+    manager._populate_open_tabs_menu()
+    assert [action.text() for action in manager._open_tabs_menu.actions()] == [
+        "report.pdf — first",
+        "report.pdf — second",
+    ]
+
+
+def test_dirty_tab_has_accessible_unsaved_state(main_window, five_page_pdf, qtbot):
+    main_window._load_pdf(str(five_page_pdf))
+    tab = _tab_at(main_window, 0)
+    _wait_for_tab_loaded(qtbot, tab)
+    tab.thumbnail_grid.reorder_pages_by_drop([4], 0)
+    qtbot.waitUntil(lambda: tab.is_dirty, timeout=3000)
+    assert "unsaved changes" in main_window._tab_manager.tabBar().accessibleTabName(0)
+
+
+def test_document_and_tool_tabs_have_distinct_icons(main_window):
+    manager = main_window._tab_manager
+    document_icon = manager.tabIcon(0)
+    tool = QWidget()
+    manager.add_page(tool, "Tool")
+    tool_icon = manager.tabIcon(manager.indexOf(tool))
+    assert not document_icon.isNull()
+    assert not tool_icon.isNull()
+    assert document_icon.cacheKey() != tool_icon.cacheKey()
+
+
 def test_tab_tooltip_includes_logical_page_count(
     main_window, five_page_pdf, qtbot
 ):
     main_window._load_pdf(str(five_page_pdf))
     _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))
     tab = _tab_at(main_window, 0)
-    assert (
-        main_window._tab_manager.tabToolTip(0)
-        == f"{five_page_pdf.name} (5 pages)"
-    )
+    assert main_window._tab_manager.tabToolTip(0) == f"{five_page_pdf.name}\n{five_page_pdf}\n5 pages"
 
     tab.thumbnail_grid.selection_manager.select_single(0)
     assert tab.delete_selected_pages()
     main_window._tab_manager.update_tab_title(tab)
-    assert (
-        main_window._tab_manager.tabToolTip(0)
-        == f"{five_page_pdf.name}* (4 pages)"
-    )
+    assert main_window._tab_manager.tabToolTip(0) == f"{five_page_pdf.name}\n{five_page_pdf}\n4 pages"
+
+
+def test_each_pdf_tab_restores_its_own_toolbar_context(
+    main_window, one_page_pdf, five_page_pdf, qtbot
+):
+    first = _tab_at(main_window, 0)
+    main_window._load_pdf(str(one_page_pdf), tab=first)
+    second = main_window._tab_manager.add_blank_tab()
+    main_window._load_pdf(str(five_page_pdf), tab=second)
+    _wait_for_tab_loaded(qtbot, first)
+    _wait_for_tab_loaded(qtbot, second)
+
+    main_window._tab_manager.setCurrentWidget(second)
+    second.thumbnail_grid.selection_manager.select_single(0)
+    qtbot.waitUntil(lambda: main_window._selection_status.text() == "Page 1 selected")
+    main_window._tab_manager.setCurrentWidget(first)
+
+    assert main_window.windowTitle() == f"PageDrop: {one_page_pdf.name} (1 page)"
+    assert main_window._selection_status.text() == "No selection"
+    assert main_window._selection_toolbar_label.text() == "No selection"
+    assert not main_window._selection_toolbar_label.isHidden()
+    assert main_window._toolbar.parentWidget() is first
 
 
 def test_detach_hint_restores_title_tooltip(main_window):
@@ -523,4 +599,3 @@ def test_detach_tab_in_preview_mode(
     detached_tab = _tab_at(detached, 0)
     assert detached_tab.is_preview_visible()
     assert detached_tab.preview_widget.current_page == 2
-

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from pagedrop.ui.theme import SPACE_2, SPACE_4
+
 if TYPE_CHECKING:
     pass
 
@@ -34,6 +36,24 @@ class StatusFooter(QLabel):
 
     def currentMessage(self) -> str:  # noqa: N802
         return self._message
+
+
+class ToolWorkflowHeader(QWidget):
+    """Shared title and purpose block for tool input workflows."""
+
+    def __init__(self, title: str, purpose: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("ToolWorkflowHeader")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_2)
+        layout.setSpacing(SPACE_2)
+        heading = QLabel(title)
+        heading.setObjectName("ToolWorkflowTitle")
+        layout.addWidget(heading)
+        description = QLabel(purpose)
+        description.setObjectName("ToolWorkflowPurpose")
+        description.setWordWrap(True)
+        layout.addWidget(description)
 
 
 def attach_status_footer(

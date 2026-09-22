@@ -25,6 +25,7 @@ from pagedrop.core.jobs.spec import JobSpec, ProgressCallback, _noop_progress
 from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.thread_policy import ensure_no_fitz_document
+from pagedrop.utils.diagnostics import log_failure
 from pagedrop.utils.temp_manager import TempManager
 
 JobHandler = Callable[["JobContext"], Path]
@@ -168,7 +169,14 @@ class SerializedJobRunner:
             promoted = staging.promote(result_staged, Path(spec.output))
             report(1.0, "Done")
             return promoted
-        except Exception:
+        except Exception as exc:
+            log_failure(
+                "Tool job",
+                exc,
+                job_type=spec.job_type,
+                inputs=", ".join(map(str, spec.inputs)),
+                output=spec.output,
+            )
             staging.cleanup()
             raise
         finally:

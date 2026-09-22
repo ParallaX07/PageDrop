@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtCore import QEvent, QEventLoop, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -16,35 +17,49 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QInputDialog,
+    QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
     QToolBar,
     QToolButton,
+    QWIDGETSIZE_MAX,
     QWidget,
 )
 
-from pagedrop.core.jobs.paths import paths_refer_to_same_file
+from pagedrop.core.editor_jobs import register_editor_handlers
+from pagedrop.core.jobs import (
+    CancelToken,
+    JobSpec,
+    RuntimeCredentials,
+    SerializedJobRunner,
+)
+from pagedrop.core.jobs.errors import SourceOverwriteError
+from pagedrop.core.jobs.paths import paths_refer_to_same_file, reject_source_overwrite
 from pagedrop.core.pdf_loader import (
     PdfEmptyError,
     PdfLoadError,
     PdfPasswordError,
     PdfPasswordRequiredError,
 )
-from pagedrop.core.pdf_writer import write_pdf
-from pagedrop.core.redact import (
-    RedactionError,
-    RedactionVerifyError,
-    redact_edit_model,
-)
 from pagedrop.ui.actions import ActionRegistry
-from pagedrop.ui.busy_overlay import ToastOverlay
+from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
+from pagedrop.ui.editor_jobs import (
+    EditorJobWorker,
+    release_editor_signals,
+    start_editor_worker,
+)
 from pagedrop.ui.command_palette import CommandPalette, action_label
+from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.ui.dialogs import (
     fit_message_box_buttons,
     prompt_pdf_password,
@@ -55,8 +70,13 @@ from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
 )
-from pagedrop.ui.onboarding import KeyboardShortcutsDialog, TipsOverlay
+from pagedrop.ui.onboarding import (
+    KeyboardShortcutsDialog,
+    TipsOverlay,
+    show_context_hint,
+)
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
 from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui import icons
 from pagedrop.ui.settings import (
@@ -70,24 +90,29 @@ from pagedrop.ui.settings import (
     remember_directory,
     remember_recent_file,
     save_window_geometry,
+    settings_file_path,
     set_chrome_visible,
     set_light_theme,
     set_thumbnail_quality,
     set_thumbnail_zoom,
+    KEY_CONTEXT_HINT_BACK_TO_GRID,
+    KEY_CONTEXT_HINT_SELECTION_EXPORT,
+    KEY_CONTEXT_HINT_TRANSFER,
     thumbnail_quality,
     thumbnail_zoom,
 )
 from pagedrop.ui.tab_manager import TabManager
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
-    TOOLBAR_FILENAME_MAX_WIDTH,
+    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
-from pagedrop.utils.page_jump import parse_page_jump
-from pagedrop.utils.temp_manager import TempManager
+from pagedrop.utils.page_jump import parse_page_ranges
+from pagedrop.utils.temp_manager import TempManager, process_is_alive
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -97,6 +122,8 @@ if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
     from pagedrop.ui.window_manager import WindowManager
 
+from pagedrop.utils.diagnostics import log_failure
+
 
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
@@ -104,6 +131,7 @@ STATUS_TRANSIENT_MS = 5000
 
 class MainWindow(QMainWindow):
     APP_TITLE = "PageDrop"
+    editor_job_finished = pyqtSignal(object)
 
     def __init__(
         self,
@@ -129,11 +157,19 @@ class MainWindow(QMainWindow):
         self._selection_coalesce_timer.setSingleShot(True)
         self._selection_coalesce_timer.setInterval(0)
         self._selection_coalesce_timer.timeout.connect(self._flush_selection_toolbar)
+        self._status_by_page: dict[QWidget | None, str] = {}
+        self._transient_status_timer = QTimer(self)
+        self._transient_status_timer.setSingleShot(True)
+        self._transient_status_timer.timeout.connect(self._restore_active_status)
+        self._updating_responsive_shell = False
 
         self.setWindowTitle(self.APP_TITLE)
-        # Offscreen Qt has no window manager and is prone to teardown crashes
-        # for frameless windows; desktop Windows/Linux use custom chrome.
-        if QApplication.platformName() != "offscreen":
+        # Offscreen Qt has no window manager and does not support custom chrome.
+        # Desktop Windows/Linux use the frameless title bar below.
+        if QApplication.platformName() == "offscreen":
+            # Direct test windows otherwise survive until SIP interpreter teardown.
+            QApplication.instance().aboutToQuit.connect(self.deleteLater)
+        else:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(720, 480)
         self.resize(960, 680)
@@ -203,6 +239,7 @@ class MainWindow(QMainWindow):
             "Save &as",
             slot=self._save_as,
             shortcut="Ctrl+Shift+S",
+            icon=icons.icon("floppy-disk"),
             enabled=False,
         )
         self._export_all_action = actions.register(
@@ -326,7 +363,7 @@ class MainWindow(QMainWindow):
         )
         self._deselect_all_action = actions.register(
             "deselect_all",
-            "Deselect all",
+            "Clear selection",
             slot=self._clear_selection,
             icon=icons.icon("selection-slash"),
             tip="Clear selection (Esc)",
@@ -370,7 +407,7 @@ class MainWindow(QMainWindow):
         )
         self._delete_pages_action = actions.register(
             "delete_pages",
-            "Delete page(s)",
+            "Delete selected pages",
             slot=self._delete_selected_pages,
             shortcut=QKeySequence(Qt.Key.Key_Delete),
             icon=icons.icon("trash"),
@@ -379,7 +416,7 @@ class MainWindow(QMainWindow):
         )
         self._duplicate_pages_action = actions.register(
             "duplicate_pages",
-            "Duplicate",
+            "Duplicate selected pages",
             slot=self._duplicate_selected_pages,
             shortcut="Ctrl+D",
             icon=icons.icon("copy"),
@@ -388,7 +425,7 @@ class MainWindow(QMainWindow):
         )
         self._rotate_cw_action = actions.register(
             "rotate_cw",
-            "Rotate CW",
+            "Rotate clockwise",
             slot=lambda: self._rotate_selected_pages(90),
             icon=icons.icon("arrow-clockwise"),
             tip="Rotate selected pages clockwise",
@@ -396,10 +433,30 @@ class MainWindow(QMainWindow):
         )
         self._rotate_ccw_action = actions.register(
             "rotate_ccw",
-            "Rotate CCW",
+            "Rotate counterclockwise",
             slot=lambda: self._rotate_selected_pages(-90),
             icon=icons.icon("arrow-counter-clockwise"),
             tip="Rotate selected pages counter-clockwise",
+            enabled=False,
+        )
+        self._extract_selected_action = actions.register(
+            "extract_selected",
+            "Extract",
+            slot=self._extract_selected_to_folder,
+            icon=icons.icon("export"),
+            tip="Extract selected pages to a folder",
+            enabled=False,
+        )
+        self._extract_selected_to_tab_action = actions.register(
+            "extract_selected_to_tab",
+            "Extract selected pages to new tab",
+            slot=self._extract_selected_to_new_tab,
+            enabled=False,
+        )
+        self._extract_selected_to_window_action = actions.register(
+            "extract_selected_to_window",
+            "Extract selected pages to new window",
+            slot=self._extract_selected_to_new_window,
             enabled=False,
         )
 
@@ -433,9 +490,9 @@ class MainWindow(QMainWindow):
         )
         self._page_jump_action = actions.register(
             "page_jump",
-            "Select page range",
+            "Select pages",
             slot=self._page_range_jump_dialog,
-            shortcut="Ctrl+F",
+            tip="Select pages by number or range",
             add_to_window=True,
         )
         actions.register(
@@ -445,11 +502,34 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+0",
             add_to_window=True,
         )
+        categories = {
+            "Pages": {
+                "undo", "redo", "preview", "select_all", "deselect_all",
+                "move_up", "move_down", "move_to", "delete_pages",
+                "duplicate_pages", "rotate_cw", "rotate_ccw", "extract_selected",
+                "extract_selected_to_tab", "extract_selected_to_window", "go_to_page",
+                "page_jump",
+            },
+            "View": {
+                "light_theme", "chrome_visible", "quality_low", "quality_medium",
+                "quality_high", "command_palette", "reset_zoom",
+            },
+            "Tools": {"merge", "create_pdf", "tools"},
+        }
+        synonyms = {"merge": ["combine"], "create_pdf": ["images to pdf"]}
+        for key, action in actions.items():
+            action.setProperty(
+                "commandCategory",
+                next((name for name, keys in categories.items() if key in keys), "Document"),
+            )
+            if key in synonyms:
+                action.setProperty("commandSynonyms", synonyms[key])
 
     def _refresh_action_icons(self) -> None:
         """Re-tint Phosphor toolbar icons after a light/dark swap."""
         a = self._actions
         a["open"].setIcon(icons.icon("folder-open"))
+        a["save_as"].setIcon(icons.icon("floppy-disk"))
         a["preview"].setIcon(icons.icon("list"))
         a["select_all"].setIcon(icons.icon("selection-all"))
         a["deselect_all"].setIcon(icons.icon("selection-slash"))
@@ -460,6 +540,8 @@ class MainWindow(QMainWindow):
         a["duplicate_pages"].setIcon(icons.icon("copy"))
         a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
         a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
+        a["extract_selected"].setIcon(icons.icon("export"))
+        self._set_toolbar_primary()
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -495,12 +577,42 @@ class MainWindow(QMainWindow):
         menubar.addAction(a["merge"])
         menubar.addAction(a["create_pdf"])
         menubar.addAction(a["tools"])
+        self._merge_menu_action = a["merge"]
+        self._create_pdf_menu_action = a["create_pdf"]
+        self._tools_menu_action = a["tools"]
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
         help_menu.addAction(a["tips"])
         help_menu.addSeparator()
         help_menu.addAction(a["check_for_updates"])
+        self._help_menu_action = help_menu.menuAction()
+
+        self._application_overflow_menu = menubar.addMenu("M&ore")
+        self._application_overflow_menu.setToolTip("More application actions")
+        self._application_overflow_menu.setAccessibleName("More application actions")
+        self._responsive_menu_actions = (
+            # Keep File direct; at large fonts even File/Edit/View/More plus
+            # the window controls may not fit. Move View and Edit last.
+            edit_menu.menuAction(),
+            view_menu.menuAction(),
+            self._merge_menu_action,
+            self._create_pdf_menu_action,
+            self._tools_menu_action,
+            self._help_menu_action,
+        )
+        self._application_overflow_menu.menuAction().setVisible(False)
+
+        for menu in (
+            file_menu,
+            self._open_recent_menu,
+            edit_menu,
+            view_menu,
+            quality_menu,
+            help_menu,
+            self._application_overflow_menu,
+        ):
+            self._install_menu_focus_restore(menu)
 
         window_controls = QWidget(menubar)
         window_controls.setObjectName("WindowControls")
@@ -527,55 +639,47 @@ class MainWindow(QMainWindow):
                 self._maximize_button = button
         menubar.setCornerWidget(window_controls, Qt.Corner.TopRightCorner)
         self._menu_bar = menubar
+        self._window_controls = window_controls
         self._title_drag_widgets = (window_controls, self._title_label)
+        QTimer.singleShot(0, self._update_responsive_shell)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
-        self.addToolBar(toolbar)
+        toolbar.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self._toolbar = toolbar
+        self._toolbar_host_tab: PdfTab | None = None
         a = self._actions
 
         toolbar.addAction(a["open"])
-        open_button = toolbar.widgetForAction(a["open"])
-        if open_button is not None:
-            open_button.setObjectName("ToolbarPrimary")
-
         toolbar.addAction(a["preview"])
+        # Offscreen Qt needs a widget action here to tear down this reparented
+        # toolbar safely. It is intentionally zero-width, not document chrome.
+        self._toolbar_layout_anchor = QWidget(toolbar)
+        self._toolbar_layout_anchor.setFixedWidth(0)
+        toolbar.addWidget(self._toolbar_layout_anchor)
+        toolbar.addAction(a["save_as"])
         toolbar.addSeparator()
+        self._selection_toolbar_label = QLabel()
+        self._selection_toolbar_label.setObjectName("ToolbarSelectionCount")
+        self._selection_toolbar_label.setFixedWidth(130)
+        self._selection_toolbar_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        toolbar.addWidget(self._selection_toolbar_label)
         toolbar.addAction(a["select_all"])
         toolbar.addAction(a["deselect_all"])
-        toolbar.addAction(a["move_up"])
-        toolbar.addAction(a["move_down"])
-        toolbar.addAction(a["move_to"])
-        toolbar.addAction(a["delete_pages"])
         toolbar.addAction(a["duplicate_pages"])
         toolbar.addAction(a["rotate_cw"])
         toolbar.addAction(a["rotate_ccw"])
-        # QAction has no setAccessibleName — expand CW/CCW on the toolbar buttons.
-        for action, name in (
-            (a["rotate_cw"], "Rotate clockwise"),
-            (a["rotate_ccw"], "Rotate counter-clockwise"),
-        ):
-            btn = toolbar.widgetForAction(action)
-            if btn is not None:
-                btn.setAccessibleName(name)
+        toolbar.addAction(a["move_up"])
+        toolbar.addAction(a["move_down"])
+        toolbar.addAction(a["extract_selected"])
         toolbar.addSeparator()
-
-        self._filename_label = QLabel("No file open")
-        self._filename_label.setObjectName("ToolbarFilename")
-        self._filename_label.setProperty("active", False)
-        self._filename_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self._filename_label.setWordWrap(False)
-        self._filename_label.setMaximumWidth(TOOLBAR_FILENAME_MAX_WIDTH)
-        toolbar.addWidget(self._filename_label)
-
-        spacer = QWidget()
-        spacer.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        toolbar.addWidget(spacer)
+        toolbar.addAction(a["delete_pages"])
+        for action in (a["rotate_cw"], a["rotate_ccw"]):
+            button = toolbar.widgetForAction(action)
+            if button is not None:
+                button.setAccessibleName(action.text())
+        toolbar.addSeparator()
 
         self._zoom_controls = ZoomControls(
             min_width=MIN_THUMBNAIL_WIDTH,
@@ -583,17 +687,40 @@ class MainWindow(QMainWindow):
             step=ZOOM_WHEEL_STEP,
             initial=thumbnail_zoom(),
         )
-        toolbar.addWidget(self._zoom_controls)
         self._zoom_controls.zoom_requested.connect(self._on_zoom_requested)
         self._zoom_controls.reset_requested.connect(self._reset_thumbnail_zoom)
         zoom_hint = "Thumbnail size (Ctrl+scroll · Ctrl+0 reset)"
         self._zoom_controls.setToolTip(zoom_hint)
         self._zoom_controls.setStatusTip(zoom_hint)
 
+        self._toolbar_overflow = QToolButton(toolbar)
+        self._toolbar_overflow.setObjectName("ToolbarOverflow")
+        self._toolbar_overflow.setText("More")
+        self._toolbar_overflow.setToolTip("More page actions")
+        self._toolbar_overflow.setAccessibleName("More page actions")
+        self._toolbar_overflow.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._toolbar_overflow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._toolbar_overflow_menu = QMenu(self._toolbar_overflow)
+        self._install_menu_focus_restore(self._toolbar_overflow_menu)
+        self._toolbar_overflow.setMenu(self._toolbar_overflow_menu)
+        toolbar.addWidget(self._toolbar_overflow)
+
+        for action in (a["open"], a["save_as"], a["extract_selected"]):
+            button = toolbar.widgetForAction(action)
+            if isinstance(button, QToolButton):
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        preview_button = toolbar.widgetForAction(a["preview"])
+        if isinstance(preview_button, QToolButton):
+            preview_button.setText("Pages / Preview")
+
         enable_toolbar_keyboard_navigation(toolbar)
 
     def _build_central_widget(self) -> None:
-        self._tab_manager = TabManager(temp_manager=self._temp_manager)
+        self._recovery_dir = recovery_directory(settings_file_path())
+        self._tab_manager = TabManager(
+            temp_manager=self._temp_manager,
+            recovery_dir=self._recovery_dir,
+        )
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
         self._tab_manager.currentChanged.connect(self._on_tab_index_changed)
         self._tab_manager.tab_added.connect(self._connect_tab_signals)
@@ -634,6 +761,9 @@ class MainWindow(QMainWindow):
                 tab.set_zoom_level(thumbnail_zoom())
         self.setCentralWidget(self._tab_manager)
         self._toast = ToastOverlay(self._tab_manager)
+        self._editor_runner = SerializedJobRunner(self._temp_manager)
+        register_editor_handlers(self._editor_runner)
+        self._editor_busy: dict[PdfTab, tuple[BusyOverlay, CancelToken]] = {}
         self._last_tab_index = self._tab_manager.currentIndex()
         set_content_tab_order(
             self._toolbar,
@@ -641,11 +771,33 @@ class MainWindow(QMainWindow):
             status_bar=self.statusBar(),
         )
 
-    def _transient_status(self, message: str) -> None:
-        self.statusBar().showMessage(message, STATUS_TRANSIENT_MS)
+    def _status_page(self) -> QWidget | None:
+        return self._tab_manager.currentWidget()
 
-    def _persistent_status(self, message: str) -> None:
-        self.statusBar().showMessage(message)
+    def _sender_tab(self) -> PdfTab | None:
+        sender = self.sender()
+        for index in range(self._tab_manager.count()):
+            tab = self._tab_manager.widget(index)
+            if isinstance(tab, PdfTab) and sender in (tab.thumbnail_grid, tab.preview_widget):
+                return tab
+        return None
+
+    def _transient_status(self, message: str, *, page: QWidget | None = None) -> None:
+        page = page or self._sender_tab() or self._status_page()
+        self._status_by_page[page] = message
+        if page is self._status_page():
+            self.statusBar().showMessage(message)
+            self._transient_status_timer.start(STATUS_TRANSIENT_MS)
+
+    def _persistent_status(self, message: str, *, page: QWidget | None = None) -> None:
+        page = page or self._sender_tab() or self._status_page()
+        self._status_by_page[page] = message
+        if page is self._status_page():
+            self._transient_status_timer.stop()
+            self.statusBar().showMessage(message)
+
+    def _restore_active_status(self) -> None:
+        self.statusBar().showMessage(self._status_by_page.get(self._status_page(), "Ready"))
 
     def _show_toast(
         self,
@@ -655,6 +807,48 @@ class MainWindow(QMainWindow):
         on_undo=None,
     ) -> None:
         self._toast.show_toast(message, kind=kind, on_undo=on_undo)
+
+    def _begin_editor_job(self, tab: PdfTab, message: str) -> CancelToken:
+        overlay = BusyOverlay(tab)
+        overlay.set_cancellable(True)
+        token = CancelToken()
+        overlay.set_progress(None)
+
+        def cancel() -> None:
+            token.cancel()
+            overlay.set_cancelling()
+            if tab is self._active_tab():
+                self._persistent_status("Cancelling…")
+
+        overlay.cancelled.connect(cancel)
+        overlay.show_message(message)
+        tab.setProperty("editorJobRunning", True)
+        self._editor_busy[tab] = (overlay, token)
+        return token
+
+    def _end_editor_job(self, tab: PdfTab) -> None:
+        item = self._editor_busy.pop(tab, None)
+        if item is not None:
+            item[0].hide_overlay()
+        tab.setProperty("editorJobRunning", False)
+        self.editor_job_finished.emit(tab)
+
+    def wait_for_editor_job(self, tab: PdfTab) -> None:
+        """Run a nested event loop only for shutdown preparation's save contract."""
+        if tab not in self._editor_busy:
+            return
+        loop = QEventLoop(self)
+
+        def done(finished_tab: object) -> None:
+            if finished_tab is tab:
+                loop.quit()
+
+        self.editor_job_finished.connect(done)
+        try:
+            if tab in self._editor_busy:
+                loop.exec()
+        finally:
+            self.editor_job_finished.disconnect(done)
 
     def _restore_document_status(self) -> None:
         """Restore sticky document status after a drag hint."""
@@ -670,7 +864,7 @@ class MainWindow(QMainWindow):
             noun = "page" if count == 1 else "pages"
             self._persistent_status(f"Loaded {count} {noun}")
             return
-        self._persistent_status("Ready")
+        self._restore_active_status()
 
     def _update_selection_status(self, selection: set[int]) -> None:
         tab = self._active_tab()
@@ -679,13 +873,28 @@ class MainWindow(QMainWindow):
             self._selection_status.hide()
             return
         if selection:
-            count = len(selection)
-            noun = "page" if count == 1 else "pages"
-            self._selection_status.setText(f"{count} {noun} selected")
+            visible, accessible = self._selection_summary(selection)
+            self._selection_status.setText(visible)
+            self._selection_status.setToolTip(accessible)
+            self._selection_status.setAccessibleName(accessible)
             self._selection_status.show()
         else:
             self._selection_status.setText("No selection")
+            self._selection_status.setToolTip("")
+            self._selection_status.setAccessibleName("No selection")
             self._selection_status.show()
+
+    @staticmethod
+    def _selection_summary(selection: set[int]) -> tuple[str, str]:
+        """Return compact visible and complete accessible selection context."""
+        ranges = format_indices_as_ranges(selection).replace("-", "–")
+        count = len(selection)
+        if "," not in ranges:
+            noun = "Page" if count == 1 else "Pages"
+            summary = f"{noun} {ranges} selected"
+            return summary, summary
+        summary = f"{count} pages selected"
+        return summary, f"{summary}: Pages {ranges.replace(',', ', ')}"
 
     def _build_status_widgets(self) -> None:
         self._progress_bar = QProgressBar()
@@ -698,6 +907,17 @@ class MainWindow(QMainWindow):
         self._selection_status.setObjectName("SelectionStatusLabel")
         self._selection_status.setAccessibleName("Selection count")
         self._selection_status.hide()
+
+        self._thumbnail_zoom_host = QWidget()
+        self._thumbnail_zoom_host.setObjectName("ThumbnailZoomStatusHost")
+        zoom_layout = QHBoxLayout(self._thumbnail_zoom_host)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.setSpacing(4)
+        self._thumbnail_zoom_label = QLabel("Thumbnail size")
+        self._thumbnail_zoom_label.setObjectName("ThumbnailZoomLabel")
+        zoom_layout.addWidget(self._thumbnail_zoom_label)
+        zoom_layout.addWidget(self._zoom_controls)
+        self._thumbnail_zoom_host.hide()
 
         self._move_undo_widget = QWidget()
         self._move_undo_widget.setObjectName("MoveUndoToast")
@@ -720,6 +940,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._selection_status)
         self.statusBar().addPermanentWidget(self._move_undo_widget)
         self.statusBar().addPermanentWidget(self._progress_bar)
+        self.statusBar().addPermanentWidget(self._thumbnail_zoom_host)
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def _connect_tab_signals(self, tab: PdfTab) -> None:
@@ -743,18 +964,97 @@ class MainWindow(QMainWindow):
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
-        grid.extract_to_new_tab_requested.connect(self._extract_selected_to_new_tab)
-        grid.extract_to_new_window_requested.connect(
-            self._extract_selected_to_new_window
+        grid.bind_page_actions(
+            (self._move_up_action, self._move_down_action, self._move_to_action),
+            (
+                self._duplicate_pages_action,
+                self._rotate_cw_action,
+                self._rotate_ccw_action,
+            ),
+            (self._delete_pages_action,),
+            (
+                self._extract_selected_action,
+                self._extract_selected_to_tab_action,
+                self._extract_selected_to_window_action,
+            ),
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
+        grid.bind_open_action(self._actions["open"])
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
         tab.preview_widget.closed.connect(self._on_viewer_closed)
         tab.preview_widget.status_message.connect(self._transient_status)
+        tab.preview_widget.ocr_requested.connect(self._open_ocr_from_viewer)
         tab.dirty_changed.connect(self._on_tab_dirty_changed)
+        tab.recovery_failed.connect(self._on_recovery_failed)
+
+    def _on_recovery_failed(self, message: str) -> None:
+        self._transient_status("Draft recovery unavailable")
+        self._show_toast(message, kind="error")
+
+    def restore_recovery_drafts(self) -> int:
+        """Offer stale crash drafts and restore accepted documents as tabs."""
+        try:
+            drafts = [
+                path
+                for path in sorted(self._recovery_dir.glob("*.json"))
+                if (owner := draft_owner_pid(path)) is None
+                or not process_is_alive(owner)
+            ]
+        except OSError:
+            return 0
+        if not drafts:
+            return 0
+        reply = QMessageBox.question(
+            self,
+            "Recover unsaved changes",
+            f"PageDrop found unsaved changes from an earlier session "
+            f"({len(drafts)} {'document' if len(drafts) == 1 else 'documents'}). "
+            "Recover them now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            for path in drafts:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return 0
+
+        restored = 0
+        failures: list[str] = []
+        for path in drafts:
+            tab = self._tab_manager.active_tab
+            if tab is None or not tab.is_blank or restored:
+                tab = self._tab_manager.add_blank_tab()
+            try:
+                tab.restore_recovery_draft(path)
+            except (RecoveryError, PdfLoadError, OSError) as exc:
+                failures.append(str(exc))
+                if tab.is_blank and self._tab_manager.count() > 1:
+                    self._tab_manager.close_tab(self._tab_manager.indexOf(tab))
+                continue
+            tab.set_zoom_level(thumbnail_zoom())
+            self._tab_manager.setCurrentWidget(tab)
+            restored += 1
+        if restored:
+            message = (
+                "Recovered 1 unsaved document"
+                if restored == 1
+                else f"Recovered {restored} unsaved documents"
+            )
+            self._transient_status(message)
+            self._show_toast(message, kind="success")
+        if failures:
+            QMessageBox.warning(
+                self,
+                "Recovery incomplete",
+                "Some drafts could not be recovered:\n" + "\n".join(failures),
+            )
+        return restored
 
     def _disconnect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -780,11 +1080,6 @@ class MainWindow(QMainWindow):
             (grid.page_transfer_failed, self._on_page_transfer_failed),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
-            (grid.extract_to_new_tab_requested, self._extract_selected_to_new_tab),
-            (
-                grid.extract_to_new_window_requested,
-                self._extract_selected_to_new_window,
-            ),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
             (preview.page_changed, self._on_preview_page_changed),
@@ -792,7 +1087,9 @@ class MainWindow(QMainWindow):
             (preview.render_error, self._on_preview_render_error),
             (preview.closed, self._on_viewer_closed),
             (preview.status_message, self._transient_status),
+            (preview.ocr_requested, self._open_ocr_from_viewer),
             (tab.dirty_changed, self._on_tab_dirty_changed),
+            (tab.recovery_failed, self._on_recovery_failed),
         ):
             try:
                 signal.disconnect(slot)
@@ -804,6 +1101,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         if self.sender() is self._active_tab():
             self._update_window_title()
+            self._set_toolbar_primary()
 
     def _active_tab(self) -> PdfTab | None:
         return self._tab_manager.active_tab
@@ -902,6 +1200,7 @@ class MainWindow(QMainWindow):
         if self._last_tab_index != index:
             self._previous_tab_index = self._last_tab_index
         self._last_tab_index = index
+        self._sync_toolbar_from_active_tab()
 
     @staticmethod
     def _remap_tab_index_after_close(
@@ -974,17 +1273,15 @@ class MainWindow(QMainWindow):
 
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.is_blank:
+        self._set_toolbar_host(tab)
+        if tab is None:
+            self._reset_toolbar_for_tool_page()
+            return
+        if tab.is_blank:
             self._reset_toolbar_for_blank_tab()
             return
 
-        pdf_path = tab.pdf_path or ""
-        filename = Path(pdf_path).name if pdf_path else "No file open"
         self._update_window_title()
-        self._set_toolbar_filename(filename, tooltip=pdf_path)
-        self._filename_label.setProperty("active", True)
-        self._filename_label.style().unpolish(self._filename_label)
-        self._filename_label.style().polish(self._filename_label)
         self._preview_action.setEnabled(True)
         self._select_all_action.setEnabled(not tab.is_preview_visible())
         self._deselect_all_action.setEnabled(
@@ -997,6 +1294,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
         self._zoom_controls.setEnabled(not tab.is_preview_visible())
         self._zoom_controls.set_value(tab.zoom_level)
+        self._update_thumbnail_zoom_host()
         self._update_preview_mode_ui()
         self._update_close_tab_action()
         self._update_save_as_action()
@@ -1006,26 +1304,103 @@ class MainWindow(QMainWindow):
             selection
         )
         self._update_selection_status(selection)
+        self._sync_contextual_toolbar(selection)
 
-    def _set_toolbar_filename(self, filename: str, *, tooltip: str = "") -> None:
-        """Show a single-line elided name; full path stays on the tooltip (R14)."""
-        metrics = self._filename_label.fontMetrics()
-        self._filename_label.setText(
-            metrics.elidedText(
-                filename,
-                Qt.TextElideMode.ElideRight,
-                TOOLBAR_FILENAME_MAX_WIDTH,
-            )
+    def _set_toolbar_host(self, tab: PdfTab | None) -> None:
+        if self._toolbar_host_tab is tab:
+            self._toolbar.setVisible(tab is not None)
+            return
+        if self._toolbar_host_tab is not None:
+            self._toolbar_host_tab.detach_context_toolbar(self._toolbar)
+        self._toolbar_host_tab = tab
+        if tab is not None:
+            tab.attach_context_toolbar(self._toolbar)
+
+    def _set_toolbar_action_visible(self, action: QAction, visible: bool) -> None:
+        widget = self._toolbar.widgetForAction(action)
+        if widget is not None:
+            widget.setVisible(visible)
+
+    def _sync_contextual_toolbar(self, selection: set[int]) -> None:
+        has_selection = bool(selection)
+        if has_selection:
+            visible, accessible = self._selection_summary(selection)
+        else:
+            visible = accessible = "No selection"
+        self._selection_toolbar_label.setText(visible)
+        self._selection_toolbar_label.setToolTip(accessible if has_selection else "")
+        self._selection_toolbar_label.setAccessibleName(accessible)
+        self._selection_toolbar_label.setVisible(True)
+        for action in (
+            self._duplicate_pages_action,
+            self._rotate_cw_action,
+            self._rotate_ccw_action,
+            self._move_up_action,
+            self._move_down_action,
+            self._move_to_action,
+            self._extract_selected_action,
+            self._delete_pages_action,
+        ):
+            self._set_toolbar_action_visible(action, has_selection)
+        self._set_toolbar_action_visible(self._select_all_action, True)
+        self._set_toolbar_action_visible(self._deselect_all_action, True)
+        self._sync_toolbar_overflow(has_selection)
+        self._set_toolbar_primary()
+
+    def _sync_toolbar_overflow(self, has_selection: bool) -> None:
+        """Project only page commands without a direct toolbar presentation."""
+        menu = self._toolbar_overflow_menu
+        menu.clear()
+        if self._export_all_action.isEnabled():
+            menu.addAction(self._export_all_action)
+        if has_selection and self._move_to_action.isEnabled():
+            menu.addAction(self._move_to_action)
+        self._toolbar_overflow.setVisible(bool(menu.actions()))
+
+    def _install_menu_focus_restore(self, menu: QMenu) -> None:
+        """Return keyboard focus to the control that opened a transient menu."""
+        menu.aboutToShow.connect(
+            lambda: setattr(menu, "_pagedrop_focus_target", QApplication.focusWidget())
         )
-        self._filename_label.setToolTip(tooltip)
+        menu.aboutToHide.connect(
+            lambda: QTimer.singleShot(0, lambda: self._restore_menu_focus(menu))
+        )
+
+    def _restore_menu_focus(self, menu: QMenu) -> None:
+        target = getattr(menu, "_pagedrop_focus_target", None)
+        if (
+            isinstance(target, QWidget)
+            and target.isVisible()
+            and target.isEnabled()
+            and target.window() is self
+            and QApplication.activeModalWidget() is None
+        ):
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _set_toolbar_primary(self) -> None:
+        for action in (self._actions["open"], self._save_as_action):
+            button = self._toolbar.widgetForAction(action)
+            if button is not None:
+                button.setObjectName("")
+                button.setIcon(action.icon())
+                button.style().unpolish(button)
+                button.style().polish(button)
+        tab = self._active_tab()
+        primary = self._actions["open"] if tab is None or tab.is_blank else (
+            self._save_as_action if tab.is_dirty else None
+        )
+        if primary is not None:
+            button = self._toolbar.widgetForAction(primary)
+            if button is not None:
+                button.setObjectName("ToolbarPrimary")
+                icon_name = "folder-open" if primary is self._actions["open"] else "floppy-disk"
+                button.setIcon(icons.icon(icon_name, color=ON_PRIMARY))
+                button.style().unpolish(button)
+                button.style().polish(button)
 
     def _reset_toolbar_for_blank_tab(self) -> None:
         tab = self._active_tab()
         self._update_window_title()
-        self._set_toolbar_filename("No file open")
-        self._filename_label.setProperty("active", False)
-        self._filename_label.style().unpolish(self._filename_label)
-        self._filename_label.style().polish(self._filename_label)
         self._preview_action.setEnabled(False)
         self._select_all_action.setEnabled(False)
         self._deselect_all_action.setEnabled(False)
@@ -1040,6 +1415,9 @@ class MainWindow(QMainWindow):
         self._redo_action.setEnabled(False)
         self._go_to_page_action.setEnabled(False)
         self._page_jump_action.setEnabled(False)
+        self._extract_selected_action.setEnabled(False)
+        self._extract_selected_to_tab_action.setEnabled(False)
+        self._extract_selected_to_window_action.setEnabled(False)
         self._zoom_controls.setEnabled(False)
         self._zoom_controls.set_value(
             tab.zoom_level if tab is not None else thumbnail_zoom()
@@ -1050,6 +1428,32 @@ class MainWindow(QMainWindow):
         self._pending_selection = set()
         self._last_selection_toolbar_snap = self._selection_toolbar_snapshot(set())
         self._update_selection_status(set())
+        self._sync_contextual_toolbar(set())
+        for action in (
+            self._save_as_action,
+            self._select_all_action,
+            self._deselect_all_action,
+            self._duplicate_pages_action,
+            self._rotate_cw_action,
+            self._rotate_ccw_action,
+            self._move_up_action,
+            self._move_down_action,
+            self._move_to_action,
+            self._extract_selected_action,
+            self._delete_pages_action,
+        ):
+            self._set_toolbar_action_visible(action, False)
+        self._toolbar.hide()
+        self._update_thumbnail_zoom_host()
+
+    def _reset_toolbar_for_tool_page(self) -> None:
+        """Tool pages own their chrome and footer; never inherit PDF context."""
+        self._update_window_title()
+        self._selection_status.hide()
+        self._progress_bar.hide()
+        self._move_undo_widget.hide()
+        self._update_thumbnail_zoom_host()
+        self._persistent_status("Ready")
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
@@ -1081,6 +1485,9 @@ class MainWindow(QMainWindow):
         self._duplicate_pages_action.setEnabled(enabled)
         self._rotate_cw_action.setEnabled(enabled)
         self._rotate_ccw_action.setEnabled(enabled)
+        self._extract_selected_action.setEnabled(enabled)
+        self._extract_selected_to_tab_action.setEnabled(enabled)
+        self._extract_selected_to_window_action.setEnabled(enabled)
 
     def _update_move_pages_actions(self) -> None:
         tab = self._active_tab()
@@ -1223,6 +1630,11 @@ class MainWindow(QMainWindow):
         tab = self._active_tab()
         if tab is None:
             return
+        description = (
+            tab.markup_session.undo_description()
+            if tab.is_viewer_mode() and tab.markup_session.can_undo()
+            else tab.edit_model.undo_description() if tab.edit_model is not None else None
+        )
         # Grid-edit undo stays blocked while preview is up; viewer markup undo is allowed.
         if tab.is_preview_visible() and not (
             tab.is_viewer_mode() and tab.markup_session.can_undo()
@@ -1234,12 +1646,18 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(tab)
         self._update_window_title()
         self._sync_toolbar_from_active_tab()
-        self._transient_status("Undo")
+        self._update_undo_redo_actions()
+        self._transient_status(self._history_outcome(description, undo=True))
 
     def _redo(self) -> None:
         tab = self._active_tab()
         if tab is None:
             return
+        description = (
+            tab.markup_session.redo_description()
+            if tab.is_viewer_mode() and tab.markup_session.can_redo()
+            else tab.edit_model.redo_description() if tab.edit_model is not None else None
+        )
         if tab.is_preview_visible() and not (
             tab.is_viewer_mode() and tab.markup_session.can_redo()
         ):
@@ -1250,7 +1668,8 @@ class MainWindow(QMainWindow):
         self._tab_manager.update_tab_title(tab)
         self._update_window_title()
         self._sync_toolbar_from_active_tab()
-        self._transient_status("Redo")
+        self._update_undo_redo_actions()
+        self._transient_status(self._history_outcome(description, undo=False))
 
     def _update_undo_redo_actions(self) -> None:
         tab = self._active_tab()
@@ -1258,12 +1677,47 @@ class MainWindow(QMainWindow):
         preview_blocking = tab is not None and tab.is_preview_visible()
         markup_undo = tab is not None and tab.is_viewer_mode() and tab.markup_session.can_undo()
         markup_redo = tab is not None and tab.is_viewer_mode() and tab.markup_session.can_redo()
-        self._undo_action.setEnabled(
-            (markup_undo or (model is not None and model.can_undo() and not preview_blocking))
+        undo_description = (
+            tab.markup_session.undo_description() if markup_undo else model.undo_description() if model else None
         )
-        self._redo_action.setEnabled(
-            (markup_redo or (model is not None and model.can_redo() and not preview_blocking))
+        redo_description = (
+            tab.markup_session.redo_description() if markup_redo else model.redo_description() if model else None
         )
+        undo_enabled = markup_undo or (model is not None and model.can_undo() and not preview_blocking)
+        redo_enabled = markup_redo or (model is not None and model.can_redo() and not preview_blocking)
+        self._set_history_action(self._undo_action, "Undo", undo_description, undo_enabled, preview_blocking)
+        self._set_history_action(self._redo_action, "Redo", redo_description, redo_enabled, preview_blocking)
+
+    @staticmethod
+    def _set_history_action(
+        action: QAction,
+        verb: str,
+        description: str | None,
+        enabled: bool,
+        viewer_blocking: bool,
+    ) -> None:
+        action.setText(f"{verb} {description}" if description else f"&{verb}")
+        reason = (
+            f"Return to the page grid to {verb.casefold()} {description}"
+            if description and viewer_blocking and not enabled
+            else ""
+        )
+        action.setProperty("unavailableReason", reason)
+        action.setToolTip(reason)
+        action.setStatusTip(reason)
+        action.setEnabled(enabled)
+
+    @staticmethod
+    def _history_outcome(description: str | None, *, undo: bool) -> str:
+        if not description:
+            return "Undo complete" if undo else "Redo complete"
+        if undo and description.startswith("delete "):
+            return f"Restored {description.removeprefix('delete ')}"
+        if undo and description.startswith("rotate "):
+            return "Rotation undone"
+        if undo and description.startswith("add "):
+            return f"Removed {description.removeprefix('add ')}"
+        return f"{'Undid' if undo else 'Redid'} {description}"
 
     def _offer_move_undo(self, count: int, undo: Callable[[], bool]) -> None:
         self._pending_move_undo = undo
@@ -1369,6 +1823,22 @@ class MainWindow(QMainWindow):
         tab.show_preview_at(page_index)
         self._update_preview_mode_ui()
         self._update_preview_status()
+        button = self._toolbar.widgetForAction(self._preview_action)
+        if isinstance(button, QWidget):
+            show_context_hint(
+                self,
+                button,
+                KEY_CONTEXT_HINT_BACK_TO_GRID,
+                "Use Back to grid to return to your thumbnails.",
+            )
+
+    def _show_transfer_hint(self, anchor: QWidget) -> None:
+        show_context_hint(
+            self,
+            anchor,
+            KEY_CONTEXT_HINT_TRANSFER,
+            "Drag to another document to copy pages. Hold Shift to move them.",
+        )
 
     def _update_preview_mode_ui(self) -> None:
         tab = self._active_tab()
@@ -1382,7 +1852,7 @@ class MainWindow(QMainWindow):
                 "Preview selected page (Enter or double-click a card)",
             )
         has_pdf = tab is not None and tab.loader is not None
-        self._zoom_controls.setVisible(not in_preview)
+        self._update_thumbnail_zoom_host()
         self._clear_selection_action.setEnabled(not in_preview)
         self._select_all_action.setEnabled(has_pdf and not in_preview)
         self._deselect_all_action.setEnabled(
@@ -1397,6 +1867,9 @@ class MainWindow(QMainWindow):
         self._update_delete_pages_action()
         self._update_move_pages_actions()
         self._update_page_op_actions()
+        preview_button = self._toolbar.widgetForAction(self._preview_action)
+        if isinstance(preview_button, QToolButton):
+            preview_button.setText("Pages / Preview")
 
     def _update_preview_status(self) -> None:
         tab = self._active_tab()
@@ -1487,24 +1960,87 @@ class MainWindow(QMainWindow):
         count = tab.edit_model.logical_count()
         if count <= 0:
             return
-        text, ok = QInputDialog.getText(
-            self,
-            "Jump to pages",
-            f"Page or range (e.g. 12 or 1-5), 1–{count}:",
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select pages")
+        form = QFormLayout(dialog)
+        page_input = QLineEdit(dialog)
+        page_input.setObjectName("SelectPagesInput")
+        page_input.setAccessibleName("Pages to select")
+        label = QLabel("Pages:", dialog)
+        label.setBuddy(page_input)
+        form.addRow(label, page_input)
+        description = QLabel(
+            f"Use page numbers or ranges from 1 to {count}, separated by commas "
+            "(for example, 1-3,5).",
+            dialog,
         )
-        if not ok:
-            return
-        indices = parse_page_jump(text, count)
-        if not indices:
-            self._transient_status("Enter a page number or range like 12 or 1-5")
-            return
-        tab.thumbnail_grid.jump_to_pages(indices)
-        if len(indices) == 1:
-            self._transient_status(f"Jumped to page {indices[0] + 1}")
-        else:
-            self._transient_status(
-                f"Selected pages {indices[0] + 1}–{indices[-1] + 1}"
+        description.setWordWrap(True)
+        form.addRow(description)
+        error = QLabel(dialog)
+        error.setObjectName("SelectPagesError")
+        error.setWordWrap(True)
+        error.setAccessibleName("Selection error")
+        error.hide()
+        form.addRow(error)
+        preview = QLabel("Enter pages to preview the selection.", dialog)
+        preview.setObjectName("SelectPagesCount")
+        preview.setAccessibleName("Selection count")
+        form.addRow(preview)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dialog)
+        select_button = buttons.addButton(
+            "Select", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        select_button.setObjectName("SelectPagesConfirm")
+        select_button.setEnabled(False)
+        form.addRow(buttons)
+
+        selected_indices: list[int] = []
+
+        def indices_for_text() -> list[int] | None:
+            ranges = parse_page_ranges(page_input.text(), count)
+            if ranges is None:
+                return None
+            return sorted(
+                {index for start, end in ranges for index in range(start, end + 1)}
             )
+
+        def update_preview() -> None:
+            nonlocal selected_indices
+            selected_indices = indices_for_text() or []
+            if not page_input.text().strip():
+                error.clear()
+                error.hide()
+                preview.setText("Enter pages to preview the selection.")
+            elif not selected_indices:
+                error.setText(
+                    f"Use page numbers from 1 to {count}, separated by commas or "
+                    "ranges (for example, 1-3,5)."
+                )
+                error.show()
+                preview.setText("No pages selected.")
+                page_input.setFocus()
+            else:
+                error.clear()
+                error.hide()
+                noun = "page" if len(selected_indices) == 1 else "pages"
+                preview.setText(f"{len(selected_indices)} {noun} will be selected.")
+            select_button.setEnabled(bool(selected_indices))
+
+        def select_pages() -> None:
+            if not selected_indices:
+                page_input.setFocus()
+                return
+            dialog.accept()
+
+        page_input.textChanged.connect(update_preview)
+        select_button.clicked.connect(select_pages)
+        buttons.rejected.connect(dialog.reject)
+        page_input.setFocus()
+        if dialog.exec() != QDialog.DialogCode.Accepted or not selected_indices:
+            return
+        tab.thumbnail_grid.jump_to_pages(selected_indices)
+        noun = "page" if len(selected_indices) == 1 else "pages"
+        self._transient_status(f"Selected {len(selected_indices)} {noun}")
 
     def _on_zoom_changed(self, thumbnail_width_px: int) -> None:
         if not self._grid_belongs_to_active_tab(self.sender()):
@@ -1544,6 +2080,7 @@ class MainWindow(QMainWindow):
     def _on_light_theme_toggled(self, enabled: bool) -> None:
         set_light_theme(enabled)
         refresh_themed_widgets()
+        QTimer.singleShot(0, self._update_responsive_shell)
         # Keep other windows' checkboxes in sync.
         if self._window_manager is not None:
             for window in self._window_manager.windows:
@@ -1698,11 +2235,16 @@ class MainWindow(QMainWindow):
 
     def _update_window_title(self) -> None:
         tab = self._active_tab()
-        if tab is None or tab.edit_model is None or tab.pdf_path is None:
+        if tab is None:
+            page = self._tab_manager.currentWidget()
+            title = getattr(page, "tab_title", None) or getattr(page, "WINDOW_TITLE", None)
+            self.setWindowTitle(f"{self.APP_TITLE}: {title}" if title else self.APP_TITLE)
+            self._sync_custom_title()
+            return
+        if tab.edit_model is None or tab.display_path is None:
             self.setWindowTitle(self.APP_TITLE)
             self._sync_custom_title()
             return
-        # tab.tab_title already includes dirty * and save-path / custom names.
         count = tab.edit_model.logical_count()
         noun = "page" if count == 1 else "pages"
         self.setWindowTitle(
@@ -1713,7 +2255,114 @@ class MainWindow(QMainWindow):
     def _sync_custom_title(self) -> None:
         title_label = getattr(self, "_title_label", None)
         if title_label is not None:
-            title_label.setText(self.windowTitle())
+            full_title = self.windowTitle()
+            width = title_label.maximumWidth()
+            title_label.setText(title_label.fontMetrics().elidedText(
+                full_title, Qt.TextElideMode.ElideRight, width if width < 10000 else 220
+            ))
+            title_label.setToolTip(full_title)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_shell()
+
+    def _update_responsive_shell(self) -> None:
+        """Move destinations between the menu bar and More as one ownership set."""
+        if not hasattr(self, "_menu_bar") or self._updating_responsive_shell:
+            return
+        self._updating_responsive_shell = True
+        try:
+            # Start with no title reservation: filename identity gives way before
+            # any destination moves. Geometry, rather than text-width guesses,
+            # accounts for the active font, display scale, and corner controls.
+            self._title_label.setFixedWidth(0)
+            self._window_controls.setMinimumWidth(0)
+            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
+            self._window_controls.layout().invalidate()
+            self._window_controls.setFixedWidth(
+                self._window_controls.layout().sizeHint().width()
+            )
+            self._menu_bar.setCornerWidget(
+                self._window_controls, Qt.Corner.TopRightCorner
+            )
+            self._flush_menu_layout()
+            direct = list(self._responsive_menu_actions)
+            overflowed: list[QAction] = []
+            self._relocate_application_actions(direct, overflowed)
+            self._flush_menu_layout()
+
+            while direct and not self._menu_actions_fit():
+                overflowed.insert(0, direct.pop())
+                self._relocate_application_actions(direct, overflowed)
+                self._flush_menu_layout()
+
+            title_width = min(180, max(0, self._menu_action_slack()))
+            self._title_label.setFixedWidth(title_width)
+            # The corner widget was sized while the title reservation was zero.
+            # Refresh it before painting so the label cannot spill into controls.
+            self._window_controls.setMinimumWidth(0)
+            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
+            self._window_controls.layout().invalidate()
+            self._window_controls.setFixedWidth(
+                self._window_controls.layout().sizeHint().width()
+            )
+            self._menu_bar.setCornerWidget(
+                self._window_controls, Qt.Corner.TopRightCorner
+            )
+            self._window_controls.updateGeometry()
+            self._flush_menu_layout()
+            self._sync_custom_title()
+        finally:
+            self._updating_responsive_shell = False
+        self._update_thumbnail_zoom_host()
+
+    def _relocate_application_actions(
+        self, direct: list[QAction], overflowed: list[QAction]
+    ) -> None:
+        """Give every responsive destination exactly one current presentation."""
+        for action in self._responsive_menu_actions:
+            self._menu_bar.removeAction(action)
+            self._application_overflow_menu.removeAction(action)
+        more = self._application_overflow_menu.menuAction()
+        more.setVisible(bool(overflowed))
+        for action in direct:
+            self._menu_bar.insertAction(more, action)
+        for action in overflowed:
+            self._application_overflow_menu.addAction(action)
+
+    def _flush_menu_layout(self) -> None:
+        self._menu_bar.updateGeometry()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _menu_action_slack(self) -> int:
+        """Return room between the final rendered menu action and title controls."""
+        actions = [
+            action for action in self._menu_bar.actions() if action.isVisible()
+        ]
+        right = max(
+            (self._menu_bar.actionGeometry(action).right() + 1 for action in actions),
+            default=0,
+        )
+        # QMenuBar may not have repositioned its corner widget after a font or
+        # title-width change. Budget its assigned width in menu-bar coordinates;
+        # the window width and the corner's sizeHint can both overstate the room.
+        menu_right = self._menu_bar.contentsRect().right() + 1
+        if not self.isVisible():
+            # Before first show, QMainWindow has not laid out the menu bar yet.
+            menu_right = self.contentsRect().right() + 1
+        controls_left = menu_right - self._window_controls.width()
+        return controls_left - right
+
+    def _menu_actions_fit(self) -> bool:
+        return self._menu_action_slack() >= 0
+
+    def _update_thumbnail_zoom_host(self) -> None:
+        if not hasattr(self, "_thumbnail_zoom_host"):
+            return
+        tab = self._active_tab()
+        visible = tab is not None and tab.loader is not None and not tab.is_preview_visible()
+        self._thumbnail_zoom_host.setVisible(visible)
+        self._zoom_controls.set_slider_visible(self.width() > 800)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -1729,6 +2378,8 @@ class MainWindow(QMainWindow):
                 button.setText("❐" if maximized else "□")
                 button.setToolTip("Restore window" if maximized else "Maximize window")
                 button.setAccessibleName(button.toolTip())
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            QTimer.singleShot(0, self._update_responsive_shell)
         super().changeEvent(event)
 
     def _extract_selected_to_folder(self) -> None:
@@ -1748,35 +2399,9 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        remember_directory(folder)
-        try:
-            paths = tab.thumbnail_grid.extract_selected_to_folder(Path(folder))
-        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
-            QMessageBox.critical(
-                self,
-                "Extract pages",
-                f"Could not extract pages:\n{exc}",
-            )
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Extract pages",
-                f"Could not write PDFs to the chosen folder:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Extract pages",
-                f"Could not extract pages:\n{exc}",
-            )
-            return
-
-        count = len(paths)
-        noun = "page" if count == 1 else "pages"
-        self._transient_status(f"Extracted {count} {noun} to {folder}")
-        self._show_toast(f"Extracted {count} {noun}", kind="success")
+        self._start_folder_export(
+            tab, tab.selected_page_refs(), Path(folder), "Extracted"
+        )
 
     def _export_all_pages(self) -> None:
         tab = self._active_tab()
@@ -1791,35 +2416,70 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        remember_directory(folder)
-        try:
-            paths = tab.thumbnail_grid.extract_all_to_folder(Path(folder))
-        except (PdfPasswordRequiredError, PdfPasswordError) as exc:
-            QMessageBox.critical(
-                self,
-                "Export all pages",
-                f"Could not export pages:\n{exc}",
-            )
-            return
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Export all pages",
-                f"Could not write PDFs to the chosen folder:\n{exc}",
-            )
-            return
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Export all pages",
-                f"Could not export pages:\n{exc}",
-            )
-            return
+        refs = [
+            tab.edit_model.page_at(index)
+            for index in range(tab.edit_model.logical_count())
+        ]
+        self._start_folder_export(tab, refs, Path(folder), "Exported")
 
-        count = len(paths)
-        noun = "page" if count == 1 else "pages"
-        self._transient_status(f"Exported {count} {noun} to {folder}")
-        self._show_toast(f"Exported {count} {noun}", kind="success")
+    def _start_folder_export(self, tab: PdfTab, refs, folder: Path, verb: str) -> None:
+        if not refs or tab in self._editor_busy or tab.edit_model is None:
+            return
+        remember_directory(str(folder))
+        base_name = Path(tab.display_name).stem
+        token = self._begin_editor_job(
+            tab, f"{verb[:-2] if verb.endswith('ed') else verb}ing pages…"
+        )
+        worker = EditorJobWorker.export(
+            list(refs),
+            folder,
+            base_name,
+            tab.credentials.snapshot(),
+            token,
+            tab._temp_manager,
+        )
+        signals = worker.signals
+
+        def finish() -> None:
+            release_editor_signals(signals)
+            self._end_editor_job(tab)
+
+        def succeeded(result: object) -> None:
+            paths = list(result)
+            count = len(paths)
+            noun = "page" if count == 1 else "pages"
+            renamed = any(
+                path.name != f"{base_name}_page_{index:04d}.pdf"
+                for index, path in enumerate(paths, start=1)
+            )
+            suffix = " (renamed to avoid collisions)" if renamed else ""
+            message = f"{verb} {count} {noun} to {folder}{suffix}"
+            self._transient_status(message)
+            self._show_toast(f"{verb} {count} {noun}{suffix}", kind="success")
+            finish()
+
+        def cancelled() -> None:
+            finish()
+            self._transient_status(f"{verb} cancelled")
+            self._show_toast(f"{verb} cancelled", kind="info")
+
+        def failed(error: str) -> None:
+            finish()
+            QMessageBox.critical(
+                self, f"{verb} pages", f"Could not {verb.lower()} pages:\n{error}"
+            )
+            self._transient_status(f"{verb} failed")
+            self._show_toast(f"{verb} failed", kind="error")
+
+        signals.progress.connect(
+            lambda _fraction, message: self._persistent_status(message)
+            if tab is self._active_tab()
+            else None
+        )
+        signals.succeeded.connect(succeeded)
+        signals.cancelled.connect(cancelled)
+        signals.failed.connect(failed)
+        start_editor_worker(worker)
 
     def _extract_selected_to_new_tab(self) -> None:
         tab = self._active_tab()
@@ -1964,6 +2624,12 @@ class MainWindow(QMainWindow):
             self._tools_window.set_editor(self)
         assert self._tools_window is not None
         self.open_tool_page(self._tools_window, page_id=ToolsWindow.PAGE_ID)
+
+    def _open_ocr_from_viewer(self) -> None:
+        """Open the existing OCR shell; it pre-fills the active document."""
+        self._open_tools_window()
+        if self._tools_window is not None:
+            self._tools_window._on_tile_activated("ocr_pdf")
 
     def _open_pdf(self) -> None:
         start_dir = last_directory()
@@ -2201,7 +2867,8 @@ class MainWindow(QMainWindow):
                         self._sync_toolbar_from_active_tab()
                         self._persistent_status("Ready")
                     return
-            except PdfEmptyError:
+            except PdfEmptyError as exc:
+                log_failure("Open PDF", exc, path=path)
                 QMessageBox.warning(
                     self,
                     "Open PDF",
@@ -2212,6 +2879,7 @@ class MainWindow(QMainWindow):
                     self._persistent_status("Ready")
                 return
             except PdfLoadError as exc:
+                log_failure("Open PDF", exc, path=path)
                 QMessageBox.critical(
                     self,
                     "Open PDF",
@@ -2264,9 +2932,9 @@ class MainWindow(QMainWindow):
         return str(start_dir / f"{stem}.pdf")
 
     def _save_as(self, tab: PdfTab | None = None) -> bool:
-        """Save the active tab (or *tab*) to a new path. Returns True on success."""
+        """Start a non-blocking Save As transaction for an immutable tab snapshot."""
         target = tab or self._active_tab()
-        if target is None or target.edit_model is None:
+        if target is None or target.edit_model is None or target in self._editor_busy:
             return False
 
         model = target.edit_model
@@ -2285,85 +2953,96 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".pdf"):
             path = f"{path}.pdf"
 
-        if self._same_path(path, model.original_path):
+        try:
+            reject_source_overwrite(path, *model.source_paths())
+        except SourceOverwriteError:
             QMessageBox.warning(
                 self,
                 "Save as",
-                "Cannot save over the original file.\n"
+                "Cannot save over a source file.\n"
                 "Choose a different path.",
             )
             return False
 
-        regions = target.markup_session.redaction_regions()
-        passwords = target.credentials.snapshot()
-        non_redact = target.markup_session.non_redaction_ops() or None
+        regions = target.markup_session.redaction_regions(model)
+        scope = prompt_redaction_scope(self) if regions else None
+        if regions and scope is None:
+            return False
+        snapshot = model.snapshot_for_write()
+        markup = copy.deepcopy(target.markup_session.non_redaction_ops(model) or None)
+        revision = (tuple(model.iter_pages()), tuple(target.peek_markup_ops()))
+        credentials = RuntimeCredentials()
+        for source, password in target.credentials.snapshot().items():
+            credentials.set(source, password)
+        token = self._begin_editor_job(target, "Saving PDF…")
+        spec = JobSpec.create(
+            "editor_save",
+            inputs=sorted(snapshot.source_paths()),
+            output=path,
+            options={
+                "model": snapshot,
+                "markup": markup,
+                "regions": copy.deepcopy(regions),
+                "scope": scope,
+            },
+            overwrite=True,
+        )
+        worker = EditorJobWorker.save(self._editor_runner, spec, token, credentials)
+        signals = worker.signals
 
-        try:
-            if regions:
-                scope = prompt_redaction_scope(self)
-                if scope is None:
-                    return False
-                redact_edit_model(
-                    model,
-                    path,
-                    regions,
-                    markup=non_redact,
-                    passwords=passwords,
-                    scope=scope,
-                    verify=True,
-                )
-            else:
-                write_pdf(
-                    model,
-                    path,
-                    markup=non_redact,
-                    passwords=passwords,
-                )
-        except RedactionVerifyError as exc:
-            QMessageBox.critical(
-                self,
-                "Redaction verification failed",
-                f"{exc}\n\nNo redacted copy was produced.",
-            )
+        def finish() -> None:
+            release_editor_signals(signals)
+            self._end_editor_job(target)
+
+        def progress(_fraction: float, message: str) -> None:
             if target is self._active_tab():
-                self._transient_status(
-                    "Redaction verification failed. Output discarded"
-                )
-            return False
-        except (PdfPasswordRequiredError, PdfPasswordError, RedactionError) as exc:
-            QMessageBox.critical(
-                self,
-                "Save as",
-                f"Could not save PDF:\n{exc}",
-            )
-            return False
-        except OSError as exc:
-            QMessageBox.critical(
-                self,
-                "Save as",
-                f"Could not write PDF:\n{exc}",
-            )
-            return False
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Save as",
-                f"Could not save PDF:\n{exc}",
-            )
-            return False
+                self._persistent_status(message)
 
-        remember_directory(path)
-        model.mark_saved(path)
-        target.clear_markup_after_save()
-        if regions:
-            target.clear_redactions_after_apply()
-        target.clear_custom_tab_title()
-        target._sync_dirty_from_model()
-        self._tab_manager.update_tab_title(target)
-        if target is self._active_tab():
-            self._sync_toolbar_from_active_tab()
-            self._transient_status(f"Saved to {Path(path).name}")
-            self._show_toast(f"Saved to {Path(path).name}", kind="success")
+        def succeeded(_result: object) -> None:
+            remember_directory(path)
+            current = target.edit_model
+            if current is None or (
+                tuple(current.iter_pages()), tuple(target.peek_markup_ops())
+            ) != revision:
+                message = f"Saved {Path(path).name} from an earlier snapshot"
+                self._transient_status(message)
+                self._show_toast(message, kind="warning")
+                finish()
+                return
+            try:
+                target.commit_saved_output(path)
+            except (PdfLoadError, OSError) as exc:
+                QMessageBox.critical(self, "Save as", f"Saved copy could not be opened:\n{exc}")
+                finish()
+                return
+            self._tab_manager.update_tab_title(target)
+            if target is self._active_tab():
+                self._sync_toolbar_from_active_tab()
+                message = (
+                    f"Verified redacted copy saved to {Path(path).name}"
+                    if regions
+                    else f"Saved to {Path(path).name}"
+                )
+                self._transient_status(message)
+                self._show_toast(message, kind="success")
+            finish()
+
+        def cancelled() -> None:
+            finish()
+            self._transient_status("Save cancelled")
+            self._show_toast("Save cancelled", kind="info")
+
+        def failed(error: str) -> None:
+            finish()
+            QMessageBox.critical(self, "Save as", f"Could not save PDF:\n{error}")
+            self._transient_status("Save failed")
+            self._show_toast("Save failed", kind="error")
+
+        signals.progress.connect(progress)
+        signals.succeeded.connect(succeeded)
+        signals.cancelled.connect(cancelled)
+        signals.failed.connect(failed)
+        start_editor_worker(worker)
         return True
 
     def _rename_tab(self, index: int) -> None:
@@ -2496,6 +3175,10 @@ class MainWindow(QMainWindow):
             return
         self._update_undo_redo_actions()
         self._update_move_pages_actions()
+        tab = self._active_tab()
+        if tab is not None:
+            self._update_selection_status(tab.thumbnail_grid.selection_manager.selection)
+            self._sync_contextual_toolbar(tab.thumbnail_grid.selection_manager.selection)
 
     def _on_cross_window_pages_inserted(
         self, count: int, filename: str
@@ -2664,6 +3347,14 @@ class MainWindow(QMainWindow):
         self._update_move_pages_actions()
         self._update_page_op_actions()
         self._update_selection_status(selection)
+        self._sync_contextual_toolbar(selection)
+        if selection:
+            show_context_hint(
+                self,
+                self._selection_status,
+                KEY_CONTEXT_HINT_SELECTION_EXPORT,
+                "Drag selected pages to a folder to export them as PDF files.",
+            )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._window_manager is not None:

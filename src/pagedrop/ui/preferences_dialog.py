@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -15,6 +16,8 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -53,9 +56,20 @@ class PreferencesDialog(QDialog):
         self.setMinimumWidth(480)
         self._update_coordinator = coordinator
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+        scroll = QScrollArea()
+        scroll.setObjectName("PreferencesScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QWidget()
+        root = QVBoxLayout(content)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
 
         safety_heading = QLabel("Safety")
         safety_heading.setObjectName("PreferencesSection")
@@ -69,7 +83,9 @@ class PreferencesDialog(QDialog):
         self._confirm_delete.setChecked(confirm_before_deleting_multiple_pages())
         root.addWidget(self._confirm_delete)
 
-        self._confirm_close_dirty = QCheckBox("Confirm before closing dirty tabs")
+        self._confirm_close_dirty = QCheckBox(
+            "Confirm before closing documents with unsaved changes"
+        )
         self._confirm_close_dirty.setObjectName("PreferencesConfirmCloseDirty")
         self._confirm_close_dirty.setToolTip(
             "Ask before closing tabs with unsaved edits."
@@ -129,6 +145,7 @@ class PreferencesDialog(QDialog):
         root.addWidget(heading)
 
         form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.setContentsMargins(0, 0, 0, 0)
 
         self._backend = QComboBox()
@@ -140,16 +157,35 @@ class PreferencesDialog(QDialog):
         self._backend.setCurrentIndex(max(0, index))
         form.addRow("Preferred backend", self._backend)
 
+        self._advanced_button = QToolButton()
+        self._advanced_button.setObjectName("PreferencesAdvancedButton")
+        self._advanced_button.setText("Advanced")
+        self._advanced_button.setAccessibleName("Advanced settings")
+        self._advanced_button.setCheckable(True)
+        self._advanced_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self._advanced_button.setArrowType(Qt.ArrowType.RightArrow)
+        self._advanced = QWidget()
+        self._advanced.setObjectName("PreferencesAdvanced")
+        advanced_form = QFormLayout(self._advanced)
+        advanced_form.setContentsMargins(0, 0, 0, 0)
+        advanced_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+
         path_row = QHBoxLayout()
         self._soffice = QLineEdit(office_soffice_path())
-        self._soffice.setPlaceholderText("Detect automatically (PATH / install dirs)")
+        self._soffice.setPlaceholderText("Find automatically")
         self._soffice.setClearButtonEnabled(True)
         browse = QPushButton("Browse…")
         browse.setObjectName("ToolbarSecondary")
         browse.clicked.connect(self._browse_soffice)
         path_row.addWidget(self._soffice, stretch=1)
         path_row.addWidget(browse)
-        form.addRow("LibreOffice soffice", path_row)
+        advanced_form.addRow("LibreOffice executable", path_row)
+        self._backend_detail = QLabel()
+        self._backend_detail.setObjectName("ToolsHint")
+        self._backend_detail.setWordWrap(True)
+        advanced_form.addRow("Detection details", self._backend_detail)
 
         root.addLayout(form)
 
@@ -164,12 +200,10 @@ class PreferencesDialog(QDialog):
         ocr_heading.setObjectName("PreferencesSection")
         root.addWidget(ocr_heading)
 
-        ocr_form = QFormLayout()
-        ocr_form.setContentsMargins(0, 0, 0, 0)
         tess_row = QHBoxLayout()
         self._tessdata = QLineEdit(tessdata_path())
         self._tessdata.setPlaceholderText(
-            "Auto-detect, or folder containing *.traineddata"
+            "Find automatically"
         )
         self._tessdata.setClearButtonEnabled(True)
         tess_browse = QPushButton("Browse…")
@@ -177,22 +211,35 @@ class PreferencesDialog(QDialog):
         tess_browse.clicked.connect(self._browse_tessdata)
         tess_row.addWidget(self._tessdata, stretch=1)
         tess_row.addWidget(tess_browse)
-        ocr_form.addRow("tessdata folder", tess_row)
-        root.addLayout(ocr_form)
+        advanced_form.addRow("OCR language files", tess_row)
+        self._ocr_detail = QLabel()
+        self._ocr_detail.setObjectName("ToolsHint")
+        self._ocr_detail.setWordWrap(True)
+        advanced_form.addRow("Detection details", self._ocr_detail)
+        def toggle_advanced(visible: bool) -> None:
+            self._advanced.setVisible(visible)
+            self._advanced_button.setArrowType(
+                Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
+            )
+
+        self._advanced_button.toggled.connect(toggle_advanced)
 
         self._ocr_status = QLabel()
         self._ocr_status.setObjectName("ToolsHint")
         self._ocr_status.setWordWrap(True)
         root.addWidget(self._ocr_status)
+        root.addWidget(self._advanced_button)
+        root.addWidget(self._advanced)
+        self._advanced.hide()
 
         recheck_row = QHBoxLayout()
         self._recheck_btn = QPushButton("Recheck")
         self._recheck_btn.setObjectName("ToolbarSecondary")
         self._recheck_btn.clicked.connect(self._on_recheck)
-        self._download_eng_btn = QPushButton("Download eng…")
+        self._download_eng_btn = QPushButton("Download English language data…")
         self._download_eng_btn.setObjectName("ToolbarSecondary")
         self._download_eng_btn.setToolTip(
-            "Download tessdata_fast English into the user data folder"
+            "Download English OCR language data into the user data folder"
         )
         self._download_eng_btn.clicked.connect(self._on_download_eng)
         recheck_row.addWidget(self._recheck_btn)
@@ -205,7 +252,7 @@ class PreferencesDialog(QDialog):
         )
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        outer.addWidget(buttons)
 
         self._refresh_status()
         self._refresh_update_status()
@@ -293,18 +340,17 @@ class PreferencesDialog(QDialog):
         self._refresh_status()
         report = capability_report(refresh=False)
         tess = probe(TESSDATA)
-        lines = [report.status_line(), self._tess_line(tess)]
         if report.any_available or tess.available:
             QMessageBox.information(
                 self,
                 "Preferences",
-                "Backends updated.\n\n" + "\n".join(lines),
+                "Availability updated.",
             )
         else:
             QMessageBox.warning(
                 self,
                 "Preferences",
-                "Still no Office / OCR backends detected.\n\n" + "\n".join(lines),
+                "No Office or OCR backend was found. Open Advanced to check locations.",
             )
 
     @staticmethod
@@ -326,8 +372,17 @@ class PreferencesDialog(QDialog):
 
         set_configured_office_backend(str(self._backend.currentData()))
         set_configured_tessdata_path(self._tessdata.text().strip() or None)
-        self._status.setText(capability_report().status_line())
-        self._ocr_status.setText(self._tess_line(probe(TESSDATA)))
+        report = capability_report()
+        office = "available" if report.any_available else "unavailable"
+        self._status.setText(f"Office conversion is {office}.")
+        self._backend_detail.setText(report.status_line())
+        tess = probe(TESSDATA)
+        self._ocr_status.setText(
+            "OCR language files are available."
+            if tess.available
+            else "OCR language files are unavailable."
+        )
+        self._ocr_detail.setText(self._tess_line(tess))
 
     def _on_accept(self) -> None:
         set_confirm_before_deleting_multiple_pages(self._confirm_delete.isChecked())

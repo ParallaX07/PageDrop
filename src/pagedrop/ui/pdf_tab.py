@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QStackedWidget, QToolBar, QVBoxLayout, QWidget
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
@@ -14,6 +15,7 @@ from pagedrop.core.pdf_service import invalidate_doc_cache
 from pagedrop.ui.dialogs import confirm_delete_pages
 from pagedrop.ui.pdf_viewer import PdfViewerWidget
 from pagedrop.ui.settings import thumbnail_quality
+from pagedrop.ui.recovery import RecoveryError, read_draft, write_draft
 from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
@@ -43,11 +45,13 @@ class PdfTab(QWidget):
     pdf_closed = pyqtSignal()
     dirty_changed = pyqtSignal(bool)
     tab_title_changed = pyqtSignal()
+    recovery_failed = pyqtSignal(str)
 
     def __init__(
         self,
         temp_manager: TempManager,
         parent: QWidget | None = None,
+        recovery_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._temp_manager = temp_manager
@@ -67,6 +71,10 @@ class PdfTab(QWidget):
         self._drop_initialized = False
         self._custom_tab_title: str | None = None
         self._quality_guidance_shown = False
+        self._recovery_path = (
+            recovery_dir / f"{uuid4().hex}.json" if recovery_dir is not None else None
+        )
+        self._recovery_error_reported = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -76,10 +84,15 @@ class PdfTab(QWidget):
         self._content_stack.setObjectName("TabContentStack")
 
         self._thumbnail_grid = ThumbnailGrid(temp_manager=self._temp_manager)
+        self._thumbnail_grid.set_annotation_provider(
+            self._pending_annotations_for_page
+        )
         self._thumbnail_grid.set_empty_state_message(
-            "Open a PDF to begin",
-            hint="Choose a file or drop one onto the grid",
+            "Open a PDF",
+            hint="Arrange pages, extract selections, or combine documents",
             show_hint=True,
+            show_shortcuts=True,
+            show_open_button=True,
         )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)
@@ -109,6 +122,20 @@ class PdfTab(QWidget):
     def content_stack(self) -> QStackedWidget:
         return self._content_stack
 
+    def attach_context_toolbar(self, toolbar: QToolBar) -> None:
+        """Place the window-owned editor toolbar directly above this tab's content."""
+        layout = self.layout()
+        assert isinstance(layout, QVBoxLayout)
+        layout.insertWidget(0, toolbar)
+        layout.setStretch(0, 1)
+        toolbar.show()
+
+    def detach_context_toolbar(self, toolbar: QToolBar) -> None:
+        layout = self.layout()
+        if isinstance(layout, QVBoxLayout):
+            layout.removeWidget(toolbar)
+        toolbar.hide()
+
     @property
     def edit_model(self) -> PdfEditModel | None:
         return self._edit_model
@@ -122,7 +149,7 @@ class PdfTab(QWidget):
         return self._credentials
 
     def peek_markup_ops(self):
-        return self._markup.ops()
+        return self._markup.ops(self._edit_model)
 
     def clear_markup_after_save(self) -> None:
         # Ordinary Save As applies annotation/form ops only. Pending redaction
@@ -134,6 +161,56 @@ class PdfTab(QWidget):
         """Drop redaction marks after verified Save As (output already written)."""
         self._markup.clear_redactions()
         self._preview_widget.refresh_markup_overlays()
+
+    def commit_saved_output(self, path: str) -> None:
+        """Rebase this tab after a staged output has been promoted successfully."""
+        assert self._edit_model is not None
+        # Open first: a failed reopen must leave the current tab untouched.
+        saved_loader = PdfLoader(path)
+        self.close_preview()
+        self._thumbnail_grid.cancel_rendering()
+        self._close_loader_cache()
+        self._loader_cache[path] = saved_loader
+        self._edit_model.rebase_saved_output(path)
+        self._markup.clear()
+        self._pdf_path = path
+        self._drop_initialized = False
+        self._custom_tab_title = None
+        self._preview_widget.set_model(None, None)
+        self._thumbnail_grid.load_model(self._edit_model, self.get_loader)
+        self._sync_dirty_from_model()
+
+    @property
+    def recovery_path(self) -> Path | None:
+        return self._recovery_path
+
+    def restore_recovery_draft(self, path: Path) -> None:
+        """Load one persisted draft into this blank tab."""
+        if self._edit_model is not None:
+            raise RecoveryError("Recovery needs a blank tab")
+        recovered = read_draft(path)
+        for source in recovered.model.current_reference_paths():
+            loader = PdfLoader(source)
+            try:
+                if any(
+                    page.source_path == source
+                    and not 0 <= page.source_index < loader.page_count
+                    for page in recovered.model.iter_pages()
+                ):
+                    raise RecoveryError(f"Recovery refers to a missing page in {source}")
+            finally:
+                loader.close()
+        self._edit_model = recovered.model
+        self._markup.bind_model(self._edit_model)
+        self._markup.restore(recovered.markup)
+        self._pdf_path = self._edit_model.original_path
+        self._drop_initialized = recovered.drop_initialized
+        self._custom_tab_title = recovered.custom_title
+        self._recovery_path = path
+        self._preview_widget.set_model(None, None)
+        self._thumbnail_grid.load_model(self._edit_model, self.get_loader)
+        self._sync_dirty_from_model()
+        self.pdf_loaded.emit()
 
     @property
     def loader(self) -> PdfLoader | None:
@@ -165,6 +242,10 @@ class PdfTab(QWidget):
         return self._dirty
 
     @property
+    def is_editor_job_running(self) -> bool:
+        return bool(self.property("editorJobRunning"))
+
+    @property
     def can_rename_tab(self) -> bool:
         """True when the tab has no saved path yet (blank or unsaved document)."""
         if self._edit_model is None:
@@ -176,28 +257,46 @@ class PdfTab(QWidget):
         return self._custom_tab_title
 
     @property
-    def tab_title(self) -> str:
+    def display_name(self) -> str:
+        """The single human-facing name for this document, without dirty state."""
         if self._edit_model is None:
             return self._custom_tab_title or "New tab"
         if self._edit_model.save_path is not None:
-            filename = Path(self._edit_model.save_path).name
-            return f"{filename}*" if self._dirty else filename
+            return Path(self._edit_model.save_path).name
         if self._custom_tab_title is not None:
-            title = self._custom_tab_title
-            return f"{title}*" if self._dirty else title
-        filename = Path(self._edit_model.original_path).name
-        return f"{filename}*" if self._dirty else filename
+            return self._custom_tab_title
+        return Path(self._edit_model.original_path).name
+
+    @property
+    def display_path(self) -> str | None:
+        """Path represented by :attr:`display_name`, when the tab has one."""
+        if self._edit_model is None:
+            return None
+        return self._edit_model.save_path or self._edit_model.original_path
+
+    @property
+    def identity_tooltip(self) -> str:
+        """Full current and original identities, without duplicating chrome."""
+        if self._edit_model is None:
+            return self.display_name
+        current = self.display_path or self.display_name
+        original = self._edit_model.original_path
+        detail = current if current == original else f"{current}\nOriginal: {original}"
+        return f"{self.display_name}\n{detail}"
+
+    @property
+    def tab_title(self) -> str:
+        return f"{self.display_name}*" if self._dirty else self.display_name
 
     def suggested_save_stem(self) -> str:
-        if self._custom_tab_title is not None:
-            return sanitize_tab_title_stem(self._custom_tab_title)
         if self._edit_model is None:
             return "untitled"
-        if self._edit_model.save_path is not None:
-            return Path(self._edit_model.save_path).stem
+        if self._custom_tab_title is not None:
+            return sanitize_tab_title_stem(self._custom_tab_title)
         if self._drop_initialized:
             return "untitled"
-        return f"{Path(self._edit_model.original_path).stem}_edited"
+        stem = Path(self.display_name).stem
+        return stem if self._edit_model.save_path is not None or self._custom_tab_title else f"{stem}_edited"
 
     def set_custom_tab_title(self, title: str | None) -> bool:
         """Set a display title for an unsaved tab. Returns True when changed."""
@@ -212,6 +311,7 @@ class PdfTab(QWidget):
             return False
 
         self._custom_tab_title = cleaned
+        self._sync_recovery()
         self.tab_title_changed.emit()
         return True
 
@@ -219,6 +319,7 @@ class PdfTab(QWidget):
         if self._custom_tab_title is None:
             return
         self._custom_tab_title = None
+        self._sync_recovery()
         self.tab_title_changed.emit()
 
     @property
@@ -259,7 +360,21 @@ class PdfTab(QWidget):
         if not self.is_viewer_mode():
             return
         self._content_stack.setCurrentWidget(self._thumbnail_grid)
+        self._thumbnail_grid.refresh_markup_thumbnails()
         self._preview_widget.clear_caches()
+
+    def _pending_annotations_for_page(self, logical: int):
+        if (
+            self._edit_model is None
+            or not 0 <= logical < self._edit_model.logical_count()
+        ):
+            return ()
+        instance_id = self._edit_model.instance_id_at(logical)
+        return tuple(
+            entry.annotation
+            for entry in self._markup.entries_for_instance(instance_id)
+            if entry.annotation is not None
+        )
 
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""
@@ -289,6 +404,7 @@ class PdfTab(QWidget):
             self._credentials.set(path, password)
         self._loader_cache[path] = loader
         self._edit_model = PdfEditModel(path, loader.page_count)
+        self._markup.bind_model(self._edit_model)
         self._markup.clear()
         self._pdf_path = path
         self._drop_initialized = False
@@ -302,7 +418,7 @@ class PdfTab(QWidget):
 
     def delete_selected_pages(self) -> bool:
         """Delete the current thumbnail selection; no-op when nothing is selected."""
-        if self._edit_model is None:
+        if self._edit_model is None or self.is_editor_job_running:
             return False
         selection = self._thumbnail_grid.selection_manager.selection
         if not selection:
@@ -390,7 +506,7 @@ class PdfTab(QWidget):
 
     def move_selected_pages_to(self, dest: int) -> bool:
         """Move selection so the block starts at *dest* (0-based); no-op if unchanged."""
-        if self._edit_model is None or self.is_preview_visible():
+        if self._edit_model is None or self.is_preview_visible() or self.is_editor_job_running:
             return False
         if not self._thumbnail_grid.can_move_selection_to():
             return False
@@ -412,7 +528,7 @@ class PdfTab(QWidget):
 
     def rotate_selected_pages(self, delta_degrees: int) -> bool:
         """Rotate the current selection by *delta_degrees*."""
-        if self._edit_model is None or self.is_preview_visible():
+        if self._edit_model is None or self.is_preview_visible() or self.is_editor_job_running:
             return False
         if not self._thumbnail_grid.rotate_selected_pages(delta_degrees):
             return False
@@ -454,6 +570,7 @@ class PdfTab(QWidget):
 
         primary = refs[0].source_path
         self._edit_model = PdfEditModel.with_pages(primary, refs)
+        self._markup.bind_model(self._edit_model)
         self._markup.clear()
         self._pdf_path = primary
         self._drop_initialized = True
@@ -480,6 +597,7 @@ class PdfTab(QWidget):
             self._dirty = False
             self.dirty_changed.emit(False)
         self._preview_widget.set_model(None, None)
+        self._clear_recovery()
         self.pdf_closed.emit()
 
     def quality_scale_guidance(self) -> str | None:
@@ -514,7 +632,11 @@ class PdfTab(QWidget):
         """Close unreferenced source loaders beyond LOADER_CACHE_IDLE_MAX."""
         if not self._loader_cache:
             return
-        live = self._edit_model.source_paths() if self._edit_model is not None else set()
+        live = (
+            self._edit_model.current_reference_paths()
+            if self._edit_model is not None
+            else set()
+        )
         if keep:
             live |= keep
         idle = [path for path in self._loader_cache if path not in live]
@@ -527,8 +649,40 @@ class PdfTab(QWidget):
 
     def _sync_dirty_from_model(self) -> None:
         model_dirty = self._edit_model.is_dirty() if self._edit_model is not None else False
-        dirty = model_dirty or self._markup.is_dirty()
+        dirty = model_dirty or self._markup.is_dirty(self._edit_model)
         if dirty != self._dirty:
             self._dirty = dirty
             self.dirty_changed.emit(dirty)
+        self._sync_recovery()
         self._evict_idle_loaders()
+
+    def _sync_recovery(self) -> None:
+        if self._recovery_path is None:
+            return
+        if not self._dirty or self._edit_model is None:
+            self._clear_recovery()
+            return
+        try:
+            write_draft(
+                self._recovery_path,
+                self._edit_model,
+                self._markup.ops(self._edit_model),
+                custom_title=self._custom_tab_title,
+                drop_initialized=self._drop_initialized,
+            )
+            self._recovery_error_reported = False
+        except RecoveryError as exc:
+            if not self._recovery_error_reported:
+                self._recovery_error_reported = True
+                self.recovery_failed.emit(str(exc))
+
+    def _clear_recovery(self) -> None:
+        if self._recovery_path is None:
+            return
+        try:
+            self._recovery_path.unlink(missing_ok=True)
+            self._recovery_path.with_suffix(".tmp").unlink(missing_ok=True)
+        except OSError as exc:
+            if not self._recovery_error_reported:
+                self._recovery_error_reported = True
+                self.recovery_failed.emit(f"Could not remove the recovery draft: {exc}")

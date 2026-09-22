@@ -34,7 +34,7 @@ def test_smoke_toolbar_buttons_enabled_states(qtbot, five_page_pdf):
 
     preview = _toolbar_action(window, "Preview")
     select_all = _toolbar_action(window, "Select all")
-    deselect_all = _toolbar_action(window, "Deselect all")
+    deselect_all = _toolbar_action(window, "Clear selection")
 
     assert not preview.isEnabled()
     assert not select_all.isEnabled()

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from PyQt6.QtWidgets import QLabel
 
 from pagedrop.core.capabilities import (
     AbsenceReason,
@@ -143,6 +144,51 @@ def test_search_filters_category_grid(qtbot):
     window.close()
 
 
+def test_tools_hierarchy_and_category_jump_track_filter_and_collapse(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.resize(960, 680)
+    window.show()
+
+    assert window.findChild(QLabel, "ToolsHeading").text() == "Tools"
+    assert "originals stay unchanged" in window.findChild(
+        QLabel, "ToolsPurpose"
+    ).text()
+    assert window._category_descriptions["Organize"].isVisible()
+    assert window._category_jump.accessibleName() == "Jump to category"
+
+    window._search.setText("encrypt")
+    model = window._category_jump.model()
+    assert model.item(1).isEnabled() is False
+    assert model.item(5).isEnabled() is True
+
+    secure = window._category_headings["Secure"]
+    secure.setChecked(False)
+    assert "collapsed" in window._category_jump.itemText(5)
+    window._jump_to_category(5)
+    assert secure.isChecked()
+    assert window._category_jump.currentIndex() == 0
+    window.close()
+
+
+def test_tools_switch_to_two_columns_before_tile_descriptions_compress(qtbot):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.resize(960, 680)
+    window.show()
+    qtbot.waitUntil(lambda: window.grid_columns() == 3)
+
+    window.resize(720, 480)
+    qtbot.waitUntil(lambda: window.grid_columns() == 2)
+    visible = [
+        tile
+        for tile in window.visible_tiles()
+        if tile.entry.category == "Organize"
+    ]
+    assert min(tile.width() for tile in visible) >= 210
+    window.close()
+
+
 def test_density_toggle_sets_compact_property(qtbot):
     """R6: Compact density toggle still flips tile compact state/property."""
     window = ToolsWindow()
@@ -235,9 +281,33 @@ def test_busy_overlay_cancel_aborts_job(qtbot):
 
     window._busy_overlay._cancel_btn.click()
     assert token.is_cancelled()
+    assert window._busy_overlay._message.text() == "Cancelling…"
+    assert window._busy_overlay._cancel_btn.text() == "Cancelling…"
     assert window.is_job_running()  # overlay cancel does not end_job by itself
     window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
     assert not window.is_job_running()
+    window.close()
+
+
+def test_job_progress_is_determinate_only_with_a_real_total(qtbot):
+    window = _job_chrome_host(qtbot)
+    window.begin_job("Working…")
+    window.set_job_progress(0.5, "Working…")
+    assert window._busy_overlay._progress.maximum() == 0
+    window.set_job_progress(0.5, "Working…", total_known=True)
+    assert window._busy_overlay._progress.maximum() == 100
+    assert window._busy_overlay._progress.value() == 50
+    window.end_job(status="Done")
+    window.close()
+
+
+def test_job_failure_stays_beside_run(qtbot, monkeypatch):
+    window = _job_chrome_host(qtbot)
+    monkeypatch.setattr("pagedrop.ui.job_chrome.QMessageBox.critical", lambda *args: 0)
+    window.begin_job("Working…")
+    window.end_job(error="Choose a different output path.")
+    assert window._job_error.isVisible()
+    assert window._job_error.text() == "Choose a different output path."
     window.close()
 
 
@@ -390,9 +460,11 @@ def test_result_actions_bar_emits_explicit_only(qtbot, tmp_path):
     assert not bar.isVisible()
     bar.show_for(path)
     assert bar.isVisible()
-    assert bar.accessibleName() == f"Saved {path.name}"
+    assert f"Saved {path.name}" in bar.accessibleName()
+    assert str(path) in bar.accessibleName()
     bar.show_for(path, message="Merged 3 files")
-    assert bar.accessibleName() == "Merged 3 files"
+    assert "Merged 3 files" in bar.accessibleName()
+    assert str(path) in bar.accessibleName()
     bar.clear()
     assert bar.accessibleName() == ""
     bar.show_for(path)
