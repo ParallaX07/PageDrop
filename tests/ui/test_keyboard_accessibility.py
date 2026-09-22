@@ -113,6 +113,7 @@ def test_toolbar_overflow_menu_restores_focus_to_its_invoker(
     qtbot.waitExposed(main_window, timeout=5000)
 
     invoker = main_window._toolbar_overflow
+    qtbot.waitUntil(lambda: invoker.isVisible() and invoker.isEnabled())
     invoker.setFocus(Qt.FocusReason.TabFocusReason)
     qtbot.waitUntil(invoker.hasFocus)
     menu = invoker.menu()
