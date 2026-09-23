@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Callable, Sequence
+from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +29,8 @@ _SMALL_TEXT_PT = 6.5
 _OVERLAY_OPACITY = 0.28
 _RED = (0.88, 0.16, 0.16)
 _GREEN = (0.16, 0.62, 0.28)
+_APPENDIX_MEDIABOX = fitz.Rect(0, 0, 612, 792)
+_APPENDIX_WHERE = fitz.Rect(48, 48, 564, 744)
 
 
 def transform_rect(
@@ -62,15 +66,12 @@ def write_compare_report(
 ) -> Path:
     """Write comparison pages from two already-open documents.
 
-    The caller owns *original* and *revised*.  Include flags are part of the
-    report contract and are accepted here for the appendix phase; CR2 writes
-    comparison pages only.
+    The caller owns *original* and *revised*.
     """
     if layout not in {"split", "alternating"}:
         raise ValueError("layout must be 'split' or 'alternating'")
     if not isinstance(include_summary, bool) or not isinstance(include_revisions, bool):
         raise TypeError("include_summary and include_revisions must be bool")
-    del include_summary, include_revisions
 
     output = Path(output_path)
     source_paths = [
@@ -153,6 +154,32 @@ def write_compare_report(
             )
 
         assert document is not None
+        if include_summary:
+            check_cancel(cancel)
+            summary_page = document.page_count + 1
+            _append_story(
+                document,
+                _summary_html(
+                    report,
+                    str(original_filename),
+                    str(revised_filename),
+                ),
+                output.parent,
+                cancel=cancel,
+            )
+            bookmarks.append([1, "Summary", summary_page])
+            _emit(progress, 0.95, "Appended Summary")
+        if include_revisions:
+            check_cancel(cancel)
+            revisions_page = document.page_count + 1
+            _append_revisions(
+                document,
+                report,
+                output.parent,
+                cancel=cancel,
+            )
+            bookmarks.append([1, "Revisions", revisions_page])
+            _emit(progress, 0.98, "Appended Revisions")
         document.set_toc(bookmarks)
         check_cancel(cancel)
         document.save(str(staged))
@@ -166,6 +193,173 @@ def write_compare_report(
         if document is not None:
             document.close()
         staged.unlink(missing_ok=True)
+
+
+def _append_revisions(
+    document: fitz.Document,
+    report: CompareReport,
+    temporary_directory: Path,
+    *,
+    cancel: CancelToken | None,
+) -> None:
+    if not report.changes:
+        _append_story(
+            document,
+            _section_html(
+                "Revisions",
+                '<p class="empty">No text changes detected</p>',
+            ),
+            temporary_directory,
+            cancel=cancel,
+        )
+        return
+
+    for number, change in enumerate(report.changes, start=1):
+        check_cancel(cancel)
+        _append_story(
+            document,
+            _revision_html(change, number, include_section_title=number == 1),
+            temporary_directory,
+            cancel=cancel,
+            continuation_label=f"Revision {number}",
+        )
+
+
+def _append_story(
+    document: fitz.Document,
+    html_document: str,
+    temporary_directory: Path,
+    *,
+    cancel: CancelToken | None,
+    continuation_label: str | None = None,
+) -> int:
+    fd, staged_name = tempfile.mkstemp(
+        dir=str(temporary_directory), prefix=".compare-appendix-", suffix=".pdf"
+    )
+    os.close(fd)
+    staged = Path(staged_name)
+    try:
+        _write_story(staged, html_document, cancel=cancel)
+        check_cancel(cancel)
+        appendix = fitz.open(str(staged))
+        try:
+            if continuation_label is not None:
+                for page_number in range(1, appendix.page_count):
+                    check_cancel(cancel)
+                    appendix[page_number].insert_text(
+                        (48, 30),
+                        f"{continuation_label} (continued)",
+                        fontsize=9,
+                        color=(0.25, 0.25, 0.25),
+                    )
+            page_count = appendix.page_count
+            document.insert_pdf(appendix)
+            return page_count
+        finally:
+            appendix.close()
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def _write_story(
+    output: Path,
+    html_document: str,
+    *,
+    cancel: CancelToken | None,
+) -> None:
+    story = fitz.Story(html=html_document)
+    writer = fitz.DocumentWriter(str(output))
+    try:
+        more = True
+        while more:
+            check_cancel(cancel)
+            device = writer.begin_page(_APPENDIX_MEDIABOX)
+            more, _ = story.place(_APPENDIX_WHERE)
+            story.draw(device)
+            writer.end_page()
+    finally:
+        writer.close()
+
+
+def _summary_html(
+    report: CompareReport,
+    original_filename: str,
+    revised_filename: str,
+) -> str:
+    compared_pairs = max(report.page_count_a, report.page_count_b)
+    empty_state = (
+        '<p class="empty">No text changes detected</p>' if not report.changes else ""
+    )
+    return _section_html(
+        "Summary",
+        f"""
+        <p><b>Original filename:</b> {escape(original_filename)}</p>
+        <p><b>Revised filename:</b> {escape(revised_filename)}</p>
+        <p><b>Original page count:</b> {report.page_count_a}</p>
+        <p><b>Revised page count:</b> {report.page_count_b}</p>
+        <p><b>Generation time:</b> {escape(datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z'))}</p>
+        <p><b>Compared page-pair count:</b> {compared_pairs}</p>
+        <p><b>Changed page-pair count:</b> {report.changed_page_pair_count}</p>
+        <p><b>Removed groups:</b> {report.deleted_count}</p>
+        <p><b>Added groups:</b> {report.added_count}</p>
+        <p><b>Replaced groups:</b> {report.modified_count}</p>
+        <p class="limitation">Text comparison, matched by page number. Image, formatting, and moved-content differences are not classified.</p>
+        {empty_state}
+        """,
+    )
+
+
+def _revision_html(
+    change: CompareChange,
+    number: int,
+    *,
+    include_section_title: bool,
+) -> str:
+    kind = {
+        "deleted": "Removed",
+        "added": "Added",
+        "modified": "Replaced",
+    }[change.kind]
+    title = f"<h1>Revisions</h1>" if include_section_title else ""
+    return _section_html(
+        "",
+        f"""
+        {title}
+        <h2>Revision {number}: {kind}</h2>
+        <p><b>Original page:</b> {_page_reference(change.page_a)}</p>
+        <p><b>Revised page:</b> {_page_reference(change.page_b)}</p>
+        <h3>Before</h3>
+        <div class="value">{_revision_value(change.before_text)}</div>
+        <h3>After</h3>
+        <div class="value">{_revision_value(change.after_text)}</div>
+        """,
+    )
+
+
+def _section_html(title: str, body: str) -> str:
+    heading = f"<h1>{escape(title)}</h1>" if title else ""
+    return f"""
+    <html><head><style>
+    body {{ font-family: sans-serif; font-size: 10pt; color: #202020; }}
+    h1 {{ font-size: 20pt; margin-bottom: 18pt; }}
+    h2 {{ font-size: 14pt; margin-top: 8pt; margin-bottom: 12pt; }}
+    h3 {{ font-size: 11pt; margin-top: 14pt; margin-bottom: 4pt; }}
+    p {{ margin: 4pt 0; }}
+    .value {{ border: 0.5pt solid #b8b8b8; padding: 8pt; margin-bottom: 8pt; }}
+    .limitation {{ margin-top: 18pt; color: #505050; }}
+    .empty {{ margin-top: 18pt; font-size: 12pt; }}
+    </style></head><body>{heading}{body}</body></html>
+    """
+
+
+def _page_reference(page: int | None) -> str:
+    return f"Page {page + 1}" if page is not None else "No corresponding page"
+
+
+def _revision_value(value: str | None) -> str:
+    if value is None or value == "":
+        return "—"
+    return escape(value).replace("\n", "<br/>")
 
 
 def _emit(

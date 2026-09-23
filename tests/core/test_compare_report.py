@@ -194,10 +194,151 @@ def test_unchanged_report_includes_all_pages_and_empty_state(tmp_path: Path) -> 
     output = fitz.open(str(output_path))
     try:
         assert not report.changes
-        assert len(output) == 2
-        assert all(page.search_for("No text changes detected") for page in output)
+        assert len(output) == 4
+        assert all(page.search_for("No text changes detected") for page in output[:2])
         assert output[0].search_for("same")
         assert output[1].search_for("Text comparison, matched by page number")
+        assert output[2].search_for("Summary")
+        assert output[3].search_for("Revisions")
+        assert [entry[1] for entry in output.get_toc()] == [
+            "Original 1 / Revised 1",
+            "Original 2 / Revised 2",
+            "Summary",
+            "Revisions",
+        ]
+    finally:
+        output.close()
+
+
+@pytest.mark.parametrize("layout", ["split", "alternating"])
+@pytest.mark.parametrize(
+    ("include_summary", "include_revisions"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_summary_revisions_flags_preserve_section_order(
+    tmp_path: Path,
+    layout: compare_report.CompareLayout,
+    include_summary: bool,
+    include_revisions: bool,
+) -> None:
+    original_path = _make_pdf(
+        tmp_path / "original.pdf", [{"size": (220, 130), "text": "before"}]
+    )
+    revised_path = _make_pdf(
+        tmp_path / "revised.pdf", [{"size": (220, 130), "text": "after"}]
+    )
+    output_path = tmp_path / f"{layout}-{include_summary}-{include_revisions}.pdf"
+
+    _write(
+        original_path,
+        revised_path,
+        output_path,
+        layout=layout,
+        include_summary=include_summary,
+        include_revisions=include_revisions,
+    )
+
+    output = fitz.open(str(output_path))
+    try:
+        comparison_pages = 1 if layout == "split" else 2
+        expected_titles = (
+            ["Original 1 / Revised 1"]
+            if layout == "split"
+            else ["Original 1", "Revised 1"]
+        )
+        if include_summary:
+            expected_titles.append("Summary")
+        if include_revisions:
+            expected_titles.append("Revisions")
+        assert len(output.get_toc()) == len(expected_titles)
+        assert [entry[1] for entry in output.get_toc()] == expected_titles
+        assert len(output) >= comparison_pages + int(include_summary) + int(include_revisions)
+        if include_summary:
+            assert output[comparison_pages].search_for("Compared page-pair count: 1")
+        if include_revisions:
+            revisions_page = comparison_pages + int(include_summary)
+            assert output[revisions_page].search_for("Revision 1: Replaced")
+    finally:
+        output.close()
+
+
+def test_summary_uses_group_and_changed_pair_counts(tmp_path: Path) -> None:
+    original_path = _make_pdf(
+        tmp_path / "original.pdf",
+        [{"size": (240, 140), "text": "one two three four"}, {"size": (240, 140), "text": "same"}],
+    )
+    revised_path = _make_pdf(
+        tmp_path / "revised.pdf",
+        [{"size": (240, 140), "text": "one changed three four"}, {"size": (240, 140), "text": "same"}],
+    )
+    output_path = tmp_path / "summary.pdf"
+
+    report = _write(
+        original_path,
+        revised_path,
+        output_path,
+        layout="split",
+        include_summary=True,
+    )
+
+    output = fitz.open(str(output_path))
+    try:
+        summary = "\n".join(page.get_text() for page in output)
+        assert f"Compared page-pair count: 2" in summary
+        assert f"Changed page-pair count: {report.changed_page_pair_count}" in summary
+        assert f"Removed groups: {report.deleted_count}" in summary
+        assert f"Added groups: {report.added_count}" in summary
+        assert f"Replaced groups: {report.modified_count}" in summary
+    finally:
+        output.close()
+
+
+def test_revisions_escape_unicode_and_paginate_without_truncation(tmp_path: Path) -> None:
+    original_path = _make_pdf(tmp_path / "original.pdf", [{"size": (240, 140)}])
+    revised_path = _make_pdf(tmp_path / "revised.pdf", [{"size": (240, 140)}])
+    output_path = tmp_path / "revisions.pdf"
+    before = "before <tag> & café Ω " * 600
+    after = "after <tag> & naïve 世界 " * 600
+    report = pdf_tools.CompareReport(
+        changes=(
+            pdf_tools.CompareChange(
+                kind="modified",
+                page_a=0,
+                page_b=0,
+                text="display label is not used",
+                before_text=before,
+                after_text=after,
+            ),
+        ),
+        page_count_a=1,
+        page_count_b=1,
+    )
+    original = fitz.open(str(original_path))
+    revised = fitz.open(str(revised_path))
+    try:
+        compare_report.write_compare_report(
+            original,
+            revised,
+            report,
+            original_path.name,
+            revised_path.name,
+            output_path,
+            layout="alternating",
+            include_revisions=True,
+        )
+    finally:
+        original.close()
+        revised.close()
+
+    output = fitz.open(str(output_path))
+    try:
+        extracted = "\n".join(page.get_text() for page in output)
+        assert "before <tag> & café Ω" in extracted
+        assert "after <tag> & naïve 世界" in extracted
+        assert "Revision 1: Replaced" in extracted
+        assert "Revision 1 (continued)" in extracted
+        assert len(output) > 3
+        assert output.get_toc()[-1][1:] == ["Revisions", 3]
     finally:
         output.close()
 
