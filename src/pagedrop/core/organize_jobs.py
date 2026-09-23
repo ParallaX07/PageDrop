@@ -220,6 +220,20 @@ def handle_zip(ctx: JobContext) -> Path:
 def handle_compare(ctx: JobContext) -> Path:
     ctx.progress(0.2, "Comparing pages…")
     a, b = ctx.spec.inputs[0], ctx.spec.inputs[1]
+    expected = None
+    if (
+        "source_fingerprint_a" in ctx.spec.options
+        or "source_fingerprint_b" in ctx.spec.options
+    ):
+        expected = (
+            _compare_report_fingerprint(
+                ctx.spec.options.get("source_fingerprint_a"), "Original"
+            ),
+            _compare_report_fingerprint(
+                ctx.spec.options.get("source_fingerprint_b"), "Revised"
+            ),
+        )
+        _check_compare_report_sources((a, b), expected)
     result = pdf_tools.compare_pdfs_heatmap(
         a,
         b,
@@ -229,6 +243,8 @@ def handle_compare(ctx: JobContext) -> Path:
         password_b=ctx.password(b),
         cancel=ctx.cancel,
     )
+    if expected is not None:
+        _check_compare_report_sources((a, b), expected)
     # Stash ratio for UI status via options mutation is forbidden; write a
     # promoted sidecar note next to the exported heatmap PDF.
     ratio_dest = Path(ctx.spec.output).with_suffix(".compare_ratio.txt")

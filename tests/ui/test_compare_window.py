@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import fitz
@@ -233,7 +234,12 @@ def test_compare_heatmap_uses_async_job_bridge(
 ):
     """The secondary heatmap action uses the shared asynchronous bridge."""
     import pagedrop.ui.compare_window as compare_module
+    from pagedrop.core.pdf_tools import CompareReport, source_fingerprint
 
+    original = tmp_path / "a.pdf"
+    revised = tmp_path / "b.pdf"
+    _write_line_pdf(original, "old")
+    _write_line_pdf(revised, "new")
     out = tmp_path / "heat_compare.pdf"
     calls: list[dict] = []
     monkeypatch.setattr(
@@ -250,15 +256,26 @@ def test_compare_heatmap_uses_async_job_bridge(
     window = CompareWindow()
     qtbot.addWidget(window)
     window.show()
-    window._path_a = str(tmp_path / "a.pdf")
-    window._path_b = str(tmp_path / "b.pdf")
+    window._path_a = str(original)
+    window._path_b = str(revised)
+    window._report = CompareReport(
+        changes=(),
+        page_count_a=1,
+        page_count_b=1,
+        source_fingerprint_a=source_fingerprint(original),
+        source_fingerprint_b=source_fingerprint(revised),
+    )
     window._export_heatmap()
 
     assert calls == [
         {
             "job_type": "compare",
-            "inputs": [str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")],
+            "inputs": [str(original), str(revised)],
             "output": str(out),
+            "options": {
+                "source_fingerprint_a": asdict(window._report.source_fingerprint_a),
+                "source_fingerprint_b": asdict(window._report.source_fingerprint_b),
+            },
             "progress_message": "Exporting visual heatmap…",
             "success_toast": window._heatmap_success_message,
             "credentials": window._credentials,

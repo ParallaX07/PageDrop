@@ -941,7 +941,12 @@ class CompareWindow(JobChromeMixin, QWidget):
         )
 
     def _export_heatmap(self) -> None:
-        if self._job_running or not self._path_a or not self._path_b:
+        if (
+            self._job_running
+            or self._report is None
+            or not self._path_a
+            or not self._path_b
+        ):
             return
         suggested = str(
             Path(self._path_a).with_name(f"{Path(self._path_a).stem}_compare.pdf")
@@ -949,11 +954,23 @@ class CompareWindow(JobChromeMixin, QWidget):
         path = self._save_export_path("Export visual heatmap PDF", suggested)
         if path is None:
             return
+        report = self._report
+        if report.source_fingerprint_a is None or report.source_fingerprint_b is None:
+            self.end_job(
+                error="Comparison has no source fingerprints; compare again.",
+                toast="Compare again",
+                toast_kind="error",
+            )
+            return
         run_tool_job(
             self,
             job_type="compare",
             inputs=[self._path_a, self._path_b],
             output=path,
+            options={
+                "source_fingerprint_a": asdict(report.source_fingerprint_a),
+                "source_fingerprint_b": asdict(report.source_fingerprint_b),
+            },
             progress_message="Exporting visual heatmap…",
             success_toast=self._heatmap_success_message,
             credentials=self._credentials,

@@ -916,6 +916,38 @@ def test_compare_report_job_rejects_stale_sources_and_preserves_output(
         temp.cleanup()
 
 
+def test_compare_heatmap_job_rejects_stale_sources_when_fingerprints_supplied(
+    tmp_path: Path,
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    options = {
+        "source_fingerprint_a": asdict(pdf_tools.source_fingerprint(original)),
+        "source_fingerprint_b": asdict(pdf_tools.source_fingerprint(revised)),
+    }
+    _make_text_pdf(revised, page_texts=["changed"])
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"keep me")
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(pdf_tools.CompareSourceChangedError, match="compare again"):
+            runner.run(
+                JobSpec.create(
+                    "compare",
+                    inputs=[original, revised],
+                    output=output,
+                    options=options,
+                    overwrite=True,
+                )
+            )
+        assert output.read_bytes() == b"keep me"
+        assert not output.with_suffix(".compare_ratio.txt").exists()
+    finally:
+        temp.cleanup()
+
+
 def test_compare_report_job_rejects_bad_options_without_output(tmp_path: Path) -> None:
     original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
     revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])

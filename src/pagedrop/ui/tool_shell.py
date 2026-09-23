@@ -399,6 +399,7 @@ def run_tool_job(
             prompt=lambda name, incorrect: prompt_pdf_password(
                 host, name, incorrect=incorrect
             ),
+            credentials=credentials,
             cancel=token,
         )
         if existing and not confirm_overwrite(host, existing, window_title=title):

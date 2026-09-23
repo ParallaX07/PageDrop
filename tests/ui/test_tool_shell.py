@@ -437,9 +437,10 @@ def test_password_prompt_before_overwrite_confirm(tmp_path: Path, monkeypatch, q
         events.append("password_prompt")
         return "secret"
 
-    def fake_preflight_pdf_inputs(_inputs, prompt, cancel):
+    def fake_preflight_pdf_inputs(_inputs, prompt, cancel, credentials):
         events.append("preflight_pdf_inputs")
         assert cancel is host._token
+        assert credentials is None
         # Mimic the preflight triggering an actual password prompt.
         password = prompt("locked.pdf", False)
         assert password == "secret"

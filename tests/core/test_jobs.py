@@ -227,6 +227,11 @@ def test_protected_pdf_uses_runtime_credential_without_persisting_it(
     assert prompts[0] == ("locked.pdf", False)
     assert prompts[1] == ("locked.pdf", True)
     assert creds.get(enc) == "secret"
+    assert preflight_pdf_inputs(
+        [enc],
+        prompt=lambda *_args: pytest.fail("Valid cached password prompted again"),
+        credentials=creds,
+    ) is creds
     assert "secret" not in repr(creds)
     assert "secret" not in str(creds)
 
