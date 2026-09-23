@@ -8,6 +8,7 @@ import pytest
 
 from pagedrop.core import compare_report, pdf_tools
 from pagedrop.core.jobs import CancelToken, JobCancelledError
+from tests.fixtures.generate_fixtures import generate_compare_pair
 
 
 def _hash(path: Path) -> str:
@@ -61,6 +62,71 @@ def _write(
         original.close()
         revised.close()
     return report
+
+
+@pytest.mark.parametrize("layout", ["split", "alternating"])
+@pytest.mark.parametrize(
+    ("include_summary", "include_revisions"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_acceptance_matrix_uses_reusable_fitz_fixtures(
+    tmp_path: Path,
+    layout: compare_report.CompareLayout,
+    include_summary: bool,
+    include_revisions: bool,
+) -> None:
+    original_path, revised_path = generate_compare_pair(tmp_path / "fixtures")
+    source_hashes = (_hash(original_path), _hash(revised_path))
+    report = pdf_tools.compare_pdf_text_diff(str(original_path), str(revised_path))
+    output_path = tmp_path / f"acceptance-{layout}-{include_summary}-{include_revisions}.pdf"
+
+    _write(
+        original_path,
+        revised_path,
+        output_path,
+        layout=layout,
+        include_summary=include_summary,
+        include_revisions=include_revisions,
+    )
+
+    output = fitz.open(str(output_path))
+    try:
+        kinds = {change.kind for change in report.changes}
+        assert {"deleted", "added", "modified"} <= kinds
+        assert report.changed_page_pair_count == 5
+        extracted = "\n".join(page.get_text() for page in output)
+        assert "Unchanged page" in extracted
+        assert "No extractable text on this page" in extracted
+        assert "No corresponding page" in extracted
+        assert "extra revised page" in extracted
+        assert "Shared replace-before" in extracted
+        assert "Shared replace-after" in extracted
+        titles = [entry[1] for entry in output.get_toc()]
+        comparison_count = 8 if layout == "split" else 16
+        assert titles[0] == (
+            "Original 1 / Revised 1" if layout == "split" else "Original 1"
+        )
+        placeholder_title = "No Original page" if layout == "split" else "No corresponding page"
+        assert any(placeholder_title in title for title in titles[:comparison_count])
+        assert titles[comparison_count:] == [
+            *(["Summary"] if include_summary else []),
+            *(["Revisions"] if include_revisions else []),
+        ]
+        assert ("Summary" in titles) is include_summary
+        assert ("Revisions" in titles) is include_revisions
+        if include_summary:
+            assert f"Changed page-pair count: {report.changed_page_pair_count}" in extracted
+            assert f"Removed groups: {report.deleted_count}" in extracted
+            assert f"Added groups: {report.added_count}" in extracted
+            assert f"Replaced groups: {report.modified_count}" in extracted
+        if include_revisions:
+            assert "Before" in extracted
+            assert "After" in extracted
+            assert all(marker in extracted for marker in ("before", "café", "after", "naïve"))
+    finally:
+        output.close()
+
+    assert (_hash(original_path), _hash(revised_path)) == source_hashes
 
 
 def test_split_report_preserves_native_pages_text_and_sources(tmp_path: Path) -> None:

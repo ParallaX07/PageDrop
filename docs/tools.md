@@ -16,6 +16,33 @@ Coming-soon tiles stay hidden until you enable **Show upcoming** in the hub.
 
 Split/extract, alternate, reverse, N-up, booklet, posterize, divide, combine, normalize size, attachments, metadata, page labels, ZIP, compare.
 
+### Compare
+
+Compare two PDFs by matching pages by page number. The viewer calls the inputs
+**Original** and **Revised**, lists Removed, Added, and Replaced text changes,
+and shows red highlights on Original with green highlights on Revised. Pages
+without extractable text are labeled in each pane. The report discloses this
+limitation:
+
+> Text comparison, matched by page number. Image, formatting, and moved-content differences are not classified.
+
+Use **Export comparison…** for a readable PDF report. Choose **Split view** to
+place the Original and Revised pages side by side, or **Alternating** to emit
+Original then Revised pages in reading order. **Summary** and **Revisions** are
+enabled by default and can be omitted independently. The report keeps source
+content selectable, includes placeholders for missing pages, and adds PDF
+bookmarks for comparison pages and enabled sections.
+
+**Export visual heatmap…** remains available as the secondary legacy export for
+a coarse visual comparison. It keeps its overall-diff ratio sidecar; comparison
+reports do not create that sidecar.
+
+Both exports run in the background and check that the inputs have not changed
+since comparison. On success, choose **Preview**, **Open**, or **Show in
+folder**; results never open automatically. Passwords are requested again only
+when needed and are held for the current operation, not written to the job or
+report.
+
 ### Convert
 
 Create PDF, Convert to PDF, Export from PDF, Office to PDF, PDF to Word, OCR, extract tables / PDF to CSV / Excel.

@@ -21,7 +21,7 @@ CompareLayout = Literal["split", "alternating"]
 ProgressCallback = Callable[[float, str], None]
 
 _HEADER_PT = 64.0
-_FOOTER_PT = 42.0
+_FOOTER_PT = 58.0
 _GUTTER_PT = 24.0
 _MARGIN_PT = 12.0
 _TEXT_PT = 8.0
@@ -599,32 +599,53 @@ def _draw_chrome(
             position < (report.page_count_a if is_original else report.page_count_b),
         )
 
+    footer_top = sheet.rect.height - _FOOTER_PT + 5
     footer = fitz.Rect(
         _MARGIN_PT,
-        sheet.rect.height - _FOOTER_PT + 3,
+        footer_top,
         sheet.rect.width - _MARGIN_PT,
         sheet.rect.height - _MARGIN_PT,
     )
-    legend = (
-        f"Report page {report_page_number}  |  Legend: Removed / replacement before = red; "
-        "Added / replacement after = green"
+    footer_color = (0.25, 0.25, 0.25)
+    sheet.insert_text(
+        (footer.x0, footer.y0 + 7),
+        f"Report page {report_page_number}  |  Legend:",
+        fontsize=_SMALL_TEXT_PT,
+        color=footer_color,
     )
-    sheet.insert_textbox(footer, legend, fontsize=_SMALL_TEXT_PT, color=(0.25, 0.25, 0.25))
-    sheet.insert_textbox(
-        fitz.Rect(_MARGIN_PT, footer.y1 - 28, sheet.rect.width - _MARGIN_PT, footer.y1 - 15),
+    sheet.insert_text(
+        (footer.x0, footer.y0 + 14),
+        "Removed / replacement before = red;",
+        fontsize=_SMALL_TEXT_PT,
+        color=footer_color,
+    )
+    sheet.insert_text(
+        (footer.x0, footer.y0 + 21),
+        "Added / replacement after = green",
+        fontsize=_SMALL_TEXT_PT,
+        color=footer_color,
+    )
+    sheet.insert_text(
+        (footer.x0, footer.y0 + 33),
         "Text comparison, matched by page number.",
         fontsize=_SMALL_TEXT_PT,
-        color=(0.25, 0.25, 0.25),
+        color=footer_color,
     )
-    sheet.insert_textbox(
-        fitz.Rect(_MARGIN_PT, footer.y1 - 15, sheet.rect.width - _MARGIN_PT, footer.y1),
-        "Image, formatting, and moved-content differences are not classified.",
+    sheet.insert_text(
+        (footer.x0, footer.y0 + 40),
+        "Image, formatting, and moved-content differences",
         fontsize=_SMALL_TEXT_PT,
-        color=(0.25, 0.25, 0.25),
+        color=footer_color,
+    )
+    sheet.insert_text(
+        (footer.x0, footer.y0 + 47),
+        "are not classified.",
+        fontsize=_SMALL_TEXT_PT,
+        color=footer_color,
     )
     if not report.changes:
         sheet.insert_text(
-            (sheet.rect.width - 112, sheet.rect.height - 8),
+            (sheet.rect.width - 112, footer.y1 - 2),
             "No text changes detected",
             fontsize=_SMALL_TEXT_PT,
             color=(0.25, 0.25, 0.25),

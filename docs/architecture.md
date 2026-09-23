@@ -50,6 +50,32 @@ Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI
 
 External converters (Office COM helper, LibreOffice, Ghostscript) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
 
+## Comparison reports
+
+The Compare viewer uses the page-number-matched text diff from
+`core/pdf_tools.py`. `core/compare_report.py` composes the selected **Split**
+or **Alternating** report from the two already-open source documents with
+PyMuPDF's vector-preserving page import, shared coordinate transforms, and
+translucent red/green overlays. Optional Summary and Revisions appendices are
+added after comparison pages; their bookmarks and the comparison-page
+bookmarks are written into the report PDF.
+
+The `compare_report` handler runs through `SerializedJobRunner` under
+`FITZ_LOCK`. Its persisted options contain only layout, appendix flags, and
+the non-secret source fingerprints. It rechecks both fingerprints before
+opening sources and during the job, stages the report, reopens and validates
+the staged PDF and expected bookmarks, then promotes it. Cancellation, typed
+load failures, stale inputs, and source-destination paths remove staging while
+preserving source and existing destination bytes. Unlike the legacy `compare`
+heatmap handler, `compare_report` creates no `.compare_ratio.txt` sidecar.
+
+The UI owns passwords only in `RuntimeCredentials`; they are passed to
+preflight, pane rendering, and export opening without entering persisted job
+options. Editing either input invalidates the comparison and its result
+actions, and the report repeats the locked scope: text comparison matched by
+page number, with image, formatting, and moved-content differences not
+classified.
+
 ## PyMuPDF concurrency
 
 PyMuPDF is not safe for concurrent multithreaded use — even separate `Document` instances share MuPDF caches. PageDrop serializes in-process fitz work through a process-wide lock in `core/pdf_service.py` (`FITZ_LOCK`). Viewer thumbnails, previews, and fitz-backed job handlers take that lock (or call helpers that do). Workers open documents by path inside `run()`, close before returning, and never receive a live loader document from the UI thread.

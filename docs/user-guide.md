@@ -59,6 +59,37 @@ Open via the menu bar **Create PDF** or the Tools hub tile. Turn images into PDF
 
 See [Tools](tools.md) for the full catalogue and optional backends.
 
+## Compare PDFs
+
+Open **Compare** from the Tools hub and choose an **Original** PDF and a
+**Revised** PDF. Comparison matches pages by page number and reports text
+groups as Removed, Added, or Replaced. The viewer shows the two pages together,
+uses red highlights for the Original side and green highlights for the Revised
+side, and marks pages with no extractable text.
+
+Choose **Export comparison…** to make a PDF report. **Split view** places both
+source pages on one sheet; **Alternating** writes Original then Revised for
+each page position. The export dialog enables **Summary** and **Revisions** by
+default, with independent checkboxes for each section. Summary contains source
+and change counts; Revisions contains numbered entries with separate Before
+and After blocks. Missing pages receive an explicit placeholder, and report
+pages remain selectable with bookmarks for comparison pages and enabled
+sections.
+
+**Export visual heatmap…** is the secondary export for the existing coarse
+visual comparison. It also writes its overall-diff ratio sidecar. The readable
+comparison report writes one PDF and no ratio sidecar.
+
+Compare uses this exact scope: **Text comparison, matched by page number.
+Image, formatting, and moved-content differences are not classified.** A
+page with only an image or other non-extractable content is still included
+visually, but it does not produce text changes. If either input changes after
+comparison, compare again before exporting. Password-protected PDFs use the
+normal password prompt and retry flow.
+
+After either export completes, use **Preview**, **Open**, or **Show in folder**
+from the result bar. PageDrop does not open the report automatically.
+
 ## Preferences and accessibility
 
 - View → Toggle Light Theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom

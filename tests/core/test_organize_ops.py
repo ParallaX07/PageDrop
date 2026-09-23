@@ -20,7 +20,7 @@ from pagedrop.core.jobs import (
 from pagedrop.core import compare_report
 from pagedrop.core import organize_jobs
 from pagedrop.core.organize_jobs import MAX_ATTACHMENT_BYTES, register_organize_handlers
-from pagedrop.core.jobs.errors import JobError
+from pagedrop.core.jobs.errors import JobError, SourceOverwriteError
 from pagedrop.core.pdf_loader import (
     PdfCorruptError,
     PdfPasswordError,
@@ -936,6 +936,33 @@ def test_compare_report_job_rejects_bad_options_without_output(tmp_path: Path) -
                 )
             )
         assert not output.exists()
+    finally:
+        temp.cleanup()
+
+
+@pytest.mark.parametrize("source_name", ["original", "revised"])
+def test_compare_report_job_rejects_either_source_as_output(
+    tmp_path: Path, source_name: str
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    output = original if source_name == "original" else revised
+    source_hash = _file_hash(output)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(SourceOverwriteError):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[original, revised],
+                    output=output,
+                    options=_compare_report_options(original, revised),
+                    overwrite=True,
+                )
+            )
+        assert _file_hash(output) == source_hash
     finally:
         temp.cleanup()
 
