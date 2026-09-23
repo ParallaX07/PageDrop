@@ -402,11 +402,61 @@ def test_revisions_escape_unicode_and_paginate_without_truncation(tmp_path: Path
         assert "before <tag> & café Ω" in extracted
         assert "after <tag> & naïve 世界" in extracted
         assert "Revision 1: Replaced" in extracted
-        assert "Revision 1 (continued)" in extracted
+        assert "Revisions (continued)" in extracted
+        appendix_text = "\n".join(page.get_text() for page in output[2:])
+        assert appendix_text.count("before") == 600
+        assert appendix_text.count("after") == 600
         assert len(output) > 3
         assert output.get_toc()[-1][1:] == ["Revisions", 3]
     finally:
         output.close()
+
+
+def test_many_revisions_flow_across_shared_pages(tmp_path: Path) -> None:
+    original_path = _make_pdf(tmp_path / "original.pdf", [{"size": (240, 140)}])
+    revised_path = _make_pdf(tmp_path / "revised.pdf", [{"size": (240, 140)}])
+    source_hashes = (_hash(original_path), _hash(revised_path))
+    output_path = tmp_path / "compact.pdf"
+    report = pdf_tools.CompareReport(
+        changes=tuple(
+            pdf_tools.CompareChange(
+                kind="modified",
+                page_a=0,
+                page_b=0,
+                text="",
+                before_text=f"old wording {number}",
+                after_text=f"new wording {number}",
+            )
+            for number in range(1, 84)
+        ),
+        page_count_a=1,
+        page_count_b=1,
+    )
+    with fitz.open(str(original_path)) as original, fitz.open(str(revised_path)) as revised:
+        compare_report.write_compare_report(
+            original,
+            revised,
+            report,
+            original_path.name,
+            revised_path.name,
+            output_path,
+            include_revisions=True,
+        )
+
+    with fitz.open(str(output_path)) as output:
+        assert len(output) < 15
+        revision_pages = [page.get_text() for page in output[1:]]
+        revisions = "\n".join(revision_pages)
+        assert "Revision 1: Replaced" in revisions
+        assert "Revision 83: Replaced" in revisions
+        assert "old wording 83" in revisions
+        assert "new wording 83" in revisions
+        for number in range(1, 84):
+            assert f"Revision {number}: Replaced" in revisions
+            assert f"old wording {number}" in revisions
+            assert f"new wording {number}" in revisions
+        assert output.get_toc()[-1][1:] == ["Revisions", 2]
+    assert (_hash(original_path), _hash(revised_path)) == source_hashes
 
 
 def test_cancel_preserves_existing_output_and_cleans_stage(tmp_path: Path) -> None:

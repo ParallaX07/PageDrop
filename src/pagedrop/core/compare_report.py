@@ -214,15 +214,21 @@ def _append_revisions(
         )
         return
 
+    entries = []
     for number, change in enumerate(report.changes, start=1):
         check_cancel(cancel)
-        _append_story(
-            document,
-            _revision_html(change, number, include_section_title=number == 1),
-            temporary_directory,
-            cancel=cancel,
-            continuation_label=f"Revision {number}",
-        )
+        entries.append(_revision_html(change, number))
+    _append_story(
+        document,
+        _section_html(
+            "Revisions",
+            f'<p>{len(entries)} text {"change" if len(entries) == 1 else "changes"}</p>'
+            + "".join(entries),
+        ),
+        temporary_directory,
+        cancel=cancel,
+        continuation_label="Revisions",
+    )
 
 
 def _append_story(
@@ -312,28 +318,28 @@ def _summary_html(
 def _revision_html(
     change: CompareChange,
     number: int,
-    *,
-    include_section_title: bool,
 ) -> str:
     kind = {
         "deleted": "Removed",
         "added": "Added",
         "modified": "Replaced",
     }[change.kind]
-    title = f"<h1>Revisions</h1>" if include_section_title else ""
-    return _section_html(
-        "",
-        f"""
-        {title}
-        <h2>Revision {number}: {kind}</h2>
-        <p><b>Original page:</b> {_page_reference(change.page_a)}</p>
-        <p><b>Revised page:</b> {_page_reference(change.page_b)}</p>
-        <h3>Before</h3>
-        <div class="value">{_revision_value(change.before_text)}</div>
-        <h3>After</h3>
-        <div class="value">{_revision_value(change.after_text)}</div>
-        """,
+    pages = (
+        f"Original {_page_reference(change.page_a)} · "
+        f"Revised {_page_reference(change.page_b)}"
     )
+    title = (
+        f'<b>Revision {number}: {kind}</b> '
+        f'<span class="pages">{pages}</span><br/>'
+    )
+    if change.kind == "added":
+        details = _revision_detail(title + "<b>Added:</b> ", change.after_text)
+    elif change.kind == "deleted":
+        details = _revision_detail(title + "<b>Removed:</b> ", change.before_text)
+    else:
+        details = _revision_detail(title + "<b>Before:</b> ", change.before_text)
+        details += _revision_detail("<b>After:</b> ", change.after_text)
+    return f'<div class="revision">{details}</div>'
 
 
 def _section_html(title: str, body: str) -> str:
@@ -342,12 +348,12 @@ def _section_html(title: str, body: str) -> str:
     <html><head><style>
     body {{ font-family: sans-serif; font-size: 10pt; color: #202020; }}
     h1 {{ font-size: 20pt; margin-bottom: 18pt; }}
-    h2 {{ font-size: 14pt; margin-top: 8pt; margin-bottom: 12pt; }}
-    h3 {{ font-size: 11pt; margin-top: 14pt; margin-bottom: 4pt; }}
     p {{ margin: 4pt 0; }}
-    .value {{ border: 0.5pt solid #b8b8b8; padding: 8pt; margin-bottom: 8pt; }}
     .limitation {{ margin-top: 18pt; color: #505050; }}
     .empty {{ margin-top: 18pt; font-size: 12pt; }}
+    .revision {{ border-bottom: 0.5pt solid #d8d8d8; padding: 4pt 0; }}
+    .revision p {{ margin: 2pt 0; orphans: 2; widows: 2; }}
+    .pages {{ color: #555555; font-size: 8pt; }}
     </style></head><body>{heading}{body}</body></html>
     """
 
@@ -360,6 +366,23 @@ def _revision_value(value: str | None) -> str:
     if value is None or value == "":
         return "—"
     return escape(value).replace("\n", "<br/>")
+
+
+def _revision_detail(label: str, value: str | None) -> str:
+    if not value:
+        return f"<p>{label}—</p>"
+    # PyMuPDF Story can omit text from a paragraph that spans several pages.
+    paragraphs = []
+    while len(value) > 400:
+        cut = max(value.rfind(" ", 0, 400), value.rfind("\n", 0, 400)) + 1
+        cut = cut or 400
+        paragraphs.append(value[:cut])
+        value = value[cut:]
+    paragraphs.append(value)
+    return "".join(
+        f"<p>{label if index == 0 else ''}{_revision_value(part)}</p>"
+        for index, part in enumerate(paragraphs)
+    )
 
 
 def _emit(
