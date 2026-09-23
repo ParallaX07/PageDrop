@@ -17,6 +17,7 @@ from pagedrop.core.jobs import (
 )
 from pagedrop.core.organize_jobs import MAX_ATTACHMENT_BYTES, register_organize_handlers
 from pagedrop.core.jobs.errors import JobError
+from pagedrop.core.pdf_loader import PdfPasswordRequiredError
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -904,6 +905,154 @@ def test_compare_text_diff_truncation_and_identical(tmp_path: Path) -> None:
     identical = pdf_tools.compare_pdf_text_diff(str(a), str(a))
     assert identical.changes == ()
     assert identical.deleted_count == 0
+    assert identical.changed_page_pair_count == 0
+
+
+def test_compare_text_diff_exposes_complete_change_text_and_metadata(
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original.pdf"
+    revised = tmp_path / "revised.pdf"
+    _make_text_pdf(
+        original,
+        page_texts=["old", "", "removed", ""],
+    )
+    _make_text_pdf(
+        revised,
+        page_texts=["new", "inserted", ""],
+    )
+
+    report = pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+
+    assert report.modified_count == 1
+    assert report.added_count == 1
+    assert report.deleted_count == 2
+    assert report.changed_page_pair_count == 4
+    assert report.textless_pages_a == (1, 3)
+    assert report.textless_pages_b == (2,)
+
+    modified, added, deleted, trailing = report.changes
+    assert (modified.before_text, modified.after_text, modified.text) == (
+        "old",
+        "new",
+        "old → new",
+    )
+    assert (added.before_text, added.after_text) == (None, "inserted")
+    assert (deleted.before_text, deleted.after_text) == ("removed", None)
+    assert (trailing.before_text, trailing.after_text, trailing.text) == (
+        "",
+        None,
+        "(page 4)",
+    )
+    assert report.source_fingerprint_a == pdf_tools.source_fingerprint(original)
+    assert report.source_fingerprint_b == pdf_tools.source_fingerprint(revised)
+
+
+def test_compare_text_diff_rejects_source_fingerprint_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["A"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["B"])
+    real_fingerprint = pdf_tools.source_fingerprint
+    fingerprints = [
+        real_fingerprint(original),
+        real_fingerprint(revised),
+        pdf_tools.SourceFingerprint(
+            path=str(original.resolve()),
+            size=1,
+            mtime_ns=1,
+            sha256="0" * 64,
+        ),
+        real_fingerprint(revised),
+    ]
+    monkeypatch.setattr(
+        pdf_tools,
+        "source_fingerprint",
+        lambda _path: fingerprints.pop(0),
+    )
+
+    with pytest.raises(pdf_tools.CompareSourceChangedError, match="changed"):
+        pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+
+
+def test_compare_text_diff_closes_original_when_revised_open_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["A"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["B"])
+    real_open = pdf_tools.open_pdf
+    opened: list[object] = []
+
+    class TrackedDocument:
+        def __init__(self, document: object) -> None:
+            self.document = document
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.document.close()  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.document, name)
+
+    def open_for_test(path: str, password: str | None = None) -> object:
+        if path == str(revised):
+            raise PdfPasswordRequiredError("password-protected")
+        document = TrackedDocument(real_open(path, password=password))
+        opened.append(document)
+        return document
+
+    monkeypatch.setattr(pdf_tools, "open_pdf", open_for_test)
+
+    with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
+        pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+
+    assert opened and all(document.closed for document in opened)  # type: ignore[attr-defined]
+
+
+def test_compare_text_diff_closes_documents_on_success_and_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["A"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["B"])
+    real_open = pdf_tools.open_pdf
+    opened: list[object] = []
+
+    class TrackedDocument:
+        def __init__(self, document: object) -> None:
+            self.document = document
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.document.close()  # type: ignore[attr-defined]
+
+        def __len__(self) -> int:
+            return len(self.document)  # type: ignore[arg-type]
+
+        def __getitem__(self, index: int) -> object:
+            return self.document[index]  # type: ignore[index]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.document, name)
+
+    def open_for_test(path: str, password: str | None = None) -> object:
+        document = TrackedDocument(real_open(path, password=password))
+        opened.append(document)
+        return document
+
+    monkeypatch.setattr(pdf_tools, "open_pdf", open_for_test)
+    pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+    assert all(document.closed for document in opened)  # type: ignore[attr-defined]
+
+    opened.clear()
+    token = CancelToken()
+    token.cancel()
+    with pytest.raises(JobCancelledError):
+        pdf_tools.compare_pdf_text_diff(
+            str(original), str(revised), cancel=token
+        )
+    assert all(document.closed for document in opened)  # type: ignore[attr-defined]
 
 
 def test_compare_keeps_pixmap_cache_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1038,4 +1187,3 @@ def test_compare_text_diff_cancel_mid_page(tmp_path, monkeypatch):
     assert checks["n"] >= 2
     assert _file_hash(a) == hash_a
     assert _file_hash(b) == hash_b
-
