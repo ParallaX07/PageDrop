@@ -30,8 +30,10 @@ from pagedrop.core.jobs import (
     OutputExistsError,
     SerializedJobRunner,
     SourceOverwriteError,
+    RuntimeCredentials,
     preflight_pdf_inputs,
 )
+from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.core.supported_formats import is_pdf_path, local_paths_from_mime
 from pagedrop.ui.dialogs import (
     confirm_overwrite,
@@ -114,7 +116,7 @@ class _ToolJobWorker(QRunnable):
                 f"Output already exists:\n{exc}",
                 "Output exists",
             )
-        except (JobError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
+        except (JobError, PdfLoadError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
             self.signals.failed.emit(str(exc), "Job failed")
         except Exception as exc:
             self.signals.failed.emit(f"Unexpected error:\n{exc}", "Job failed")
@@ -361,7 +363,8 @@ def run_tool_job(
     options: dict | None = None,
     existing_paths: list[Path] | None = None,
     progress_message: str = "Working…",
-    success_toast: str | None = None,
+    success_toast: str | Callable[[str], str] | None = None,
+    credentials: RuntimeCredentials | None = None,
     secrets: dict[str, str] | None = None,
 ) -> None:
     """Password preflight → overwrite confirm → job runner (shared with Tools hub).
@@ -371,6 +374,9 @@ def run_tool_job(
 
     *host* must provide ``begin_job``, ``end_job``, ``job_runner``, ``set_job_progress``,
     and ``WINDOW_TITLE`` (same shape as ``ToolsWindow`` / ``ToolShellWindow``).
+
+    *credentials* reuses a tab's in-memory PDF passwords so a completed compare
+    does not prompt again for the same sources.
 
     *secrets* are runtime-only (e.g. encrypt passwords) — never written to
     ``JobSpec``, settings, or logs.
@@ -415,7 +421,7 @@ def run_tool_job(
             toast_kind="error",
         )
         return
-    except (JobError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
+    except (JobError, PdfLoadError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
         end(error=str(exc), toast="Job failed", toast_kind="error")
         return
     except Exception as exc:
@@ -462,7 +468,11 @@ def run_tool_job(
         if not _still_running():
             return
         name = Path(result_path).name
-        message = success_toast or f"Saved {name}"
+        message = (
+            success_toast(result_path)
+            if callable(success_toast)
+            else success_toast or f"Saved {name}"
+        )
         end(
             status=message,
             toast="Completed",
