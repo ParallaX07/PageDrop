@@ -580,9 +580,9 @@ def test_toolbar_secondary_is_ghost_not_primary():
         assert "transparent" not in primary
 
 
-def test_paint_helpers_pair_with_light_stylesheet(isolated_settings):
+def test_paint_helpers_pair_with_light_stylesheet(isolated_settings, qapp):
     """R1: border/shadow paint helpers share light tokens with app_stylesheet."""
-    from pagedrop.ui.accessibility import apply_app_stylesheet, refresh_themed_widgets
+    from pagedrop.ui.accessibility import apply_app_stylesheet
     from pagedrop.ui.settings import set_light_theme
     from pagedrop.ui.theme import (
         BORDER_HOVER,
@@ -600,7 +600,7 @@ def test_paint_helpers_pair_with_light_stylesheet(isolated_settings):
     assert BORDER_HOVER in dark_sheet
 
     set_light_theme(True)
-    refresh_themed_widgets()
+    apply_app_stylesheet(qapp)
     light_border = border_hover_qcolor()
     assert light_border.name().upper() == BORDER_HOVER_LIGHT.upper()
     light_shadow = shadow_qcolor(alpha=72)
@@ -608,7 +608,7 @@ def test_paint_helpers_pair_with_light_stylesheet(isolated_settings):
     assert light_shadow.alpha() == SHADOW_ALPHA_CAP_LIGHT
 
     set_light_theme(False)
-    apply_app_stylesheet()
+    apply_app_stylesheet(qapp)
     dark_border = border_hover_qcolor()
     assert dark_border.name().upper() == BORDER_HOVER.upper()
     dark_shadow = shadow_qcolor(alpha=72)
