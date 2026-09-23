@@ -11,7 +11,9 @@ After the first test run (or `uv run python tests/fixtures/generate_fixtures.py`
 tests/fixtures/generated/
 ├── one_page.pdf
 ├── five_page.pdf
-└── empty.pdf
+├── empty.pdf
+├── compare_original.pdf
+└── compare_revised.pdf
 ```
 
 The `generated/` directory is gitignored. Delete it anytime; tests will recreate

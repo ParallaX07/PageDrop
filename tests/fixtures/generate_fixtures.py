@@ -6,7 +6,15 @@ from pathlib import Path
 
 import fitz
 
-FIXTURE_NAMES = ("one_page", "five_page", "empty", "corrupt", "garbage")
+FIXTURE_NAMES = (
+    "one_page",
+    "five_page",
+    "empty",
+    "corrupt",
+    "garbage",
+    "compare_original",
+    "compare_revised",
+)
 
 # fitz refuses to save zero-page docs; a minimal catalog is enough for PdfEmptyError.
 _EMPTY_PDF = (
@@ -59,6 +67,71 @@ def generate_n_page(path: Path, page_count: int) -> None:
     _write_blank_pages(path, page_count)
 
 
+def generate_compare_pair(directory: Path) -> tuple[Path, Path]:
+    """Write a reusable, fitz-only pair covering the comparison report matrix."""
+    directory.mkdir(parents=True, exist_ok=True)
+    original = directory / "compare_original.pdf"
+    revised = directory / "compare_revised.pdf"
+    _write_compare_pdf(original, revised=False)
+    _write_compare_pdf(revised, revised=True)
+    return original, revised
+
+
+def _write_compare_pdf(path: Path, *, revised: bool) -> None:
+    document = fitz.open()
+    try:
+        long_text = (
+            "after <tag> & naïve 世界 "
+            + " ".join(f"new{index}" for index in range(600))
+            if revised
+            else "before <tag> & café Ω "
+            + " ".join(f"old{index}" for index in range(600))
+        )
+        if revised:
+            pages = [
+                ((280, 180), "Shared replace-after added-only café 世界", 90, None),
+                ((360, 200), "Unchanged page", 0, (12, 10, 320, 180)),
+                ((240, 180), "keep", 0, None),
+                ((240, 180), "keep added-only", 0, None),
+                ((220, 160), None, 0, None),
+                ((180, 120), None, 0, None),
+                ((300, 220), long_text, 0, None),
+                ((260, 160), "extra revised page", 0, None),
+            ]
+        else:
+            pages = [
+                ((280, 180), "Shared replace-before remove-only café Ω", 90, None),
+                ((360, 200), "Unchanged page", 0, (12, 10, 320, 180)),
+                ((240, 180), "keep remove-only", 0, None),
+                ((240, 180), "keep", 0, None),
+                ((220, 160), None, 0, None),
+                ((180, 120), None, 0, None),
+                ((300, 220), long_text, 0, None),
+            ]
+        for (width, height), text, rotation, crop in pages:
+            page = document.new_page(width=width, height=height)
+            if text:
+                if len(text) > 200:
+                    words = text.split()
+                    for row in range(0, len(words), 18):
+                        page.insert_text(
+                            (12, 18 + (row // 18) * 5),
+                            " ".join(words[row : row + 18]),
+                            fontsize=4,
+                        )
+                else:
+                    page.insert_text((12, 36), text, fontsize=16)
+            if text is None and page.number == 4:
+                page.draw_rect(fitz.Rect(24, 24, 120, 96), fill=(0.25, 0.45, 0.8), color=None)
+            if crop:
+                page.set_cropbox(fitz.Rect(*crop))
+            if rotation:
+                page.set_rotation(rotation)
+        document.save(str(path))
+    finally:
+        document.close()
+
+
 def ensure_fixtures(directory: Path) -> None:
     """Create all standard fixtures if missing."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -73,6 +146,11 @@ def ensure_fixtures(directory: Path) -> None:
         target = directory / f"{name}.pdf"
         if not target.exists():
             generator(target)
+    if not all(
+        (directory / f"compare_{side}.pdf").exists()
+        for side in ("original", "revised")
+    ):
+        generate_compare_pair(directory)
 
 
 def fixture_path(directory: Path, name: str) -> Path:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +11,7 @@ import fitz
 
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.paths import reject_source_overwrite
-from pagedrop.core.pdf_loader import open_pdf
+from pagedrop.core.pdf_loader import PdfLoadError, PdfNotFoundError, open_pdf
 from pagedrop.core.pdf_service import FITZ_LOCK, attachments_for_path, extract_attachment
 
 
@@ -770,6 +771,46 @@ CompareChangeKind = Literal["deleted", "added", "modified"]
 
 
 @dataclass(frozen=True)
+class SourceFingerprint:
+    """Stable identity and content metadata for a PDF source."""
+
+    path: str
+    size: int
+    mtime_ns: int
+    sha256: str
+
+
+class CompareSourceChangedError(PdfLoadError):
+    """Raised when a comparison source changes while it is being read."""
+
+
+def source_fingerprint(
+    path: str | Path, *, chunk_size: int = 1024 * 1024
+) -> SourceFingerprint:
+    """Return resolved path, stat metadata, and a streaming SHA-256 digest."""
+    source = Path(path).resolve()
+    try:
+        stat = source.stat()
+    except FileNotFoundError as exc:
+        raise PdfNotFoundError(f"PDF not found: {path}") from exc
+    except OSError as exc:
+        raise PdfLoadError(f"Could not access PDF: {path}") from exc
+    digest = hashlib.sha256()
+    try:
+        with source.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(chunk_size), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise PdfLoadError(f"Could not access PDF: {path}") from exc
+    return SourceFingerprint(
+        path=str(source),
+        size=stat.st_size,
+        mtime_ns=stat.st_mtime_ns,
+        sha256=digest.hexdigest(),
+    )
+
+
+@dataclass(frozen=True)
 class CompareChange:
     kind: CompareChangeKind
     page_a: int | None
@@ -777,6 +818,8 @@ class CompareChange:
     text: str
     rects_a: tuple[tuple[float, float, float, float], ...] = ()
     rects_b: tuple[tuple[float, float, float, float], ...] = ()
+    before_text: str | None = None
+    after_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -784,6 +827,10 @@ class CompareReport:
     changes: tuple[CompareChange, ...]
     page_count_a: int
     page_count_b: int
+    source_fingerprint_a: SourceFingerprint | None = None
+    source_fingerprint_b: SourceFingerprint | None = None
+    textless_pages_a: tuple[int, ...] = ()
+    textless_pages_b: tuple[int, ...] = ()
 
     @property
     def deleted_count(self) -> int:
@@ -796,6 +843,15 @@ class CompareReport:
     @property
     def modified_count(self) -> int:
         return sum(1 for c in self.changes if c.kind == "modified")
+
+    @property
+    def changed_page_pair_count(self) -> int:
+        return len(
+            {
+                c.page_a if c.page_a is not None else c.page_b
+                for c in self.changes
+            }
+        )
 
 
 def _word_items(page: fitz.Page) -> list[tuple[str, tuple[float, float, float, float]]]:
@@ -858,6 +914,7 @@ def _page_word_diff(
                     page_b=page_b,
                     text=text,
                     rects_a=rects,
+                    before_text=text,
                 )
             )
         elif tag == "insert":
@@ -871,6 +928,7 @@ def _page_word_diff(
                     page_b=page_b,
                     text=text,
                     rects_b=rects,
+                    after_text=text,
                 )
             )
         else:  # replace
@@ -887,9 +945,94 @@ def _page_word_diff(
                     text=label,
                     rects_a=_merge_word_rects([w[1] for w in chunk_a]),
                     rects_b=_merge_word_rects([w[1] for w in chunk_b]),
+                    before_text=text_a,
+                    after_text=text_b,
                 )
             )
     return changes
+
+
+def _compare_documents(
+    a: fitz.Document,
+    b: fitz.Document,
+    *,
+    cancel: CancelToken | None = None,
+    source_fingerprint_a: SourceFingerprint | None = None,
+    source_fingerprint_b: SourceFingerprint | None = None,
+) -> CompareReport:
+    """Compare two already-open documents without taking ownership of them."""
+    changes: list[CompareChange] = []
+    textless_a: list[int] = []
+    textless_b: list[int] = []
+    shared = min(len(a), len(b))
+    for pno in range(shared):
+        _check_cancel(cancel)
+        words_a = _word_items(a[pno])
+        words_b = _word_items(b[pno])
+        if not words_a:
+            textless_a.append(pno)
+        if not words_b:
+            textless_b.append(pno)
+        changes.extend(
+            _page_word_diff(words_a, words_b, page_a=pno, page_b=pno)
+        )
+    for pno in range(shared, len(a)):
+        _check_cancel(cancel)
+        words = _word_items(a[pno])
+        if not words:
+            textless_a.append(pno)
+        text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
+        changes.append(
+            CompareChange(
+                kind="deleted",
+                page_a=pno,
+                page_b=None,
+                text=text,
+                before_text=" ".join(w[0] for w in words),
+                rects_a=_merge_word_rects([w[1] for w in words])
+                or (
+                    (
+                        0.0,
+                        0.0,
+                        float(a[pno].rect.width),
+                        float(a[pno].rect.height),
+                    ),
+                ),
+            )
+        )
+    for pno in range(shared, len(b)):
+        _check_cancel(cancel)
+        words = _word_items(b[pno])
+        if not words:
+            textless_b.append(pno)
+        text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
+        changes.append(
+            CompareChange(
+                kind="added",
+                page_a=None,
+                page_b=pno,
+                text=text,
+                after_text=" ".join(w[0] for w in words),
+                rects_b=_merge_word_rects([w[1] for w in words])
+                or (
+                    (
+                        0.0,
+                        0.0,
+                        float(b[pno].rect.width),
+                        float(b[pno].rect.height),
+                    ),
+                ),
+            )
+        )
+    return CompareReport(
+        changes=tuple(changes),
+        page_count_a=len(a),
+        page_count_b=len(b),
+        source_fingerprint_a=source_fingerprint_a,
+        source_fingerprint_b=source_fingerprint_b,
+        textless_pages_a=tuple(textless_a),
+        textless_pages_b=tuple(textless_b),
+    )
 
 
 def compare_pdf_text_diff(
@@ -906,72 +1049,42 @@ def compare_pdf_text_diff(
     as wholesale deleted (A only) or added (B only) changes.
     Holds ``FITZ_LOCK`` for open/work/close (Compare GUI text-diff path).
     """
+    fingerprint_a = source_fingerprint(pdf_a)
+    fingerprint_b = source_fingerprint(pdf_b)
     with FITZ_LOCK:
         a = open_pdf(pdf_a, password=password_a)
-        b = open_pdf(pdf_b, password=password_b)
         try:
-            changes: list[CompareChange] = []
-            shared = min(len(a), len(b))
-            for pno in range(shared):
-                _check_cancel(cancel)
-                changes.extend(
-                    _page_word_diff(
-                        _word_items(a[pno]),
-                        _word_items(b[pno]),
-                        page_a=pno,
-                        page_b=pno,
-                    )
-                )
-            for pno in range(shared, len(a)):
-                _check_cancel(cancel)
-                words = _word_items(a[pno])
-                text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
-                changes.append(
-                    CompareChange(
-                        kind="deleted",
-                        page_a=pno,
-                        page_b=None,
-                        text=text,
-                        rects_a=_merge_word_rects([w[1] for w in words])
-                        or (
-                            (
-                                0.0,
-                                0.0,
-                                float(a[pno].rect.width),
-                                float(a[pno].rect.height),
-                            ),
-                        ),
-                    )
-                )
-            for pno in range(shared, len(b)):
-                _check_cancel(cancel)
-                words = _word_items(b[pno])
-                text = " ".join(w[0] for w in words) or f"(page {pno + 1})"
-                changes.append(
-                    CompareChange(
-                        kind="added",
-                        page_a=None,
-                        page_b=pno,
-                        text=text,
-                        rects_b=_merge_word_rects([w[1] for w in words])
-                        or (
-                            (
-                                0.0,
-                                0.0,
-                                float(b[pno].rect.width),
-                                float(b[pno].rect.height),
-                            ),
-                        ),
-                    )
-                )
-            return CompareReport(
-                changes=tuple(changes),
-                page_count_a=len(a),
-                page_count_b=len(b),
+            b = open_pdf(pdf_b, password=password_b)
+        except Exception:
+            try:
+                a.close()
+            finally:
+                raise
+        try:
+            report = _compare_documents(
+                a,
+                b,
+                cancel=cancel,
+                source_fingerprint_a=fingerprint_a,
+                source_fingerprint_b=fingerprint_b,
             )
         finally:
-            a.close()
-            b.close()
+            try:
+                b.close()
+            finally:
+                a.close()
+
+    current_a = source_fingerprint(pdf_a)
+    current_b = source_fingerprint(pdf_b)
+    if current_a != fingerprint_a:
+        raise CompareSourceChangedError(
+            f"Comparison source changed while it was being read: {pdf_a}"
+        )
+    if current_b != fingerprint_b:
+        raise CompareSourceChangedError(
+            f"Comparison source changed while it was being read: {pdf_b}"
+        )
+    return report
 
 
 def compare_pdfs_heatmap(
@@ -1120,4 +1233,3 @@ def compare_pdfs_heatmap(
         a.close()
         b.close()
         out.close()
-

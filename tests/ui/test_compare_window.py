@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import fitz
@@ -107,6 +108,89 @@ def test_compare_window_lists_deleted_text(qtbot, tmp_path: Path):
     window.close()
 
 
+def test_compare_viewer_uses_replacement_before_after_and_red_green(qtbot):
+    from pagedrop.core.pdf_tools import CompareChange, CompareReport
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    change = CompareChange(
+        kind="modified",
+        page_a=0,
+        page_b=0,
+        text="old → new",
+        before_text="old complete value",
+        after_text="new complete value",
+        rects_a=((10.0, 20.0, 30.0, 40.0),),
+        rects_b=((12.0, 22.0, 32.0, 42.0),),
+    )
+    window._report = CompareReport(changes=(change,), page_count_a=1, page_count_b=1)
+    window._populate_changes()
+
+    label = window._change_list.item(0).text()
+    assert "1. Replaced" in label
+    assert "Original p.1 / Revised p.1" in label
+    assert "Before: old complete value" in label
+    assert "After: new complete value" in label
+    assert (
+        "Text comparison, matched by page number. Image, formatting, and moved-content differences are not classified."
+        == window._limitation.text()
+    )
+    original_color = window._highlights_for_page("a", 0)[0][1]
+    revised_color = window._highlights_for_page("b", 0)[0][1]
+    assert original_color.red() > original_color.green()
+    assert revised_color.green() > revised_color.red()
+    window.close()
+
+
+def test_compare_input_edit_clears_report_and_result_actions(qtbot):
+    from pagedrop.core.pdf_tools import CompareReport
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._path_a = "original.pdf"
+    window._path_b = "revised.pdf"
+    window._report = CompareReport(changes=(), page_count_a=1, page_count_b=1)
+    window._toolbar.setVisible(True)
+    window._result_bar.show_for("result.pdf")
+
+    window._row_a.set_text("edited.pdf")
+
+    assert window._report is None
+    assert not window._toolbar.isVisible()
+    assert not window._result_bar.isVisible()
+    assert window._summary.text() == "Removed 0 · Added 0 · Replaced 0"
+    window.close()
+
+
+def test_compare_viewer_shows_textless_page_notices(qtbot, monkeypatch):
+    import pagedrop.ui.compare_window as compare_module
+    from pagedrop.core.pdf_tools import CompareReport
+    from PyQt6.QtGui import QPixmap
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._path_a = "original.pdf"
+    window._path_b = "revised.pdf"
+    window._report = CompareReport(
+        changes=(),
+        page_count_a=1,
+        page_count_b=1,
+        textless_pages_a=(0,),
+        textless_pages_b=(0,),
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "_render_page_pixmap",
+        lambda *_args, **_kwargs: (QPixmap(40, 40), fitz.Rect(0, 0, 40, 40)),
+    )
+
+    window._render_pages()
+
+    assert window._pane_a._notice.text() == "No extractable text on this page"
+    assert window._pane_b._notice.text() == "No extractable text on this page"
+    window.close()
+
+
 def test_compare_render_failure_shows_status_and_toast(
     qtbot, tmp_path: Path, monkeypatch
 ):
@@ -145,50 +229,117 @@ def test_compare_render_failure_shows_status_and_toast(
     window.close()
 
 
-def test_compare_success_shows_diff_ratio(
+def test_compare_heatmap_uses_async_job_bridge(
     qtbot, tmp_path: Path, monkeypatch
 ):
-    """UI should read overall diff ratio sidecar and include it in status/toast."""
+    """The secondary heatmap action uses the shared asynchronous bridge."""
     import pagedrop.ui.compare_window as compare_module
-    from pagedrop.core.jobs import JobSpec
+    from pagedrop.core.pdf_tools import CompareReport, source_fingerprint
 
+    original = tmp_path / "a.pdf"
+    revised = tmp_path / "b.pdf"
+    _write_line_pdf(original, "old")
+    _write_line_pdf(revised, "new")
     out = tmp_path / "heat_compare.pdf"
-    ratio_text = "0.1234"
-    opened: list[str] = []
-
-    class FakeRunner:
-        def run(self, spec: JobSpec, **_kwargs):
-            out_path = Path(spec.output)
-            out_path.write_bytes(b"%PDF-1.4 fake")
-            out_path.with_suffix(".compare_ratio.txt").write_text(
-                ratio_text, encoding="utf-8"
-            )
-            return out_path
-
-    class FakeEditor:
-        def _open_single_pdf(self, path: str) -> None:
-            opened.append(path)
-
-    monkeypatch.setattr(compare_module, "ensure_organize_runner", lambda: FakeRunner())
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        compare_module,
+        "run_tool_job",
+        lambda _host, **kwargs: calls.append(kwargs),
+    )
     monkeypatch.setattr(
         compare_module.QFileDialog,
         "getSaveFileName",
         lambda *args, **kwargs: (str(out), "PDF files (*.pdf)"),
     )
 
-    window = CompareWindow(editor=FakeEditor())
+    window = CompareWindow()
     qtbot.addWidget(window)
     window.show()
-    window._path_a = str(tmp_path / "a.pdf")
-    window._path_b = str(tmp_path / "b.pdf")
+    window._path_a = str(original)
+    window._path_b = str(revised)
+    window._report = CompareReport(
+        changes=(),
+        page_count_a=1,
+        page_count_b=1,
+        source_fingerprint_a=source_fingerprint(original),
+        source_fingerprint_b=source_fingerprint(revised),
+    )
     window._export_heatmap()
 
-    status = window.statusBar().currentMessage()
-    assert "Overall diff" in status
-    assert f"{float(ratio_text):.4f}" in status
-    assert window._result_bar.isVisible()
-    assert window._result_bar._path == str(out)
-    assert opened == []  # success must not auto-open
+    assert calls == [
+        {
+            "job_type": "compare",
+            "inputs": [str(original), str(revised)],
+            "output": str(out),
+            "options": {
+                "source_fingerprint_a": asdict(window._report.source_fingerprint_a),
+                "source_fingerprint_b": asdict(window._report.source_fingerprint_b),
+            },
+            "progress_message": "Exporting visual heatmap…",
+            "success_toast": window._heatmap_success_message,
+            "credentials": window._credentials,
+        }
+    ]
+    window.close()
+
+
+def test_compare_export_defaults_and_job_spec(
+    qtbot, tmp_path: Path, monkeypatch
+):
+    import pagedrop.ui.compare_window as compare_module
+    from pagedrop.core.pdf_tools import CompareReport, source_fingerprint
+
+    original = tmp_path / "original.pdf"
+    revised = tmp_path / "revised.pdf"
+    _write_line_pdf(original, "old")
+    _write_line_pdf(revised, "new")
+    out = tmp_path / "original_compare_split.pdf"
+    calls: list[dict] = []
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._path_a = str(original)
+    window._path_b = str(revised)
+    window._report = CompareReport(
+        changes=(),
+        page_count_a=1,
+        page_count_b=1,
+        source_fingerprint_a=source_fingerprint(original),
+        source_fingerprint_b=source_fingerprint(revised),
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "prompt_compare_export_options",
+        lambda _parent: ("split", True, True),
+    )
+    monkeypatch.setattr(
+        compare_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(out), "PDF files (*.pdf)"),
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "run_tool_job",
+        lambda _host, **kwargs: calls.append(kwargs),
+    )
+
+    window._export_comparison()
+
+    assert calls[0]["job_type"] == "compare_report"
+    assert calls[0]["output"] == str(out)
+    assert calls[0]["options"]["layout"] == "split"
+    assert calls[0]["options"]["include_summary"] is True
+    assert calls[0]["options"]["include_revisions"] is True
+    assert set(calls[0]["options"]) == {
+        "layout",
+        "include_summary",
+        "include_revisions",
+        "source_fingerprint_a",
+        "source_fingerprint_b",
+    }
+    assert window._export_act.text() == "Export comparison…"
+    assert window._heatmap_act.text() == "Export visual heatmap…"
     window.close()
 
 
@@ -254,13 +405,17 @@ def test_request_close_while_comparing_explains_busy(qtbot, monkeypatch):
     assert toasts and toasts[-1] == ("Compare still running…", "info")
 
 
-def test_export_heatmap_ponytail_marker() -> None:
-    """O17-h: sync export freeze ceiling is named in source."""
-    import pagedrop.ui.compare_window as mod
+def test_compare_export_cancellation_waits_for_worker_cleanup(qtbot):
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    token = window.begin_job("Exporting comparison…")
 
-    text = Path(mod.__file__).read_text(encoding="utf-8")
-    idx = text.index("def _export_heatmap")
-    chunk = text[idx : idx + 1600]
-    assert "ponytail:" in chunk
-    assert "runner.run" in chunk or "processEvents" in chunk
-    assert "cancel" in chunk.lower()
+    assert window.request_close() is False
+    window._busy_overlay._cancel_btn.click()
+    assert token.is_cancelled()
+    assert window.is_job_running()
+
+    window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
+    assert not window.is_job_running()
+    assert window.request_close() is True
+    window.close()

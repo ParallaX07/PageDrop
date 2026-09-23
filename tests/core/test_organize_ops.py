@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from dataclasses import asdict
 from pathlib import Path
 import zipfile
 
@@ -13,10 +14,18 @@ from pagedrop.core.jobs import (
     CancelToken,
     JobCancelledError,
     JobSpec,
+    RuntimeCredentials,
     SerializedJobRunner,
 )
+from pagedrop.core import compare_report
+from pagedrop.core import organize_jobs
 from pagedrop.core.organize_jobs import MAX_ATTACHMENT_BYTES, register_organize_handlers
-from pagedrop.core.jobs.errors import JobError
+from pagedrop.core.jobs.errors import JobError, SourceOverwriteError
+from pagedrop.core.pdf_loader import (
+    PdfCorruptError,
+    PdfPasswordError,
+    PdfPasswordRequiredError,
+)
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -817,6 +826,374 @@ def test_compare_job_writes_overall_diff_ratio_sidecar(tmp_path: Path) -> None:
         temp.cleanup()
 
 
+def _compare_report_options(
+    original: Path,
+    revised: Path,
+    *,
+    layout: str = "split",
+    include_summary: bool = True,
+    include_revisions: bool = True,
+) -> dict[str, object]:
+    return {
+        "layout": layout,
+        "include_summary": include_summary,
+        "include_revisions": include_revisions,
+        "source_fingerprint_a": asdict(pdf_tools.source_fingerprint(original)),
+        "source_fingerprint_b": asdict(pdf_tools.source_fingerprint(revised)),
+    }
+
+
+def test_compare_report_job_layouts_sections_and_no_sidecar(tmp_path: Path) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old", "same"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new", "same"])
+    hashes = (_file_hash(original), _file_hash(revised))
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        for layout in ("split", "alternating"):
+            for include_summary in (False, True):
+                for include_revisions in (False, True):
+                    output = tmp_path / (
+                        f"report-{layout}-{int(include_summary)}-{int(include_revisions)}.pdf"
+                    )
+                    runner.run(
+                        JobSpec.create(
+                            "compare_report",
+                            inputs=[original, revised],
+                            output=output,
+                            options=_compare_report_options(
+                                original,
+                                revised,
+                                layout=layout,
+                                include_summary=include_summary,
+                                include_revisions=include_revisions,
+                            ),
+                        )
+                    )
+                    document = fitz.open(str(output))
+                    try:
+                        titles = [title for _level, title, _page in document.get_toc()]
+                        assert titles[0] == (
+                            "Original 1 / Revised 1" if layout == "split" else "Original 1"
+                        )
+                        assert ("Summary" in titles) is include_summary
+                        assert ("Revisions" in titles) is include_revisions
+                    finally:
+                        document.close()
+                    assert not output.with_suffix(".compare_ratio.txt").exists()
+        assert (_file_hash(original), _file_hash(revised)) == hashes
+    finally:
+        temp.cleanup()
+
+
+def test_compare_report_job_rejects_stale_sources_and_preserves_output(
+    tmp_path: Path,
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    options = _compare_report_options(original, revised)
+    _make_text_pdf(original, page_texts=["changed"])
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"keep me")
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(pdf_tools.CompareSourceChangedError, match="compare again"):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[original, revised],
+                    output=output,
+                    options=options,
+                    overwrite=True,
+                )
+            )
+        assert output.read_bytes() == b"keep me"
+        assert not any(temp._dir.glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_compare_heatmap_job_rejects_stale_sources_when_fingerprints_supplied(
+    tmp_path: Path,
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    options = {
+        "source_fingerprint_a": asdict(pdf_tools.source_fingerprint(original)),
+        "source_fingerprint_b": asdict(pdf_tools.source_fingerprint(revised)),
+    }
+    _make_text_pdf(revised, page_texts=["changed"])
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"keep me")
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(pdf_tools.CompareSourceChangedError, match="compare again"):
+            runner.run(
+                JobSpec.create(
+                    "compare",
+                    inputs=[original, revised],
+                    output=output,
+                    options=options,
+                    overwrite=True,
+                )
+            )
+        assert output.read_bytes() == b"keep me"
+        assert not output.with_suffix(".compare_ratio.txt").exists()
+    finally:
+        temp.cleanup()
+
+
+def test_compare_report_job_rejects_bad_options_without_output(tmp_path: Path) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    options = _compare_report_options(original, revised)
+    options["layout"] = "diagonal"
+    output = tmp_path / "report.pdf"
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(JobError, match="layout"):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[original, revised],
+                    output=output,
+                    options=options,
+                )
+            )
+        assert not output.exists()
+    finally:
+        temp.cleanup()
+
+
+@pytest.mark.parametrize("source_name", ["original", "revised"])
+def test_compare_report_job_rejects_either_source_as_output(
+    tmp_path: Path, source_name: str
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    output = original if source_name == "original" else revised
+    source_hash = _file_hash(output)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(SourceOverwriteError):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[original, revised],
+                    output=output,
+                    options=_compare_report_options(original, revised),
+                    overwrite=True,
+                )
+            )
+        assert _file_hash(output) == source_hash
+    finally:
+        temp.cleanup()
+
+
+def test_compare_report_job_validates_staged_output_before_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"keep me")
+    monkeypatch.setattr(
+        organize_jobs,
+        "_validate_staged_compare_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            JobError("forced validation failure")
+        ),
+    )
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(JobError, match="forced validation"):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[original, revised],
+                    output=output,
+                    options=_compare_report_options(original, revised),
+                    overwrite=True,
+                )
+            )
+        assert output.read_bytes() == b"keep me"
+        assert not any(temp._dir.glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_compare_report_job_cancellation_cleans_staged_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old", "old2", "old3"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new", "new2", "new3"])
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"keep me")
+    token = CancelToken()
+    real_write_page = compare_report._write_split_page
+
+    def cancel_after_page(*args, **kwargs):
+        result = real_write_page(*args, **kwargs)
+        token.cancel()
+        return result
+
+    monkeypatch.setattr(compare_report, "_write_split_page", cancel_after_page)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[original, revised],
+                    output=output,
+                    options=_compare_report_options(original, revised),
+                    overwrite=True,
+                ),
+                cancel=token,
+            )
+        assert output.read_bytes() == b"keep me"
+        assert not any(temp._dir.glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_compare_report_job_keeps_passwords_runtime_only_and_preserves_failures(
+    tmp_path: Path,
+) -> None:
+    protected = tmp_path / "protected.pdf"
+    document = fitz.open()
+    try:
+        document.new_page(width=200, height=200).insert_text((50, 80), "secret")
+        document.save(
+            str(protected),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="correct",
+            owner_pw="owner",
+        )
+    finally:
+        document.close()
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["secret"])
+    output = tmp_path / "existing.pdf"
+    output.write_bytes(b"keep me")
+    options = _compare_report_options(protected, revised)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        good_credentials = RuntimeCredentials()
+        good_credentials.set(protected, "correct")
+        good_output = tmp_path / "protected-report.pdf"
+        good_spec = JobSpec.create(
+            "compare_report",
+            inputs=[protected, revised],
+            output=good_output,
+            options=options,
+        )
+        runner.run(good_spec, credentials=good_credentials)
+        assert good_output.exists()
+        assert "correct" not in repr(good_spec.to_persistable_dict())
+
+        bad_credentials = RuntimeCredentials()
+        bad_credentials.set(protected, "wrong")
+        with pytest.raises(PdfPasswordError):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[protected, revised],
+                    output=output,
+                    options=options,
+                    overwrite=True,
+                ),
+                credentials=bad_credentials,
+            )
+        assert output.read_bytes() == b"keep me"
+
+        corrupt = tmp_path / "corrupt.pdf"
+        corrupt.write_bytes(b"not a PDF")
+        with pytest.raises(PdfCorruptError):
+            runner.run(
+                JobSpec.create(
+                    "compare_report",
+                    inputs=[corrupt, revised],
+                    output=output,
+                    options=_compare_report_options(corrupt, revised),
+                    overwrite=True,
+                )
+            )
+        assert output.read_bytes() == b"keep me"
+        assert not any(temp._dir.glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_compare_report_job_releases_source_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
+    real_open = pdf_tools.open_pdf
+    opened: list[object] = []
+
+    class TrackedDocument:
+        def __init__(self, document: object) -> None:
+            self.document = document
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.document.close()  # type: ignore[attr-defined]
+
+        def __len__(self) -> int:
+            return len(self.document)  # type: ignore[arg-type]
+
+        def __getitem__(self, index: int) -> object:
+            return self.document[index]  # type: ignore[index]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.document, name)
+
+    def open_for_test(path: str, password: str | None = None) -> object:
+        document = TrackedDocument(real_open(path, password=password))
+        opened.append(document)
+        return document
+
+    monkeypatch.setattr(pdf_tools, "open_pdf", open_for_test)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        runner.run(
+            JobSpec.create(
+                "compare_report",
+                inputs=[original, revised],
+                output=tmp_path / "report.pdf",
+                options=_compare_report_options(original, revised),
+            )
+        )
+        source_documents = [
+            document
+            for document in opened
+            if getattr(document.document, "name", "") in {str(original), str(revised)}
+        ]
+        assert len(source_documents) == 2
+        assert all(document.closed for document in source_documents)
+    finally:
+        temp.cleanup()
+
+
 def test_compare_detects_thin_deleted_text_line(tmp_path: Path) -> None:
     """Regression: sparse 3×3 probes miss a single deleted text line on a letter page."""
     a = tmp_path / "full.pdf"
@@ -904,6 +1281,154 @@ def test_compare_text_diff_truncation_and_identical(tmp_path: Path) -> None:
     identical = pdf_tools.compare_pdf_text_diff(str(a), str(a))
     assert identical.changes == ()
     assert identical.deleted_count == 0
+    assert identical.changed_page_pair_count == 0
+
+
+def test_compare_text_diff_exposes_complete_change_text_and_metadata(
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original.pdf"
+    revised = tmp_path / "revised.pdf"
+    _make_text_pdf(
+        original,
+        page_texts=["old", "", "removed", ""],
+    )
+    _make_text_pdf(
+        revised,
+        page_texts=["new", "inserted", ""],
+    )
+
+    report = pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+
+    assert report.modified_count == 1
+    assert report.added_count == 1
+    assert report.deleted_count == 2
+    assert report.changed_page_pair_count == 4
+    assert report.textless_pages_a == (1, 3)
+    assert report.textless_pages_b == (2,)
+
+    modified, added, deleted, trailing = report.changes
+    assert (modified.before_text, modified.after_text, modified.text) == (
+        "old",
+        "new",
+        "old → new",
+    )
+    assert (added.before_text, added.after_text) == (None, "inserted")
+    assert (deleted.before_text, deleted.after_text) == ("removed", None)
+    assert (trailing.before_text, trailing.after_text, trailing.text) == (
+        "",
+        None,
+        "(page 4)",
+    )
+    assert report.source_fingerprint_a == pdf_tools.source_fingerprint(original)
+    assert report.source_fingerprint_b == pdf_tools.source_fingerprint(revised)
+
+
+def test_compare_text_diff_rejects_source_fingerprint_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["A"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["B"])
+    real_fingerprint = pdf_tools.source_fingerprint
+    fingerprints = [
+        real_fingerprint(original),
+        real_fingerprint(revised),
+        pdf_tools.SourceFingerprint(
+            path=str(original.resolve()),
+            size=1,
+            mtime_ns=1,
+            sha256="0" * 64,
+        ),
+        real_fingerprint(revised),
+    ]
+    monkeypatch.setattr(
+        pdf_tools,
+        "source_fingerprint",
+        lambda _path: fingerprints.pop(0),
+    )
+
+    with pytest.raises(pdf_tools.CompareSourceChangedError, match="changed"):
+        pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+
+
+def test_compare_text_diff_closes_original_when_revised_open_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["A"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["B"])
+    real_open = pdf_tools.open_pdf
+    opened: list[object] = []
+
+    class TrackedDocument:
+        def __init__(self, document: object) -> None:
+            self.document = document
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.document.close()  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.document, name)
+
+    def open_for_test(path: str, password: str | None = None) -> object:
+        if path == str(revised):
+            raise PdfPasswordRequiredError("password-protected")
+        document = TrackedDocument(real_open(path, password=password))
+        opened.append(document)
+        return document
+
+    monkeypatch.setattr(pdf_tools, "open_pdf", open_for_test)
+
+    with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
+        pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+
+    assert opened and all(document.closed for document in opened)  # type: ignore[attr-defined]
+
+
+def test_compare_text_diff_closes_documents_on_success_and_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["A"])
+    revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["B"])
+    real_open = pdf_tools.open_pdf
+    opened: list[object] = []
+
+    class TrackedDocument:
+        def __init__(self, document: object) -> None:
+            self.document = document
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.document.close()  # type: ignore[attr-defined]
+
+        def __len__(self) -> int:
+            return len(self.document)  # type: ignore[arg-type]
+
+        def __getitem__(self, index: int) -> object:
+            return self.document[index]  # type: ignore[index]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.document, name)
+
+    def open_for_test(path: str, password: str | None = None) -> object:
+        document = TrackedDocument(real_open(path, password=password))
+        opened.append(document)
+        return document
+
+    monkeypatch.setattr(pdf_tools, "open_pdf", open_for_test)
+    pdf_tools.compare_pdf_text_diff(str(original), str(revised))
+    assert all(document.closed for document in opened)  # type: ignore[attr-defined]
+
+    opened.clear()
+    token = CancelToken()
+    token.cancel()
+    with pytest.raises(JobCancelledError):
+        pdf_tools.compare_pdf_text_diff(
+            str(original), str(revised), cancel=token
+        )
+    assert all(document.closed for document in opened)  # type: ignore[attr-defined]
 
 
 def test_compare_keeps_pixmap_cache_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1038,4 +1563,3 @@ def test_compare_text_diff_cancel_mid_page(tmp_path, monkeypatch):
     assert checks["n"] >= 2
     assert _file_hash(a) == hash_a
     assert _file_hash(b) == hash_b
-
