@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from pagedrop.core import pdf_tools
+from pagedrop.core import compare_report
 from pagedrop.core.jobs.errors import JobError, OutputExistsError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 
@@ -234,6 +237,217 @@ def handle_compare(ctx: JobContext) -> Path:
     ctx.staging.promote(ratio_staged, ratio_dest)
     return ctx.staged_output
 
+
+_COMPARE_REPORT_OPTIONS = frozenset(
+    {
+        "layout",
+        "include_summary",
+        "include_revisions",
+        "source_fingerprint_a",
+        "source_fingerprint_b",
+    }
+)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _compare_report_fingerprint(value: object, label: str) -> pdf_tools.SourceFingerprint:
+    if not isinstance(value, Mapping) or set(value) != {
+        "path",
+        "size",
+        "mtime_ns",
+        "sha256",
+    }:
+        raise JobError(f"Malformed {label} source fingerprint")
+    path = value["path"]
+    size = value["size"]
+    mtime_ns = value["mtime_ns"]
+    sha256 = value["sha256"]
+    if (
+        not isinstance(path, str)
+        or not path
+        or type(size) is not int
+        or size < 0
+        or type(mtime_ns) is not int
+        or mtime_ns < 0
+        or not isinstance(sha256, str)
+        or _SHA256_RE.fullmatch(sha256) is None
+    ):
+        raise JobError(f"Malformed {label} source fingerprint")
+    return pdf_tools.SourceFingerprint(
+        path=path,
+        size=size,
+        mtime_ns=mtime_ns,
+        sha256=sha256,
+    )
+
+
+def _compare_report_options(ctx: JobContext) -> tuple[
+    compare_report.CompareLayout,
+    bool,
+    bool,
+    pdf_tools.SourceFingerprint,
+    pdf_tools.SourceFingerprint,
+]:
+    if len(ctx.spec.inputs) != 2:
+        raise JobError("Comparison report requires Original and Revised PDFs")
+    options = dict(ctx.spec.options)
+    if set(options) != _COMPARE_REPORT_OPTIONS:
+        raise JobError(
+            "Comparison report options must contain only layout, section flags, "
+            "and source fingerprints"
+        )
+    layout = options["layout"]
+    include_summary = options["include_summary"]
+    include_revisions = options["include_revisions"]
+    if not isinstance(layout, str) or layout not in {"split", "alternating"}:
+        raise JobError("Comparison report layout must be split or alternating")
+    if type(include_summary) is not bool or type(include_revisions) is not bool:
+        raise JobError("Comparison report section flags must be boolean")
+    return (
+        layout,
+        include_summary,
+        include_revisions,
+        _compare_report_fingerprint(options["source_fingerprint_a"], "Original"),
+        _compare_report_fingerprint(options["source_fingerprint_b"], "Revised"),
+    )
+
+
+def _check_compare_report_sources(
+    paths: tuple[str, str],
+    expected: tuple[pdf_tools.SourceFingerprint, pdf_tools.SourceFingerprint],
+) -> None:
+    for path, fingerprint in zip(paths, expected, strict=True):
+        current = pdf_tools.source_fingerprint(path)
+        if current != fingerprint:
+            raise pdf_tools.CompareSourceChangedError(
+                f"Comparison source changed; compare again: {path}"
+            )
+
+
+def _validate_staged_compare_report(
+    path: Path,
+    *,
+    layout: compare_report.CompareLayout,
+    include_summary: bool,
+    include_revisions: bool,
+    comparison_positions: int,
+) -> None:
+    try:
+        document = pdf_tools.open_pdf(str(path))
+    except Exception as exc:
+        if isinstance(exc, JobError):
+            raise
+        raise JobError(f"Comparison report validation failed: {exc}") from exc
+    try:
+        top_level = [
+            title for level, title, _page in document.get_toc() if level == 1
+        ]
+        comparison_bookmarks = comparison_positions * (1 if layout == "split" else 2)
+        if (
+            len(document) < comparison_bookmarks
+            or len(top_level) < comparison_bookmarks
+        ):
+            raise JobError(
+                "Comparison report validation failed: missing comparison pages"
+            )
+        if layout == "split":
+            expected_first = "Original 1 / Revised 1"
+        else:
+            expected_first = "Original 1"
+        if top_level[0] != expected_first:
+            raise JobError(
+                "Comparison report validation failed: missing comparison bookmark"
+            )
+        required_sections = []
+        if include_summary:
+            required_sections.append("Summary")
+        if include_revisions:
+            required_sections.append("Revisions")
+        missing = [title for title in required_sections if title not in top_level]
+        if missing:
+            raise JobError(
+                "Comparison report validation failed: missing "
+                + ", ".join(missing)
+                + " bookmark"
+            )
+    finally:
+        document.close()
+
+
+def handle_compare_report(ctx: JobContext) -> Path:
+    """Compose one staged comparison report and validate it before promotion."""
+    layout, include_summary, include_revisions, fingerprint_a, fingerprint_b = (
+        _compare_report_options(ctx)
+    )
+    paths = (ctx.spec.inputs[0], ctx.spec.inputs[1])
+    expected = (fingerprint_a, fingerprint_b)
+    ctx.progress(0.05, "Validating comparison sources…")
+    _check_compare_report_sources(paths, expected)
+    ctx.cancel.check()
+
+    ctx.progress(0.10, "Comparing pages…")
+    original = revised = None
+    try:
+        original = pdf_tools.open_pdf(paths[0], password=ctx.password(paths[0]))
+        try:
+            revised = pdf_tools.open_pdf(paths[1], password=ctx.password(paths[1]))
+        except Exception:
+            original.close()
+            original = None
+            raise
+        report = pdf_tools._compare_documents(  # type: ignore[attr-defined]
+            original,
+            revised,
+            cancel=ctx.cancel,
+            source_fingerprint_a=fingerprint_a,
+            source_fingerprint_b=fingerprint_b,
+        )
+        _check_compare_report_sources(paths, expected)
+        ctx.progress(0.30, "Comparison complete…")
+
+        def report_progress(fraction: float, message: str) -> None:
+            if message == "Appended Summary":
+                ctx.progress(0.76, "Appending Summary…")
+            elif message == "Appended Revisions":
+                ctx.progress(0.81, "Appending Revisions…")
+            elif message == "Comparison report composed":
+                ctx.progress(0.85, "Report composed…")
+            else:
+                ctx.progress(0.30 + min(1.0, fraction) * 0.50, "Composing report…")
+
+        compare_report.write_compare_report(
+            original,
+            revised,
+            report,
+            Path(paths[0]).name,
+            Path(paths[1]).name,
+            ctx.staged_output,
+            layout=layout,
+            include_summary=include_summary,
+            include_revisions=include_revisions,
+            cancel=ctx.cancel,
+            progress=report_progress,
+        )
+        _check_compare_report_sources(paths, expected)
+    finally:
+        if revised is not None:
+            revised.close()
+        if original is not None:
+            original.close()
+
+    ctx.cancel.check()
+    ctx.progress(0.90, "Validating report…")
+    _validate_staged_compare_report(
+        ctx.staged_output,
+        layout=layout,
+        include_summary=include_summary,
+        include_revisions=include_revisions,
+        comparison_positions=max(report.page_count_a, report.page_count_b),
+    )
+    ctx.cancel.check()
+    ctx.progress(0.93, "Report validated…")
+    return ctx.staged_output
+
 ORGANIZE_HANDLERS: dict[str, object] = {
     "split": handle_split_ranges,
     "alternate": handle_alternate,
@@ -252,6 +466,7 @@ ORGANIZE_HANDLERS: dict[str, object] = {
     "attachment_extract": handle_attachment_extract,
     "zip": handle_zip,
     "compare": handle_compare,
+    "compare_report": handle_compare_report,
 }
 
 def register_organize_handlers(runner: SerializedJobRunner) -> None:

@@ -69,6 +69,53 @@ def test_ensure_no_fitz_document_allows_paths_and_scalars() -> None:
     assert not is_fitz_document("/tmp/x.pdf")
 
 
+def test_compare_report_job_is_registered_under_fitz_lock(tmp_path: Path, monkeypatch) -> None:
+    from dataclasses import asdict
+
+    from pagedrop.core import pdf_tools
+    from pagedrop.core.jobs import JobSpec, SerializedJobRunner
+    from pagedrop.core.organize_jobs import register_organize_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    original = tmp_path / "original.pdf"
+    revised = tmp_path / "revised.pdf"
+    _write_pdf(original)
+    _write_pdf(revised)
+    fingerprints = {
+        "source_fingerprint_a": asdict(pdf_tools.source_fingerprint(original)),
+        "source_fingerprint_b": asdict(pdf_tools.source_fingerprint(revised)),
+    }
+    lock_owned: list[bool] = []
+    real_compare = pdf_tools._compare_documents
+
+    def tracking_compare(*args, **kwargs):
+        lock_owned.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(pdf_tools, "_compare_documents", tracking_compare)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_organize_handlers(runner)
+        assert runner._handlers["compare_report"].holds_fitz is True
+        runner.run(
+            JobSpec.create(
+                "compare_report",
+                inputs=[original, revised],
+                output=tmp_path / "report.pdf",
+                options={
+                    "layout": "split",
+                    "include_summary": False,
+                    "include_revisions": False,
+                    **fingerprints,
+                },
+            )
+        )
+        assert lock_owned == [True]
+    finally:
+        temp.cleanup()
+
+
 def _write_pdf(path: Path, pages: int = 1) -> None:
     doc = fitz.open()
     try:
