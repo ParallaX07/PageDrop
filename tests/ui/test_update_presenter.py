@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from PyQt6.QtCore import QObject
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QTextBrowser, QWidget
 
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
 from pagedrop.ui.update_presenter import UpdatePresenter
@@ -72,23 +72,40 @@ def test_active_state_feedback(presenter, state, expected):
     assert expected in presenter.dialog.message.text()
 
 
-def test_available_offer_is_reopened_without_network(presenter):
+def test_available_offer_displays_release_notes(presenter):
     c = presenter._coordinator
     c._release = ReleaseInfo("1.2.3", "v1.2.3", "PageDrop-1.2.3-Setup.exe",
                              "https://github.com/ParallaX07/PageDrop/releases/download/v1.2.3/PageDrop-1.2.3-Setup.exe",
                              1, "<b>plain notes</b>", "a" * 64)
     c._set_state(UpdateState.AVAILABLE)
-    presenter.check_manually(presenter._manager.primary)
+    presenter._show_offer(presenter._manager.primary)
     assert "Download update" in labels(presenter)
-    assert c._worker is None
-    assert presenter.dialog.notes.toPlainText() == "<b>plain notes</b>"
+    assert presenter.dialog.notes.toPlainText() == "plain notes"
+
+
+def test_offer_renders_markdown_in_a_roomy_release_notes_browser(presenter):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1,
+                             "# What's changed\n\n* **Polished** [release notes](https://example.com)", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._show_offer(presenter._manager.primary)
+    dialog = presenter.dialog
+
+    assert isinstance(dialog.notes, QTextBrowser)
+    assert dialog.minimumSize().width() >= 640
+    assert dialog.minimumSize().height() >= 480
+    assert dialog.notes.maximumHeight() > 160
+    assert dialog.layout().stretch(dialog.layout().indexOf(dialog.notes)) == 1
+    html = dialog.notes.document().toHtml()
+    assert "<h1" in html
+    assert 'href="https://example.com"' in html
 
 
 def test_offer_actions_are_centered_and_fit(presenter, qtbot):
     c = presenter._coordinator
     c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
     c._set_state(UpdateState.AVAILABLE)
-    presenter.check_manually(presenter._manager.primary)
+    presenter._show_offer(presenter._manager.primary)
     dialog = presenter.dialog
     dialog.show()
     qtbot.waitUntil(lambda: dialog.buttons.width() > 0)
@@ -97,6 +114,21 @@ def test_offer_actions_are_centered_and_fit(presenter, qtbot):
     right = dialog.buttons.width() - actions[-1].geometry().right() - 1
     assert abs(left - right) <= 1
     assert dialog.minimumWidth() >= dialog.minimumSizeHint().width()
+
+
+def test_manual_check_refreshes_an_available_release(presenter, qtbot):
+    c = presenter._coordinator
+    stale = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "Stale notes", "a" * 64)
+    refreshed = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "# Current notes", "a" * 64)
+    c._release = stale
+    c._set_state(UpdateState.AVAILABLE)
+    c._check = lambda *_: refreshed
+
+    with qtbot.waitSignal(c.check_succeeded):
+        presenter.check_manually(presenter._manager.primary)
+
+    assert c.release == refreshed
+    assert presenter.dialog.notes.toPlainText() == "Current notes"
 
 
 def test_download_progress_keeps_cancel_button_and_cancellation_state(presenter):
@@ -170,7 +202,7 @@ def test_storage_failure_is_visible_and_leaves_offer(presenter, monkeypatch):
     c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
     c._set_state(UpdateState.AVAILABLE)
     monkeypatch.setattr(module, "UpdateStorage", lambda: (_ for _ in ()).throw(PermissionError("secret")))
-    presenter.check_manually(presenter._manager.primary)
+    presenter._show_offer(presenter._manager.primary)
     next(b for b in presenter.dialog.buttons.buttons() if b.text() == "Download update").click()
     assert c.state is UpdateState.AVAILABLE
     assert "disk space" in presenter.dialog.message.text()

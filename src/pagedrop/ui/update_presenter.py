@@ -11,8 +11,8 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QLabel,
-    QPlainTextEdit,
     QProgressBar,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -33,19 +33,19 @@ class UpdateDialog(QDialog):
         self._manager = manager
         self.setWindowTitle("PageDrop updates")
         self.setObjectName("UpdateDialog")
-        self.setMinimumWidth(460)
+        self.setMinimumSize(640, 480)
         layout = QVBoxLayout(self)
         self.message = QLabel()
         self.message.setObjectName("UpdateMessage")
         self.message.setWordWrap(True)
         self.message.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.message)
-        self.notes = QPlainTextEdit()
+        self.notes = QTextBrowser()
         self.notes.setObjectName("UpdateReleaseNotes")
         self.notes.setReadOnly(True)
         self.notes.setAccessibleName("Release notes")
-        self.notes.setMaximumHeight(160)
-        layout.addWidget(self.notes)
+        self.notes.setOpenExternalLinks(True)
+        layout.addWidget(self.notes, 1)
         self.progress = QProgressBar()
         self.progress.setObjectName("UpdateDownloadProgress")
         self.progress.setAccessibleName("Update download progress")
@@ -58,7 +58,7 @@ class UpdateDialog(QDialog):
     def show_message(self, message: str, *, notes: str = "") -> None:
         self._cancelling_download = False
         self.message.setText(message)
-        self.notes.setPlainText(notes)
+        self.notes.setMarkdown(notes)
         self.notes.setVisible(bool(notes))
         self.progress.hide()
         self._clear_buttons()
@@ -181,7 +181,11 @@ class UpdatePresenter(QObject):
             self._show_ready(parent)
             return
         if self._coordinator.state is UpdateState.AVAILABLE:
-            self._show_offer(parent)
+            if self._coordinator.request_check(manual=True):
+                self._manual = True
+                self._show_message(parent, "Checking for updates…")
+            else:
+                self._show_offer(parent)
             return
         if self._coordinator.state is UpdateState.DOWNLOADING:
             if self._dialog is None:

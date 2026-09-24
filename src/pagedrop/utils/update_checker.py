@@ -8,7 +8,7 @@ import os
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -19,6 +19,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPOSITORY = "ParallaX07/PageDrop"
 MANIFEST_URL = f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json"
+_RELEASE_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{{tag}}"
 _USER_AGENT = "PageDrop-updater"
 _METADATA_LIMIT = 1024 * 1024
 _SOCKET_TIMEOUT = 10.0
@@ -154,7 +155,13 @@ def check_for_update(installed_version: str, **kwargs: object) -> ReleaseInfo | 
     """Return a newer release, while rejecting an invalid installed version."""
     parse_version(installed_version)
     release = fetch_latest_release(**kwargs)  # type: ignore[arg-type]
-    return release if is_newer(release.version, installed_version) else None
+    if not is_newer(release.version, installed_version):
+        return None
+    try:
+        return replace(release, notes=_fetch_current_notes(release.tag, **kwargs))
+    except (ReleaseDataError, UpdateNetworkError):
+        # Notes are display metadata; a verified manifest still authorizes the update.
+        return release
 
 
 def download_installer(
@@ -218,6 +225,39 @@ def _release_from_data(data: object) -> ReleaseInfo:
     return ReleaseInfo(version, tag, name, url, size, notes, digest)
 
 
+def _fetch_current_notes(
+    tag: str,
+    *,
+    open_url: OpenUrl | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    """Return the current GitHub release body for a manifest-verified tag."""
+    started = monotonic()
+    response = _request(
+        _RELEASE_API_URL.format(tag=tag),
+        open_url or _stdlib_open,
+        _SOCKET_TIMEOUT,
+        monotonic,
+        started,
+        _METADATA_DEADLINE,
+        False,
+        cancel_event,
+        accept="application/vnd.github+json",
+    )
+    try:
+        raw = _read_limited(response, _METADATA_LIMIT, monotonic, started, _METADATA_DEADLINE, cancel_event)
+    finally:
+        response.close()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ReleaseDataError("Live release notes are not valid JSON") from exc
+    if not isinstance(data, dict) or data.get("tag_name") != tag or not isinstance(data.get("body"), str):
+        raise ReleaseDataError("Live release notes are invalid")
+    return data["body"]
+
+
 def _validate_initial_asset_url(url: str, tag: str, name: str) -> None:
     parsed = _split_update_url(url)
     expected = f"/{REPOSITORY}/releases/download/{tag}/{name}"
@@ -264,12 +304,14 @@ def _request(
     deadline: float,
     allow_redirects: bool,
     cancel_event: threading.Event | None = None,
+    *,
+    accept: str = "application/octet-stream",
 ) -> _Response:
     current = url
     for redirect_count in range(_MAX_REDIRECTS + 1):
         _ensure_not_cancelled(cancel_event)
         _ensure_before_deadline(monotonic, started, deadline)
-        request = Request(current, headers={"User-Agent": _USER_AGENT, "Accept": "application/octet-stream"})
+        request = Request(current, headers={"User-Agent": _USER_AGENT, "Accept": accept})
         try:
             response = opener(request, socket_timeout)
         except HTTPError as exc:

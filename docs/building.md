@@ -106,16 +106,18 @@ re-verifies all three assets before publishing. It will not move “latest” ba
 
 The UTF-8 manifest contains `schema_version: 1`, numeric `version` as a
 `MAJOR.MINOR.PATCH` string, positive integer `installer_size`, lowercase
-`installer_sha256`, and plain-text `notes`. Generation is deterministic and
+`installer_sha256`, and Markdown `notes`. Generation is deterministic and
 limited to 1 MiB. Notes changed during publication cause publication to fail;
-rerun the draft workflow to regenerate and verify the manifest.
+rerun the draft workflow to regenerate and verify the manifest. Clients use the
+matching public GitHub release body when available, falling back to these
+verified manifest notes if that display-only request fails.
 
 The first manifest-capable release must include this asset. Older API-based
 updaters can still discover its installer/checksum pair. Newly built clients use
 `https://github.com/ParallaX07/PageDrop/releases/latest/download/latest.json`;
 until that release is published, a missing manifest is reported as unavailable
-update information, with an explicit link to the releases page. No API fallback
-or client credentials are used.
+update information, with an explicit link to the releases page. No client
+credentials are used.
 
 Do not use `-SkipBuild` for a release. Never upload a checksum made from anything
 other than the final installer bytes. The production updater and workflow are

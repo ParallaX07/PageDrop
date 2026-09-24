@@ -489,7 +489,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPlainTextEdit,
-    QTextEdit {{
+    QTextEdit,
+    QTextBrowser {{
         background-color: {bg_card};
         color: {text_primary};
         border: 1px solid {border_default};
@@ -500,7 +501,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPlainTextEdit:focus,
-    QTextEdit:focus {{
+    QTextEdit:focus,
+    QTextBrowser:focus {{
         border: {focus_width}px solid {ACCENT};
     }}
 

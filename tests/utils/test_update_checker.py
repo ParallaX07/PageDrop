@@ -30,6 +30,7 @@ from pagedrop.utils.update_checker import (
 )
 
 MANIFEST_URL = update_checker.MANIFEST_URL
+RELEASE_API_URL = update_checker._RELEASE_API_URL
 
 
 class FakeResponse(io.BytesIO):
@@ -90,15 +91,47 @@ def _manifest(**changes):
     return json.dumps(data).encode()
 
 
-def test_numeric_versions_and_single_manifest_request():
+def _live_notes(tag: str, body: object = "Current notes") -> bytes:
+    return json.dumps({"tag_name": tag, "body": body}).encode()
+
+
+def test_numeric_versions_and_current_notes_request_for_an_available_update():
     assert is_newer("1.10.0", "1.9.0")
-    opener = FakeOpen({MANIFEST_URL: FakeResponse(_manifest(extra=True, installer_url="https://evil.test"))})
+    tag = "v1.10.0"
+    notes_url = RELEASE_API_URL.format(tag=tag)
+    opener = FakeOpen({
+        MANIFEST_URL: FakeResponse(_manifest(extra=True, installer_url="https://evil.test")),
+        notes_url: FakeResponse(_live_notes(tag, "# Current notes")),
+    })
     release = check_for_update("1.9.0", open_url=opener)
     assert release.installer_url == _asset_url("v1.10.0", "PageDrop-1.10.0-Setup.exe")
-    assert opener.requests == [MANIFEST_URL]
+    assert release.notes == "# Current notes"
+    assert opener.requests == [MANIFEST_URL, notes_url]
     assert check_for_update("1.10.0", open_url=FakeOpen({MANIFEST_URL: FakeResponse(_manifest())})) is None
     with pytest.raises(ReleaseDataError):
         check_for_update("0.0.0-dev", open_url=opener)
+
+
+@pytest.mark.parametrize("response", [
+    FakeResponse(b"not json"),
+    FakeResponse(_live_notes("v9.9.9")),
+    FakeResponse(_live_notes("v1.10.0", 4)),
+    TimeoutError("slow"),
+    OSError("offline"),
+    FakeResponse(b"", code=429, headers={"Retry-After": "60"}),
+], ids=["invalid-json", "wrong-tag", "non-string-body", "timeout", "network", "rate-limited"])
+def test_current_notes_failures_fall_back_to_verified_manifest_notes(response):
+    tag = "v1.10.0"
+    opener = FakeOpen({
+        MANIFEST_URL: FakeResponse(_manifest(notes="Verified manifest notes")),
+        RELEASE_API_URL.format(tag=tag): response,
+    })
+
+    release = check_for_update("1.9.0", open_url=opener)
+
+    assert release.notes == "Verified manifest notes"
+    assert release.installer_url == _asset_url(tag, "PageDrop-1.10.0-Setup.exe")
+    assert release.expected_sha256 == "a" * 64
 
 
 @pytest.mark.parametrize("field,value", [

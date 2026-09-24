@@ -100,10 +100,12 @@ idle → checking → available → downloading → ready → preparing → hand
                  └──────────────┴──────────────┴→ available / idle on a safe failure
 ```
 
-The Qt-independent service in `utils/update_checker.py` fetches only the public
-`ParallaX07/PageDrop` latest stable release's `latest.json` static asset, without
-using GitHub's REST API. It validates schema version 1, the strict numeric version,
-positive installer size, SHA-256, and string notes within a 1 MiB UTF-8 response.
+The Qt-independent service in `utils/update_checker.py` fetches the public
+`ParallaX07/PageDrop` latest stable release's `latest.json` static asset, then
+best-effort fetches the matching public GitHub release body for current display
+notes. It validates schema version 1, the strict numeric version, positive installer
+size, SHA-256, and string notes within a 1 MiB UTF-8 response. A failed or malformed
+live-notes response falls back to the manifest notes and never affects installer trust.
 Additive fields are ignored. Installer names and URLs are derived locally;
 the digest comes from the manifest, avoiding a separate checksum request.
 Trusted HTTPS redirects, exact size, and SHA-256 are verified before atomically
