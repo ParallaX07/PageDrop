@@ -488,8 +488,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {ACCENT};
     }}
 
+    QTextEdit {{
+        background-color: {bg_card};
+        color: {text_primary};
+        border: 1px solid {border_default};
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 8px 10px;
+        selection-background-color: {ACCENT};
+        selection-color: {TEXT_ON_ACCENT};
+    }}
+
     QPlainTextEdit,
-    QTextEdit,
     QTextBrowser {{
         background-color: {bg_card};
         color: {text_primary};

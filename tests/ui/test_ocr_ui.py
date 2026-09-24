@@ -41,8 +41,9 @@ def test_ocr_tile_blocked_when_tessdata_absent(monkeypatch, qtbot, isolated_sett
     window.close()
 
 
-def test_missing_tessdata_dialog_has_download_configure_recheck():
+def test_missing_tessdata_dialog_has_download_configure_recheck(qtbot):
     dialog = build_missing_tessdata_dialog(None, subject="OCR", detail="none found")
+    qtbot.addWidget(dialog)
     names = {b.objectName() for b in dialog.buttons() if b.objectName()}
     assert "tess_recheck" in names
     assert "tess_download" in names

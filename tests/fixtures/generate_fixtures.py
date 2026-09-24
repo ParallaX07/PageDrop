@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import tempfile
 
 import fitz
 
@@ -30,12 +32,26 @@ _EMPTY_PDF = (
 )
 
 
+def _save_pdf(document: fitz.Document, path: Path) -> None:
+    """Save via a worker-private name before publishing the fixture."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.stem}-", suffix=".pdf", dir=path.parent
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        document.save(str(temporary_path))
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def _write_blank_pages(path: Path, page_count: int, *, width: float = 200) -> None:
     doc = fitz.open()
     try:
         for _ in range(page_count):
             doc.new_page(width=width, height=200)
-        doc.save(str(path))
+        _save_pdf(doc, path)
     finally:
         doc.close()
 
@@ -127,7 +143,7 @@ def _write_compare_pdf(path: Path, *, revised: bool) -> None:
                 page.set_cropbox(fitz.Rect(*crop))
             if rotation:
                 page.set_rotation(rotation)
-        document.save(str(path))
+        _save_pdf(document, path)
     finally:
         document.close()
 
