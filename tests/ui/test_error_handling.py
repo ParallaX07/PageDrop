@@ -154,21 +154,18 @@ def test_disk_full_oserror(qtbot, five_page_pdf, monkeypatch):
 
     monkeypatch.setattr(QMessageBox, "critical", fake_critical)
 
-    def fake_exec(self, *args, **kwargs):
-        return Qt.DropAction.IgnoreAction
+    try:
+        with patch(
+            "pagedrop.ui.page_card.extract_page_refs_to_files",
+            side_effect=OSError(28, "No space left on device"),
+        ):
+            card._start_drag()
 
-    monkeypatch.setattr(QDrag, "exec", fake_exec)
-
-    with patch(
-        "pagedrop.ui.page_card.extract_page_refs_to_files",
-        side_effect=OSError(28, "No space left on device"),
-    ):
-        qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
-        qtbot.mouseMove(card, pos=QPoint(200, 200))
-
-    assert len(captured) == 1
-    assert "disk full" in captured[0][1].lower() or "write error" in captured[0][1].lower()
-    loader.close()
+        assert len(captured) == 1
+        assert "disk full" in captured[0][1].lower() or "write error" in captured[0][1].lower()
+    finally:
+        loader.close()
+        temp_manager.cleanup()
 
 
 def test_rapid_reopen_cancels_worker(main_window, five_page_pdf, one_page_pdf, qtbot):

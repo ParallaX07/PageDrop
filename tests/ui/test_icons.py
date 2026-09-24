@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import gc
+from weakref import ref
+
 import pytest
 from PyQt6.QtGui import QIcon
 
@@ -100,13 +103,23 @@ def test_refresh_icons_clears_cache_and_notifies(qapp, isolated_settings):
     def _on_refresh() -> None:
         calls.append(1)
 
+    class _WidgetCallback:
+        def refresh(self) -> None:
+            pytest.fail("Destroyed widget callback was retained")
+
     register_refresh(_on_refresh)
+    stale = _WidgetCallback()
+    stale_ref = ref(stale)
+    register_refresh(stale.refresh)
+    del stale
+    gc.collect()
     try:
         dark = icon("folder-open")
         assert not dark.isNull()
         set_light_theme(True)
         refresh_themed_widgets()
         assert calls == [1]
+        assert stale_ref() is None
         light = icon("folder-open")
         assert not light.isNull()
         # Fresh QIcon after theme swap (cache was cleared).

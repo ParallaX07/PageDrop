@@ -210,6 +210,7 @@ def test_never_writes_source_path(tmp_path: Path) -> None:
 
 def test_protected_pdf_uses_runtime_credential_without_persisting_it(
     tmp_path: Path,
+    isolated_settings,
 ) -> None:
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")

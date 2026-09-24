@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
+from weakref import WeakMethod
 
 from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
@@ -21,7 +22,7 @@ from pagedrop.ui.theme import ACCENT, TEXT_PRIMARY, TEXT_PRIMARY_LIGHT
 _ICON_SIZES = (16, 20, 24, 32)
 
 _cache: dict[tuple[str, str], QIcon] = {}
-_refresh_callbacks: list[Callable[[], None]] = []
+_refresh_callbacks: list[Callable[[], None] | WeakMethod] = []
 
 
 def available_names() -> frozenset[str]:
@@ -61,21 +62,32 @@ def refresh_icons() -> None:
     re-``setIcon(icon(...))`` so existing toolbars pick up the new tint.
     """
     _cache.clear()
-    for callback in list(_refresh_callbacks):
+    for registered in list(_refresh_callbacks):
+        callback = registered() if isinstance(registered, WeakMethod) else registered
+        if callback is None:
+            _refresh_callbacks.remove(registered)
+            continue
         callback()
 
 
 def register_refresh(callback: Callable[[], None]) -> None:
     """Register a no-arg callback invoked from ``refresh_icons``."""
-    if callback not in _refresh_callbacks:
-        _refresh_callbacks.append(callback)
+    if any(
+        (registered() if isinstance(registered, WeakMethod) else registered) == callback
+        for registered in _refresh_callbacks
+    ):
+        return
+    _refresh_callbacks.append(
+        WeakMethod(callback) if getattr(callback, "__self__", None) is not None else callback
+    )
 
 
 def unregister_refresh(callback: Callable[[], None]) -> None:
-    try:
-        _refresh_callbacks.remove(callback)
-    except ValueError:
-        pass
+    _refresh_callbacks[:] = [
+        registered
+        for registered in _refresh_callbacks
+        if (registered() if isinstance(registered, WeakMethod) else registered) not in (None, callback)
+    ]
 
 
 def _chrome_text_hex() -> str:
