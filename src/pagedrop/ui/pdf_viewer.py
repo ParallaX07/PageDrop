@@ -3907,7 +3907,11 @@ class PdfViewerWidget(QWidget):
         self.setFocus()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self._page_edit and event.type() == QEvent.Type.FocusIn:
+        if (
+            hasattr(self, "_page_edit")
+            and watched is self._page_edit
+            and event.type() == QEvent.Type.FocusIn
+        ):
             QTimer.singleShot(0, self._page_edit.selectAll)
         if (
             hasattr(self, "_scroll")

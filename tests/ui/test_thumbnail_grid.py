@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QProgressBar
 
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -15,6 +16,24 @@ def _all_cards_have_thumbnails(cards) -> bool:
         if pixmap is None or pixmap.isNull():
             return False
     return bool(cards)
+
+
+def test_stale_render_width_dismisses_progress(qtbot, one_page_pdf, monkeypatch):
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid._model = PdfEditModel(str(one_page_pdf), 1)
+    grid._get_loader = lambda _path: None
+    grid._page_render_width = [0]
+    grid._progress_active = True
+    monkeypatch.setattr(grid._model, "logical_count", lambda: 0)
+    monkeypatch.setattr(grid, "_render_window_indices", lambda: [0])
+
+    finished = []
+    grid.rendering_finished.connect(lambda: finished.append(True))
+    grid._maybe_continue_or_dismiss_progress()
+
+    assert finished == [True]
+    assert not grid._progress_active
 
 
 def test_load_pdf_creates_cards(qtbot, five_page_pdf):

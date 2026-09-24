@@ -2002,10 +2002,11 @@ class ThumbnailGrid(QScrollArea):
 
     def _pages_needing_render(self) -> list[int]:
         target = self._target_render_width()
+        logical_count = self._model.logical_count() if self._model is not None else 0
         return [
             index
             for index, width in enumerate(self._page_render_width)
-            if width < target
+            if index < logical_count and width < target
         ]
 
     def _visible_pages_needing_render(self) -> list[int]:
