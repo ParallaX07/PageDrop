@@ -99,6 +99,22 @@ def test_offer_actions_are_centered_and_fit(presenter, qtbot):
     assert dialog.minimumWidth() >= dialog.minimumSizeHint().width()
 
 
+def test_download_progress_keeps_cancel_button_and_cancellation_state(presenter):
+    dialog = presenter._ensure_dialog(presenter._manager.primary)
+    dialog.show_downloading(0, 100)
+    cancel_button = dialog.buttons.buttons()[0]
+
+    for done in (10, 50, 100):
+        presenter._on_download_progress(done, 100)
+        assert dialog.buttons.buttons() == [cancel_button]
+        assert dialog.progress.value() == done
+
+    dialog.show_downloading(cancelling=True)
+    presenter._on_download_progress(100, 100)
+    assert dialog.buttons.buttons() == []
+    assert dialog.message.text() == "Cancelling update download…"
+
+
 @pytest.mark.parametrize("error,expected", [
     (UpdateNetworkError("private"), "internet connection"),
     (UpdateTimeoutError("private"), "timed out"),

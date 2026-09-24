@@ -53,8 +53,10 @@ class UpdateDialog(QDialog):
         self.buttons = QDialogButtonBox()
         self.buttons.setCenterButtons(True)
         layout.addWidget(self.buttons)
+        self._cancelling_download = False
 
     def show_message(self, message: str, *, notes: str = "") -> None:
+        self._cancelling_download = False
         self.message.setText(message)
         self.notes.setPlainText(notes)
         self.notes.setVisible(bool(notes))
@@ -74,13 +76,17 @@ class UpdateDialog(QDialog):
         self._center_buttons()
 
     def show_downloading(self, done: int = 0, total: int = 0, *, cancelling: bool = False) -> None:
-        self.message.setText("Cancelling update download…" if cancelling else "Downloading update…")
+        self._cancelling_download = self._cancelling_download or cancelling
+        self.message.setText("Cancelling update download…" if self._cancelling_download else "Downloading update…")
         self.notes.hide()
         self.progress.setRange(0, max(total, 0))
         self.progress.setValue(done)
         self.progress.show()
-        self._clear_buttons()
-        if not cancelling:
+        if self._cancelling_download:
+            if self.buttons.buttons():
+                self._clear_buttons()
+        elif not any(button.text() == "Cancel" for button in self.buttons.buttons()):
+            self._clear_buttons()
             self._button("Cancel", self._cancel_download)
 
     def show_ready(self) -> None:
