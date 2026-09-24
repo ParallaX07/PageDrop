@@ -36,7 +36,7 @@ jobs:
           }
 
       - name: Run release tests
-        run: uv run python all_tests.py
+        run: uv run python all_tests.py -n 0
 
       - name: Install Inno Setup
         shell: powershell

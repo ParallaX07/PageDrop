@@ -57,4 +57,4 @@ jobs:
         run: uv run python scripts/check_packaging.py
 
       - name: Full test suite
-        run: uv run python all_tests.py
+        run: uv run python all_tests.py -n 0
