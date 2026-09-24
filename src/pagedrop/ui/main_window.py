@@ -2257,9 +2257,13 @@ class MainWindow(QMainWindow):
         if title_label is not None:
             full_title = self.windowTitle()
             width = title_label.maximumWidth()
-            title_label.setText(title_label.fontMetrics().elidedText(
-                full_title, Qt.TextElideMode.ElideRight, width if width < 10000 else 220
-            ))
+            title_label.setText(
+                full_title
+                if full_title == self.APP_TITLE
+                else title_label.fontMetrics().elidedText(
+                    full_title, Qt.TextElideMode.ElideRight, width if width < 10000 else 220
+                )
+            )
             title_label.setToolTip(full_title)
 
     def resizeEvent(self, event) -> None:
