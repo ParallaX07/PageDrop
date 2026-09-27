@@ -54,6 +54,7 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle("Preferences")
         self.setObjectName("PreferencesDialog")
         self.setMinimumWidth(480)
+        self.setSizeGripEnabled(True)
         self._update_coordinator = coordinator
 
         outer = QVBoxLayout(self)

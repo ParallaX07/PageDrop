@@ -219,6 +219,7 @@ class KeyboardShortcutsDialog(QDialog):
         self.setWindowTitle("Keyboard shortcuts")
         self.setModal(True)
         self.setMinimumSize(480, 520)
+        self.setSizeGripEnabled(True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)

@@ -34,6 +34,7 @@ class UpdateDialog(QDialog):
         self.setWindowTitle("PageDrop updates")
         self.setObjectName("UpdateDialog")
         self.setMinimumSize(640, 480)
+        self.setSizeGripEnabled(True)
         layout = QVBoxLayout(self)
         self.message = QLabel()
         self.message.setObjectName("UpdateMessage")
