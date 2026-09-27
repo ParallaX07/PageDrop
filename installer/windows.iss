@@ -46,6 +46,12 @@ LicenseFile=..\LICENSE
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[InstallDelete]
+; Previous versions leave their package metadata behind on upgrade. Remove it
+; before copying the new bundle so importlib.metadata reads the installed version.
+Type: filesandordirs; Name: "{app}\_internal\pagedrop-*.dist-info"
+Type: filesandordirs; Name: "{app}\pagedrop-*.dist-info"
+
 [Files]
 ; PyInstaller onedir tree (exe + Qt/plugins + bundled datas)
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

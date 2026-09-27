@@ -184,6 +184,13 @@ def test_installer_build_rejects_stale_frozen_version_before_compiling():
     assert script.index("scripts/check_packaging.py") < script.index("Compiling installer")
 
 
+def test_installer_removes_stale_pagedrop_metadata_before_copying_bundle():
+    script = (ROOT / "installer" / "windows.iss").read_text(encoding="utf-8")
+    cleanup = script.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
+    for path in (r"{app}\_internal\pagedrop-*.dist-info", r"{app}\pagedrop-*.dist-info"):
+        assert f'Type: filesandordirs; Name: "{path}"' in cleanup
+
+
 @pytest.mark.parametrize("notes", ["", "Improved café rendering — বাংলা"])
 def test_manifest_matches_tested_installer_and_draft_notes(tmp_path, notes):
     installer, checksum, payload, _ = _pair(tmp_path)
