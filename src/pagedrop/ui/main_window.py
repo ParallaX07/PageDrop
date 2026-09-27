@@ -337,6 +337,7 @@ class MainWindow(QMainWindow):
             "Check for &updates…",
             slot=self._check_for_updates,
         )
+        actions.register("about", "&About PageDrop", slot=self._show_about)
         actions.register(
             "preferences",
             "&Preferences…",
@@ -586,6 +587,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(a["tips"])
         help_menu.addSeparator()
         help_menu.addAction(a["check_for_updates"])
+        help_menu.addAction(a["about"])
         self._help_menu_action = help_menu.menuAction()
 
         self._application_overflow_menu = menubar.addMenu("M&ore")
@@ -2168,6 +2170,13 @@ class MainWindow(QMainWindow):
 
     def _show_keyboard_shortcuts(self) -> None:
         KeyboardShortcutsDialog(self).exec()
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About PageDrop",
+            f"PageDrop version {QApplication.instance().applicationVersion()}",
+        )
 
     def _open_preferences(self) -> None:
         from pagedrop.ui.preferences_dialog import open_preferences

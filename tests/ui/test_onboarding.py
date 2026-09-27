@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QStatusTipEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QToolBar, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QToolBar, QWidget
 
 from pagedrop.ui.onboarding import (
     FIRST_RUN_TIPS,
@@ -108,6 +108,30 @@ def test_help_menu_keyboard_shortcuts_action(main_window):
         if a.text().replace("&", "") == "Keyboard shortcuts"
     )
     assert action.shortcut() == QKeySequence("Ctrl+/")
+
+
+def test_help_about_shows_current_application_version(main_window, monkeypatch):
+    app = QApplication.instance()
+    previous = app.applicationVersion()
+    app.setApplicationVersion("1.2.3")
+    shown = []
+    monkeypatch.setattr(
+        QMessageBox, "about", lambda parent, title, text: shown.append((parent, title, text))
+    )
+    try:
+        help_menu = next(
+            action.menu()
+            for action in main_window.menuBar().actions()
+            if action.text().replace("&", "") == "Help"
+        )
+        about = next(
+            action for action in help_menu.actions()
+            if action.text().replace("&", "") == "About PageDrop"
+        )
+        about.trigger()
+        assert shown == [(main_window, "About PageDrop", "PageDrop version 1.2.3")]
+    finally:
+        app.setApplicationVersion(previous)
 
 
 def test_keyboard_shortcuts_dialog_lists_categories(qtbot):
