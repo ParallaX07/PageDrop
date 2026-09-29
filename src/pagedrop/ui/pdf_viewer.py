@@ -687,7 +687,7 @@ class _PageTile(QWidget):
                     painter.drawPixmap(
                         target,
                         pix,
-                        QRectF(0, 0, pix.width(), pix.height()),
+                        pix.rect(),
                     )
             else:
                 painter.setPen(token_qcolor(TEXT_MUTED))
