@@ -33,7 +33,11 @@ merge, and image→PDF. Keep it local, trustworthy, keyboard-friendly, and acces
   without them. Use typed user-facing errors, not bare `Exception`.
 - Respect accessibility hooks for contrast, keyboard traversal, and reduced motion.
 - Use sentence-case labels; progress status ends with `…`, idle/success status does not.
-- Follow `redesign.md`; stay on Fusion and `theme.py`, with no third-party Qt widget kits.
+- Stay on Fusion and `theme.py` tokens, with no third-party Qt widget kits. Tool pages
+  follow the "Result UX" section of `docs/architecture.md`.
+- Planning docs (`*plan*.md`) are working notes. Never reference them, their phase
+  numbers, or their checklist IDs in code, comments, docstrings, tests, test names, or
+  `docs/`; describe the behaviour instead.
 
 ## Core PDF and jobs
 
@@ -72,8 +76,11 @@ merge, and image→PDF. Keep it local, trustworthy, keyboard-friendly, and acces
 
 ## Release reminder
 
-Before binary or Store release, resolve combined PyQt6 (GPLv3/commercial) and PyMuPDF
-(AGPL/commercial) redistribution requirements; MIT `LICENSE` alone is not enough.
+PageDrop is free software under AGPL-3.0-or-later and stays that way: no commercial
+licences, no paid tiers. Every binary release ships the free PyQt6 (GPLv3) and PyMuPDF
+(AGPL) wheels, so it must follow `docs/licensing.md`: licence texts and notices beside
+the executable, and a link to the matching source tag. Bundled dependencies must have
+AGPL-compatible licences.
 
 ## Git commits
 

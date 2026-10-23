@@ -1,0 +1,193 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-notes:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require checked-in release notes
+        shell: bash
+        run: |
+          notes="release-notes/${GITHUB_REF_NAME}.md"
+          if [[ ! -s "$notes" ]] || [[ -z "$(tr -d '[:space:]' < "$notes")" ]]; then
+            echo "Missing or empty release notes: $notes" >&2
+            exit 1
+          fi
+
+  build-windows:
+    needs: release-notes
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+
+      - name: Verify tag version
+        shell: powershell
+        run: |
+          $version = (uv run --locked python scripts/read_version.py).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Version reading failed with exit code $LASTEXITCODE" }
+          if ("${{ github.ref_name }}" -cne "v$version") {
+            throw "Tag ${{ github.ref_name }} must equal v$version"
+          }
+
+      - name: Run release tests
+        run: uv run python all_tests.py -n 0
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build installer
+        shell: powershell
+        run: .\scripts\build_windows_installer.ps1 -Release
+
+      - name: Create checksum and validate package
+        shell: powershell
+        run: |
+          $version = (uv run --locked python scripts/read_version.py).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Version reading failed with exit code $LASTEXITCODE" }
+          $installer = "installer/Output/PageDrop-$version-Setup.exe"
+          if (-not (Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).Length -le 0) {
+            throw "Missing non-empty installer: $installer"
+          }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$installer.sha256", "$hash  PageDrop-$version-Setup.exe`n", [System.Text.ASCIIEncoding]::new())
+          uv run --locked python scripts/check_packaging.py
+          if ($LASTEXITCODE -ne 0) { throw "Packaging validation failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke test built executable
+        shell: powershell
+        run: |
+          $env:PAGEDROP_EXE = "$PWD/dist/pagedrop/pagedrop.exe"
+          if (-not (Test-Path -LiteralPath $env:PAGEDROP_EXE)) { throw "Missing built executable: $env:PAGEDROP_EXE" }
+          uv run --locked pytest tests/smoke/test_phase16_executable.py -v -n 0
+          if ($LASTEXITCODE -ne 0) { throw "Executable smoke tests failed with exit code $LASTEXITCODE" }
+
+      - name: Upload tested Windows release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: tested-windows-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            installer/Output/PageDrop-*-Setup.exe
+            installer/Output/PageDrop-*-Setup.exe.sha256
+
+  build-linux:
+    needs: release-notes
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt system libraries and zsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 \
+            libxcb-xkb1 zsync
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+
+      - name: Verify tag version
+        shell: bash
+        run: |
+          version="$(uv run --locked python scripts/read_version.py)"
+          [[ "${GITHUB_REF_NAME}" == "v${version}" ]] || { echo "Tag ${GITHUB_REF_NAME} must equal v${version}" >&2; exit 1; }
+
+      - name: Run release tests
+        run: uv run python all_tests.py -n 0
+
+      - name: Build AppImage
+        run: |
+          uv run pyinstaller --noconfirm pagedrop.spec
+          uv run python scripts/check_packaging.py
+          ./scripts/build_linux_appimage.sh
+
+      - name: Smoke test AppImage
+        shell: bash
+        run: |
+          version="$(uv run --locked python scripts/read_version.py)"
+          PAGEDROP_EXE="./dist/PageDrop-${version}-x86_64.AppImage" \
+            QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 \
+            uv run --locked pytest tests/smoke/test_phase16_executable.py -v -n 0
+
+      - name: Upload tested Linux release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: tested-linux-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            dist/PageDrop-*-x86_64.AppImage
+            dist/PageDrop-*-x86_64.AppImage.zsync
+            dist/PageDrop-*-x86_64.AppImage.sha256
+
+  publish:
+    needs: [release-notes, build-windows, build-linux]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    concurrency:
+      group: release-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Download tested Windows artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: tested-windows-${{ github.ref_name }}
+          path: release-assets
+
+      - name: Download tested Linux artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: tested-linux-${{ github.ref_name }}
+          path: release-assets
+
+      - name: Publish verified release assets and notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(uv run --locked python scripts/read_version.py)"
+          uv run --locked python scripts/publish_release.py \
+            --tag "${GITHUB_REF_NAME}" \
+            --installer "release-assets/PageDrop-${version}-Setup.exe" \
+            --checksum "release-assets/PageDrop-${version}-Setup.exe.sha256" \
+            --appimage "release-assets/PageDrop-${version}-x86_64.AppImage" \
+            --zsync "release-assets/PageDrop-${version}-x86_64.AppImage.zsync" \
+            --appimage-checksum "release-assets/PageDrop-${version}-x86_64.AppImage.sha256" \
+            --notes-file "release-notes/${GITHUB_REF_NAME}.md" \
+            --repository "${GITHUB_REPOSITORY}"

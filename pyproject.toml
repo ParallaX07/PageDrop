@@ -4,10 +4,17 @@ version = "0.9.0"
 description = "Grab PDF pages and drop them where they belong — folders, merges, multi-tab edits"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "ParallaX07" }]
 dependencies = [
     "PyQt6>=6.6.0",
     "PyMuPDF>=1.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ParallaX07/PageDrop"
+Issues = "https://github.com/ParallaX07/PageDrop/issues"
+Author = "https://github.com/ParallaX07"
+Portfolio = "https://saalimaraf.vercel.app/"
 
 [project.scripts]
 pagedrop = "pagedrop.main:main"

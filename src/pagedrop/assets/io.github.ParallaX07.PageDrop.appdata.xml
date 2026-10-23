@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ParallaX07.PageDrop</id>
+  <name>PageDrop</name>
+  <summary>Browse, organize, and edit PDF pages</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <developer id="io.github.parallax07">
+    <name>ParallaX07</name>
+  </developer>
+  <description>
+    <p>Browse PDF pages as thumbnails, rearrange documents, combine files, and export selected pages as new PDFs.</p>
+  </description>
+  <launchable type="desktop-id">io.github.ParallaX07.PageDrop.desktop</launchable>
+  <url type="homepage">https://github.com/ParallaX07/PageDrop</url>
+  <url type="vcs-browser">https://github.com/ParallaX07/PageDrop</url>
+  <url type="bugtracker">https://github.com/ParallaX07/PageDrop/issues</url>
+  <url type="contact">https://saalimaraf.vercel.app/</url>
+  <content_rating type="oars-1.1" />
+  <categories>
+    <category>Office</category>
+  </categories>
+</component>

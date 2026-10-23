@@ -119,6 +119,17 @@ def _assert_installer_if_present(version: str) -> None:
     )
 
 
+def _assert_linux_release_script() -> None:
+    script = ROOT / "scripts" / "build_linux_appimage.sh"
+    text = script.read_text(encoding="utf-8")
+    assert "THIRD_PARTY_NOTICES.md" in text and "LICENSE" in text, (
+        "Linux AppImage must include licence texts and third-party notices"
+    )
+    assert "gh-releases-zsync|ParallaX07|PageDrop|latest|PageDrop-*-x86_64.AppImage.zsync" in text, (
+        "Linux AppImage must embed the GitHub zsync update information"
+    )
+
+
 def main() -> None:
     ver = read_version()
     assert re.fullmatch(r"\d+\.\d+\.\d+", ver), f"unexpected semver: {ver!r}"
@@ -161,6 +172,7 @@ def main() -> None:
     _assert_onedir_spec(spec_text)
     _assert_onedir_dist_if_present()
     _assert_installer_if_present(ver)
+    _assert_linux_release_script()
 
     assert "THIRD_PARTY_NOTICES.md" in iss_text, (
         "windows.iss must install THIRD_PARTY_NOTICES.md beside the exe"

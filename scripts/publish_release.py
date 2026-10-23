@@ -1,4 +1,4 @@
-"""Publish a tested installer, checksum, and verified static update manifest."""
+"""Publish tested Windows and Linux assets with a verified update manifest."""
 
 from __future__ import annotations
 
@@ -31,7 +31,9 @@ class Release:
 class ReleaseOperations(Protocol):
     def get(self, tag: str) -> Release | None: ...
 
-    def create_draft(self, tag: str, title: str) -> None: ...
+    def create_draft(self, tag: str, title: str, notes_file: Path) -> None: ...
+
+    def edit_notes(self, tag: str, notes_file: Path) -> None: ...
 
     def delete_asset(self, tag: str, name: str) -> None: ...
 
@@ -98,8 +100,11 @@ class GhReleaseOperations:
                 return self._release(release)
         return None
 
-    def create_draft(self, tag: str, title: str) -> None:
-        self._run("release", "create", tag, "--repo", self.repository, "--draft", "--title", title, "--generate-notes")
+    def create_draft(self, tag: str, title: str, notes_file: Path) -> None:
+        self._run("release", "create", tag, "--repo", self.repository, "--draft", "--title", title, "--notes-file", str(notes_file))
+
+    def edit_notes(self, tag: str, notes_file: Path) -> None:
+        self._run("release", "edit", tag, "--repo", self.repository, "--notes-file", str(notes_file))
 
     def delete_asset(self, tag: str, name: str) -> None:
         self._run("release", "delete-asset", tag, name, "--repo", self.repository, "--yes")
@@ -143,20 +148,76 @@ def _expected_pair(installer: Path, checksum: Path, tag: str) -> dict[str, bytes
     return {installer.name: installer.read_bytes(), checksum.name: expected_checksum}
 
 
+def _expected_linux_assets(appimage: Path, zsync: Path, checksum: Path, tag: str) -> dict[str, bytes]:
+    version = ".".join(map(str, _version(tag)))
+    expected_name = f"PageDrop-{version}-x86_64.AppImage"
+    if appimage.name != expected_name or zsync.name != f"{expected_name}.zsync":
+        raise ReleaseError("AppImage/zsync names do not match the release tag")
+    if checksum.name != f"{expected_name}.sha256":
+        raise ReleaseError("AppImage checksum name does not match the release tag")
+    if any(not path.is_file() or path.stat().st_size <= 0 for path in (appimage, zsync)) or not checksum.is_file():
+        raise ReleaseError("Tested AppImage/zsync/checksum set is incomplete")
+    expected_checksum = f"{hashlib.sha256(appimage.read_bytes()).hexdigest()}  {appimage.name}\n".encode("ascii")
+    if checksum.read_bytes() != expected_checksum:
+        raise ReleaseError("Tested checksum does not match AppImage bytes")
+    return {
+        appimage.name: appimage.read_bytes(),
+        zsync.name: zsync.read_bytes(),
+        checksum.name: expected_checksum,
+    }
+
+
 def publish_tested_pair(
-    operations: ReleaseOperations, *, tag: str, installer: Path, checksum: Path
+    operations: ReleaseOperations, *, tag: str, installer: Path, checksum: Path,
+    appimage: Path, zsync: Path, appimage_checksum: Path, notes_file: Path,
+) -> None:
+    if not notes_file.is_file() or not notes_file.read_text(encoding="utf-8").strip():
+        raise ReleaseError(f"Release notes are missing or empty: {notes_file}")
+    raw_notes = notes_file.read_text(encoding="utf-8")
+    version = ".".join(map(str, _version(tag)))
+    notes = raw_notes.replace("{{version}}", version)
+    with tempfile.TemporaryDirectory(prefix="pagedrop-notes-") as temporary:
+        rendered_notes = Path(temporary) / notes_file.name
+        rendered_notes.write_text(notes, encoding="utf-8")
+        _publish_tested_assets(
+            operations,
+            tag=tag,
+            installer=installer,
+            checksum=checksum,
+            appimage=appimage,
+            zsync=zsync,
+            appimage_checksum=appimage_checksum,
+            notes_file=rendered_notes,
+            notes=notes,
+        )
+
+
+def _publish_tested_assets(
+    operations: ReleaseOperations, *, tag: str, installer: Path, checksum: Path,
+    appimage: Path, zsync: Path, appimage_checksum: Path, notes_file: Path, notes: str,
 ) -> None:
     expected = _expected_pair(installer, checksum, tag)
+    expected.update(_expected_linux_assets(appimage, zsync, appimage_checksum, tag))
     release = operations.get(tag)
     if release is not None and not release.draft:
         raise ReleaseError(f"Release {tag} is already published; refusing to mutate it")
     if release is None:
-        operations.create_draft(tag, f"PageDrop {'.'.join(map(str, _version(tag)))}")
+        operations.create_draft(tag, f"PageDrop {'.'.join(map(str, _version(tag)))}", notes_file)
         release = operations.get(tag)
     if release is None or not release.draft or release.tag != tag:
         raise ReleaseError("Draft release identity changed")
+    operations.edit_notes(tag, notes_file)
+    release = operations.get(tag)
+    if release is None or not release.draft or release.tag != tag or release.notes != notes:
+        raise ReleaseError("Draft release notes differ from the checked-in notes file")
 
-    paths = {installer.name: installer, checksum.name: checksum}
+    paths = {
+        installer.name: installer,
+        checksum.name: checksum,
+        appimage.name: appimage,
+        zsync.name: zsync,
+        appimage_checksum.name: appimage_checksum,
+    }
     with tempfile.TemporaryDirectory(prefix="pagedrop-release-") as temporary:
         directory = Path(temporary)
         manifest = {
@@ -164,7 +225,7 @@ def publish_tested_pair(
             "version": ".".join(map(str, _version(tag))),
             "installer_size": len(expected[installer.name]),
             "installer_sha256": hashlib.sha256(expected[installer.name]).hexdigest(),
-            "notes": release.notes,
+            "notes": notes,
         }
         expected["latest.json"] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         if len(expected["latest.json"]) > 1024 * 1024:
@@ -201,6 +262,10 @@ def main() -> None:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--installer", required=True, type=Path)
     parser.add_argument("--checksum", required=True, type=Path)
+    parser.add_argument("--appimage", required=True, type=Path)
+    parser.add_argument("--zsync", required=True, type=Path)
+    parser.add_argument("--appimage-checksum", required=True, type=Path)
+    parser.add_argument("--notes-file", required=True, type=Path)
     parser.add_argument("--repository", default=REPOSITORY)
     args = parser.parse_args()
     if args.repository != REPOSITORY:
@@ -211,6 +276,10 @@ def main() -> None:
             tag=args.tag,
             installer=args.installer,
             checksum=args.checksum,
+            appimage=args.appimage,
+            zsync=args.zsync,
+            appimage_checksum=args.appimage_checksum,
+            notes_file=args.notes_file,
         )
     except ReleaseError as exc:
         raise SystemExit(str(exc)) from exc
