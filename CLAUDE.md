@@ -12,7 +12,7 @@
   - the orchestrating session (Opus) plans, reviews, and commits each block
   - `reviewer` (Opus) does a fresh-context review of the branch before the final report
 - Inside `/phase`, only the orchestrating session commits; sub-agents never commit and nothing is pushed. Outside `/phase`, the `AGENTS.md` commit rules apply.
-- Never put "phase" or a phase number in branch names or commit messages, and never mention plan files, `AGENTS.md`/`CLAUDE.md`, agents, skills, Claude, or Codex in commits or code.
+- Never put "phase" or a phase number in branch names or commit messages, and never mention plan files, `AGENTS.md`/`CLAUDE.md`, agents, skills, Claude, or Codex in commits, code, tests, or `docs/`. Plan docs are the only place phase numbers live.
 
 ## Tools
 

@@ -22,12 +22,12 @@ PageDrop’s own source is licensed under **AGPL-3.0-or-later**. This is compati
 For every tagged binary package that includes free PyQt6 / PyMuPDF:
 
 1. Release notes, About, and installer materials identify PageDrop as AGPL-3.0-or-later and link to the matching source release (or the commercial stack is in use).
-2. `THIRD_PARTY_NOTICES.md` and `LICENSE` ship with the Windows installer next to `pagedrop.exe` (and in the onedir tree for local/frozen smoke).
+2. `THIRD_PARTY_NOTICES.md` and `LICENSE` ship inside the Windows installation and Linux AppImage (and in the onedir tree for local/frozen smoke).
 3. Qt LGPL obligations below are addressed for that release (texts + source/offer; see replaceability note).
 
 ## PyInstaller onedir + installer layout
 
-`pagedrop.spec` builds an **onedir** bundle: `dist/pagedrop/pagedrop` (Unix) or `dist/pagedrop/pagedrop.exe` (Windows), with Qt plugins and datas as loose files beside the exe. The Windows Inno Setup script installs that folder tree into Program Files and also copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into the same install directory.
+`pagedrop.spec` builds an **onedir** bundle: `dist/pagedrop/pagedrop` (Unix) or `dist/pagedrop/pagedrop.exe` (Windows), with Qt plugins and datas as loose files beside the exe. The Windows Inno Setup script installs that folder tree into Program Files and also copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into the same install directory. The Linux AppImage build puts both files under `usr/share/licenses/pagedrop/` inside its AppDir before creating the image.
 
 ## Qt / LGPL — redistributor obligations
 
@@ -40,7 +40,7 @@ When shipping LGPL Qt from free PyQt6 wheels, each binary release should:
 
 ### Suggested release note
 
-> PageDrop is installed as a PyInstaller onedir folder. Licence texts and third-party notices are installed next to `pagedrop.exe` as `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+> PageDrop is distributed as a PyInstaller onedir folder inside its installer or AppImage. Licence texts and third-party notices are included in each distribution.
 > Qt and other bundled libraries ship as files under the install directory.
 > The corresponding source for this release is available from the matching PageDrop source release. See `THIRD_PARTY_NOTICES.md` for third-party license notices.
 

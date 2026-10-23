@@ -1,9 +1,8 @@
 # Building and packaging
 
 PageDrop ships as a PyInstaller **onedir** bundle (`pagedrop.spec` → `COLLECT` →
-`dist/pagedrop/`). Windows releases are distributed only via the Inno Setup
-installer — not as a portable zip. Onefile is no longer the primary Windows
-artifact.
+`dist/pagedrop/`). Windows releases use the Inno Setup installer; Linux releases
+use an x86_64 AppImage.
 
 ## Build the executable
 
@@ -27,7 +26,10 @@ Output (onedir folder):
 
 Qt plugins, icons, `LICENSE`, and `THIRD_PARTY_NOTICES.md` live beside the exe
 inside that folder. You can launch the binary for local smoke testing. Published
-Windows builds go through the installer below.
+Windows builds go through the installer below. Linux builds can be wrapped in an
+AppImage with `make build-appimage` after building the onedir bundle; the script
+pins and verifies its AppImage tooling and emits a matching `.zsync` file and
+SHA-256 checksum.
 
 ## Smoke the build
 
@@ -68,13 +70,14 @@ Default executable path for the Makefile is `./dist/pagedrop/pagedrop`. Override
 
 Before tagging a release, also verify manually on a machine without Python: install Setup.exe, open a PDF, drag a page into the file manager, and confirm the extracted files appear. On a frozen onedir build, also confirm toolbar icons, Print dialog, and Show in folder.
 
-## Windows installer (GitHub Releases)
+## Tagged releases (GitHub Releases)
 
-Windows releases are published only from the `vMAJOR.MINOR.PATCH` tag that
-exactly matches the version in `pyproject.toml`. The release workflow builds and
-tests one onedir installer, produces its checksum from the final bytes, then
-passes that tested pair to its publication job. Do not create a release manually
-or rebuild an artifact between testing and publication.
+Releases are published only from a `vMAJOR.MINOR.PATCH` tag that exactly matches
+the version in `pyproject.toml`. Before tagging, copy
+`release-notes/TEMPLATE.md` to `release-notes/vX.Y.Z.md` and fill it in. The
+workflow requires those notes, builds and tests Windows and Linux artifacts in
+separate jobs, then passes the tested files to one publication job. Do not
+create a release manually or rebuild artifacts between testing and publication.
 
 For a local Windows packaging check, generate icons once (or after logo changes),
 then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isinfo.php),
@@ -95,16 +98,18 @@ The workflow creates the required checksum beside it:
 <64 lowercase SHA-256 hex characters>  PageDrop-X.Y.Z-Setup.exe
 ```
 
-On a matching tag push, `.github/workflows/release-windows.yml` runs the full
-test suite, packaging validation, and the newly built executable smoke test on
-Windows x64 before publication. It then creates or resumes an unpublished draft,
-generates `latest.json` from the tested installer and draft release notes, verifies
-the downloaded installer, checksum, and manifest bytes, and publishes all three. A
-published release is never changed. If an unpublished draft is interrupted, rerun
-the same tag workflow: it replaces only incomplete or mismatched draft assets and
-re-verifies all three assets before publishing. It will not move “latest” backwards.
+On a matching tag push, `.github/workflows/release.yml` runs the full test suite,
+packaging validation, and executable smoke test on Windows and Linux before
+publication. It creates or resumes an unpublished draft, applies the checked-in
+tag notes, generates `latest.json` from the tested Windows installer and those
+notes, verifies downloaded asset bytes, and publishes the Windows installer and
+checksum plus the AppImage, `.zsync`, and AppImage checksum. A published release
+is never changed. If an unpublished draft is interrupted, rerun the same tag
+workflow: it replaces only incomplete or mismatched assets and verifies them
+again before publishing. It will not move “latest” backwards. Linux updates use
+the embedded `gh-releases-zsync` information and are not listed in `latest.json`.
 
-The UTF-8 manifest contains `schema_version: 1`, numeric `version` as a
+The Windows-only UTF-8 manifest contains `schema_version: 1`, numeric `version` as a
 `MAJOR.MINOR.PATCH` string, positive integer `installer_size`, lowercase
 `installer_sha256`, and Markdown `notes`. Generation is deterministic and
 limited to 1 MiB. Notes changed during publication cause publication to fail;
@@ -136,8 +141,9 @@ Before a tagged binary package:
 
 1. Run `make test-release` (or equivalent full suite + executable smoke)
 2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, `QtPrintSupport`, installer identity, and updater mutex contract
-3. Confirm release notes / About / installer materials match the redistribution policy in [Licensing](licensing.md)
-4. Confirm Qt LGPL obligations (licence texts + source/offer) for that release
+3. Run `make build-appimage` on Linux and smoke-test the resulting AppImage
+4. Confirm release notes / About / installer materials match the redistribution policy in [Licensing](licensing.md)
+5. Confirm Qt LGPL obligations (licence texts + source/offer) for that release
 
 Passing source tests or this checklist is not release clearance. Follow the
 binary-release requirements in [Licensing](licensing.md) for every published

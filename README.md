@@ -47,7 +47,10 @@ Packaged Windows builds check for updates automatically; use **Help → Check fo
 
 > Windows may show a SmartScreen warning on unsigned builds. Choose **More info → Run anyway** if that happens.
 
-macOS and Linux binaries aren't published yet. Run from source (below) or build your own with PyInstaller.
+Linux releases are also available as an x86_64 AppImage. Download it from
+[GitHub Releases](https://github.com/ParallaX07/PageDrop/releases), make it
+executable, and launch it. Gear Lever can integrate AppImages; AppImageUpdate
+supports the published zsync updates. macOS binaries aren't published yet.
 
 ## Quick start
 
@@ -147,7 +150,7 @@ Deeper setup, layout, and tests: [docs/development.md](docs/development.md).
 | [User guide](docs/user-guide.md) | Workflows, preferences, shortcuts |
 | [Tools](docs/tools.md) | Tools hub catalogue and backends |
 | [Development](docs/development.md) | Source layout, stack, tests, CI |
-| [Building](docs/building.md) | PyInstaller, smoke checks, Windows installer |
+| [Building](docs/building.md) | PyInstaller, smoke checks, Windows installer, Linux AppImage |
 | [Architecture](docs/architecture.md) | Layers, edit model, jobs, locking |
 | [Licensing](docs/licensing.md) | Binary redistribution policy |
 
