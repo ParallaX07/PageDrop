@@ -128,6 +128,9 @@ def _assert_linux_release_script() -> None:
     assert "gh-releases-zsync|ParallaX07|PageDrop|latest|PageDrop-*-x86_64.AppImage.zsync" in text, (
         "Linux AppImage must embed the GitHub zsync update information"
     )
+    assert "X-AppImage-Version=${VERSION}" in text and "<<DESKTOP" in text, (
+        "Linux AppImage desktop file must carry the app version for AppImage managers"
+    )
 
 
 def main() -> None:
