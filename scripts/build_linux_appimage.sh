@@ -41,7 +41,7 @@ HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/usr/bin/pagedrop" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
-cat > "$APPDIR/io.github.ParallaX07.PageDrop.desktop" <<'DESKTOP'
+cat > "$APPDIR/io.github.ParallaX07.PageDrop.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=PageDrop
@@ -51,6 +51,7 @@ Icon=pagedrop
 Categories=Office;
 Terminal=false
 MimeType=application/pdf;
+X-AppImage-Version=${VERSION}
 DESKTOP
 cp "$APPDIR/io.github.ParallaX07.PageDrop.desktop" "$APPDIR/usr/share/applications/"
 
