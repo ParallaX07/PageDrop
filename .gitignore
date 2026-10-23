@@ -15,3 +15,8 @@ dist/
 
 # Windows installer output (publish via GitHub Releases, do not commit)
 installer/Output/
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude
+.agents
