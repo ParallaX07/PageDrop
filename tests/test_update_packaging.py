@@ -90,7 +90,7 @@ def _release_files(tmp_path: Path) -> dict[str, Path]:
     zsync = tmp_path / f"{appimage.name}.zsync"
     zsync.write_bytes(b"zsync data")
     checksum = Path(f"{appimage}.sha256")
-    checksum.write_text(f"{hashlib.sha256(appimage.read_bytes()).hexdigest()}  {appimage.name}\n", encoding="ascii")
+    checksum.write_bytes(f"{hashlib.sha256(appimage.read_bytes()).hexdigest()}  {appimage.name}\n".encode("ascii"))
     notes = tmp_path / "v1.2.3.md"
     notes.write_text("# PageDrop 1.2.3\n", encoding="utf-8")
     return {"appimage": appimage, "zsync": zsync, "appimage_checksum": checksum, "notes_file": notes}
