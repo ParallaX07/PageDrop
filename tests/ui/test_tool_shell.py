@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import sys
 import time
 from pathlib import Path
@@ -28,10 +27,7 @@ from pagedrop.ui.tool_shell import (
     run_tool_job,
 )
 from pagedrop.ui.tools_window import ToolsWindow
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, pages: int = 3) -> None:
@@ -520,7 +516,7 @@ def test_each_migrated_organize_tool_runs_job_and_shows_result_actions(
     src_b = tmp_path / "doc_b.pdf"
     _write_pdf(src, pages=4)
     _write_pdf(src_b, pages=2)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
@@ -547,7 +543,7 @@ def test_each_migrated_organize_tool_runs_job_and_shows_result_actions(
     assert shell._result_bar._path == str(out)
     assert shell._result_bar._folder_btn.text() == "Show in folder"
     assert not hasattr(tools, "is_job_running")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert Path(out).resolve() != src.resolve()
 
     shell.close()
@@ -561,7 +557,7 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
     src = tmp_path / "doc.pdf"
     out = tmp_path / "doc_nup.pdf"
     _write_pdf(src, pages=12)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
@@ -607,7 +603,7 @@ def test_n_up_shell_cancel_mid_run_via_busy_overlay(
     qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert not shell._result_bar.isVisible()
     assert shell.statusBar().currentMessage() == "Cancelled"
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert checks["n"] >= 1
 
     shell.close()

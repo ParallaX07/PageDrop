@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import QColorDialog, QFileDialog, QToolButton
 from pagedrop.core.annotations import AnnotationOp, list_annotation_summaries
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.pdf_viewer import ANNOT_TOOL_ITEMS, AnnotTool, _map_pdf_rect_to_widget
-from tests.conftest import RENDER_TIMEOUT_MS, wait_for_pdf_loaded
-from tests.ui.test_save_as import _file_hash, _load_and_dirty, _wait_for_editor_job
+from tests.conftest import RENDER_TIMEOUT_MS, file_sha256, wait_for_pdf_loaded
+from tests.ui.test_save_as import _load_and_dirty, _wait_for_editor_job
 
 
 def _text_pdf(path: Path) -> None:
@@ -52,7 +52,6 @@ def markup_pdf(tmp_path: Path) -> Path:
 @pytest.fixture
 def accept_markup_color(monkeypatch: pytest.MonkeyPatch):
     """Accept color dialog with a distinct magenta so storage is observable."""
-
     def _fake_get_color(*_args, **_kwargs) -> QColor:
         return QColor(200, 40, 180)
 
@@ -190,8 +189,6 @@ def test_save_as_with_redaction_uses_verify_path(
     qtbot, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """R16: pending redaction regions go through redact_edit_model(verify=True)."""
-    import hashlib
-
     from PyQt6.QtWidgets import QFileDialog
 
     from pagedrop.core.annotations import AnnotationOp
@@ -216,7 +213,7 @@ def test_save_as_with_redaction_uses_verify_path(
         rect = (float(r.x0), float(r.y0), float(r.x1), float(r.y1))
     finally:
         hits.close()
-    before = hashlib.sha256(src.read_bytes()).hexdigest()
+    before = file_sha256(src)
 
     window = main_window
     window._load_pdf(str(src))
@@ -253,7 +250,7 @@ def test_save_as_with_redaction_uses_verify_path(
     _wait_for_editor_job(qtbot, window, tab)
     assert len(calls) == 1
     assert out.is_file()
-    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+    assert file_sha256(src) == before
     assert inspect_redaction_result(out, absent_text=[secret]).ok
     assert session.redaction_regions() == []
     assert not session.is_dirty()
@@ -265,13 +262,13 @@ def test_save_as_with_redaction_uses_verify_path(
     assert window._save_as(tab) is True
     _wait_for_editor_job(qtbot, window, tab)
     assert inspect_redaction_result(second, absent_text=[secret]).ok
-    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+    assert file_sha256(src) == before
 
 
 def test_repeated_save_rebases_comments_and_preserves_sources(
     main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
 ) -> None:
-    source_hash = _file_hash(five_page_pdf)
+    source_hash = file_sha256(five_page_pdf)
     tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
     tab.markup_session.push_annotation(
         AnnotationOp(kind="comment", page_index=0, points=((40, 80),), text="First")
@@ -294,7 +291,7 @@ def test_repeated_save_rebases_comments_and_preserves_sources(
     assert main_window._save_as(tab)
     _wait_for_editor_job(qtbot, main_window, tab)
 
-    assert _file_hash(five_page_pdf) == source_hash
+    assert file_sha256(five_page_pdf) == source_hash
     assert [summary[2] for summary in list_annotation_summaries(str(first))] == ["First"]
     assert [summary[2] for summary in list_annotation_summaries(str(second))] == ["First", "Second"]
     assert tab.edit_model is not None

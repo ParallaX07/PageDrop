@@ -8,7 +8,6 @@ Normal CI skips these. Enable with:
 
 from __future__ import annotations
 
-import hashlib
 import os
 import zipfile
 from pathlib import Path
@@ -19,10 +18,7 @@ import pytest
 
 from pagedrop.core.backends.office import convert_office_to_pdf
 from pagedrop.core.capabilities import clear_cache, set_configured_soffice_path
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _write_tiny_docx(path: Path, text: str = "PageDrop office smoke") -> Path:
@@ -71,7 +67,7 @@ def test_smoke_libreoffice_docx_to_pdf(tmp_path: Path) -> None:
     clear_cache()
     try:
         src = _write_tiny_docx(tmp_path / "smoke note.docx")
-        before = _file_hash(src)
+        before = file_sha256(src)
         dst = tmp_path / "smoke note.pdf"
         result = convert_office_to_pdf(
             src, dst, backend="libreoffice", soffice_path=lo, timeout_sec=120
@@ -81,7 +77,7 @@ def test_smoke_libreoffice_docx_to_pdf(tmp_path: Path) -> None:
         assert result.page_count >= 1
         with fitz.open(result.path) as doc:
             assert doc.page_count >= 1
-        assert _file_hash(src) == before
+        assert file_sha256(src) == before
     finally:
         set_configured_soffice_path(None)
         clear_cache()
@@ -94,7 +90,7 @@ def test_smoke_office_com_docx_to_pdf(tmp_path: Path) -> None:
 
     clear_cache()
     src = _write_tiny_docx(tmp_path / "com smoke.docx")
-    before = _file_hash(src)
+    before = file_sha256(src)
     dst = tmp_path / "com smoke.pdf"
     result = convert_office_to_pdf(src, dst, backend="com", timeout_sec=120)
     assert result.backend == "com"
@@ -102,4 +98,4 @@ def test_smoke_office_com_docx_to_pdf(tmp_path: Path) -> None:
     assert result.page_count >= 1
     with fitz.open(result.path) as doc:
         assert doc.page_count >= 1
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before

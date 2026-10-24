@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -12,10 +11,7 @@ import pytest
 from pagedrop.core import native_conversions as nc
 from pagedrop.core.capabilities import OPENPYXL, clear_cache
 from pagedrop.core.jobs.errors import BackendUnavailableError
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_table_pdf(path: Path) -> Path:
@@ -46,7 +42,7 @@ def _make_table_pdf(path: Path) -> Path:
 
 def test_tables_csv_and_json(tmp_path):
     source = _make_table_pdf(tmp_path / "table.pdf")
-    before = _file_hash(source)
+    before = file_sha256(source)
 
     csv_out = tmp_path / "t.csv"
     written = nc.export_pdf(source, csv_out, format_id="csv")
@@ -65,7 +61,7 @@ def test_tables_csv_and_json(tmp_path):
         for cell in row
     )
     assert "Ada" in flat and "Bob" in flat
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
 
 
 def test_tables_xlsx_requires_openpyxl_when_absent(tmp_path, monkeypatch):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import struct
 import sys
 import zlib
@@ -27,14 +26,11 @@ from pagedrop.core.redact import (
     verify_argv,
     verify_redacted_pdf_fresh_process,
 )
+from tests.conftest import file_sha256
 
 
 SECRET = "TOPSECRET_ZZ9"
 SECRET_B = "HIDDENVAL42"
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _png_rgb(path: Path, *, width: int = 32, height: int = 32, rgb: tuple[int, int, int] = (12, 34, 56)) -> Path:
@@ -87,12 +83,12 @@ def _secret_rect(path: Path, secret: str = SECRET) -> tuple[float, float, float,
 
 def test_redacted_text_unextractable_fresh_process(tmp_path: Path) -> None:
     src = _text_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "redacted.pdf"
     rect = _secret_rect(src)
     redact_pdf(src, out, [RedactionRegion(0, rect)], verify=True)
 
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert out.is_file()
     report = verify_redacted_pdf_fresh_process(out, absent_text=[SECRET])
     assert report.ok, report.failures
@@ -109,7 +105,7 @@ def test_redacted_text_unextractable_fresh_process(tmp_path: Path) -> None:
 
 def test_failed_verify_deletes_staged_output(tmp_path: Path) -> None:
     src = _text_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "should_not_exist.pdf"
     # Region misses the secret; extra_absent forces verify failure.
     with pytest.raises(RedactionVerifyError) as excinfo:
@@ -121,7 +117,7 @@ def test_failed_verify_deletes_staged_output(tmp_path: Path) -> None:
             verify=True,
         )
     assert not out.exists()
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert any(SECRET in f for f in excinfo.value.failures)
 
 
@@ -146,9 +142,9 @@ def test_split_spans_fixture(tmp_path: Path) -> None:
     # Cover both spans with one rect.
     rect = (40.0, 60.0, 180.0, 95.0)
     out = tmp_path / "split-out.pdf"
-    before = _file_hash(src)
+    before = file_sha256(src)
     redact_pdf(src, out, [RedactionRegion(0, rect, expected_absent=(SECRET,))], verify=True)
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
     assert verify_redacted_pdf_fresh_process(out, absent_text=[SECRET]).ok
 
 
@@ -171,9 +167,9 @@ def test_ocr_text_layer_fixture(tmp_path: Path) -> None:
         doc.close()
     rect = _secret_rect(src)
     out = tmp_path / "ocr-out.pdf"
-    before = _file_hash(src)
+    before = file_sha256(src)
     redact_pdf(src, out, [RedactionRegion(0, rect)], verify=True)
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
     hex_secret = SECRET.encode("ascii").hex().encode("ascii")
     assert hex_secret not in out.read_bytes()
     assert verify_redacted_pdf_fresh_process(out, absent_text=[SECRET]).ok
@@ -205,9 +201,9 @@ def test_shared_image_and_vector_fixture(tmp_path: Path) -> None:
         RedactionRegion(0, (40.0, 220.0, 160.0, 260.0)),
     ]
     out = tmp_path / "imgvec-out.pdf"
-    before = _file_hash(src)
+    before = file_sha256(src)
     redact_pdf(src, out, regions, verify=True)
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
 
     doc = fitz.open(str(out))
     try:
@@ -274,9 +270,9 @@ def test_annots_rotated_incremental_fixtures(tmp_path: Path) -> None:
         doc.close()
 
     out = tmp_path / "annot-out.pdf"
-    before = _file_hash(src)
+    before = file_sha256(src)
     redact_pdf(src, out, [RedactionRegion(0, rect)], verify=True)
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
     assert SECRET.encode("ascii").hex().encode("ascii") not in out.read_bytes()
     report = verify_redacted_pdf_fresh_process(out, absent_text=[SECRET])
     assert report.ok, report.failures
@@ -303,7 +299,7 @@ def test_metadata_attachments_scope(tmp_path: Path) -> None:
         doc.close()
 
     out = tmp_path / "meta-out.pdf"
-    before = _file_hash(src)
+    before = file_sha256(src)
     redact_pdf(
         src,
         out,
@@ -316,7 +312,7 @@ def test_metadata_attachments_scope(tmp_path: Path) -> None:
         extra_absent=[SECRET_B],
         verify=True,
     )
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
     report = verify_redacted_pdf_fresh_process(
         out,
         absent_text=[SECRET, SECRET_B],
@@ -356,7 +352,7 @@ def test_file_contains_any_chunked_scan(tmp_path: Path) -> None:
 
 def test_redact_edit_model_with_markup_session(tmp_path: Path) -> None:
     src = _text_pdf(tmp_path / "src.pdf")
-    before = _file_hash(src)
+    before = file_sha256(src)
     model = PdfEditModel(str(src), 1)
     session = MarkupSession()
     rect = _secret_rect(src)
@@ -369,7 +365,7 @@ def test_redact_edit_model_with_markup_session(tmp_path: Path) -> None:
         markup=session.non_redaction_ops(model),
         verify=True,
     )
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
     assert inspect_redaction_result(out, absent_text=[SECRET]).ok
 
 
@@ -391,8 +387,8 @@ def test_redaction_target_resolves_after_reorder_and_is_dropped_on_delete(tmp_pa
 def test_redact_edit_model_rejects_imported_source(tmp_path: Path) -> None:
     source_a = _text_pdf(tmp_path / "a.pdf")
     source_b = _text_pdf(tmp_path / "b.pdf")
-    hash_a = _file_hash(source_a)
-    hash_b = _file_hash(source_b)
+    hash_a = file_sha256(source_a)
+    hash_b = file_sha256(source_b)
     model = PdfEditModel(str(source_a), 1)
     model.insert_pages(1, [PageRef(str(source_b), 0)])
     model.remove_pages([1])
@@ -405,8 +401,8 @@ def test_redact_edit_model_rejects_imported_source(tmp_path: Path) -> None:
             verify=False,
         )
 
-    assert _file_hash(source_a) == hash_a
-    assert _file_hash(source_b) == hash_b
+    assert file_sha256(source_a) == hash_a
+    assert file_sha256(source_b) == hash_b
 
 
 def test_redact_edit_model_encrypted_with_passwords(tmp_path: Path) -> None:
@@ -424,7 +420,7 @@ def test_redact_edit_model_encrypted_with_passwords(tmp_path: Path) -> None:
         )
     finally:
         doc.close()
-    before = _file_hash(enc)
+    before = file_sha256(enc)
     model = PdfEditModel(str(enc), 1)
     rect = _secret_rect(plain)  # same page geometry as encrypted source
     out = tmp_path / "redacted.pdf"
@@ -444,7 +440,7 @@ def test_redact_edit_model_encrypted_with_passwords(tmp_path: Path) -> None:
         passwords={str(enc): "secret"},
         verify=True,
     )
-    assert _file_hash(enc) == before
+    assert file_sha256(enc) == before
     assert inspect_redaction_result(out, absent_text=[SECRET]).ok
 
 
