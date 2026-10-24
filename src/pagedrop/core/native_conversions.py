@@ -111,6 +111,35 @@ def collision_safe_path(path: Path) -> Path:
         index += 1
 
 
+def batch_output_paths(
+    sources: Sequence[str | Path],
+    out_dir: str | Path,
+    suffix: str = ".pdf",
+    *,
+    avoid_existing: bool = False,
+) -> list[Path]:
+    """One destination per source in *out_dir*, unique within the batch.
+
+    Shared stems get ``stem_2`` / ``stem_3`` … like :func:`collision_safe_path`.
+    With *avoid_existing*, names already on disk are skipped too.
+    """
+    out = Path(out_dir)
+    used: set[str] = set()
+    paths: list[Path] = []
+    for source in sources:
+        stem = Path(source).stem
+        index = 1
+        while True:
+            name = f"{stem}{suffix}" if index == 1 else f"{stem}_{index}{suffix}"
+            dest = out / name
+            if name.casefold() not in used and not (avoid_existing and dest.exists()):
+                break
+            index += 1
+        used.add(name.casefold())
+        paths.append(dest)
+    return paths
+
+
 def predicted_export_paths(
     output_path: str | Path,
     *,
