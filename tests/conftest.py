@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,6 +27,11 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "generated"
 # Cap how long tests wait on thumbnail rendering (ms).
 RENDER_TIMEOUT_MS = 15_000
 RENDER_POOL_DRAIN_MS = 2000
+
+
+def file_sha256(path: Path | str) -> str:
+    """Return the hex SHA-256 of a file, for source-unchanged assertions."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _install_nonblocking_qt() -> None:

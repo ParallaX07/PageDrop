@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
-import pytest
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.ui.optimize_secure_shell import (
@@ -17,6 +16,7 @@ from pagedrop.ui.optimize_secure_shell import (
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
 from tests.core.test_jobs import _encrypted_pdf
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, *, text: str = "hello") -> None:
@@ -264,7 +264,6 @@ def test_sanitize_cancel_mid_run_clears_busy_chrome(
     qtbot, tmp_path, monkeypatch, isolated_settings
 ):
     """O13: Cancel mid sanitize annot loop → no promote, BusyOverlay clears."""
-    import hashlib
     import time
 
     from pagedrop.core import optimize_secure as ops
@@ -280,7 +279,7 @@ def test_sanitize_cancel_mid_run_clears_busy_chrome(
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+    source_hash = file_sha256(src)
     out = tmp_path / "sanitized.pdf"
 
     tools = ToolsWindow()
@@ -330,7 +329,7 @@ def test_sanitize_cancel_mid_run_clears_busy_chrome(
     assert not out.exists()
     qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert shell.statusBar().currentMessage() == "Cancelled"
-    assert hashlib.sha256(src.read_bytes()).hexdigest() == source_hash
+    assert file_sha256(src) == source_hash
 
     shell.close()
     tools.close()

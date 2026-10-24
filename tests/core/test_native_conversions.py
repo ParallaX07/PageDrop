@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import zipfile
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import pytest
 
 from pagedrop.core import native_conversions as nc
 from pagedrop.core.capabilities import OPENPYXL, clear_cache
-from pagedrop.core.jobs.errors import BackendUnavailableError
+from pagedrop.core.jobs.errors import BackendUnavailableError, SourceOverwriteError
 from pagedrop.core.supported_formats import (
     EXPORT_FROM_PDF_FORMATS,
     IMPORT_TO_PDF_FORMATS,
@@ -21,10 +20,7 @@ from pagedrop.core.supported_formats import (
     import_to_pdf_dialog_filter,
     is_supported_image,
 )
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_text_pdf(path: Path, texts: list[str]) -> Path:
@@ -117,41 +113,41 @@ def test_dialog_filters_omit_gated_codecs_when_absent(monkeypatch):
 
 def test_pdf_to_png_page_count(tmp_path):
     source = _make_text_pdf(tmp_path / "src.pdf", ["A", "B", "C"])
-    before = _file_hash(source)
+    before = file_sha256(source)
     out_dir = tmp_path / "png"
     written = nc.export_pdf(source, out_dir, format_id="png", dpi=72)
     assert len(written) == 3
     assert all(p.suffix == ".png" and p.is_file() for p in written)
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
 
 
 def test_pdf_to_text_contains_known_string(tmp_path):
     source = _make_text_pdf(tmp_path / "src.pdf", ["Hello PageDrop"])
-    before = _file_hash(source)
+    before = file_sha256(source)
     out = tmp_path / "out.txt"
     written = nc.export_pdf(source, out, format_id="text")
     assert written == [out]
     assert "Hello PageDrop" in out.read_text(encoding="utf-8")
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
 
 
 def test_table_to_csv(tmp_path):
     source = _make_table_pdf(tmp_path / "table.pdf")
-    before = _file_hash(source)
+    before = file_sha256(source)
     out = tmp_path / "tables.csv"
     written = nc.export_pdf(source, out, format_id="csv")
     text = written[0].read_text(encoding="utf-8")
     assert "Ada" in text and "36" in text
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
 
 
 def test_source_hash_unchanged(tmp_path):
     """Exports and imports must never mutate the user's source bytes."""
     source = _make_text_pdf(tmp_path / "src.pdf", ["Keep", "Intact"])
-    before = _file_hash(source)
+    before = file_sha256(source)
     nc.export_pdf(source, tmp_path / "png_out", format_id="png", dpi=72)
     nc.export_pdf(source, tmp_path / "out.txt", format_id="text")
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
 
     svg = tmp_path / "shape.svg"
     svg.write_text(
@@ -159,13 +155,13 @@ def test_source_hash_unchanged(tmp_path):
         '<rect width="40" height="40" fill="red"/></svg>',
         encoding="utf-8",
     )
-    before_svg = _file_hash(svg)
+    before_svg = file_sha256(svg)
     nc.import_to_pdf(svg, tmp_path / "shape.pdf")
-    assert _file_hash(svg) == before_svg
+    assert file_sha256(svg) == before_svg
 
     txt = tmp_path / "notes.txt"
     txt.write_text("Line one\nLine two\n", encoding="utf-8")
-    before_txt = _file_hash(txt)
+    before_txt = file_sha256(txt)
     pdf = tmp_path / "notes.pdf"
     nc.import_to_pdf(txt, pdf)
     doc = fitz.open(pdf)
@@ -173,7 +169,7 @@ def test_source_hash_unchanged(tmp_path):
         assert "Line one" in doc[0].get_text()
     finally:
         doc.close()
-    assert _file_hash(txt) == before_txt
+    assert file_sha256(txt) == before_txt
 
 
 def test_markdown_and_html_via_story(tmp_path):
@@ -205,7 +201,7 @@ def test_markdown_and_html_via_story(tmp_path):
 def test_csv_to_pdf_contains_known_cells(tmp_path):
     csv_path = tmp_path / "sheet.csv"
     csv_path.write_text("Name,Score\nAda,99\n", encoding="utf-8")
-    before = _file_hash(csv_path)
+    before = file_sha256(csv_path)
     out = tmp_path / "sheet.pdf"
     nc.import_to_pdf(csv_path, out)
     doc = fitz.open(out)
@@ -216,7 +212,7 @@ def test_csv_to_pdf_contains_known_cells(tmp_path):
         assert doc.page_count >= 1
     finally:
         doc.close()
-    assert _file_hash(csv_path) == before
+    assert file_sha256(csv_path) == before
 
 
 def test_xlsx_to_pdf_requires_openpyxl_when_absent(tmp_path, monkeypatch):
@@ -251,7 +247,7 @@ def test_xlsx_to_pdf_contains_known_cells(tmp_path):
     ws.append(["Item", "Qty"])
     ws.append(["Widget", 3])
     wb.save(xlsx)
-    before = _file_hash(xlsx)
+    before = file_sha256(xlsx)
     nc.import_to_pdf(xlsx, out)
     doc = fitz.open(out)
     try:
@@ -259,7 +255,7 @@ def test_xlsx_to_pdf_contains_known_cells(tmp_path):
         assert "Widget" in text
     finally:
         doc.close()
-    assert _file_hash(xlsx) == before
+    assert file_sha256(xlsx) == before
 
 
 def test_csv_to_pdf_rejects_too_many_columns(tmp_path):
@@ -272,14 +268,14 @@ def test_csv_to_pdf_rejects_too_many_columns(tmp_path):
 
 def test_cbz_round_trip_export_import(tmp_path):
     source = _make_text_pdf(tmp_path / "src.pdf", ["One", "Two"])
-    before = _file_hash(source)
+    before = file_sha256(source)
     cbz = tmp_path / "pages.cbz"
     written = nc.export_pdf(source, cbz, format_id="cbz", dpi=72)
     assert written == [cbz]
     with zipfile.ZipFile(cbz) as zf:
         names = sorted(zf.namelist())
         assert names == ["001.png", "002.png"]
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
 
     back = tmp_path / "from_cbz.pdf"
     nc.import_to_pdf(cbz, back)
@@ -331,7 +327,7 @@ def test_json_xml_structure_export(tmp_path):
 
 def test_rejects_source_overwrite(tmp_path):
     source = _make_text_pdf(tmp_path / "src.pdf", ["X"])
-    with pytest.raises(Exception):
+    with pytest.raises(SourceOverwriteError):
         nc.export_pdf(source, source, format_id="text", overwrite=True)
 
 

@@ -78,16 +78,15 @@ class ZoomControls(QWidget):
         layout.addWidget(self._zoom_in)
         layout.addWidget(self._value_label)
 
-        def refresh_icons() -> None:
-            self._zoom_out.setIcon(icons.icon("minus"))
-            self._zoom_in.setIcon(icons.icon("plus"))
-
-        refresh_icons()
-        icons.register_refresh(refresh_icons)
-        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_icons))
+        self._refresh_icons()
+        icons.register_refresh(self._refresh_icons)
 
         self.set_value(initial)
         self.setEnabled(False)
+
+    def _refresh_icons(self) -> None:
+        self._zoom_out.setIcon(icons.icon("minus"))
+        self._zoom_in.setIcon(icons.icon("plus"))
 
     def eventFilter(self, obj, event) -> bool:
         if (

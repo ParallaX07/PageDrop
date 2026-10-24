@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import gc
-from weakref import ref
+from weakref import WeakMethod, ref
 
 import pytest
+from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QIcon
 
 
@@ -127,3 +128,47 @@ def test_refresh_icons_clears_cache_and_notifies(qapp, isolated_settings):
     finally:
         unregister_refresh(_on_refresh)
         set_light_theme(False)
+
+
+def test_refresh_icons_prunes_widget_with_deleted_cpp_object(qapp, isolated_settings):
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QWidget
+
+    from pagedrop.ui.accessibility import refresh_themed_widgets
+    from pagedrop.ui.icons import _refresh_callbacks, register_refresh, unregister_refresh
+
+    class _Owner(QWidget):
+        def refresh(self) -> None:
+            pytest.fail("Callback of a deleted widget was invoked")
+
+    calls: list[int] = []
+
+    def _alive() -> None:
+        calls.append(1)
+
+    owner = _Owner()
+    register_refresh(owner.refresh)
+    register_refresh(_alive)
+    sip.delete(owner)
+    try:
+        refresh_themed_widgets()
+        assert calls == [1]
+        assert not any(
+            isinstance(registered, WeakMethod)
+            and getattr(registered(), "__self__", None) is owner
+            for registered in _refresh_callbacks
+        )
+    finally:
+        unregister_refresh(_alive)
+
+
+def test_zoom_controls_is_collectable_after_delete(qapp):
+    from pagedrop.ui.zoom_controls import ZoomControls
+
+    controls = ZoomControls(min_width=100, max_width=400, step=20, initial=200)
+    controls_ref = ref(controls)
+    controls.deleteLater()
+    del controls
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
+    assert controls_ref() is None

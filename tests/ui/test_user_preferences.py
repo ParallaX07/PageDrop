@@ -42,6 +42,7 @@ from pagedrop.ui.theme import (
     MAX_THUMBNAIL_WIDTH,
     app_stylesheet,
 )
+from tests.conftest import wait_for_pdf_loaded
 
 
 def test_light_theme_stylesheet_differs(isolated_settings):
@@ -251,7 +252,7 @@ def test_chrome_toggle_hides_menu_and_toolbar(isolated_settings, main_window, qt
 
 def test_zoom_persisted_on_change(main_window, five_page_pdf, isolated_settings, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
     main_window._on_zoom_requested(200)
     assert thumbnail_zoom() == 200
 

@@ -49,7 +49,6 @@ from pagedrop.core.drag_mime import (
     decode_page_refs,
 )
 from pagedrop.core.page_extractor import (
-    extract_page_refs_to_files,
     extract_page_refs_to_folder,
 )
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
@@ -1159,7 +1158,7 @@ class ThumbnailGrid(QScrollArea):
         refs = [self._model.page_at(i) for i in range(self._model.logical_count())]
         card_pools: dict[PageRef, deque[PageCard]] = defaultdict(deque)
         width_pools: dict[PageRef, deque[int]] = defaultdict(deque)
-        for card, width in zip(self._cards, self._page_render_width):
+        for card, width in zip(self._cards, self._page_render_width, strict=False):
             ref = card.page_ref
             if ref is None:
                 self.load_model(self._model, self._get_loader)

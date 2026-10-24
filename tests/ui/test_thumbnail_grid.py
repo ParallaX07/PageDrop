@@ -8,6 +8,7 @@ from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+from tests.conftest import wait_for_grid_loaded
 
 
 def _all_cards_have_thumbnails(cards) -> bool:
@@ -43,7 +44,7 @@ def test_load_pdf_creates_cards(qtbot, five_page_pdf):
     grid.load_pdf(loader)
     assert len(grid._cards) == 5
     assert all(isinstance(card, PageCard) for card in grid._cards)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
     loader.close()
 
 
@@ -137,7 +138,7 @@ def test_progress_bar_visible_during_load(qtbot, five_page_pdf):
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
     qtbot.waitUntil(lambda: progress.isVisible(), timeout=5000)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
     qtbot.waitUntil(lambda: not progress.isVisible(), timeout=5000)
     loader.close()
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -20,10 +19,7 @@ from pagedrop.core.forms import (
     list_form_fields,
 )
 from pagedrop.core.jobs.errors import SourceOverwriteError
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(path: Path) -> Path:
@@ -39,7 +35,7 @@ def _make_pdf(path: Path) -> Path:
 
 def test_create_fill_flatten_round_trip(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     created = tmp_path / "created.pdf"
     create_form_fields(
         str(src),
@@ -49,7 +45,7 @@ def test_create_fill_flatten_round_trip(tmp_path: Path) -> None:
             FormCreateOp(0, "Agree", "checkbox", (40, 340, 60, 360)),
         ],
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     fields = list_form_fields(str(created))
     names = {f.name for f in fields}
     assert names == {"Name", "Agree"}
@@ -59,7 +55,7 @@ def test_create_fill_flatten_round_trip(tmp_path: Path) -> None:
         str(created), str(filled), {"Name": "Ada", "Agree": "Yes"}
     )
     assert updated == 2
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     values = {f.name: str(f.value) for f in list_form_fields(str(filled))}
     assert values["Name"] == "Ada"
     assert values["Agree"].lower() in ("yes", "true", "1", "on")
@@ -67,7 +63,7 @@ def test_create_fill_flatten_round_trip(tmp_path: Path) -> None:
     flat = tmp_path / "flat.pdf"
     flatten_forms(str(filled), str(flat))
     assert list_form_fields(str(flat)) == []
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     with pytest.raises(SourceOverwriteError):
         fill_form_fields(str(created), str(created), {"Name": "x"})

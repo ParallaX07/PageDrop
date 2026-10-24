@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -12,6 +11,7 @@ from pagedrop.core.modify_ops import RASTER_EFFECT_WARNING
 from pagedrop.ui.modify_tools_shell import SHELL_MODIFY_IDS, open_modify_shell
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, *, text: str = "hello", pages: int = 1) -> None:
@@ -434,7 +434,7 @@ def test_watermark_cancel_mid_run_clears_busy_chrome(
     src = tmp_path / "src.pdf"
     out = tmp_path / "src_watermarked.pdf"
     _write_pdf(src, text="body", pages=12)
-    source_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+    source_hash = file_sha256(src)
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
@@ -478,7 +478,7 @@ def test_watermark_cancel_mid_run_clears_busy_chrome(
     qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert not shell._result_bar.isVisible()
     assert shell.statusBar().currentMessage() == "Cancelled"
-    assert hashlib.sha256(src.read_bytes()).hexdigest() == source_hash
+    assert file_sha256(src) == source_hash
 
     shell.close()
     tools.close()
@@ -590,7 +590,7 @@ def test_blank_detect_cancel_clears_busy_chrome(
 
     pdf = tmp_path / "many.pdf"
     _write_pdf(pdf, text="keep", pages=12)
-    source_hash = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    source_hash = file_sha256(pdf)
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
@@ -634,7 +634,7 @@ def test_blank_detect_cancel_clears_busy_chrome(
     assert confirmed == []
     qtbot.waitUntil(lambda: not shell._busy_overlay.isVisible(), timeout=1000)
     assert shell.statusBar().currentMessage() == "Cancelled"
-    assert hashlib.sha256(pdf.read_bytes()).hexdigest() == source_hash
+    assert file_sha256(pdf) == source_hash
     tools.close()
 
 

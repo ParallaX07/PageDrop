@@ -11,6 +11,7 @@ from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import ZOOM_WHEEL_STEP
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+from tests.conftest import wait_for_pdf_loaded
 
 
 def _wait_for_editor_job(qtbot, window) -> None:
@@ -41,7 +42,7 @@ def test_context_menu_extract_action(
     main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
 ):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     grid.selection_manager.select_single(0)
@@ -64,7 +65,7 @@ def test_context_menu_extract_action(
 
 def test_export_all_pages(main_window, five_page_pdf, tmp_path, monkeypatch, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     assert main_window._export_all_action.isEnabled()
 
@@ -87,7 +88,7 @@ def test_export_all_reports_collision_safe_names(
     main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
 ):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
     existing = tmp_path / f"{five_page_pdf.stem}_page_0001.pdf"
     existing.write_bytes(b"unrelated")
 
@@ -109,7 +110,7 @@ def _press_key(widget, key: Qt.Key) -> None:
 
 def test_arrow_keys_and_space(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     assert grid.focused_index == 0
@@ -129,7 +130,7 @@ def test_arrow_keys_and_space(main_window, five_page_pdf, qtbot):
 
 def test_enter_opens_preview(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     _press_key(grid, Qt.Key.Key_Right)
@@ -143,7 +144,7 @@ def test_enter_opens_preview(main_window, five_page_pdf, qtbot):
 
 def test_zoom_changes_thumbnail_size(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     initial = grid.thumbnail_width_px
@@ -210,7 +211,7 @@ def test_select_all_deselect_all_toolbar(main_window, five_page_pdf, qtbot):
     assert not deselect_all.isEnabled()
 
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     assert select_all.isEnabled()
     assert not deselect_all.isEnabled()

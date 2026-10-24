@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 from pathlib import Path
 
@@ -19,10 +18,7 @@ from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
 from pagedrop.utils.temp_manager import TempManager
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, pages: int = 1) -> None:
@@ -76,7 +72,7 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
     out_ok = tmp_path / "out-ok.pdf"
     out_cancel = tmp_path / "out-cancel.pdf"
     _write_pdf(src)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     host = ToolShellWindow(title="Dummy", description="Smoke job host")
     qtbot.addWidget(host)
@@ -106,7 +102,7 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
         )
         assert result == out_ok
         assert out_ok.is_file()
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
         assert not host.is_job_running()
         assert host._result_bar.isVisible()
         assert not any(temp.get_dir().glob("job_*"))
@@ -120,7 +116,7 @@ def test_smoke_dummy_job_success_and_cancel_cleanup(qtbot, tmp_path, isolated_se
             )
         host.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
         assert not out_cancel.exists()
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
         leftovers = [
             p
             for p in temp.get_dir().rglob("*")

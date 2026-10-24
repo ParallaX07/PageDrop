@@ -382,7 +382,6 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._toast = ToastOverlay(self)
         refresh_cb = self._refresh_toolbar_icons
         icons.register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
         self._connect_signals()
         self._update_actions()
         self._update_status()

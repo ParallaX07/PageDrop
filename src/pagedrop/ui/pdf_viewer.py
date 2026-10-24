@@ -15,7 +15,6 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
-from pathlib import Path
 
 from PyQt6.QtCore import (
     QEvent,
@@ -89,7 +88,7 @@ from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.redact import RedactionRegion
-from pagedrop.ui.icons import icon, register_refresh, unregister_refresh
+from pagedrop.ui.icons import icon, register_refresh
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
 from pagedrop.core.pdf_service import (
     MAX_PRINT_PAGES,
@@ -1622,7 +1621,6 @@ class PdfViewerWidget(QWidget):
         self._freetext_format_syncing = False
         refresh_cb = self._refresh_chrome_icons
         register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: unregister_refresh(refresh_cb))
 
     # --- public API ---------------------------------------------------------
 
@@ -3349,7 +3347,7 @@ class PdfViewerWidget(QWidget):
                 self._canvas.setMinimumSize(total_w, total_h)
                 self._canvas.resize(total_w, total_h)
                 x = PAGE_GAP_PX
-                for p, (w, h) in zip(pages, sizes):
+                for p, (w, h) in zip(pages, sizes, strict=True):
                     tile = self._make_tile(p)
                     tile.setParent(self._canvas)
                     tile.setGeometry(x, PAGE_GAP_PX, w, h)
@@ -3476,7 +3474,7 @@ class PdfViewerWidget(QWidget):
             self._canvas.setMinimumSize(total_w, total_h)
             self._canvas.resize(total_w, total_h)
             x = PAGE_GAP_PX
-            for p, (w, h) in zip(pages[:2], sizes):
+            for p, (w, h) in zip(pages[:2], sizes, strict=True):
                 tile = self._tiles[p]
                 tile.setGeometry(x, PAGE_GAP_PX, w, h)
                 x += w + PAGE_GAP_PX

@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.pdf_writer import merge_pdf_files
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_text_pdf(path: Path, labels: list[str]) -> Path:
@@ -39,7 +35,7 @@ def test_smoke_split_then_merge_pieces(tmp_path: Path) -> None:
     src = tmp_path / "source.pdf"
     labels = [f"P{i}" for i in range(5)]
     _make_text_pdf(src, labels)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     out_dir = tmp_path / "parts"
     out_dir.mkdir()
@@ -50,26 +46,26 @@ def test_smoke_split_then_merge_pieces(tmp_path: Path) -> None:
         base_name="piece",
     )
     assert len(parts) == 2
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     merged = tmp_path / "rejoined.pdf"
     merge_pdf_files([str(p) for p in parts], str(merged))
     assert _page_labels(merged) == labels
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_smoke_reverse_round_trip(tmp_path: Path) -> None:
     src = tmp_path / "source.pdf"
     labels = ["A", "B", "C", "D"]
     _make_text_pdf(src, labels)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     reversed_path = tmp_path / "reversed.pdf"
     pdf_tools.reverse_pdf_pages(str(src), str(reversed_path))
     assert _page_labels(reversed_path) == list(reversed(labels))
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     restored = tmp_path / "restored.pdf"
     pdf_tools.reverse_pdf_pages(str(reversed_path), str(restored))
     assert _page_labels(restored) == labels
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash

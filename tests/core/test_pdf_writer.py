@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -13,10 +12,7 @@ from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.pdf_writer import merge_pdf_files, write_pdf
 from tests.core.test_jobs import _encrypted_pdf
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _write_distinct_pdf(path: Path, widths: list[int]) -> None:
@@ -89,8 +85,8 @@ def test_write_rejects_imported_source_without_mutating_sources(tmp_path):
     doc_b = tmp_path / "b.pdf"
     _write_distinct_pdf(doc_a, [111])
     _write_distinct_pdf(doc_b, [222])
-    hash_a = _file_hash(doc_a)
-    hash_b = _file_hash(doc_b)
+    hash_a = file_sha256(doc_a)
+    hash_b = file_sha256(doc_b)
     model = PdfEditModel(str(doc_a), 1)
     model.insert_pages(1, [PageRef(str(doc_b), 0)])
     model.remove_pages([1])
@@ -98,8 +94,8 @@ def test_write_rejects_imported_source_without_mutating_sources(tmp_path):
     with pytest.raises(SourceOverwriteError):
         write_pdf(model, str(doc_b))
 
-    assert _file_hash(doc_a) == hash_a
-    assert _file_hash(doc_b) == hash_b
+    assert file_sha256(doc_a) == hash_a
+    assert file_sha256(doc_b) == hash_b
 
 
 def test_write_rejects_hard_link_to_imported_source(tmp_path):
@@ -112,8 +108,8 @@ def test_write_rejects_hard_link_to_imported_source(tmp_path):
         alias.hardlink_to(doc_b)
     except OSError as exc:
         pytest.skip(f"hard links unavailable: {exc}")
-    hash_a = _file_hash(doc_a)
-    hash_b = _file_hash(doc_b)
+    hash_a = file_sha256(doc_a)
+    hash_b = file_sha256(doc_b)
     model = PdfEditModel(str(doc_a), 1)
     model.insert_pages(1, [PageRef(str(doc_b), 0)])
     model.remove_pages([1])
@@ -121,8 +117,8 @@ def test_write_rejects_hard_link_to_imported_source(tmp_path):
     with pytest.raises(SourceOverwriteError):
         write_pdf(model, str(alias))
 
-    assert _file_hash(doc_a) == hash_a
-    assert _file_hash(doc_b) == hash_b
+    assert file_sha256(doc_a) == hash_a
+    assert file_sha256(doc_b) == hash_b
 
 
 def test_merge_pdf_files_preserves_file_order(tmp_path):
@@ -179,13 +175,13 @@ def test_write_applies_page_rotation(five_page_pdf, tmp_path):
 def test_write_encrypted_with_password_leaves_source_unchanged(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
 
     model = PdfEditModel(str(enc), 1)
     output = tmp_path / "unlocked_copy.pdf"
     write_pdf(model, str(output), passwords={str(enc): "secret"})
 
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert output.resolve() != enc.resolve()
     out = fitz.open(str(output))
     try:
@@ -198,28 +194,28 @@ def test_write_encrypted_with_password_leaves_source_unchanged(tmp_path):
 def test_write_encrypted_without_password_fails_clearly(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
 
     model = PdfEditModel(str(enc), 1)
     output = tmp_path / "out.pdf"
     with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
         write_pdf(model, str(output))
 
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert not output.exists()
 
 
 def test_write_encrypted_wrong_password_fails_clearly(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
 
     model = PdfEditModel(str(enc), 1)
     output = tmp_path / "out.pdf"
     with pytest.raises(PdfPasswordError, match="Incorrect password"):
         write_pdf(model, str(output), passwords={str(enc): "wrong"})
 
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert not output.exists()
 
 
@@ -228,8 +224,8 @@ def test_merge_encrypted_with_passwords_leaves_sources_unchanged(tmp_path):
     enc_b = tmp_path / "b.pdf"
     _encrypted_pdf(enc_a, password="alpha")
     _encrypted_pdf(enc_b, password="beta")
-    hash_a = _file_hash(enc_a)
-    hash_b = _file_hash(enc_b)
+    hash_a = file_sha256(enc_a)
+    hash_b = file_sha256(enc_b)
 
     output = tmp_path / "merged.pdf"
     merge_pdf_files(
@@ -239,8 +235,8 @@ def test_merge_encrypted_with_passwords_leaves_sources_unchanged(tmp_path):
     )
 
     assert output.is_file()
-    assert _file_hash(enc_a) == hash_a
-    assert _file_hash(enc_b) == hash_b
+    assert file_sha256(enc_a) == hash_a
+    assert file_sha256(enc_b) == hash_b
     doc = fitz.open(str(output))
     try:
         assert doc.page_count == 2
@@ -252,11 +248,11 @@ def test_merge_encrypted_with_passwords_leaves_sources_unchanged(tmp_path):
 def test_merge_encrypted_without_password_fails_clearly(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
     output = tmp_path / "out.pdf"
     with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
         merge_pdf_files([str(enc)], str(output))
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert not output.exists()
 
 
@@ -276,12 +272,12 @@ def test_write_batches_contiguous_same_source(tmp_path, monkeypatch):
     monkeypatch.setattr(fitz.Document, "insert_pdf", _spy)
 
     output = tmp_path / "out.pdf"
-    source_hash = _file_hash(source)
+    source_hash = file_sha256(source)
     write_pdf(model, str(output))
 
     assert insert_calls == [(0, 99)]
     assert [_page_width(output, i) for i in range(100)] == [float(w) for w in widths]
-    assert _file_hash(source) == source_hash
+    assert file_sha256(source) == source_hash
     assert output.resolve() != source.resolve()
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QFileDialog, QTabBar, QWidget
 
@@ -268,7 +267,6 @@ def test_multi_select_opens_each_in_new_tab(
     if not two_page_pdf.exists():
         generate_n_page(two_page_pdf, 2)
 
-    initial_count = main_window._tab_manager.count()
     paths = [one_page_pdf, two_page_pdf, five_page_pdf]
     asked: list[int] = []
     monkeypatch.setattr(

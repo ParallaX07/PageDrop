@@ -555,7 +555,6 @@ def _draw_rects(
     rects: Sequence[tuple[float, float, float, float]],
     color: tuple[float, float, float],
 ) -> None:
-    displayed_rect = source_page.rect
     for rect in rects:
         displayed = fitz.Rect(rect) * source_page.rotation_matrix
         mapped = transform_rect(displayed, displayed_page_rect(source_page), destination)
