@@ -15,7 +15,7 @@ def test_five_simulated_extractions_per_drag_cleanup(five_page_pdf):
     tm = TempManager()
     temp_dir = tm.get_dir()
     try:
-        for drag_num in range(1, 6):
+        for _ in range(5):
             drag_dir = tm.create_drag_dir()
             paths = extract_pages_to_files(
                 str(five_page_pdf),

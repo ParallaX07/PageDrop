@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QColor, QIcon
+
 # Cold charcoal + electric blue (devtool / document utility)
 BG_BASE = "#131316"
 BG_SURFACE = "#1A1A1F"

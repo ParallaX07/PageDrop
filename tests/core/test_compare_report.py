@@ -350,7 +350,7 @@ def test_summary_uses_group_and_changed_pair_counts(tmp_path: Path) -> None:
     output = fitz.open(str(output_path))
     try:
         summary = "\n".join(page.get_text() for page in output)
-        assert f"Compared page-pair count: 2" in summary
+        assert "Compared page-pair count: 2" in summary
         assert f"Changed page-pair count: {report.changed_page_pair_count}" in summary
         assert f"Removed groups: {report.deleted_count}" in summary
         assert f"Added groups: {report.added_count}" in summary

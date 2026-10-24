@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QToolBar,
     QToolButton,
     QWIDGETSIZE_MAX,

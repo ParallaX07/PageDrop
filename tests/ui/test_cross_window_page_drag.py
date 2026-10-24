@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt
+from PyQt6.QtCore import QMimeData, QPointF, Qt
 from PyQt6.QtGui import QDrag, QDropEvent
 
 from pagedrop.core.drag_mime import (

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pagedrop.core.backends.office import (
     BACKEND_AUTO,
     OfficeBackend,
