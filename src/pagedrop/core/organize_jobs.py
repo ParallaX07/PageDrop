@@ -8,8 +8,15 @@ from pathlib import Path
 
 from pagedrop.core import pdf_tools
 from pagedrop.core import compare_report
+from pagedrop.core.image_to_pdf import (
+    ImageConvertError,
+    image_to_pdf_file,
+    images_to_single_pdf,
+    planned_individual_outputs,
+)
 from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
+from pagedrop.core.pdf_writer import merge_pdf_files
 
 # ponytail: full-file read into RAM for embfile_add; 64 MiB is enough for
 # typical embeds. Raise only with a measured large-attachment need (or stream
@@ -460,7 +467,46 @@ def handle_compare_report(ctx: JobContext) -> Path:
     ctx.progress(0.93, "Report validated…")
     return ctx.staged_output
 
+def handle_merge(ctx: JobContext) -> Path:
+    ctx.progress(0.3, "Merging PDFs…")
+    merge_pdf_files(
+        list(ctx.spec.inputs),
+        str(ctx.staged_output),
+        passwords=ctx.credentials.snapshot(),
+        cancel=ctx.cancel,
+    )
+    return ctx.staged_output
+
+def handle_images_to_pdf(ctx: JobContext) -> Path:
+    ctx.progress(0.3, "Creating PDF…")
+    try:
+        images_to_single_pdf(
+            list(ctx.spec.inputs), str(ctx.staged_output), cancel=ctx.cancel
+        )
+    except ImageConvertError as exc:
+        raise JobError(str(exc)) from exc
+    return ctx.staged_output
+
+def handle_images_to_pdfs(ctx: JobContext) -> Path:
+    """One PDF per image; ``spec.output`` is the first planned destination."""
+    ctx.progress(0.3, "Creating PDFs…")
+    images = list(ctx.spec.inputs)
+    planned = planned_individual_outputs(images, str(Path(ctx.spec.output).parent))
+    staged = [ctx.staged_output]
+    staged.extend(ctx.staging.stage_file(dest.name) for dest in planned[1:])
+    try:
+        for image, staged_path in zip(images, staged, strict=True):
+            ctx.cancel.check()
+            image_to_pdf_file(image, staged_path)
+    except ImageConvertError as exc:
+        raise JobError(str(exc)) from exc
+    ctx.extra_outputs.extend(zip(staged[1:], planned[1:], strict=True))
+    return staged[0]
+
 ORGANIZE_HANDLERS: dict[str, object] = {
+    "merge": handle_merge,
+    "images_to_pdf": handle_images_to_pdf,
+    "images_to_pdfs": handle_images_to_pdfs,
     "split": handle_split_ranges,
     "alternate": handle_alternate,
     "reverse": handle_reverse,
