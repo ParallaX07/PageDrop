@@ -913,7 +913,6 @@ class ToolsWindow(QWidget):
 
         refresh_cb = self._refresh_tile_icons
         icons.register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
 
     def _refresh_tile_icons(self) -> None:
         """Re-tint catalogue glyph pixmaps after a light/dark swap."""

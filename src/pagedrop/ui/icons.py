@@ -12,6 +12,7 @@ from importlib.resources import files
 from pathlib import Path
 from weakref import WeakMethod
 
+from PyQt6 import sip
 from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
@@ -54,6 +55,12 @@ def icon(name: str, *, accent: bool = False, color: str | None = None) -> QIcon:
     return result
 
 
+def _owner_deleted(callback: Callable[[], None]) -> bool:
+    """True when ``callback`` is bound to a Qt object whose C++ side is gone."""
+    owner = getattr(callback, "__self__", None)
+    return isinstance(owner, sip.simplewrapper) and sip.isdeleted(owner)
+
+
 def refresh_icons() -> None:
     """Drop tinted pixmap cache and notify toolbar rebuild listeners.
 
@@ -64,7 +71,7 @@ def refresh_icons() -> None:
     _cache.clear()
     for registered in list(_refresh_callbacks):
         callback = registered() if isinstance(registered, WeakMethod) else registered
-        if callback is None:
+        if callback is None or _owner_deleted(callback):
             _refresh_callbacks.remove(registered)
             continue
         callback()

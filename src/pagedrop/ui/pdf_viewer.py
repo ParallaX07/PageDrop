@@ -89,7 +89,7 @@ from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupEntry, MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.redact import RedactionRegion
-from pagedrop.ui.icons import icon, register_refresh, unregister_refresh
+from pagedrop.ui.icons import icon, register_refresh
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoader
 from pagedrop.core.pdf_service import (
     MAX_PRINT_PAGES,
@@ -1622,7 +1622,6 @@ class PdfViewerWidget(QWidget):
         self._freetext_format_syncing = False
         refresh_cb = self._refresh_chrome_icons
         register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: unregister_refresh(refresh_cb))
 
     # --- public API ---------------------------------------------------------
 
