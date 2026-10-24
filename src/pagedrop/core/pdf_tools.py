@@ -272,7 +272,6 @@ def n_up_pdf(
         cell_w = usable_w / cols
         cell_h = usable_h / rows
 
-        per_sheet = rows * cols
         pno = 0
         while pno < len(src):
             _check_cancel(cancel)
@@ -513,7 +512,7 @@ def combine_pages_to_single_long(
         combined = out.new_page(width=out_w, height=out_h)
 
         y = 0.0
-        for pno, scale, sh in zip(range(len(src)), scales, scaled_heights, strict=True):
+        for pno, _scale, sh in zip(range(len(src)), scales, scaled_heights, strict=True):
             _check_cancel(cancel)
             rect = _page_rect_for_source(src, pno)
             # Keep aspect ratio: dest rect already has the scaled height.

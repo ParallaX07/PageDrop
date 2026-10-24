@@ -780,7 +780,7 @@ def test_r5_smoke_select_hover_focus_drag_badge(qtbot, isolated_settings):
     set_reduce_motion(False)
     sheet = app_stylesheet()
     assert "QFrame#PageCard:hover" in sheet
-    assert f'QFrame#PageCard[selected="true"]' in sheet
+    assert 'QFrame#PageCard[selected="true"]' in sheet
     assert "QLabel#PageCardFocusRing" in sheet
 
     card = PageCard(0)

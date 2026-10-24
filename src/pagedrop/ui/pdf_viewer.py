@@ -15,7 +15,6 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
-from pathlib import Path
 
 from PyQt6.QtCore import (
     QEvent,
@@ -3348,7 +3347,7 @@ class PdfViewerWidget(QWidget):
                 self._canvas.setMinimumSize(total_w, total_h)
                 self._canvas.resize(total_w, total_h)
                 x = PAGE_GAP_PX
-                for p, (w, h) in zip(pages, sizes):
+                for p, (w, h) in zip(pages, sizes, strict=True):
                     tile = self._make_tile(p)
                     tile.setParent(self._canvas)
                     tile.setGeometry(x, PAGE_GAP_PX, w, h)
@@ -3475,7 +3474,7 @@ class PdfViewerWidget(QWidget):
             self._canvas.setMinimumSize(total_w, total_h)
             self._canvas.resize(total_w, total_h)
             x = PAGE_GAP_PX
-            for p, (w, h) in zip(pages[:2], sizes):
+            for p, (w, h) in zip(pages[:2], sizes, strict=True):
                 tile = self._tiles[p]
                 tile.setGeometry(x, PAGE_GAP_PX, w, h)
                 x += w + PAGE_GAP_PX

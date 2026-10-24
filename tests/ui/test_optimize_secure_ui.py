@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
-import pytest
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.ui.optimize_secure_shell import (

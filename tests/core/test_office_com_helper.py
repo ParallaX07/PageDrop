@@ -69,7 +69,7 @@ def test_convert_word_quits_owned_app() -> None:
     worker._convert_word(client, r"C:\in.docx", r"C:\out.pdf")
 
     client.DispatchEx.assert_called_once_with("Word.Application")
-    assert app.Visible is False or app.Visible == False
+    assert app.Visible is False
     assert app.DisplayAlerts == 0
     doc.Close.assert_called()
     app.Quit.assert_called_once()

@@ -7,7 +7,6 @@ from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtWidgets import QToolBar
 
 from pagedrop.core.pdf_loader import PdfLoader
-from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.page_preview import PagePreviewWidget
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
 from pagedrop.ui.theme import (

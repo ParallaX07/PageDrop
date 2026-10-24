@@ -65,7 +65,6 @@ from pagedrop.ui.theme import (
     chrome_text_muted_qcolor,
     close_tab_hex,
     status_success_hex,
-    status_warning_hex,
     token_qcolor,
 )
 

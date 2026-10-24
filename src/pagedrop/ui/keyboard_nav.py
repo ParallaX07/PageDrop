@@ -117,7 +117,7 @@ def set_content_tab_order(
     """Tab order: toolbar controls → content. Status bar stays out of the chain."""
     widgets = focusable_toolbar_widgets(toolbar)
     if widgets:
-        for left, right in zip(widgets, widgets[1:]):
+        for left, right in zip(widgets, widgets[1:], strict=False):
             QWidget.setTabOrder(left, right)
         QWidget.setTabOrder(widgets[-1], content)
 

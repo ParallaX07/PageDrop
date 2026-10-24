@@ -87,7 +87,6 @@ def _tab_bar_drop(
         "_grid_for_widget",
         staticmethod(lambda _widget: source_grid),
     )
-    target_index = window._tab_manager.indexOf(target_tab)
     return target_tab.thumbnail_grid.handle_tab_bar_page_drop(
         refs,
         move=shift,

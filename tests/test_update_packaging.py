@@ -12,9 +12,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import check_packaging
-import publish_release
-from publish_release import GhReleaseOperations, Release, ReleaseError, publish_tested_pair
+import check_packaging  # noqa: E402  (needs scripts/ on sys.path above)
+import publish_release  # noqa: E402
+from publish_release import (  # noqa: E402
+    GhReleaseOperations,
+    Release,
+    ReleaseError,
+    publish_tested_pair,
+)
 
 
 class FakeReleaseOperations:

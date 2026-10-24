@@ -11,7 +11,7 @@ import pytest
 
 from pagedrop.core import native_conversions as nc
 from pagedrop.core.capabilities import OPENPYXL, clear_cache
-from pagedrop.core.jobs.errors import BackendUnavailableError
+from pagedrop.core.jobs.errors import BackendUnavailableError, SourceOverwriteError
 from pagedrop.core.supported_formats import (
     EXPORT_FROM_PDF_FORMATS,
     IMPORT_TO_PDF_FORMATS,
@@ -331,7 +331,7 @@ def test_json_xml_structure_export(tmp_path):
 
 def test_rejects_source_overwrite(tmp_path):
     source = _make_text_pdf(tmp_path / "src.pdf", ["X"])
-    with pytest.raises(Exception):
+    with pytest.raises(SourceOverwriteError):
         nc.export_pdf(source, source, format_id="text", overwrite=True)
 
 

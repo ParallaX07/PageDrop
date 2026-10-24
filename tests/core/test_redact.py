@@ -13,6 +13,7 @@ import pytest
 
 from pagedrop.core.jobs.errors import SourceOverwriteError
 from pagedrop.core.markup import MarkupSession
+from pagedrop.core.pdf_loader import PdfCorruptError
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.redact import (
     REDACT_VERIFY_FLAG,
@@ -329,7 +330,7 @@ def test_malformed_pdf_raises(tmp_path: Path) -> None:
     bad = tmp_path / "garbage.pdf"
     bad.write_bytes(b"%PDF-1.4\nnot a real pdf xref broken")
     out = tmp_path / "out.pdf"
-    with pytest.raises(Exception):
+    with pytest.raises(PdfCorruptError):
         redact_pdf(bad, out, [RedactionRegion(0, (0, 0, 10, 10))], verify=False)
     assert not out.exists()
 
