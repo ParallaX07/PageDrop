@@ -7,6 +7,7 @@ from pathlib import Path
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 from pagedrop.core.native_conversions import (
     MULTI_PAGE_EXPORT_IDS,
+    batch_output_paths,
     collision_safe_path,
     export_pdf,
     import_to_pdf,
@@ -27,16 +28,13 @@ def handle_import_to_pdf(ctx: JobContext) -> Path:
 
     out_dir = Path(str(output_dir or Path(ctx.spec.output).parent))
     out_dir.mkdir(parents=True, exist_ok=True)
+    dests = batch_output_paths(inputs, out_dir, avoid_existing=not ctx.spec.overwrite)
     pairs: list[tuple[Path, Path]] = []
-    for index, source in enumerate(inputs):
+    for index, (source, dest) in enumerate(zip(inputs, dests, strict=True)):
         ctx.cancel.check()
         ctx.progress(index / max(n, 1), f"Converting {Path(source).name}…")
-        name = f"{Path(source).stem}.pdf"
-        staged = ctx.staging.stage_file(f"{index:03d}_{name}")
+        staged = ctx.staging.stage_file(f"{index:03d}_{dest.name}")
         import_to_pdf(source, staged, overwrite=True)
-        dest = out_dir / name
-        if dest.exists() and not ctx.spec.overwrite:
-            dest = collision_safe_path(dest)
         pairs.append((staged, dest))
 
     first_staged, _first_dest = pairs[0]

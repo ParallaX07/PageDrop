@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core.native_conversions import (
     MULTI_PAGE_EXPORT_IDS,
+    batch_output_paths,
     predicted_export_paths,
 )
 from pagedrop.core.pdf_service import page_count as pdf_page_count
@@ -139,7 +140,7 @@ def _configure_convert_to_pdf(shell: ToolShellWindow) -> None:
         folder = _pick_folder(shell, "Choose output folder")
         if not folder:
             return
-        predicted = [Path(folder) / f"{Path(p).stem}.pdf" for p in paths]
+        predicted = batch_output_paths(paths, folder)
         run_tool_job(
             shell,
             job_type="import_to_pdf",
