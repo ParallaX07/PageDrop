@@ -272,6 +272,7 @@ def test_compare_heatmap_uses_async_job_bridge(
             "job_type": "compare",
             "inputs": [str(original), str(revised)],
             "output": str(out),
+            "existing_paths": [],
             "options": {
                 "source_fingerprint_a": asdict(window._report.source_fingerprint_a),
                 "source_fingerprint_b": asdict(window._report.source_fingerprint_b),
@@ -281,6 +282,12 @@ def test_compare_heatmap_uses_async_job_bridge(
             "credentials": window._credentials,
         }
     ]
+
+    # An existing ratio note is covered by the overwrite confirmation.
+    sidecar = out.with_suffix(".compare_ratio.txt")
+    sidecar.write_text("0.1000", encoding="utf-8")
+    window._export_heatmap()
+    assert calls[-1]["existing_paths"] == [sidecar]
     window.close()
 
 

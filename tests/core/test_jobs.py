@@ -15,6 +15,7 @@ from pagedrop.core.jobs import (
     CancelToken,
     JobCancelledError,
     JobContext,
+    JobError,
     JobSpec,
     OutputExistsError,
     SerializedJobRunner,
@@ -538,4 +539,215 @@ def test_external_wait_cancel_cleans_staged_output(tmp_path: Path) -> None:
         assert not err
     finally:
         allow_finish.set()
+        temp.cleanup()
+
+
+def _two_output_handler(extra_destination: Path):
+    def handler(ctx: JobContext) -> Path:
+        shutil.copy2(ctx.spec.inputs[0], ctx.staged_output)
+        staged_extra = ctx.staging.stage_file("extra.pdf")
+        shutil.copy2(ctx.spec.inputs[0], staged_extra)
+        ctx.extra_outputs.append((staged_extra, extra_destination))
+        return ctx.staged_output
+
+    return handler
+
+
+def test_runner_promotes_primary_and_extra_outputs(tmp_path: Path) -> None:
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out" / "a.pdf"
+    extra = tmp_path / "out" / "b.pdf"
+    _write_pdf(src)
+    source_hash = file_sha256(src)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("two", _two_output_handler(extra))
+        assert runner.run(JobSpec.create("two", inputs=[src], output=out)) == out
+        assert out.is_file()
+        assert extra.is_file()
+        assert file_sha256(src) == source_hash
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_extra_output_equal_to_input_is_rejected_before_any_promote(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+    source_hash = file_sha256(src)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("two", _two_output_handler(src))
+        with pytest.raises(SourceOverwriteError):
+            runner.run(JobSpec.create("two", inputs=[src], output=out))
+        assert not out.exists()
+        assert file_sha256(src) == source_hash
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_existing_extra_output_blocks_all_promotion_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    extra = tmp_path / "extra_dest.pdf"
+    _write_pdf(src)
+    extra.write_bytes(b"keep me")
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("two", _two_output_handler(extra))
+        with pytest.raises(OutputExistsError):
+            runner.run(JobSpec.create("two", inputs=[src], output=out))
+        assert not out.exists()
+        assert extra.read_bytes() == b"keep me"
+        assert not any(temp.get_dir().glob("job_*"))
+
+        runner.run(JobSpec.create("two", inputs=[src], output=out, overwrite=True))
+        assert out.is_file()
+        assert extra.read_bytes() != b"keep me"
+    finally:
+        temp.cleanup()
+
+
+def test_two_outputs_with_one_destination_are_rejected(tmp_path: Path) -> None:
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("two", _two_output_handler(out))
+        with pytest.raises(JobError, match="share one destination"):
+            runner.run(JobSpec.create("two", inputs=[src], output=out))
+        assert not out.exists()
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_primary_appearing_mid_job_is_not_clobbered(tmp_path: Path) -> None:
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+
+    def racing_handler(ctx: JobContext) -> Path:
+        shutil.copy2(ctx.spec.inputs[0], ctx.staged_output)
+        out.write_bytes(b"someone else")
+        return ctx.staged_output
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("race", racing_handler)
+        with pytest.raises(OutputExistsError):
+            runner.run(JobSpec.create("race", inputs=[src], output=out))
+        assert out.read_bytes() == b"someone else"
+    finally:
+        temp.cleanup()
+
+
+def _split_case(tmp_path: Path):
+    from pagedrop.core.organize_jobs import register_organize_handlers
+
+    src = tmp_path / "src" / "in.pdf"
+    src.parent.mkdir()
+    _write_pdf(src, pages=3)
+    out_dir = tmp_path / "out"
+    spec = JobSpec.create(
+        "split",
+        inputs=[src],
+        output=out_dir / "in_range_0001-0001.pdf",
+        options={
+            "ranges": [(0, 0), (1, 1), (2, 2)],
+            "output_dir": str(out_dir),
+            "base_name": "in",
+        },
+    )
+    return register_organize_handlers, spec, [src], 3
+
+
+def _bates_case(tmp_path: Path):
+    from pagedrop.core.modify_jobs import register_modify_handlers
+
+    sources = []
+    for name in ("a", "b"):
+        src = tmp_path / "src" / f"{name}.pdf"
+        src.parent.mkdir(exist_ok=True)
+        _write_pdf(src)
+        sources.append(src)
+    out_dir = tmp_path / "out"
+    spec = JobSpec.create(
+        "bates",
+        inputs=sources,
+        output=out_dir / "a_bates.pdf",
+        options={"output_dir": str(out_dir), "prefix": "X-"},
+    )
+    return register_modify_handlers, spec, sources, 2
+
+
+def _import_case(tmp_path: Path):
+    from pagedrop.core.native_conversion_jobs import register_native_conversion_handlers
+
+    sources = []
+    for name in ("a", "b"):
+        src = tmp_path / "src" / f"{name}.txt"
+        src.parent.mkdir(exist_ok=True)
+        src.write_text(f"hello {name}", encoding="utf-8")
+        sources.append(src)
+    out_dir = tmp_path / "out"
+    spec = JobSpec.create(
+        "import_to_pdf",
+        inputs=sources,
+        output=out_dir / "a.pdf",
+        options={"output_dir": str(out_dir)},
+    )
+    return register_native_conversion_handlers, spec, sources, 2
+
+
+@pytest.mark.parametrize("case", [_split_case, _bates_case, _import_case])
+@pytest.mark.parametrize("cancel_after_handler", [False, True])
+def test_multi_output_handlers_promote_only_after_final_cancel_check(
+    tmp_path: Path, case, cancel_after_handler: bool
+) -> None:
+    register, spec, sources, expected_count = case(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    hashes = [file_sha256(p) for p in sources]
+    token = CancelToken()
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register(runner)
+        real = runner._handlers[spec.job_type]
+
+        def cancelling(ctx: JobContext, _real=real.handler) -> Path:
+            result = _real(ctx)
+            if cancel_after_handler:
+                ctx.cancel.cancel()
+            return result
+
+        runner.register(spec.job_type, cancelling, holds_fitz=real.holds_fitz)
+        if cancel_after_handler:
+            with pytest.raises(JobCancelledError):
+                runner.run(spec, cancel=token)
+            assert list(out_dir.iterdir()) == []
+        else:
+            runner.run(spec, cancel=token)
+            assert len(list(out_dir.glob("*.pdf"))) == expected_count
+        assert not any(temp.get_dir().glob("job_*"))
+        assert [file_sha256(p) for p in sources] == hashes
+    finally:
         temp.cleanup()

@@ -202,9 +202,6 @@ def confirm_overwrite(
     window_title: str,
 ) -> bool:
     """Return True if overwriting existing *paths* should proceed."""
-    if os.environ.get("PAGEDROP_TESTING") == "1":
-        return True
-
     names = ", ".join(path.name for path in paths[:5])
     extra = ""
     if len(paths) > 5:

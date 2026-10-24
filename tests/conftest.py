@@ -34,6 +34,35 @@ def file_sha256(path: Path | str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+class OverwriteAnswer:
+    """Settable stand-in for the overwrite confirmation dialog."""
+
+    def __init__(self, real) -> None:
+        self.answer = True
+        self.calls: list[list[Path]] = []
+        self.real = real
+
+    def __call__(self, _parent, paths, *, window_title: str) -> bool:
+        self.calls.append(list(paths))
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def overwrite_answer(monkeypatch):
+    """Answer overwrite prompts with ``.answer`` (default True) and record calls."""
+    from pagedrop.ui import dialogs
+
+    fake = OverwriteAnswer(dialogs.confirm_overwrite)
+    for target in (
+        "pagedrop.ui.dialogs",
+        "pagedrop.ui.tool_shell",
+        "pagedrop.ui.convert_window",
+        "pagedrop.ui.office_convert_window",
+    ):
+        monkeypatch.setattr(f"{target}.confirm_overwrite", fake)
+    return fake
+
+
 def _install_nonblocking_qt() -> None:
     """Patch modal Qt APIs before any widgets exist.
 
