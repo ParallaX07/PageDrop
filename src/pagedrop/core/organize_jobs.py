@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pagedrop.core import pdf_tools
 from pagedrop.core import compare_report
-from pagedrop.core.jobs.errors import JobError, OutputExistsError
+from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 
 # ponytail: full-file read into RAM for embfile_add; 64 MiB is enough for
@@ -32,12 +32,8 @@ def handle_split_ranges(ctx: JobContext) -> Path:
     ctx.cancel.check()
     if not staged:
         raise ValueError("No ranges extracted")
-    for extra in staged[1:]:
-        dest = out_dir / extra.name
-        if dest.exists() and not ctx.spec.overwrite:
-            raise OutputExistsError(str(dest))
-        ctx.staging.promote(extra, dest)
-    # Runner promotes the first staged file to spec.output.
+    ctx.extra_outputs.extend((extra, out_dir / extra.name) for extra in staged[1:])
+    # Runner promotes the first staged file to spec.output, then the extras.
     return staged[0]
 
 def handle_reverse(ctx: JobContext) -> Path:
@@ -250,7 +246,7 @@ def handle_compare(ctx: JobContext) -> Path:
     ratio_dest = Path(ctx.spec.output).with_suffix(".compare_ratio.txt")
     ratio_staged = ctx.staging.stage_file(ratio_dest.name)
     ratio_staged.write_text(f"{result.overall_diff_ratio:.4f}", encoding="utf-8")
-    ctx.staging.promote(ratio_staged, ratio_dest)
+    ctx.extra_outputs.append((ratio_staged, ratio_dest))
     return ctx.staged_output
 
 

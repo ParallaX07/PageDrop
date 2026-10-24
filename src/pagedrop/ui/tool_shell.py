@@ -32,6 +32,7 @@ from pagedrop.core.jobs import (
     SourceOverwriteError,
     RuntimeCredentials,
     preflight_pdf_inputs,
+    reject_source_overwrite,
 )
 from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.core.supported_formats import is_pdf_path, local_paths_from_mime
@@ -394,6 +395,8 @@ def run_tool_job(
 
     token = begin(progress_message)
     try:
+        for path in (out, *existing):
+            reject_source_overwrite(path, *inputs)
         credentials = preflight_pdf_inputs(
             inputs,
             prompt=lambda name, incorrect: prompt_pdf_password(
@@ -438,7 +441,7 @@ def run_tool_job(
         inputs=inputs,
         output=output,
         options=options or {},
-        overwrite=True,
+        overwrite=bool(existing),
     )
     worker = _ToolJobWorker(
         runner,

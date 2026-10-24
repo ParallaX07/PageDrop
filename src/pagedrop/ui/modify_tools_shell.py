@@ -1008,12 +1008,14 @@ def _configure_bates(shell: ToolShellWindow) -> None:
         first_name = f"{Path(paths[0]).stem}_bates.pdf"
         output = str(Path(folder) / first_name)
         opts["output_dir"] = folder
+        predicted = [Path(folder) / f"{Path(p).stem}_bates.pdf" for p in paths]
         run_tool_job(
             shell,
             job_type="bates",
             inputs=paths,
             output=output,
             options=opts,
+            existing_paths=[p for p in predicted if p.exists()],
             progress_message="Applying Bates numbers…",
         )
 

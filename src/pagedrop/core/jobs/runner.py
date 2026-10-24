@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.credentials import RuntimeCredentials
-from pagedrop.core.jobs.errors import JobError
-from pagedrop.core.jobs.paths import ensure_output_destination
+from pagedrop.core.jobs.errors import JobError, OutputExistsError
+from pagedrop.core.jobs.paths import ensure_output_destination, reject_source_overwrite
 from pagedrop.core.jobs.spec import JobSpec, ProgressCallback, _noop_progress
 from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_service import FITZ_LOCK
@@ -45,6 +45,9 @@ class JobContext:
     temp_manager: TempManager
     # Transient secrets (encrypt passwords, etc.) — never on JobSpec / disk.
     secrets: dict[str, str]
+    # (staged_path, destination) pairs for handlers that write more than one
+    # file. The runner validates and promotes them; handlers never do.
+    extra_outputs: list[tuple[Path, Path]] = field(default_factory=list)
 
     def password(self, path: str | None = None) -> str | None:
         """Credential for *path*, or the first job input if omitted."""
@@ -57,6 +60,21 @@ class _HandlerEntry:
     # When True, run under FITZ_LOCK (whole body is fitz work). When False,
     # handler must take FITZ_LOCK only around any fitz open/work/close itself.
     holds_fitz: bool = True
+
+
+def _validate_destinations(
+    spec: JobSpec, extras: list[tuple[Path, Path]]
+) -> None:
+    """Check every destination before any file is promoted."""
+    seen: set[Path] = set()
+    for destination in (Path(spec.output), *(dest for _, dest in extras)):
+        resolved = destination.resolve()
+        if resolved in seen:
+            raise JobError(f"Two outputs share one destination: {destination}")
+        seen.add(resolved)
+        reject_source_overwrite(destination, *spec.inputs)
+        if destination.exists() and not spec.overwrite:
+            raise OutputExistsError(str(destination))
 
 
 class SerializedJobRunner:
@@ -165,8 +183,11 @@ class SerializedJobRunner:
             else:
                 result_staged = Path(entry.handler(ctx))
                 token.check()
+            _validate_destinations(spec, ctx.extra_outputs)
             report(0.95, "Promoting output…")
             promoted = staging.promote(result_staged, Path(spec.output))
+            for staged_extra, destination in ctx.extra_outputs:
+                staging.promote(staged_extra, destination)
             report(1.0, "Done")
             return promoted
         except Exception as exc:

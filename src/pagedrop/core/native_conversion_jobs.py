@@ -40,11 +40,8 @@ def handle_import_to_pdf(ctx: JobContext) -> Path:
         pairs.append((staged, dest))
 
     first_staged, _first_dest = pairs[0]
-    for staged, dest in pairs[1:]:
-        ctx.staging.promote(staged, dest)
-    if first_staged != ctx.staged_output:
-        first_staged.replace(ctx.staged_output)
-    return ctx.staged_output
+    ctx.extra_outputs.extend(pairs[1:])
+    return first_staged
 
 def handle_export_from_pdf(ctx: JobContext) -> Path:
     """Export a PDF to a registered format (single- or multi-file)."""
@@ -76,17 +73,13 @@ def handle_export_from_pdf(ctx: JobContext) -> Path:
         )
         if not written:
             raise ValueError("Export produced no files")
-        for index, staged in enumerate(written):
+        for staged in written[1:]:
             dest = out_dir / staged.name
             if dest.exists() and not ctx.spec.overwrite:
                 dest = collision_safe_path(dest)
-            if index == 0:
-                if staged != ctx.staged_output:
-                    staged.replace(ctx.staged_output)
-                # Runner promotes staged_output → spec.output (first dest).
-                continue
-            ctx.staging.promote(staged, dest)
-        return ctx.staged_output
+            ctx.extra_outputs.append((staged, dest))
+        # Runner promotes the first staged file to spec.output, then the extras.
+        return written[0]
 
     export_pdf(
         source,
