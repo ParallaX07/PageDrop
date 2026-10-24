@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -26,10 +25,7 @@ from pagedrop.core.markup import (
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.ui.pdf_viewer import _apply_box_transform
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(path: Path, text: str = "Hello world") -> Path:
@@ -57,7 +53,7 @@ def _make_png(path: Path) -> Path:
 def test_all_annot_kinds_persist_source_unchanged(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
     png = _make_png(tmp_path / "mark.png")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "ann.pdf"
     ops = [
         AnnotationOp(kind="highlight", page_index=0, rects=((40, 60, 120, 90),)),
@@ -79,7 +75,7 @@ def test_all_annot_kinds_persist_source_unchanged(tmp_path: Path) -> None:
     ]
     assert {op.kind for op in ops} == set(ANNOT_KINDS)
     add_annotations(str(src), str(out), ops)
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     summaries = list_annotation_summaries(str(out))
     # Image is page content, not an annotation dictionary entry.
     assert len(summaries) == len(ops) - 1
@@ -118,7 +114,7 @@ def test_invalid_native_annotation_geometry_is_rejected() -> None:
 
 def test_highlight_survives_write_pdf_markup(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     model = PdfEditModel(str(src), 1)
     session = MarkupSession()
     session.push_annotation(
@@ -129,7 +125,7 @@ def test_highlight_survives_write_pdf_markup(tmp_path: Path) -> None:
     assert session.can_undo()
     out = tmp_path / "saved.pdf"
     write_pdf(model, str(out), markup=session.ops())
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     types = [t for _, t, _ in list_annotation_summaries(str(out))]
     assert "Highlight" in types
 
@@ -149,7 +145,7 @@ def test_many_mixed_marks_survive_across_six_pages(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     model = PdfEditModel(str(src), 6)
     session = MarkupSession()
     kinds = ("ink", "freetext", "circle", "rect")
@@ -182,7 +178,7 @@ def test_many_mixed_marks_survive_across_six_pages(tmp_path: Path) -> None:
     out = tmp_path / "many-marks.pdf"
     write_pdf(model, str(out), markup=session.ops())
     assert len(list_annotation_summaries(str(out))) == 60
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_markup_resolves_identity_and_hides_deleted_targets() -> None:
@@ -281,7 +277,7 @@ def test_freetext_font_bold_italic_round_trip(tmp_path: Path) -> None:
     from pagedrop.core.annotations import freetext_css_style, freetext_pdf_fontname
 
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "rich.pdf"
     op = AnnotationOp(
         kind="freetext",
@@ -299,7 +295,7 @@ def test_freetext_font_bold_italic_round_trip(tmp_path: Path) -> None:
     assert "bold" in freetext_css_style(op)
     assert "italic" in freetext_css_style(op)
     add_annotations(str(src), str(out), [op])
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         annot = next(

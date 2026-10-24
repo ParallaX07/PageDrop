@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -17,17 +16,13 @@ from pagedrop.ui.organize_tools import (
 from pagedrop.ui.tools_window import TOOL_CATALOGUE, ToolsWindow
 from pagedrop.utils import temp_manager as temp_manager_mod
 from pagedrop.utils.temp_manager import TempManager
-from tests.conftest import RENDER_TIMEOUT_MS
+from tests.conftest import RENDER_TIMEOUT_MS, file_sha256
 
 
 def _reset_organize_runner() -> None:
     import pagedrop.ui.organize_tools as organize_tools
 
     organize_tools._organize_runner = None
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_organize_tiles_present_and_wired():
@@ -70,7 +65,7 @@ def test_reverse_job_via_tools_runner_never_overwrites_source(tmp_path: Path):
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     temp = TempManager()
     _reset_organize_runner()
@@ -81,7 +76,7 @@ def test_reverse_job_via_tools_runner_never_overwrites_source(tmp_path: Path):
 
         result = runner.run(JobSpec.create("reverse", inputs=[src], output=out))
         assert result == out
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
         reversed_doc = fitz.open(str(out))
         try:
             assert reversed_doc.page_count == 3

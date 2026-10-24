@@ -8,7 +8,6 @@ import fitz
 from PyQt6.QtWidgets import QFileDialog, QLabel, QWidget
 
 from pagedrop.ui.convert_window import ConvertWindow
-from pagedrop.ui.main_window import MainWindow
 
 
 def _write_test_image(path: Path, width: int, height: int) -> None:

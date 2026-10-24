@@ -32,10 +32,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pagedrop"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/pagedrop/data" = "pagedrop/data"
-"src/pagedrop/assets" = "pagedrop/assets"
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
@@ -43,11 +39,17 @@ dev = [
     "pytest-timeout>=2.3.1",
     "pytest-xdist>=3.6.0",
     "pyinstaller>=6.0",
+    "ruff>=0.17.2",
 ]
 # Optional local install: `uv sync --group office` (no-op deps on non-Windows).
 office = [
     "pywin32>=306; sys_platform == 'win32'",
 ]
+
+[tool.ruff.lint]
+select = ["E", "F", "B"]
+# Long lines aren't enforced: no formatter is configured.
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -55,7 +57,7 @@ pythonpath = ["."]
 qt_api = "pyqt6"
 timeout = 60
 timeout_method = "thread"
-addopts = ["--strict-markers", "-n", "auto"]
+addopts = ["--strict-markers"]
 markers = [
     "office_com: real Microsoft Office COM conversion (set PAGEDROP_OFFICE_COM=1)",
     "libreoffice: real LibreOffice conversion (set PAGEDROP_LO_PATH or install soffice)",

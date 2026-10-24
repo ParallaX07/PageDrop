@@ -48,6 +48,12 @@ Full suite:
 uv run pytest tests/ -v
 ```
 
+Lint (also runs in CI):
+
+```bash
+uv run ruff check src tests
+```
+
 Smoke tests only:
 
 ```bash
@@ -66,16 +72,21 @@ For packaging and executable smoke checks, see [Building](building.md).
 
 ## CI
 
-GitHub Actions runs on every `pull_request` and `push` to `master` via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Two jobs — `test (ubuntu-latest)` and `test (windows-latest)` — each run:
+GitHub Actions runs on every `pull_request` and `push` to `master` via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). The `test` job runs on Ubuntu and Windows with Python 3.11 and 3.12 (four combinations), each running:
 
 ```bash
+uv sync --locked --group dev
+uv run ruff check src tests
 uv run python scripts/check_packaging.py
+uv build --wheel
 uv run python all_tests.py
 ```
 
+`all_tests.py` runs the suite sequentially, and CI does the same. `pytest-xdist` stays in the dev group, so `-n auto` opts into a parallel run locally, but CI does not use it.
+
 Optional backends (Office COM, LibreOffice, tessdata) and a frozen exe are unset on CI; those tests skip without `PAGEDROP_*` env vars.
 
-To require both jobs before merge: GitHub → **Settings → Branches** → branch protection for `master` → enable **Require status checks to pass**, and select `test (ubuntu-latest)` and `test (windows-latest)`. That setting is manual; the workflow does not configure it.
+To require the checks before merge: GitHub → **Settings → Branches** → branch protection for `master` → enable **Require status checks to pass**, and select each `test (<os>, py<version>)` check. That setting is manual; the workflow does not configure it.
 
 ## Product constraints
 
@@ -105,5 +116,5 @@ maximize/restore, and close on native Linux and Windows.
 
 - [Architecture](architecture.md) — layers, edit model, jobs, locking
 - [Building](building.md) — PyInstaller and release packaging
-- [CI](../ci.md) — GitHub Actions workflow and phase plan
+- [CI workflow](../.github/workflows/ci.yml) — GitHub Actions workflow
 - [Licensing](licensing.md) — redistribution policy for binaries

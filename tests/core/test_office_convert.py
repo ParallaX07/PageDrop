@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 import sys
 import threading
@@ -36,6 +35,7 @@ from pagedrop.core.capabilities import (
 )
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import BackendUnavailableError, JobCancelledError
+from tests.conftest import file_sha256
 
 
 @pytest.fixture(autouse=True)
@@ -244,7 +244,7 @@ def test_source_hash_unchanged(
 ) -> None:
     src = tmp_path / "a.docx"
     src.write_bytes(b"stable-office-bytes")
-    before = hashlib.sha256(src.read_bytes()).hexdigest()
+    before = file_sha256(src)
     dst = tmp_path / "out.pdf"
     report = _mock_report(com=False, lo=True)
     monkeypatch.setattr(office, "capability_report", lambda **_k: report)
@@ -255,7 +255,7 @@ def test_source_hash_unchanged(
 
     monkeypatch.setattr(office.libreoffice, "convert_via_libreoffice", fake_lo)
     convert_office_to_pdf(src, dst, backend="libreoffice")
-    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+    assert file_sha256(src) == before
 
 
 def test_cancel_kills_owned_process_tree(
@@ -318,7 +318,7 @@ def test_unicode_and_spaces_in_filenames(
 ) -> None:
     src = tmp_path / "café report (1).docx"
     src.write_bytes(b"docx-unicode")
-    before = hashlib.sha256(src.read_bytes()).hexdigest()
+    before = file_sha256(src)
     out_dir = tmp_path / "out folder"
     out_dir.mkdir()
     dst = out_dir / "résumé copy.pdf"
@@ -335,7 +335,7 @@ def test_unicode_and_spaces_in_filenames(
     assert result.path == dst.resolve()
     assert dst.is_file()
     assert result.page_count >= 1
-    assert hashlib.sha256(src.read_bytes()).hexdigest() == before
+    assert file_sha256(src) == before
 
 
 def test_com_supports_path_uses_apps() -> None:

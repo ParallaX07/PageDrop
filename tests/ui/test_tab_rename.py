@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData
 from PyQt6.QtWidgets import QInputDialog
 
-from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, encode_page_refs
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab, sanitize_tab_title_stem
-from tests.conftest import wait_for_pdf_loaded
 from tests.ui.test_save_as import _drop_init_blank_tab, _load_and_dirty
 
 

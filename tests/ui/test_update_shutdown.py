@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from pagedrop.ui.update_checker import UpdateState
 from pagedrop.ui.window_manager import WindowManager
 from pagedrop.ui.settings import set_confirm_before_closing_dirty_tabs
 from tests.ui.test_save_as import _drop_init_blank_tab, _load_and_dirty
+from tests.conftest import file_sha256
 
 
 def _manager(qapp) -> WindowManager:
@@ -90,7 +89,7 @@ def test_cancel_after_an_earlier_save_keeps_other_windows_usable(
     second = manager.create_window()
     first.showMinimized()
     second.showMinimized()
-    source_hash = hashlib.sha256(five_page_pdf.read_bytes()).hexdigest()
+    source_hash = file_sha256(five_page_pdf)
     saved_tab = _load_and_dirty(first, qtbot, five_page_pdf)
     cancelled_tab = _load_and_dirty(second, qtbot, five_page_pdf)
     output = tmp_path / "saved-before-cancel.pdf"
@@ -102,7 +101,7 @@ def test_cancel_after_an_earlier_save_keeps_other_windows_usable(
 
     assert not manager.prepare_for_installation(first)
     assert output.is_file()
-    assert hashlib.sha256(five_page_pdf.read_bytes()).hexdigest() == source_hash
+    assert file_sha256(five_page_pdf) == source_hash
     assert not saved_tab.is_dirty
     assert cancelled_tab.is_dirty
     assert first.isEnabled() and second.isEnabled()

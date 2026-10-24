@@ -177,7 +177,6 @@ class BaseFileGrid(QScrollArea):
 
         refresh_cb = self._refresh_empty_glyph
         icons.register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
 
     def _refresh_empty_glyph(self) -> None:
         tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED

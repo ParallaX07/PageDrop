@@ -5,6 +5,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QToolBar
 
 from pagedrop.ui.main_window import MainWindow
+from tests.conftest import wait_for_grid_loaded, wait_for_pdf_loaded
 
 
 def _toolbar_action(window: MainWindow, label: str):
@@ -20,7 +21,7 @@ def test_smoke_window_title_includes_page_count(qtbot, five_page_pdf):
     qtbot.addWidget(window)
 
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, window, timeout=15000)
 
     expected = f"PageDrop: {five_page_pdf.name} (5 pages)"
     assert window.windowTitle() == expected
@@ -41,7 +42,7 @@ def test_smoke_toolbar_buttons_enabled_states(qtbot, five_page_pdf):
     assert not deselect_all.isEnabled()
 
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, window, timeout=15000)
 
     assert preview.isEnabled()
     assert select_all.isEnabled()
@@ -58,7 +59,7 @@ def test_smoke_card_visual_states_differ(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, window, timeout=15000)
 
     card = window._thumbnail_grid._cards[0]
     card.set_selected(False)
@@ -92,7 +93,7 @@ def test_smoke_zoom_autofit_after_load(qtbot, five_page_pdf, isolated_settings):
     grid = window._thumbnail_grid
     expected = grid.fitted_thumbnail_width()
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
     assert grid.thumbnail_width_px == expected
     assert not grid.manual_zoom

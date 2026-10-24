@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QToolBar,
     QToolButton,
     QWIDGETSIZE_MAX,
@@ -182,7 +181,6 @@ class MainWindow(QMainWindow):
         self._set_chrome_visible(chrome_visible(), persist=False)
         refresh_cb = self._refresh_action_icons
         icons.register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
         QApplication.instance().installEventFilter(self)
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()

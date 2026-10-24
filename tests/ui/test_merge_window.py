@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -12,10 +11,7 @@ from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 from pagedrop.ui.merge_window import MergeWindow
 from tests.core.test_jobs import _encrypted_pdf
 from tests.fixtures.generate_fixtures import generate_n_page
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _merge_window(qtbot) -> MergeWindow:
@@ -262,8 +258,8 @@ def test_merge_encrypted_prompts_password_leaves_sources_unchanged(
     enc_b = tmp_path / "locked_b.pdf"
     _encrypted_pdf(enc_a, password="alpha")
     _encrypted_pdf(enc_b, password="beta")
-    hash_a = _file_hash(enc_a)
-    hash_b = _file_hash(enc_b)
+    hash_a = file_sha256(enc_a)
+    hash_b = file_sha256(enc_b)
     output = tmp_path / "merged.pdf"
 
     secrets = {"locked_a.pdf": "alpha", "locked_b.pdf": "beta"}
@@ -305,8 +301,8 @@ def test_merge_encrypted_prompts_password_leaves_sources_unchanged(
     qtbot.waitUntil(lambda: not window._merging, timeout=10000)
 
     assert output.is_file()
-    assert _file_hash(enc_a) == hash_a
-    assert _file_hash(enc_b) == hash_b
+    assert file_sha256(enc_a) == hash_a
+    assert file_sha256(enc_b) == hash_b
     doc = fitz.open(str(output))
     try:
         assert doc.page_count == 2

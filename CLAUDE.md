@@ -18,4 +18,4 @@
 
 - Use Context7 for current PyQt6, PyMuPDF, pytest-qt, and uv docs rather than guessing APIs.
 - The `ponytail` skill backs the "smallest working diff" rule. Skills are managed with `npx skills` and pinned in `skills-lock.json`; install new ones with `-a claude-code -a codex` so both agents get them.
-- Tests run headless (`QT_QPA_PLATFORM=offscreen` via `tests/conftest.py`) and in parallel through xdist; CI runs `uv run python all_tests.py -n 0`.
+- Tests run headless (`QT_QPA_PLATFORM=offscreen` via `tests/conftest.py`) and sequentially (`uv run pytest tests/ -q` or `uv run python all_tests.py`); CI runs that on Python 3.11 and 3.12, plus `uv run ruff check src tests` and `uv build --wheel`.

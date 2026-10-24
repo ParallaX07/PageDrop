@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -11,6 +10,7 @@ import pytest
 from pagedrop.core import modify_ops as ops
 from pagedrop.core.jobs.cancel import check_cancel
 from pagedrop.core.jobs.errors import SourceOverwriteError
+from tests.conftest import file_sha256
 
 
 def test_check_cancel_alias_is_shared_helper() -> None:
@@ -19,10 +19,6 @@ def test_check_cancel_alias_is_shared_helper() -> None:
 
     assert ops._check_cancel is check_cancel
     assert secure._check_cancel is check_cancel
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _make_pdf(
@@ -46,11 +42,11 @@ def _make_pdf(
 
 def test_watermark_text_present_source_unchanged(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="body")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "wm.pdf"
     # Use rotate=0 to keep vector text selectable; rotated text is rasterized (like image watermark) to avoid mirrored glyphs
     ops.add_text_watermark(str(src), str(out), text="CONFIDENTIAL", rotate=0)
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert "CONFIDENTIAL" in doc[0].get_text()
@@ -63,7 +59,7 @@ def test_watermark_text_present_source_unchanged(tmp_path: Path) -> None:
 
 def test_watermark_diagonal_percent_page_range_flatten(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="body", pages=3, width=400, height=400)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "diag.pdf"
     ops.add_text_watermark(
         str(src),
@@ -75,7 +71,7 @@ def test_watermark_diagonal_percent_page_range_flatten(tmp_path: Path) -> None:
         pages=[1],
         opacity=0.3,
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         # Rotated text is now rasterized (like image) to avoid mirrored glyphs, so check images not selectable text
@@ -95,7 +91,7 @@ def test_watermark_diagonal_percent_page_range_flatten(tmp_path: Path) -> None:
         diagonal_percent=40.0,
         flatten=True,
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(flat))
     try:
         text = doc[0].get_text()
@@ -108,7 +104,7 @@ def test_watermark_diagonal_percent_page_range_flatten(tmp_path: Path) -> None:
 
 def test_watermark_free_placement_center_fractions(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="body", width=400, height=400)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "free.pdf"
     cx_f, cy_f = 0.2, 0.8
     ops.add_text_watermark(
@@ -122,7 +118,7 @@ def test_watermark_free_placement_center_fractions(tmp_path: Path) -> None:
         center_y=cy_f,
         opacity=1.0,
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert "HERE" in doc[0].get_text()
@@ -180,7 +176,7 @@ def test_watermark_free_placement_center_fractions(tmp_path: Path) -> None:
 
 def test_watermark_image_free_placement_matches_preview_center(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="body", width=400, height=400)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     img = tmp_path / "wm.png"
     pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 80, 40), 1)
     pix.set_rect(pix.irect, (200, 40, 40, 255))
@@ -198,7 +194,7 @@ def test_watermark_image_free_placement_matches_preview_center(tmp_path: Path) -
         center_y=cy_f,
         diagonal_percent=40.0,
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     expect_x, expect_y = cx_f * 400, cy_f * 400
     diag = (400**2 + 400**2) ** 0.5
     expect_w = diag * 0.4
@@ -400,10 +396,10 @@ def test_watermark_text_box_caches_helv_font(monkeypatch) -> None:
 
 def test_page_numbers_present(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", pages=2)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "num.pdf"
     ops.add_page_numbers(str(src), str(out), template="Page {page}", start=1)
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert "Page 1" in doc[0].get_text()
@@ -414,10 +410,10 @@ def test_page_numbers_present(tmp_path: Path) -> None:
 
 def test_crop_dims_cropbox_and_rebuild(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", width=400, height=400)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     soft = tmp_path / "soft.pdf"
     ops.crop_pdf(str(src), str(soft), left=20, right=20, top=10, bottom=10, mode="cropbox")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(soft))
     try:
         assert abs(doc[0].cropbox.width - 360) < 0.5
@@ -437,14 +433,14 @@ def test_crop_dims_cropbox_and_rebuild(tmp_path: Path) -> None:
 
 def test_bookmark_round_trip_and_toc(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", pages=2)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     marked = tmp_path / "marked.pdf"
     ops.set_bookmarks(
         str(src),
         str(marked),
         [ops.BookmarkEntry(1, "First", 1), ops.BookmarkEntry(1, "Second", 2)],
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     bookmarks = ops.get_bookmarks(str(marked))
     assert [(b.title, b.page) for b in bookmarks] == [("First", 1), ("Second", 2)]
 
@@ -475,10 +471,10 @@ def test_blank_heuristic_on_empty_page(tmp_path: Path) -> None:
     assert report.blank_indices == (0,)
     assert report.page_count == 2
 
-    source_hash = _file_hash(path)
+    source_hash = file_sha256(path)
     out = tmp_path / "clean.pdf"
     ops.remove_blank_pages(str(path), str(out))
-    assert _file_hash(path) == source_hash
+    assert file_sha256(path) == source_hash
     cleaned = fitz.open(str(out))
     try:
         assert cleaned.page_count == 1
@@ -560,10 +556,10 @@ def test_remove_annotations_and_color_effects(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "clean.pdf"
     ops.remove_or_flatten_annotations(str(src), str(out), action="remove")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     cleaned = fitz.open(str(out))
     try:
         assert list(cleaned[0].annots() or []) == []
@@ -584,7 +580,7 @@ def test_watermark_cancel_mid_loop_cleans_staged(tmp_path: Path, monkeypatch) ->
     from pagedrop.utils.temp_manager import TempManager
 
     src = _make_pdf(tmp_path / "src.pdf", text="body", pages=6)
-    src_hash = _file_hash(src)
+    src_hash = file_sha256(src)
     out = tmp_path / "wm.pdf"
     token = CancelToken()
     checks = {"n": 0}
@@ -614,6 +610,6 @@ def test_watermark_cancel_mid_loop_cleans_staged(tmp_path: Path, monkeypatch) ->
             )
         assert not out.exists()
         assert not any(temp._dir.glob("job_*"))
-        assert _file_hash(src) == src_hash
+        assert file_sha256(src) == src_hash
     finally:
         temp.cleanup()

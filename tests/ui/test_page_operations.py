@@ -8,6 +8,7 @@ from pagedrop.core.drag_mime import decode_page_refs, encode_page_refs
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import render_page_png
 from pagedrop.ui.window_manager import WindowManager
+from tests.conftest import wait_for_pdf_loaded
 
 
 def test_page_ref_rotation_mime_roundtrip():
@@ -48,7 +49,7 @@ def test_render_page_png_accepts_rotation(tmp_path):
 
 def test_duplicate_selected_pages(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     tab = main_window._active_tab()
     grid = tab.thumbnail_grid
@@ -69,7 +70,7 @@ def test_rotate_selected_pages_updates_ref_and_indicator(
     main_window, five_page_pdf, qtbot
 ):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     tab = main_window._active_tab()
     grid = tab.thumbnail_grid
@@ -88,7 +89,7 @@ def test_rotate_selected_pages_updates_ref_and_indicator(
 
 def test_extract_selected_to_new_tab(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     source = main_window._active_tab()
     source.thumbnail_grid.selection_manager.set_selection({0, 2})
@@ -117,7 +118,7 @@ def test_extract_selected_to_new_window(qapp, five_page_pdf, qtbot):
     qtbot.addWidget(main_window)
 
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     main_window._active_tab().thumbnail_grid.selection_manager.set_selection({1, 4})
     main_window._rotate_selected_pages(90)

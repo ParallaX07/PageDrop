@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -16,7 +15,7 @@ from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 from pagedrop.utils.temp_manager import TempManager
-from tests.conftest import wait_for_pdf_loaded
+from tests.conftest import file_sha256, wait_for_pdf_loaded
 from tests.core.test_jobs import _encrypted_pdf
 
 
@@ -162,7 +161,7 @@ def test_page_card_drag_encrypted(main_window, tmp_path, monkeypatch, qtbot):
     """Unlock → drag-out uses grid credentials; source unchanged, output openable."""
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = hashlib.sha256(enc.read_bytes()).hexdigest()
+    source_hash = file_sha256(enc)
 
     monkeypatch.setattr(
         QInputDialog,
@@ -203,4 +202,4 @@ def test_page_card_drag_encrypted(main_window, tmp_path, monkeypatch, qtbot):
     qtbot.mouseMove(card, pos=QPoint(200, 200))
 
     assert extracted_ok["value"]
-    assert hashlib.sha256(enc.read_bytes()).hexdigest() == source_hash
+    assert file_sha256(enc) == source_hash

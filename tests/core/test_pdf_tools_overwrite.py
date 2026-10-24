@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 
@@ -11,10 +10,7 @@ import pytest
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs.errors import SourceOverwriteError
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(path: Path) -> Path:
@@ -30,10 +26,10 @@ def _make_pdf(path: Path) -> Path:
 
 def test_reverse_rejects_same_path(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "in.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     with pytest.raises(SourceOverwriteError):
         pdf_tools.reverse_pdf_pages(str(src), str(src))
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_reverse_rejects_hardlink_alias(tmp_path: Path) -> None:
@@ -43,10 +39,10 @@ def test_reverse_rejects_hardlink_alias(tmp_path: Path) -> None:
         os.link(src, alias)
     except OSError:
         pytest.skip("filesystem does not support hardlinks")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     with pytest.raises(SourceOverwriteError):
         pdf_tools.reverse_pdf_pages(str(src), str(alias))
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_alternate_and_zip_reject_source_output(tmp_path: Path) -> None:

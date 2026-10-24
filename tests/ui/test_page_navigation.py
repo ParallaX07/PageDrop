@@ -16,6 +16,7 @@ from pagedrop.ui.theme import (
 )
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.ui.zoom_controls import ZoomControls
+from tests.conftest import wait_for_grid_loaded, wait_for_pdf_loaded
 
 
 def test_jump_to_pages_selects_and_focuses(qtbot, five_page_pdf):
@@ -23,7 +24,7 @@ def test_jump_to_pages_selects_and_focuses(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
     grid.jump_to_pages([2, 3])
     assert grid.selection_manager.selection == {2, 3}
@@ -34,7 +35,7 @@ def test_jump_to_pages_selects_and_focuses(qtbot, five_page_pdf):
 
 def test_go_to_page_dialog(main_window, five_page_pdf, qtbot, monkeypatch):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     monkeypatch.setattr(QInputDialog, "getInt", lambda *a, **k: (4, True))
     main_window._go_to_page_dialog()
@@ -45,7 +46,7 @@ def test_go_to_page_dialog(main_window, five_page_pdf, qtbot, monkeypatch):
 
 def test_go_to_page_in_preview(main_window, five_page_pdf, qtbot, monkeypatch):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
     main_window._thumbnail_grid.selection_manager.select_single(0)
     main_window._open_preview()
     qtbot.waitUntil(lambda: main_window._is_preview_visible(), timeout=5000)
@@ -58,7 +59,7 @@ def test_go_to_page_in_preview(main_window, five_page_pdf, qtbot, monkeypatch):
 
 def test_page_range_jump_dialog(main_window, five_page_pdf, qtbot, monkeypatch):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     def fill_and_accept(dialog: QDialog) -> int:
         page_input = dialog.findChild(QLineEdit, "SelectPagesInput")
@@ -97,7 +98,7 @@ def test_page_overlay_appears_when_zoomed_in(qtbot, five_page_pdf):
 
 def test_ctrl_zero_resets_thumbnail_zoom(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     grid.set_thumbnail_zoom(DEFAULT_THUMBNAIL_WIDTH + ZOOM_WHEEL_STEP * 3)
@@ -109,7 +110,7 @@ def test_ctrl_zero_resets_thumbnail_zoom(main_window, five_page_pdf, qtbot):
 
 def test_zoom_slider_double_click_resets(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     zoom = main_window.findChild(ZoomControls)

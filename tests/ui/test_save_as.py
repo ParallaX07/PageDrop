@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-
 import fitz
 from PyQt6.QtCore import QMimeData
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
@@ -15,12 +13,8 @@ from pagedrop.core.pdf_editor import PageRef
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.settings import remember_directory
-from tests.conftest import wait_for_pdf_loaded
+from tests.conftest import file_sha256, wait_for_pdf_loaded
 from tests.core.test_jobs import _encrypted_pdf
-
-
-def _file_hash(path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _active_tab(window: MainWindow) -> PdfTab:
@@ -153,7 +147,7 @@ def test_repeated_save_preserves_forms_page_order_and_rotation(
         doc.save(str(source))
     finally:
         doc.close()
-    source_hash = _file_hash(source)
+    source_hash = file_sha256(source)
     main_window.showMinimized()
     main_window._load_pdf(str(source))
     wait_for_pdf_loaded(qtbot, main_window)
@@ -183,7 +177,7 @@ def test_repeated_save_preserves_forms_page_order_and_rotation(
     finally:
         saved.close()
     assert [field.name for field in list_form_fields(str(second))] == ["Name"]
-    assert _file_hash(source) == source_hash
+    assert file_sha256(source) == source_hash
 
 
 def _drop_init_blank_tab(main_window, five_page_pdf, qtbot) -> PdfTab:
@@ -273,7 +267,7 @@ def test_encrypted_save_as_uses_runtime_credentials(
 ):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
     output = tmp_path / "copy.pdf"
 
     monkeypatch.setattr(
@@ -301,7 +295,7 @@ def test_encrypted_save_as_uses_runtime_credentials(
     assert main_window._save_as(tab) is True
     _wait_for_editor_job(qtbot, main_window, tab)
     assert output.is_file()
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     out = fitz.open(str(output))
     try:
         assert out.page_count == 1

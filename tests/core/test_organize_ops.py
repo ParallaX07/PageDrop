@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -27,10 +26,7 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.utils.temp_manager import TempManager
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_text_pdf(
@@ -99,7 +95,7 @@ def _make_single_page_with_quadrant_labels(
 def test_split_extract_ranges_to_folder(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=[f"P{i}" for i in range(6)], page_size=(200, 200))
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()
@@ -111,7 +107,7 @@ def test_split_extract_ranges_to_folder(tmp_path: Path) -> None:
     )
 
     assert [p.name for p in out_paths] == ["doc_range_0001-0002.pdf", "doc_range_0003-0006.pdf"]
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     first = fitz.open(str(out_paths[0]))
     try:
@@ -152,12 +148,12 @@ def test_alternate_pdfs_page_order(tmp_path: Path) -> None:
 def test_reverse_pages_and_add_blank(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=["R0", "R1", "R2"], page_size=(200, 200))
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     out = tmp_path / "rev.pdf"
     pdf_tools.reverse_pdf_pages(str(src), str(out), add_blank_page=True)
 
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert doc.page_count == 4
@@ -172,12 +168,12 @@ def test_reverse_pages_and_add_blank(tmp_path: Path) -> None:
 def test_n_up_layout_row_major(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=["N0", "N1", "N2", "N3"], page_size=(200, 200), text_pos=(20, 20))
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     out = tmp_path / "nup.pdf"
     pdf_tools.n_up_pdf(str(src), str(out), rows=2, cols=2, margin_pt=0.0)
 
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert doc.page_count == 1
@@ -308,7 +304,7 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     out_added = tmp_path / "with_attach.pdf"
     pdf_tools.attachment_add(
@@ -319,7 +315,7 @@ def test_attachments_add_extract_remove(tmp_path: Path) -> None:
         filename="note.txt",
         overwrite=False,
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     names = [a.name for a in pdf_tools.attachments_list(str(out_added))]
     assert "note.txt" in names
@@ -345,7 +341,7 @@ def test_attachment_add_rejects_oversized_file(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     huge = tmp_path / "huge.bin"
     # Sparse-ish: write just past the guard without allocating a full 64 MiB buffer
@@ -374,7 +370,7 @@ def test_attachment_add_rejects_oversized_file(tmp_path: Path) -> None:
             )
         assert not out.exists()
         assert not any(temp._dir.glob("job_*"))
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
     finally:
         temp.cleanup()
 
@@ -385,7 +381,7 @@ def test_attachment_add_remove_encrypted_with_password(tmp_path: Path) -> None:
 
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
 
     out_added = tmp_path / "with_attach.pdf"
     with pytest.raises(PdfPasswordRequiredError):
@@ -402,7 +398,7 @@ def test_attachment_add_remove_encrypted_with_password(tmp_path: Path) -> None:
         data=b"hello",
         password="secret",
     )
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert "note.txt" in [
         a.name
         for a in pdf_tools.attachments_list(str(out_added))
@@ -419,7 +415,7 @@ def test_attachment_add_remove_encrypted_with_password(tmp_path: Path) -> None:
         )
     finally:
         doc.close()
-    locked_hash = _file_hash(locked_added)
+    locked_hash = file_sha256(locked_added)
     out_removed = tmp_path / "removed.pdf"
     with pytest.raises(PdfPasswordRequiredError):
         pdf_tools.attachment_remove(
@@ -431,7 +427,7 @@ def test_attachment_add_remove_encrypted_with_password(tmp_path: Path) -> None:
         name="note.txt",
         password="secret",
     )
-    assert _file_hash(locked_added) == locked_hash
+    assert file_sha256(locked_added) == locked_hash
     assert "note.txt" not in [
         a.name for a in pdf_tools.attachments_list(str(out_removed))
     ]
@@ -445,7 +441,7 @@ def test_attachment_extract_all_zip(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     with_attach = tmp_path / "with_attach.pdf"
     pdf_tools.attachment_add(
@@ -465,14 +461,14 @@ def test_attachment_extract_all_zip(tmp_path: Path) -> None:
         filename="data.bin",
         overwrite=False,
     )
-    attached_hash = _file_hash(with_two)
+    attached_hash = file_sha256(with_two)
 
     out_zip = tmp_path / "out" / "src_attachments.zip"
     result = pdf_tools.attachment_extract_all_zip(str(with_two), out_zip)
     assert result == out_zip
     assert out_zip.is_file()
-    assert _file_hash(with_two) == attached_hash
-    assert _file_hash(src) == source_hash
+    assert file_sha256(with_two) == attached_hash
+    assert file_sha256(src) == source_hash
 
     with zipfile.ZipFile(out_zip) as zf:
         assert set(zf.namelist()) == {"note.txt", "data.bin"}
@@ -682,11 +678,11 @@ def test_metadata_set_strip_and_xmp_v1(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     out_set = tmp_path / "set.pdf"
     pdf_tools.metadata_set(str(src), str(out_set), updates={"title": "new"})
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     meta = pdf_tools.metadata_get(str(out_set))
     assert meta["title"] == "new"
 
@@ -718,7 +714,7 @@ def test_page_labels_get_set(tmp_path: Path) -> None:
 def test_zip_pdfs_members(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     _make_text_pdf(src, page_texts=[f"P{i}" for i in range(3)], page_size=(200, 200))
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     parts = pdf_tools.extract_ranges_to_folder(
@@ -729,7 +725,7 @@ def test_zip_pdfs_members(tmp_path: Path) -> None:
     )
     zip_path = tmp_path / "bundle.zip"
     pdf_tools.zip_pdfs(parts, zip_path)
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         names = sorted(zf.namelist())
@@ -754,8 +750,8 @@ def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
         doc.save(str(b))
     finally:
         doc.close()
-    hash_a = _file_hash(a)
-    hash_b = _file_hash(b)
+    hash_a = file_sha256(a)
+    hash_b = file_sha256(b)
 
     heatmap = tmp_path / "heatmap.pdf"
     result = pdf_tools.compare_pdfs_heatmap(
@@ -768,8 +764,8 @@ def test_compare_pdfs_heatmap(tmp_path: Path) -> None:
     )
     assert heatmap.exists()
     assert result.page_diffs and result.page_diffs[0] > 0.0
-    assert _file_hash(a) == hash_a
-    assert _file_hash(b) == hash_b
+    assert file_sha256(a) == hash_a
+    assert file_sha256(b) == hash_b
 
     out_doc = fitz.open(str(heatmap))
     try:
@@ -846,7 +842,7 @@ def _compare_report_options(
 def test_compare_report_job_layouts_sections_and_no_sidecar(tmp_path: Path) -> None:
     original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old", "same"])
     revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new", "same"])
-    hashes = (_file_hash(original), _file_hash(revised))
+    hashes = (file_sha256(original), file_sha256(revised))
     temp = TempManager()
     try:
         runner = SerializedJobRunner(temp)
@@ -882,7 +878,7 @@ def test_compare_report_job_layouts_sections_and_no_sidecar(tmp_path: Path) -> N
                     finally:
                         document.close()
                     assert not output.with_suffix(".compare_ratio.txt").exists()
-        assert (_file_hash(original), _file_hash(revised)) == hashes
+        assert (file_sha256(original), file_sha256(revised)) == hashes
     finally:
         temp.cleanup()
 
@@ -979,7 +975,7 @@ def test_compare_report_job_rejects_either_source_as_output(
     original = _make_text_pdf(tmp_path / "original.pdf", page_texts=["old"])
     revised = _make_text_pdf(tmp_path / "revised.pdf", page_texts=["new"])
     output = original if source_name == "original" else revised
-    source_hash = _file_hash(output)
+    source_hash = file_sha256(output)
     temp = TempManager()
     try:
         runner = SerializedJobRunner(temp)
@@ -994,7 +990,7 @@ def test_compare_report_job_rejects_either_source_as_output(
                     overwrite=True,
                 )
             )
-        assert _file_hash(output) == source_hash
+        assert file_sha256(output) == source_hash
     finally:
         temp.cleanup()
 
@@ -1264,11 +1260,11 @@ def test_compare_text_diff_truncation_and_identical(tmp_path: Path) -> None:
         finally:
             doc.close()
 
-    hash_a = _file_hash(a)
-    hash_b = _file_hash(b)
+    hash_a = file_sha256(a)
+    hash_b = file_sha256(b)
     report = pdf_tools.compare_pdf_text_diff(str(a), str(b))
-    assert _file_hash(a) == hash_a
-    assert _file_hash(b) == hash_b
+    assert file_sha256(a) == hash_a
+    assert file_sha256(b) == hash_b
     assert report.deleted_count == 1
     assert report.added_count == 0
     assert report.modified_count == 0
@@ -1478,7 +1474,7 @@ def test_n_up_cancel_mid_loop_cleans_staged(tmp_path, monkeypatch):
         tmp_path / "src.pdf",
         page_texts=["A", "B", "C", "D", "E", "F", "G", "H"],
     )
-    src_hash = _file_hash(src)
+    src_hash = file_sha256(src)
     out = tmp_path / "nup.pdf"
     token = CancelToken()
     checks = {"n": 0}
@@ -1508,7 +1504,7 @@ def test_n_up_cancel_mid_loop_cleans_staged(tmp_path, monkeypatch):
             )
         assert not out.exists()
         assert not any(temp._dir.glob("job_*"))
-        assert _file_hash(src) == src_hash
+        assert file_sha256(src) == src_hash
     finally:
         temp.cleanup()
 
@@ -1545,8 +1541,8 @@ def test_compare_text_diff_cancel_mid_page(tmp_path, monkeypatch):
     """Cancel between text-diff pages must raise and leave sources unchanged."""
     a = _make_text_pdf(tmp_path / "a.pdf", page_texts=["A1", "A2", "A3", "A4"])
     b = _make_text_pdf(tmp_path / "b.pdf", page_texts=["B1", "B2", "B3", "B4"])
-    hash_a = _file_hash(a)
-    hash_b = _file_hash(b)
+    hash_a = file_sha256(a)
+    hash_b = file_sha256(b)
     token = CancelToken()
     checks = {"n": 0}
     real_check = pdf_tools._check_cancel
@@ -1561,5 +1557,5 @@ def test_compare_text_diff_cancel_mid_page(tmp_path, monkeypatch):
     with pytest.raises(JobCancelledError):
         pdf_tools.compare_pdf_text_diff(str(a), str(b), cancel=token)
     assert checks["n"] >= 2
-    assert _file_hash(a) == hash_a
-    assert _file_hash(b) == hash_b
+    assert file_sha256(a) == hash_a
+    assert file_sha256(b) == hash_b

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -20,10 +19,7 @@ from pagedrop.core.capabilities import (
 )
 from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.core.pdf_to_docx import PdfToDocxError, convert_pdf_to_docx
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(path: Path, text: str = "PageDrop word export") -> Path:
@@ -50,7 +46,7 @@ def test_pdf_to_docx_promotes_and_leaves_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     src = _make_pdf(tmp_path / "report.pdf")
-    before = _file_hash(src)
+    before = file_sha256(src)
     dst = tmp_path / "report.docx"
     fake_bin = tmp_path / "soffice"
     fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -76,7 +72,7 @@ def test_pdf_to_docx_promotes_and_leaves_source(
     result = convert_pdf_to_docx(src, dst, soffice_path=str(fake_bin))
     assert result == dst
     assert dst.read_bytes().startswith(b"PK")
-    assert _file_hash(src) == before
+    assert file_sha256(src) == before
 
 
 def test_pdf_to_docx_rejects_non_pdf(tmp_path: Path) -> None:
@@ -147,12 +143,12 @@ def test_smoke_libreoffice_pdf_to_docx(tmp_path: Path) -> None:
     clear_cache()
     try:
         src = _make_pdf(tmp_path / "smoke.pdf", "Phase 32 PDF to Word")
-        before = _file_hash(src)
+        before = file_sha256(src)
         dst = tmp_path / "smoke.docx"
         result = convert_pdf_to_docx(src, dst, soffice_path=lo, timeout_sec=120)
         assert result.is_file()
         assert result.read_bytes()[:2] == b"PK"
-        assert _file_hash(src) == before
+        assert file_sha256(src) == before
     finally:
         set_configured_soffice_path(None)
         clear_cache()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -11,10 +10,7 @@ import pytest
 from pagedrop.core.jobs import JobCancelledError, JobContext, JobSpec
 from pagedrop.ui.organize_shell import open_organize_shell
 from pagedrop.ui.tools_window import ToolsWindow
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, pages: int = 2) -> None:
@@ -35,7 +31,7 @@ def test_smoke_shell_open_cancel_success_cleanup(
     out_ok = tmp_path / "out_ok.pdf"
     out_cancel = tmp_path / "out_cancel.pdf"
     _write_pdf(src)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     tools = ToolsWindow()
     qtbot.addWidget(tools)
@@ -67,7 +63,7 @@ def test_smoke_shell_open_cancel_success_cleanup(
         )
     shell.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
     assert not out_cancel.exists()
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert not shell.is_job_running()
     assert not shell._result_bar.isVisible()
 
@@ -78,7 +74,7 @@ def test_smoke_shell_open_cancel_success_cleanup(
     shell._run_btn.click()
     qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
     assert out_ok.is_file()
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert shell._result_bar.isVisible()
     assert shell.statusBar().currentMessage().startswith("Saved")
 
