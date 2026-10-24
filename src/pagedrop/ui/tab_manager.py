@@ -311,7 +311,6 @@ class TabManager(QTabWidget):
 
         refresh_cb = self._refresh_close_icons
         icons.register_refresh(refresh_cb)
-        self.destroyed.connect(lambda *_: icons.unregister_refresh(refresh_cb))
 
     @property
     def detachable_tab_bar(self) -> DetachableTabBar:

@@ -8,6 +8,7 @@ import pytest
 
 from pagedrop.ui.main_window import MainWindow
 from tests.fixtures.generate_fixtures import generate_n_page
+from tests.conftest import wait_for_pdf_loaded
 
 
 def _page_numbers(cards) -> list[int]:
@@ -25,7 +26,7 @@ def test_smoke_thumbnail_grid_five_pages(qtbot, five_page_pdf):
     window.showMinimized()
 
     window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, window, timeout=15000)
 
     cards = window._thumbnail_grid._cards
     assert len(cards) == 5
@@ -49,7 +50,7 @@ def test_smoke_stress_pages(qtbot, pdf_fixtures_dir):
     window.showMinimized()
 
     window._load_pdf(str(stress_pdf))
-    qtbot.waitSignal(window._thumbnail_grid.rendering_finished, timeout=120000)
+    wait_for_pdf_loaded(qtbot, window, timeout=120000)
 
     assert len(window._thumbnail_grid._cards) == page_count
     assert window.isEnabled()

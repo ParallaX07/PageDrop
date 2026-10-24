@@ -17,6 +17,7 @@ from pagedrop.ui.theme import (
 )
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.ui.zoom_controls import ZoomControls
+from tests.conftest import wait_for_grid_loaded, wait_for_pdf_loaded
 
 
 def _ctrl_wheel(widget, delta_y: int) -> None:
@@ -38,7 +39,7 @@ def test_ctrl_scroll_zoom_increases_thumbnail_width(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
     initial = grid.thumbnail_width_px
     _ctrl_wheel(grid, 120)
@@ -53,7 +54,7 @@ def test_zoom_does_not_immediately_trigger_full_rerender(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
     with qtbot.waitSignal(
         grid.rendering_started, timeout=200, raising=False
@@ -70,7 +71,7 @@ def test_ctrl_scroll_zoom_out_decreases_thumbnail_width(qtbot, five_page_pdf):
     qtbot.addWidget(grid)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
     _ctrl_wheel(grid, -120)
     assert grid.thumbnail_width_px == DEFAULT_THUMBNAIL_WIDTH - ZOOM_WHEEL_STEP
@@ -91,7 +92,7 @@ def test_preview_button_disabled_without_pdf(main_window):
 
 def test_preview_button_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     preview_action = None
     for toolbar in main_window.findChildren(QToolBar):
@@ -181,7 +182,7 @@ def test_preview_zoom_clamps_at_maximum(qtbot, five_page_pdf):
 
 def test_open_preview_resets_zoom_to_fit(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     main_window._open_preview()
     qtbot.waitUntil(lambda: main_window._is_preview_visible(), timeout=5000)
@@ -227,7 +228,7 @@ def test_zoom_controls_disabled_without_pdf(main_window):
 
 def test_zoom_controls_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     zoom = main_window.findChild(ZoomControls)
     assert zoom is not None
@@ -243,7 +244,7 @@ def test_thumbnail_zoom_lives_in_status_bar_and_compacts_at_narrow_width(
     assert main_window._thumbnail_zoom_host.isHidden()
 
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
     assert not main_window._thumbnail_zoom_host.isHidden()
 
     main_window.show()
@@ -261,7 +262,7 @@ def test_thumbnail_zoom_lives_in_status_bar_and_compacts_at_narrow_width(
 
 def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     zoom = main_window.findChild(ZoomControls)
@@ -274,7 +275,7 @@ def test_zoom_in_button_increases_thumbnail_width(main_window, five_page_pdf, qt
 
 def test_zoom_slider_changes_thumbnail_width(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     grid = main_window._thumbnail_grid
     zoom = main_window.findChild(ZoomControls)
@@ -292,7 +293,7 @@ def test_zoom_rerender_prioritizes_visible_pages(qtbot, five_page_pdf, monkeypat
     qtbot.waitExposed(grid, timeout=5000)
     loader = PdfLoader(str(five_page_pdf))
     grid.load_pdf(loader)
-    qtbot.waitSignal(grid.rendering_finished, timeout=15000)
+    wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
     monkeypatch.setattr(grid, "_get_visible_page_indices", lambda **_: [0, 1])
 
@@ -320,7 +321,7 @@ def test_escape_closes_preview(main_window, five_page_pdf, qtbot):
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     main_window._open_preview()
     qtbot.waitUntil(lambda: main_window._is_preview_visible(), timeout=5000)
@@ -334,7 +335,7 @@ def test_escape_closes_preview(main_window, five_page_pdf, qtbot):
 def test_toggle_grid_viewer_preserves_tab(main_window, five_page_pdf, qtbot):
     """PdfTab grid ↔ viewer toggle; status uses logical_count; Esc returns."""
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     tab = main_window._active_tab()
     assert tab is not None
@@ -372,7 +373,7 @@ def test_preview_blocks_grid_shortcuts(main_window, five_page_pdf, qtbot):
     from PyQt6.QtGui import QKeyEvent, QKeySequence
 
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     tab = main_window._active_tab()
     grid = main_window._thumbnail_grid
@@ -415,7 +416,7 @@ def test_preview_blocks_grid_shortcuts(main_window, five_page_pdf, qtbot):
 
 def test_open_preview_uses_selected_page(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
     main_window._thumbnail_grid.selection_manager.select_single(3)
     main_window._open_preview()
@@ -434,7 +435,7 @@ def test_preview_render_error_shows_status_and_dialog(
     from PyQt6.QtWidgets import QMessageBox
 
     main_window._load_pdf(str(five_page_pdf))
-    qtbot.waitSignal(main_window._thumbnail_grid.rendering_finished, timeout=15000)
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
     main_window._open_preview()
     qtbot.waitUntil(lambda: main_window._is_preview_visible(), timeout=5000)
 
