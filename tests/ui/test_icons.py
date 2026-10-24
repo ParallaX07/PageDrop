@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import gc
-from weakref import ref
+from weakref import WeakMethod, ref
 
 import pytest
 from PyQt6.QtCore import QEvent
@@ -149,12 +149,15 @@ def test_refresh_icons_prunes_widget_with_deleted_cpp_object(qapp, isolated_sett
     owner = _Owner()
     register_refresh(owner.refresh)
     register_refresh(_alive)
-    before = len(_refresh_callbacks)
     sip.delete(owner)
     try:
         refresh_themed_widgets()
         assert calls == [1]
-        assert len(_refresh_callbacks) == before - 1
+        assert not any(
+            isinstance(registered, WeakMethod)
+            and getattr(registered(), "__self__", None) is owner
+            for registered in _refresh_callbacks
+        )
     finally:
         unregister_refresh(_alive)
 
