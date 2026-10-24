@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QSize, pyqtSignal
+from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -23,8 +23,7 @@ from pagedrop.core.pdf_loader import (
     PdfPasswordRequiredError,
 )
 from pagedrop.core.pdf_merge import PdfMergeModel
-from pagedrop.core.pdf_service import FITZ_LOCK, page_count as pdf_page_count
-from pagedrop.core.pdf_writer import merge_pdf_files
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import prompt_discard_file_list, prompt_pdf_password
@@ -47,69 +46,11 @@ from pagedrop.ui.theme import (
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
+from pagedrop.ui.tool_shell import run_tool_job
 from pagedrop.ui.zoom_controls import ZoomControls
-from pagedrop.utils.diagnostics import log_failure
 
 # Show a progress dialog once folder validation exceeds this many candidates.
 _FOLDER_PROGRESS_THRESHOLD = 8
-
-
-class _MergeWorker(QRunnable):
-    """Whole-file merge off the UI thread (see core.thread_policy)."""
-
-    class Signals(QObject):
-        succeeded = pyqtSignal(str)
-        failed = pyqtSignal(str)
-
-    def __init__(
-        self,
-        file_paths: list[str],
-        output_path: str,
-        *,
-        passwords: dict[str, str] | None = None,
-    ) -> None:
-        super().__init__()
-        self.signals = self.Signals()
-        self._file_paths = file_paths
-        self._output_path = output_path
-        self._passwords = passwords
-        self.setAutoDelete(True)
-
-    def run(self) -> None:
-        # Paths only; FITZ_LOCK around fitz merge; pool max 1.
-        try:
-            with FITZ_LOCK:
-                merge_pdf_files(
-                    self._file_paths,
-                    self._output_path,
-                    passwords=self._passwords,
-                )
-        except PdfLoadError as exc:
-            log_failure(
-                "Merge PDFs",
-                exc,
-                inputs=", ".join(self._file_paths),
-                output=self._output_path,
-            )
-            self.signals.failed.emit(f"Could not read a source PDF:\n{exc}")
-        except OSError as exc:
-            log_failure(
-                "Merge PDFs",
-                exc,
-                inputs=", ".join(self._file_paths),
-                output=self._output_path,
-            )
-            self.signals.failed.emit(f"Could not write PDF:\n{exc}")
-        except Exception as exc:
-            log_failure(
-                "Merge PDFs",
-                exc,
-                inputs=", ".join(self._file_paths),
-                output=self._output_path,
-            )
-            self.signals.failed.emit(f"Could not merge PDFs:\n{exc}")
-        else:
-            self.signals.succeeded.emit(self._output_path)
 
 
 class MergeWindow(JobChromeMixin, QWidget):
@@ -129,10 +70,8 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._page_counts: dict[str, int] = {}
         self._credentials = RuntimeCredentials()
         self._preview_loader: PdfLoader | None = None
-        self._merging = False
+        self._init_job_chrome_state()
         self._folder_checking = False
-        self._merge_pool = QThreadPool(self)
-        self._merge_pool.setMaxThreadCount(1)
         self._status = StatusFooter()
 
         self.setWindowTitle(self.WINDOW_TITLE)
@@ -190,6 +129,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._root.addWidget(self._stack, stretch=1)
 
         self._busy_overlay = BusyOverlay(self._stack)
+        self._busy_overlay.cancelled.connect(self.cancel_active_job)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Merge", self)
@@ -304,8 +244,6 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._preview_widget.page_changed.connect(self._update_status)
         self._preview_widget.closed.connect(self._close_preview)
         self._wire_result_actions()
-        # ponytail: whole-file merge has no CancelToken — Cancel stays hidden;
-        # Escape/close explain "still running…". Upgrade: cancel in merge_pdf_files.
         self._busy_overlay.escape_blocked.connect(self._explain_busy)
 
     def _selected_indices(self) -> list[int]:
@@ -334,15 +272,15 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._merge_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
-        toolbar_enabled = not self._merging and not self._folder_checking
+        toolbar_enabled = not self.is_job_running() and not self._folder_checking
         self._add_action.setEnabled(toolbar_enabled)
         self._add_folder_action.setEnabled(toolbar_enabled)
         self._remove_action.setEnabled(has_selection and toolbar_enabled)
         self._move_up_action.setEnabled(self._can_move_up() and toolbar_enabled)
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
-        self._merge_action.setEnabled(has_files and not self._merging and not self._folder_checking)
+        self._merge_action.setEnabled(has_files and not self.is_job_running() and not self._folder_checking)
         self._zoom_controls.setEnabled(
-            has_files and not in_preview and not self._merging and not self._folder_checking
+            has_files and not in_preview and not self.is_job_running() and not self._folder_checking
         )
         self._set_result_precedence(self._result_bar.isVisible())
 
@@ -697,6 +635,10 @@ class MergeWindow(JobChromeMixin, QWidget):
         first_path = Path(self._model.path_at(0))
         return str(first_path.parent / f"{first_path.stem}_merged.pdf")
 
+    def _set_job_controls_enabled(self, enabled: bool) -> None:
+        self._busy_overlay.set_cancellable(not enabled)
+        self._update_actions()
+
     def _merge_pdfs(self) -> None:
         if self._model.file_count() == 0:
             return
@@ -706,6 +648,8 @@ class MergeWindow(JobChromeMixin, QWidget):
             "Merge PDFs",
             self._default_merge_path(),
             "PDF files (*.pdf);;All files (*)",
+            "",
+            QFileDialog.Option.DontConfirmOverwrite,
         )
         if not path:
             return
@@ -716,20 +660,22 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._start_merge(self._model.all_paths(), path)
 
     def _start_merge(self, file_paths: list[str], output_path: str) -> None:
-        self._merging = True
-        self._result_bar.clear()
-        self._busy_overlay.show_message("Merging PDFs…")
-        self.statusBar().showMessage("Merging PDFs…")
-        self._update_actions()
+        count = len(file_paths)
+        noun = "file" if count == 1 else "files"
 
-        worker = _MergeWorker(
-            file_paths,
-            output_path,
-            passwords=self._credentials.snapshot() or None,
+        def success_message(result: str) -> str:
+            remember_directory(result)
+            return f"Merged {count} {noun} to {Path(result).name}"
+
+        run_tool_job(
+            self,
+            job_type="merge",
+            inputs=file_paths,
+            output=output_path,
+            progress_message="Merging PDFs…",
+            success_toast=success_message,
+            credentials=self._credentials,
         )
-        worker.signals.succeeded.connect(self._on_merge_succeeded)
-        worker.signals.failed.connect(self._on_merge_failed)
-        self._merge_pool.start(worker)
 
     def _explain_busy(self) -> None:
         explain_busy_running(
@@ -737,30 +683,6 @@ class MergeWindow(JobChromeMixin, QWidget):
             toast=self._toast,
             label="Merge",
         )
-
-    def _finish_merge(self) -> None:
-        self._merging = False
-        self._busy_overlay.hide_overlay()
-        self._update_actions()
-
-    def _on_merge_succeeded(self, path: str) -> None:
-        self._finish_merge()
-        remember_directory(path)
-        filename = Path(path).name
-        file_count = self._model.file_count()
-        noun = "file" if file_count == 1 else "files"
-        status = f"Merged {file_count} {noun} to {filename}"
-        self.statusBar().showMessage(status)
-        self._toast.show_toast(status, kind="success")
-        self._result_bar.show_for(path, message=status)
-        self._set_result_precedence(True)
-
-    def _on_merge_failed(self, message: str) -> None:
-        self._finish_merge()
-        self._result_bar.clear()
-        self.statusBar().showMessage("Merge failed")
-        self._toast.show_toast("Merge failed", kind="error")
-        QMessageBox.critical(self, "Merge PDFs", message)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -786,7 +708,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._refresh_grid()
 
     def request_close(self) -> bool:
-        if self._merging:
+        if self.is_job_running():
             self._explain_busy()
             return False
 

@@ -56,7 +56,6 @@ def overwrite_answer(monkeypatch):
     for target in (
         "pagedrop.ui.dialogs",
         "pagedrop.ui.tool_shell",
-        "pagedrop.ui.convert_window",
         "pagedrop.ui.office_convert_window",
     ):
         monkeypatch.setattr(f"{target}.confirm_overwrite", fake)
