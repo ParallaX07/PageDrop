@@ -9,6 +9,6 @@ PageDrop is a free, open-source PDF desktop app: thumbnail grid, multi-tab editi
 | [Development](development.md) | Run from source, layout, stack, tests, CI, product constraints |
 | [Building](building.md) | PyInstaller onedir, smoke checks, Windows installer, release checklist |
 | [Architecture](architecture.md) | Layers, edit model, drag mime, jobs, capabilities, PyMuPDF locking |
-| [Licensing](licensing.md) | Source MIT vs binary redistribution (PyQt6 / PyMuPDF / Qt) |
+| [Licensing](licensing.md) | AGPL-3.0-or-later source and binary licence obligations (PyQt6 / PyMuPDF / Qt) |
 
 Start with the [user guide](user-guide.md) if you are using the app, or [development](development.md) if you are hacking on it.

@@ -48,7 +48,7 @@ Batch Tools and editor Save As work through a **serialized job runner** (`Serial
 
 Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI can configure / recheck without crashing the app. Core thumbnail / edit / merge / Create PDF must remain usable when optional backends are absent.
 
-External converters (Office COM helper, LibreOffice, Ghostscript) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
+External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
 
 ## Comparison reports
 
