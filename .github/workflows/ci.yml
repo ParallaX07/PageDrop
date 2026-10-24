@@ -11,12 +11,13 @@ on:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v5
 
@@ -48,13 +49,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
+
+      - name: Lint
+        run: uv run ruff check src tests
 
       - name: Packaging check
         run: uv run python scripts/check_packaging.py
 
+      - name: Build wheel
+        run: uv build --wheel
+
       - name: Full test suite
-        run: uv run python all_tests.py -n 0
+        run: uv run python all_tests.py
