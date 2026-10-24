@@ -82,7 +82,7 @@ uv build --wheel
 uv run python all_tests.py
 ```
 
-`all_tests.py` runs the suite in parallel through xdist (`-n auto` from `pyproject.toml`); pass `-n 0` to run serially.
+`all_tests.py` runs the suite sequentially, and CI does the same. `pytest-xdist` stays in the dev group, so `-n auto` opts into a parallel run locally, but CI does not use it.
 
 Optional backends (Office COM, LibreOffice, tessdata) and a frozen exe are unset on CI; those tests skip without `PAGEDROP_*` env vars.
 
