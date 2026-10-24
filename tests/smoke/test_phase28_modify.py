@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
 
 from pagedrop.core import modify_ops as ops
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(path: Path, *, text: str = "phase28 body", pages: int = 2) -> Path:
@@ -28,11 +24,11 @@ def _make_pdf(path: Path, *, text: str = "phase28 body", pages: int = 2) -> Path
 
 def test_smoke_watermark_and_page_numbers(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     watermarked = tmp_path / "wm.pdf"
     ops.add_text_watermark(str(src), str(watermarked), text="DRAFT")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert watermarked.resolve() != src.resolve()
 
     numbered = tmp_path / "num.pdf"
@@ -42,8 +38,8 @@ def test_smoke_watermark_and_page_numbers(tmp_path: Path) -> None:
         template="{page}/{total}",
         position="bottom-center",
     )
-    assert _file_hash(src) == source_hash
-    wm_hash = _file_hash(watermarked)
+    assert file_sha256(src) == source_hash
+    wm_hash = file_sha256(watermarked)
 
     doc = fitz.open(str(numbered))
     try:
@@ -57,5 +53,5 @@ def test_smoke_watermark_and_page_numbers(tmp_path: Path) -> None:
         assert "phase28 body" in t0
     finally:
         doc.close()
-    assert _file_hash(watermarked) == wm_hash
-    assert _file_hash(src) == source_hash
+    assert file_sha256(watermarked) == wm_hash
+    assert file_sha256(src) == source_hash

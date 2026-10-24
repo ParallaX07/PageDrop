@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -9,10 +8,7 @@ import pytest
 from pagedrop.core import compare_report, pdf_tools
 from pagedrop.core.jobs import CancelToken, JobCancelledError
 from tests.fixtures.generate_fixtures import generate_compare_pair
-
-
-def _hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(path: Path, pages: list[dict]) -> Path:
@@ -76,7 +72,7 @@ def test_acceptance_matrix_uses_reusable_fitz_fixtures(
     include_revisions: bool,
 ) -> None:
     original_path, revised_path = generate_compare_pair(tmp_path / "fixtures")
-    source_hashes = (_hash(original_path), _hash(revised_path))
+    source_hashes = (file_sha256(original_path), file_sha256(revised_path))
     report = pdf_tools.compare_pdf_text_diff(str(original_path), str(revised_path))
     output_path = tmp_path / f"acceptance-{layout}-{include_summary}-{include_revisions}.pdf"
 
@@ -126,7 +122,7 @@ def test_acceptance_matrix_uses_reusable_fitz_fixtures(
     finally:
         output.close()
 
-    assert (_hash(original_path), _hash(revised_path)) == source_hashes
+    assert (file_sha256(original_path), file_sha256(revised_path)) == source_hashes
 
 
 def test_split_report_preserves_native_pages_text_and_sources(tmp_path: Path) -> None:
@@ -145,8 +141,8 @@ def test_split_report_preserves_native_pages_text_and_sources(tmp_path: Path) ->
             {"size": (150, 90), "text": "added"},
         ],
     )
-    original_hash = _hash(original_path)
-    revised_hash = _hash(revised_path)
+    original_hash = file_sha256(original_path)
+    revised_hash = file_sha256(revised_path)
     output_path = tmp_path / "split.pdf"
 
     report = _write(original_path, revised_path, output_path, layout="split")
@@ -193,8 +189,8 @@ def test_split_report_preserves_native_pages_text_and_sources(tmp_path: Path) ->
         revised.close()
         output.close()
 
-    assert _hash(original_path) == original_hash
-    assert _hash(revised_path) == revised_hash
+    assert file_sha256(original_path) == original_hash
+    assert file_sha256(revised_path) == revised_hash
 
 
 def test_alternating_report_orders_pages_and_places_highlights(tmp_path: Path) -> None:
@@ -210,8 +206,8 @@ def test_alternating_report_orders_pages_and_places_highlights(tmp_path: Path) -
         ],
     )
     output_path = tmp_path / "alternating.pdf"
-    original_hash = _hash(original_path)
-    revised_hash = _hash(revised_path)
+    original_hash = file_sha256(original_path)
+    revised_hash = file_sha256(revised_path)
 
     _write(original_path, revised_path, output_path, layout="alternating")
 
@@ -233,8 +229,8 @@ def test_alternating_report_orders_pages_and_places_highlights(tmp_path: Path) -
         assert output[2].rect.width == pytest.approx(160)
     finally:
         output.close()
-    assert _hash(original_path) == original_hash
-    assert _hash(revised_path) == revised_hash
+    assert file_sha256(original_path) == original_hash
+    assert file_sha256(revised_path) == revised_hash
 
 
 def test_unchanged_report_includes_all_pages_and_empty_state(tmp_path: Path) -> None:
@@ -415,7 +411,7 @@ def test_revisions_escape_unicode_and_paginate_without_truncation(tmp_path: Path
 def test_many_revisions_flow_across_shared_pages(tmp_path: Path) -> None:
     original_path = _make_pdf(tmp_path / "original.pdf", [{"size": (240, 140)}])
     revised_path = _make_pdf(tmp_path / "revised.pdf", [{"size": (240, 140)}])
-    source_hashes = (_hash(original_path), _hash(revised_path))
+    source_hashes = (file_sha256(original_path), file_sha256(revised_path))
     output_path = tmp_path / "compact.pdf"
     report = pdf_tools.CompareReport(
         changes=tuple(
@@ -456,7 +452,7 @@ def test_many_revisions_flow_across_shared_pages(tmp_path: Path) -> None:
             assert f"old wording {number}" in revisions
             assert f"new wording {number}" in revisions
         assert output.get_toc()[-1][1:] == ["Revisions", 2]
-    assert (_hash(original_path), _hash(revised_path)) == source_hashes
+    assert (file_sha256(original_path), file_sha256(revised_path)) == source_hashes
 
 
 def test_cancel_preserves_existing_output_and_cleans_stage(tmp_path: Path) -> None:

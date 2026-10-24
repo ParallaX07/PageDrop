@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -21,10 +20,7 @@ from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.utils.temp_manager import TempManager
 from tests.core.test_jobs import _encrypted_pdf
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _page_size(path: Path | str, page_index: int = 0) -> tuple[float, float]:
@@ -131,7 +127,7 @@ def test_extracted_content_matches_source(five_page_pdf, tmp_path):
 def test_extract_encrypted_with_password_leaves_source_unchanged(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
     output_dir = tmp_path / "out"
     output_dir.mkdir()
 
@@ -140,7 +136,7 @@ def test_extract_encrypted_with_password_leaves_source_unchanged(tmp_path):
     )
 
     assert len(paths) == 1
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     out = fitz.open(str(paths[0]))
     try:
         assert out.page_count == 1
@@ -152,14 +148,14 @@ def test_extract_encrypted_with_password_leaves_source_unchanged(tmp_path):
 def test_extract_encrypted_without_password_fails_clearly(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
     output_dir = tmp_path / "out"
     output_dir.mkdir()
 
     with pytest.raises(PdfPasswordRequiredError, match="password-protected"):
         extract_pages_to_files(str(enc), [0], output_dir, "locked")
 
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert list(output_dir.iterdir()) == []
 
 
@@ -168,8 +164,8 @@ def test_extract_page_refs_encrypted_rotation_multi_source(tmp_path):
     enc_b = tmp_path / "b.pdf"
     _encrypted_pdf(enc_a, password="alpha")
     _encrypted_pdf(enc_b, password="beta")
-    hash_a = _file_hash(enc_a)
-    hash_b = _file_hash(enc_b)
+    hash_a = file_sha256(enc_a)
+    hash_b = file_sha256(enc_b)
 
     output_dir = tmp_path / "out"
     output_dir.mkdir()
@@ -187,8 +183,8 @@ def test_extract_page_refs_encrypted_rotation_multi_source(tmp_path):
         "mix_page_0001.pdf",
         "mix_page_0002.pdf",
     ]
-    assert _file_hash(enc_a) == hash_a
-    assert _file_hash(enc_b) == hash_b
+    assert file_sha256(enc_a) == hash_a
+    assert file_sha256(enc_b) == hash_b
 
     for path, expected_rot in zip(paths, (90, 180), strict=True):
         doc = fitz.open(str(path))
@@ -203,7 +199,7 @@ def test_extract_page_refs_encrypted_rotation_multi_source(tmp_path):
 def test_extract_page_refs_wrong_password_fails_clearly(tmp_path):
     enc = tmp_path / "locked.pdf"
     _encrypted_pdf(enc, password="secret")
-    source_hash = _file_hash(enc)
+    source_hash = file_sha256(enc)
     output_dir = tmp_path / "out"
     output_dir.mkdir()
 
@@ -215,7 +211,7 @@ def test_extract_page_refs_wrong_password_fails_clearly(tmp_path):
             passwords={str(enc): "wrong"},
         )
 
-    assert _file_hash(enc) == source_hash
+    assert file_sha256(enc) == source_hash
     assert list(output_dir.iterdir()) == []
 
 
@@ -243,7 +239,7 @@ def test_folder_export_renames_collisions_without_changing_existing(
     output_dir.mkdir()
     existing = output_dir / "report_page_0001.pdf"
     existing.write_bytes(b"unrelated bytes")
-    existing_hash = _file_hash(existing)
+    existing_hash = file_sha256(existing)
 
     paths = extract_page_refs_to_folder(
         [PageRef(str(five_page_pdf), 0), PageRef(str(five_page_pdf), 2)],
@@ -255,7 +251,7 @@ def test_folder_export_renames_collisions_without_changing_existing(
         "report_page_0001_2.pdf",
         "report_page_0002.pdf",
     ]
-    assert _file_hash(existing) == existing_hash
+    assert file_sha256(existing) == existing_hash
     for path in paths:
         document = fitz.open(str(path))
         try:

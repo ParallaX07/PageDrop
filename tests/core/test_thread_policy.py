@@ -21,6 +21,7 @@ from pagedrop.ui.convert_file_grid import render_image_thumbnail_png
 from pagedrop.ui.page_preview import PreviewRenderWorker
 from pagedrop.ui.stacked_thumbnail import render_stacked_page_pngs
 from pagedrop.ui.thumbnail_grid import ThumbnailWorker
+from tests.conftest import file_sha256
 
 
 def test_policy_documents_no_concurrent_fitz_and_migration() -> None:
@@ -368,8 +369,6 @@ def test_redact_edit_model_holds_fitz_lock_verify_outside(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """O17-a: redact_edit_model MuPDF opens own FITZ_LOCK; verify wait does not."""
-    import hashlib
-
     from pagedrop.core import redact as redact_module
     from pagedrop.core.pdf_editor import PdfEditModel
     from pagedrop.core.redact import RedactionRegion, redact_edit_model
@@ -384,7 +383,7 @@ def test_redact_edit_model_holds_fitz_lock_verify_outside(
     finally:
         doc.close()
 
-    before = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    before = file_sha256(pdf)
     rect_doc = fitz.open(str(pdf))
     try:
         hit = rect_doc[0].search_for(secret)[0]
@@ -425,7 +424,7 @@ def test_redact_edit_model_holds_fitz_lock_verify_outside(
     assert verify_owned == [False], (
         f"verify must run outside FITZ_LOCK (owned flags={verify_owned})"
     )
-    assert hashlib.sha256(pdf.read_bytes()).hexdigest() == before
+    assert file_sha256(pdf) == before
     assert out.is_file() and out.resolve() != pdf.resolve()
 
 

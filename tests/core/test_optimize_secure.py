@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import fitz
@@ -14,10 +13,7 @@ from pagedrop.core.jobs import JobSpec, SerializedJobRunner
 from pagedrop.core.optimize_secure_jobs import register_optimize_secure_handlers
 from pagedrop.core.pdf_tools import metadata_get, normalize_pdf_page_size
 from pagedrop.utils.temp_manager import TempManager
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _make_pdf(
@@ -86,18 +82,18 @@ def _make_image_heavy_pdf(path: Path, *, width: int = 2400, height: int = 3200) 
 
 def test_compress_never_overwrites_source(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     with pytest.raises(SourceOverwriteError):
         ops.compress_pdf(str(src), str(src))
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_compress_smoke_openable_and_source_unchanged(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="compress me " * 40)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "out.pdf"
     ops.compress_pdf(str(src), str(out), profile="lossless")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert out.is_file()
     assert out.stat().st_size <= src.stat().st_size
     doc = fitz.open(str(out))
@@ -110,12 +106,12 @@ def test_compress_smoke_openable_and_source_unchanged(tmp_path: Path) -> None:
 
 def test_compress_lossy_screen_shrinks_image_heavy(tmp_path: Path) -> None:
     src = _make_image_heavy_pdf(tmp_path / "scan.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     lossless_out = tmp_path / "lossless.pdf"
     lossy_out = tmp_path / "screen.pdf"
     ops.compress_pdf(str(src), str(lossless_out), profile="lossless")
     ops.compress_pdf(str(src), str(lossy_out), profile="screen")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert lossy_out.stat().st_size < lossless_out.stat().st_size
     assert lossy_out.stat().st_size < src.stat().st_size
     with fitz.open(str(lossy_out)) as doc:
@@ -125,7 +121,7 @@ def test_compress_lossy_screen_shrinks_image_heavy(tmp_path: Path) -> None:
 
 def test_compress_job_handler_accepts_lossy_profile_params(tmp_path: Path) -> None:
     src = _make_image_heavy_pdf(tmp_path / "scan.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "job_out.pdf"
     temp = TempManager()
     try:
@@ -146,7 +142,7 @@ def test_compress_job_handler_accepts_lossy_profile_params(tmp_path: Path) -> No
         )
     finally:
         temp.cleanup()
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     assert out.is_file()
     assert out.stat().st_size < src.stat().st_size
     with fitz.open(str(out)) as doc:
@@ -155,14 +151,14 @@ def test_compress_job_handler_accepts_lossy_profile_params(tmp_path: Path) -> No
 
 def test_repair_rewrite_surfaces_is_repaired(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "repaired.pdf"
     result = ops.repair_pdf(str(src), str(out))
     assert result.output_path == str(out)
     assert isinstance(result.was_repaired, bool)
     # Clean synthetic PDFs are typically not repaired.
     assert result.was_repaired is False
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     doc = fitz.open(str(out))
     try:
         assert doc.page_count == 1
@@ -172,7 +168,7 @@ def test_repair_rewrite_surfaces_is_repaired(tmp_path: Path) -> None:
 
 def test_encrypt_round_trip_and_wrong_password(tmp_path: Path) -> None:
     src = _make_pdf(tmp_path / "src.pdf", text="classified")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     enc = tmp_path / "enc.pdf"
     ops.encrypt_pdf(
         str(src),
@@ -181,7 +177,7 @@ def test_encrypt_round_trip_and_wrong_password(tmp_path: Path) -> None:
         owner_password="owner-secret",
         permissions=ops.PdfPermissions(allow_print=True, allow_copy=False),
     )
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
     locked = fitz.open(str(enc))
     try:
@@ -200,7 +196,7 @@ def test_encrypt_round_trip_and_wrong_password(tmp_path: Path) -> None:
         assert "classified" in unlocked[0].get_text()
     finally:
         unlocked.close()
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_encrypt_rejects_empty_password(tmp_path: Path) -> None:
@@ -223,11 +219,11 @@ def test_sanitize_metadata_and_optional_annotations(tmp_path: Path) -> None:
         doc.save(str(src))
     finally:
         doc.close()
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     meta_only = tmp_path / "meta.pdf"
     ops.sanitize_pdf(str(src), str(meta_only), strip_annotations=False)
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     cleaned = metadata_get(str(meta_only))
     assert cleaned.get("title") in ("", None)
     assert cleaned.get("author") in ("", None)
@@ -240,7 +236,7 @@ def test_sanitize_metadata_and_optional_annotations(tmp_path: Path) -> None:
     with fitz.open(str(scrubbed)) as out:
         assert list(out[0].annots() or []) == []
         assert "keep text" in out[0].get_text()
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
 
 
 def test_sanitize_cancel_mid_annot_loop_cleans_staged(
@@ -259,7 +255,7 @@ def test_sanitize_cancel_mid_annot_loop_cleans_staged(
         doc.save(str(src))
     finally:
         doc.close()
-    src_hash = _file_hash(src)
+    src_hash = file_sha256(src)
     out = tmp_path / "sanitized.pdf"
     token = CancelToken()
     checks = {"n": 0}
@@ -293,7 +289,7 @@ def test_sanitize_cancel_mid_annot_loop_cleans_staged(
             )
         assert not out.exists()
         assert not any(temp._dir.glob("job_*"))
-        assert _file_hash(src) == src_hash
+        assert file_sha256(src) == src_hash
     finally:
         temp.cleanup()
 
@@ -301,10 +297,10 @@ def test_sanitize_cancel_mid_annot_loop_cleans_staged(
 def test_fix_page_size_covered_by_phase24(tmp_path: Path) -> None:
     """Phase 27 reuses Phase 24 normalize — not a second implementation."""
     src = _make_pdf(tmp_path / "src.pdf")
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
     out = tmp_path / "sized.pdf"
     normalize_pdf_page_size(str(src), str(out), 300, 400, strategy="fit")
-    assert _file_hash(src) == source_hash
+    assert file_sha256(src) == source_hash
     with fitz.open(str(out)) as doc:
         rect = doc[0].rect
         assert abs(rect.width - 300) < 0.5

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 import threading
 import time
@@ -26,10 +25,7 @@ from pagedrop.core.capabilities import AbsenceReason
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_service import FITZ_LOCK, render_ref_png
 from pagedrop.utils.temp_manager import TempManager
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, pages: int = 1) -> None:
@@ -69,7 +65,7 @@ def test_job_success_promotes_staged_output(tmp_path: Path) -> None:
     src = tmp_path / "in.pdf"
     out = tmp_path / "out.pdf"
     _write_pdf(src)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     temp = TempManager()
     try:
@@ -80,7 +76,7 @@ def test_job_success_promotes_staged_output(tmp_path: Path) -> None:
         )
         assert result == out
         assert out.is_file()
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
         assert not any(temp.get_dir().glob("job_*"))
     finally:
         temp.cleanup()
@@ -160,7 +156,7 @@ def test_cancel_removes_partial_and_orphans(tmp_path: Path) -> None:
     src = tmp_path / "in.pdf"
     out = tmp_path / "out.pdf"
     _write_pdf(src)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     def cancelling_handler(ctx: JobContext) -> Path:
         ctx.staged_output.write_bytes(b"%PDF-partial")
@@ -175,7 +171,7 @@ def test_cancel_removes_partial_and_orphans(tmp_path: Path) -> None:
         with pytest.raises(JobCancelledError):
             runner.run(JobSpec.create("cancel_me", inputs=[src], output=out))
         assert not out.exists()
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
         leftovers = list(temp.get_dir().rglob("*"))
         assert not any(
             p.is_file() and p.name != ".pagedrop_owner" for p in leftovers
@@ -187,7 +183,7 @@ def test_cancel_removes_partial_and_orphans(tmp_path: Path) -> None:
 def test_never_writes_source_path(tmp_path: Path) -> None:
     src = tmp_path / "in.pdf"
     _write_pdf(src)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     temp = TempManager()
     try:
@@ -195,7 +191,7 @@ def test_never_writes_source_path(tmp_path: Path) -> None:
         runner.register("copy", _copy_handler)
         with pytest.raises(SourceOverwriteError):
             runner.run(JobSpec.create("copy", inputs=[src], output=src))
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
 
         existing = tmp_path / "exists.pdf"
         _write_pdf(existing)
@@ -492,7 +488,7 @@ def test_external_wait_cancel_cleans_staged_output(tmp_path: Path) -> None:
     src = tmp_path / "in.pdf"
     out = tmp_path / "out.pdf"
     _write_pdf(src)
-    source_hash = _file_hash(src)
+    source_hash = file_sha256(src)
 
     started = threading.Event()
     allow_finish = threading.Event()
@@ -532,7 +528,7 @@ def test_external_wait_cancel_cleans_staged_output(tmp_path: Path) -> None:
         t.join(timeout=5)
 
         assert not out.exists()
-        assert _file_hash(src) == source_hash
+        assert file_sha256(src) == source_hash
         assert staged_seen
         assert not staged_seen[0].exists()
         leftovers = list(temp.get_dir().rglob("*"))

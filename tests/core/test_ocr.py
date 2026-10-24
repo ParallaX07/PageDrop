@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 
@@ -19,10 +18,7 @@ from pagedrop.core.capabilities import (
 )
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import BackendUnavailableError, JobCancelledError
-
-
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.conftest import file_sha256
 
 
 def _scan_like_pdf(path: Path, text: str = "HELLO OCR") -> Path:
@@ -139,11 +135,11 @@ def test_ocr_searchable_when_tessdata_env(tmp_path):
     if not tess or not Path(tess).is_dir():
         pytest.skip("PAGEDROP_TESSDATA not set to a tessdata directory")
     source = _scan_like_pdf(tmp_path / "scan.pdf", "UNIQUEOCRWORD")
-    before = _file_hash(source)
+    before = file_sha256(source)
     out = tmp_path / "searchable.pdf"
     ocr_mod.ocr_pdf(source, out, tessdata=tess, language="eng", dpi=150)
     assert out.is_file()
-    assert _file_hash(source) == before
+    assert file_sha256(source) == before
     doc = fitz.open(out)
     try:
         text = doc[0].get_text()
