@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,7 +11,11 @@ from PyQt6.QtWidgets import QStackedWidget, QToolBar, QVBoxLayout, QWidget
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_loader import (
+    PdfLoader,
+    PdfPasswordError,
+    PdfPasswordRequiredError,
+)
 from pagedrop.core.pdf_service import invalidate_doc_cache
 from pagedrop.ui.dialogs import confirm_delete_pages
 from pagedrop.ui.pdf_viewer import PdfViewerWidget
@@ -184,13 +189,36 @@ class PdfTab(QWidget):
     def recovery_path(self) -> Path | None:
         return self._recovery_path
 
-    def restore_recovery_draft(self, path: Path) -> None:
-        """Load one persisted draft into this blank tab."""
+    def restore_recovery_draft(
+        self,
+        path: Path,
+        ask_password: Callable[[str, bool], str | None] | None = None,
+    ) -> None:
+        """Load one persisted draft into this blank tab.
+
+        *ask_password(source, incorrect)* is asked for protected sources; None
+        cancels, which raises the password error and leaves the draft file alone.
+        """
         if self._edit_model is not None:
             raise RecoveryError("Recovery needs a blank tab")
         recovered = read_draft(path)
+        entered: dict[str, str] = {}
         for source in recovered.model.current_reference_paths():
-            loader = PdfLoader(source)
+            password: str | None = None
+            while True:
+                try:
+                    loader = PdfLoader(source, password=password)
+                    break
+                except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+                    if ask_password is None:
+                        raise
+                    password = ask_password(
+                        source, isinstance(exc, PdfPasswordError)
+                    )
+                    if password is None:
+                        raise
+            if password is not None:
+                entered[source] = password
             try:
                 if any(
                     page.source_path == source
@@ -200,6 +228,8 @@ class PdfTab(QWidget):
                     raise RecoveryError(f"Recovery refers to a missing page in {source}")
             finally:
                 loader.close()
+        for source, password in entered.items():
+            self._credentials.set(source, password)
         self._edit_model = recovered.model
         self._markup.bind_model(self._edit_model)
         self._markup.restore(recovered.markup)
@@ -389,20 +419,25 @@ class PdfTab(QWidget):
         self, path: str, password: str | None = None
     ) -> PdfLoader:
         """Open *path* in this tab. Raises PdfLoadError subclasses on failure."""
-        self.close_preview()
-        self._thumbnail_grid.cancel_rendering()
-        if self._edit_model is not None:
-            self._thumbnail_grid.clear()
-            self._close_loader_cache()
-        self._edit_model = None
-        self._pdf_path = None
-        self._custom_tab_title = None
-        self._quality_guidance_shown = False
-
+        # Open first: a cancelled password or a load error keeps the current document.
         loader = PdfLoader(path, password=password)
-        if password is not None:
-            self._credentials.set(path, password)
-        self._loader_cache[path] = loader
+        try:
+            self.close_preview()
+            self._thumbnail_grid.cancel_rendering()
+            if self._edit_model is not None:
+                self._thumbnail_grid.clear()
+                self._close_loader_cache()
+            self._edit_model = None
+            self._pdf_path = None
+            self._custom_tab_title = None
+            self._quality_guidance_shown = False
+
+            if password is not None:
+                self._credentials.set(path, password)
+            self._loader_cache[path] = loader
+        except BaseException:
+            loader.close()
+            raise
         self._edit_model = PdfEditModel(path, loader.page_count)
         self._markup.bind_model(self._edit_model)
         self._markup.clear()

@@ -452,6 +452,9 @@ def run_tool_job(
     )
     signals = worker.signals
     _TOOL_JOB_SIGNAL_REFS.append(signals)
+    worker_started = getattr(host, "_worker_started", None)
+    if callable(worker_started):
+        worker_started()
 
     def _still_running() -> bool:
         check = getattr(host, "is_job_running", None)
@@ -462,6 +465,9 @@ def run_tool_job(
             _TOOL_JOB_SIGNAL_REFS.remove(signals)
         except ValueError:
             pass
+        worker_finished = getattr(host, "_worker_finished", None)
+        if callable(worker_finished):
+            worker_finished()
 
     def on_progress(fraction: float, message: str) -> None:
         if _still_running():

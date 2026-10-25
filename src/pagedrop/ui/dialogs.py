@@ -167,9 +167,6 @@ def prompt_discard_file_list(
 
 def prompt_unsaved_changes(parent: QWidget, display_title: str) -> str:
     """Return ``save``, ``discard``, or ``cancel`` for a dirty-document close."""
-    if os.environ.get("PAGEDROP_TESTING") == "1":
-        return "discard"
-
     title = display_title.rstrip("*") or "document"
     message = QMessageBox(parent)
     message.setIcon(QMessageBox.Icon.Warning)
