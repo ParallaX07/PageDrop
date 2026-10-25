@@ -52,7 +52,7 @@ def test_window_title_includes_dirty_star(main_window, five_page_pdf, qtbot):
 
 
 def test_unsaved_prompt_uses_custom_tab_title(
-    main_window, five_page_pdf, monkeypatch, qtbot
+    main_window, five_page_pdf, monkeypatch, qtbot, unsaved_answer
 ):
     tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
     assert tab.set_custom_tab_title("Working Copy")
@@ -88,7 +88,7 @@ def test_unsaved_prompt_uses_custom_tab_title(
         lambda _msg: None,
     )
 
-    assert main_window._prompt_unsaved_changes(tab) == "cancel"
+    assert unsaved_answer.real(main_window, tab.tab_title) == "cancel"
     assert seen["text"] == '"Working Copy" has unsaved changes.'
 
 
