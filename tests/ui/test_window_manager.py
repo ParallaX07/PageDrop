@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from tests.conftest import RENDER_TIMEOUT_MS
@@ -229,3 +231,42 @@ def test_closing_last_of_two_windows_quits(qtbot, qapp, monkeypatch):
     qapp.processEvents()
     assert quit_called
     assert not manager.windows
+
+
+def test_installation_preparation_with_merge_and_create_pdf_tabs_open(qtbot, qapp):
+    from pagedrop.ui.update_checker import UpdateState
+
+    manager = _reset_window_manager(qapp)
+    manager.update_coordinator._set_state(UpdateState.READY)
+    window = manager.create_window()
+    window._open_merge_window()
+    window._open_convert_window()
+    merge, convert = window._merge_window, window._convert_window
+    assert merge is not None and convert is not None
+    assert not merge.is_job_running() and not convert.is_job_running()
+
+    assert manager.prepare_for_installation(window)
+
+    manager.cancel_installation_preparation()
+    assert window.isEnabled()
+
+
+@pytest.mark.parametrize("tool", ["_merge_window", "_convert_window"])
+def test_running_merge_or_create_pdf_job_blocks_installation_preparation(
+    qtbot, qapp, tool
+):
+    from pagedrop.ui.update_checker import UpdateState
+
+    manager = _reset_window_manager(qapp)
+    manager.update_coordinator._set_state(UpdateState.READY)
+    window = manager.create_window()
+    window._open_merge_window()
+    window._open_convert_window()
+    running = getattr(window, tool)
+    running.begin_job("Working…")
+    assert running.is_job_running()
+
+    assert not manager.prepare_for_installation(window)
+
+    assert window.isEnabled()
+    running.end_job()

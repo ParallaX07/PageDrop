@@ -70,7 +70,7 @@ def test_smoke_merge_reorder_save_as(qtbot, tmp_path, monkeypatch):
     )
 
     window._merge_pdfs()
-    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
 
     expected_widths = [444, 555, 666, 111, 222, 333]
     assert [_page_width(output, index) for index in range(len(expected_widths))] == expected_widths

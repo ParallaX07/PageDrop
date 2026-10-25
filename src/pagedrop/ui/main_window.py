@@ -2944,6 +2944,19 @@ class MainWindow(QMainWindow):
             start_dir = Path(model.original_path).parent
         return str(start_dir / f"{stem}.pdf")
 
+    def _open_source_paths(self) -> set[str]:
+        """Source paths of every open PDF tab in this and any other window."""
+        windows = {self}
+        if self._window_manager is not None:
+            windows.update(self._window_manager.windows)
+        paths: set[str] = set()
+        for window in windows:
+            for index in range(window._tab_manager.count()):
+                tab = window._tab_manager.widget(index)
+                if isinstance(tab, PdfTab) and tab.edit_model is not None:
+                    paths.update(tab.edit_model.source_paths())
+        return paths
+
     def _save_as(self, tab: PdfTab | None = None) -> bool:
         """Start a non-blocking Save As transaction for an immutable tab snapshot."""
         target = tab or self._active_tab()
@@ -2967,13 +2980,15 @@ class MainWindow(QMainWindow):
             path = f"{path}.pdf"
 
         try:
-            reject_source_overwrite(path, *model.source_paths())
+            reject_source_overwrite(
+                path, *model.source_paths(), *self._open_source_paths()
+            )
         except SourceOverwriteError:
             QMessageBox.warning(
                 self,
                 "Save as",
-                "Cannot save over a source file.\n"
-                "Choose a different path.",
+                "Cannot save over a source file, including one open in "
+                "another tab.\nChoose a different path.",
             )
             return False
 

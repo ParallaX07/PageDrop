@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from pagedrop.core import modify_ops as ops
-from pagedrop.core.jobs.errors import OutputExistsError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 
 def handle_crop(ctx: JobContext) -> Path:
@@ -135,17 +134,7 @@ def handle_bates(ctx: JobContext) -> Path:
     ctx.cancel.check()
     if not written:
         raise ValueError("No Bates outputs produced")
-    for extra in written[1:]:
-        dest = out_dir / extra.name
-        if dest.exists() and not ctx.spec.overwrite:
-            raise OutputExistsError(str(dest))
-        ctx.staging.promote(extra, dest)
-    # Rename first staged file to match user-facing first output name.
-    first_dest_name = written[0].name
-    renamed = ctx.staging.job_dir / first_dest_name
-    if written[0] != renamed:
-        written[0].replace(renamed)
-        return renamed
+    ctx.extra_outputs.extend((extra, out_dir / extra.name) for extra in written[1:])
     return written[0]
 
 def handle_bookmarks(ctx: JobContext) -> Path:

@@ -111,7 +111,7 @@ def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):
     window._separate_mode_action.setChecked(True)
     window._create_pdfs()
 
-    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
 
     assert folder_called["value"]
     assert not save_called["value"]
@@ -120,8 +120,8 @@ def test_separate_mode_uses_folder_dialog(qtbot, tmp_path, monkeypatch):
     assert window._result_bar._path == str(out_dir / "alpha.pdf")
     assert window._toast.isVisible()
     assert window._toast._message.accessibleName()
-    assert "Created 1 PDF file" in window._toast._message.text()
-    assert "Showing first" not in window._toast._message.text()
+    assert "Created 1 PDF file" in window.statusBar().currentMessage()
+    assert "Showing first" not in window.statusBar().currentMessage()
 
 
 def test_separate_mode_multi_file_copy_mentions_showing_first(
@@ -147,18 +147,48 @@ def test_separate_mode_multi_file_copy_mentions_showing_first(
     window._separate_mode_action.setChecked(True)
     window._create_pdfs()
 
-    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
 
     assert (out_dir / "alpha.pdf").is_file()
     assert (out_dir / "bravo.pdf").is_file()
     status = window.statusBar().currentMessage()
-    toast = window._toast._message.text()
+    assert window._toast._message.text() == "Completed"
     bar = window._result_bar._label.text()
     assert "Created 2 PDF files" in status
     assert "Showing first" in status
-    assert status == toast == bar
+    assert status == bar.splitlines()[0]
     assert window._result_bar._path == str(out_dir / "alpha.pdf")
     assert window.editor is None
+
+
+def test_separate_mode_shared_stems_get_distinct_outputs(
+    qtbot, tmp_path, monkeypatch
+):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    images = [src_dir / name for name in ("a.png", "a.jpg", "a_2.png")]
+    for image in images:
+        _write_test_image(image, 100, 100)
+    out_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *a, **k: str(out_dir)
+    )
+
+    window = _convert_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    window._add_paths([str(p) for p in images])
+    window._separate_mode_action.setChecked(True)
+    window._create_pdfs()
+
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "a.pdf",
+        "a_2.pdf",
+        "a_2_2.pdf",
+    ]
+    assert "Created 3 PDF files" in window.statusBar().currentMessage()
 
 
 def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monkeypatch):
@@ -178,7 +208,7 @@ def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monk
     window._add_paths([str(png)])
     window._create_pdfs()
 
-    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
     assert output.is_file()
     assert "Created PDF from 1 image" in window.statusBar().currentMessage()
     assert window._result_bar.isVisible()
@@ -308,7 +338,7 @@ def test_toolbar_actions_have_status_tips(qtbot):
 
 def test_request_close_while_converting_explains_busy(qtbot, monkeypatch):
     window = _convert_window(qtbot)
-    window._converting = True
+    window.begin_job("Creating PDF…")
     toasts: list[tuple[str, str]] = []
     monkeypatch.setattr(
         window._toast,
@@ -316,17 +346,17 @@ def test_request_close_while_converting_explains_busy(qtbot, monkeypatch):
         lambda msg, kind="info": toasts.append((msg, kind)),
     )
 
+    assert window.is_job_running()
     assert window.request_close() is False
     assert "still running" in window.statusBar().currentMessage()
     assert toasts and toasts[-1] == ("Create PDF still running…", "info")
 
 
-def test_convert_failed_matches_end_job_feedback(qtbot, monkeypatch):
+def test_convert_failed_shows_shared_job_feedback(qtbot, monkeypatch):
     from PyQt6.QtWidgets import QMessageBox
 
     window = _convert_window(qtbot)
-    window._converting = True
-    window._busy_overlay.show_message("Creating PDF…")
+    window.begin_job("Creating PDF…")
     toasts: list[tuple[str, str]] = []
     dialogs: list[object] = []
     monkeypatch.setattr(
@@ -340,10 +370,83 @@ def test_convert_failed_matches_end_job_feedback(qtbot, monkeypatch):
         lambda *args, **kwargs: dialogs.append(args) or QMessageBox.StandardButton.Ok,
     )
 
-    window._on_convert_failed("convert boom")
+    window.end_job(error="convert boom", toast="Job failed", toast_kind="error")
 
-    assert not window._converting
+    assert not window.is_job_running()
     qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
-    assert window.statusBar().currentMessage() == "Create PDF failed"
-    assert toasts and toasts[-1] == ("Create PDF failed", "error")
+    assert window.statusBar().currentMessage() == "Job failed"
+    assert toasts and toasts[-1] == ("Job failed", "error")
     assert dialogs and "convert boom" in str(dialogs[-1])
+
+
+def test_create_pdf_asks_once_before_replacing_existing_output(
+    qtbot, tmp_path, monkeypatch, overwrite_answer
+):
+    from tests.conftest import file_sha256
+
+    png = tmp_path / "solo.png"
+    _write_test_image(png, 100, 100)
+    source_hash = file_sha256(png)
+    output = tmp_path / "solo.pdf"
+    output.write_bytes(b"old")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+    window = _convert_window(qtbot)
+    window._add_paths([str(png)])
+
+    overwrite_answer.answer = False
+    window._create_pdfs()
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+    assert output.read_bytes() == b"old"
+    assert len(overwrite_answer.calls) == 1
+
+    overwrite_answer.answer = True
+    window._create_pdfs()
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+    assert output.read_bytes() != b"old"
+    assert len(overwrite_answer.calls) == 2
+    assert file_sha256(png) == source_hash
+
+
+def test_create_pdf_with_unreadable_image_keeps_existing_outputs(
+    qtbot, tmp_path, monkeypatch, overwrite_answer
+):
+    from pagedrop.core import image_to_pdf
+    from tests.conftest import file_sha256
+
+    alpha = tmp_path / "alpha.png"
+    bravo = tmp_path / "bravo.png"
+    _write_test_image(alpha, 100, 100)
+    _write_test_image(bravo, 120, 120)
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    (out_dir / "alpha.pdf").write_bytes(b"old")
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(out_dir)
+    )
+    window = _convert_window(qtbot)
+    window._add_paths([str(alpha), str(bravo)])
+    window._separate_mode_action.setChecked(True)
+    hashes = [file_sha256(alpha), file_sha256(bravo)]
+
+    # Pass the up-front check, then fail while writing the second file.
+    real_write = image_to_pdf.image_to_pdf_file
+
+    def fail_second(path, out_path):
+        if Path(path) == bravo.resolve():
+            raise image_to_pdf.ImageConvertError("bravo is unreadable")
+        real_write(path, out_path)
+
+    monkeypatch.setattr("pagedrop.core.organize_jobs.image_to_pdf_file", fail_second)
+    window._create_pdfs()
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+
+    assert overwrite_answer.calls == [[out_dir / "alpha.pdf"]]
+    assert (out_dir / "alpha.pdf").read_bytes() == b"old"
+    assert not (out_dir / "bravo.pdf").exists()
+    assert window.statusBar().currentMessage() == "Job failed"
+    assert not window._result_bar.isVisible()
+    assert [file_sha256(alpha), file_sha256(bravo)] == hashes

@@ -42,8 +42,6 @@ def test_worker_audit_covers_known_fitz_pools() -> None:
         "_ViewerSearchWorker",
         "_MergeThumbnailWorker",
         "_ConvertThumbnailWorker",
-        "_MergeWorker",
-        "_ConvertWorker",
         "WatermarkPageRenderWorker",
         "CompareWindow",
         "_BlankDetectWorker",
@@ -449,8 +447,6 @@ def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     viewer = PdfViewerWidget()
     qtbot.addWidget(viewer)
 
-    assert merge._merge_pool.maxThreadCount() == 1
-    assert convert._convert_pool.maxThreadCount() == 1
     assert merge._file_grid._render_pool.maxThreadCount() == 1
     assert convert._file_grid._render_pool.maxThreadCount() == 1
     assert grid._render_pool.maxThreadCount() == 1

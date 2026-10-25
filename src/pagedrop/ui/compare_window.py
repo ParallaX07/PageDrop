@@ -961,11 +961,13 @@ class CompareWindow(JobChromeMixin, QWidget):
                 toast_kind="error",
             )
             return
+        sidecar = Path(path).with_suffix(".compare_ratio.txt")
         run_tool_job(
             self,
             job_type="compare",
             inputs=[self._path_a, self._path_b],
             output=path,
+            existing_paths=[p for p in (Path(path), sidecar) if p.exists()],
             options={
                 "source_fingerprint_a": asdict(report.source_fingerprint_a),
                 "source_fingerprint_b": asdict(report.source_fingerprint_b),

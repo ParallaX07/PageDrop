@@ -8,8 +8,15 @@ from pathlib import Path
 
 from pagedrop.core import pdf_tools
 from pagedrop.core import compare_report
-from pagedrop.core.jobs.errors import JobError, OutputExistsError
+from pagedrop.core.image_to_pdf import (
+    ImageConvertError,
+    image_to_pdf_file,
+    images_to_single_pdf,
+)
+from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
+from pagedrop.core.native_conversions import batch_output_paths
+from pagedrop.core.pdf_writer import merge_pdf_files
 
 # ponytail: full-file read into RAM for embfile_add; 64 MiB is enough for
 # typical embeds. Raise only with a measured large-attachment need (or stream
@@ -32,12 +39,8 @@ def handle_split_ranges(ctx: JobContext) -> Path:
     ctx.cancel.check()
     if not staged:
         raise ValueError("No ranges extracted")
-    for extra in staged[1:]:
-        dest = out_dir / extra.name
-        if dest.exists() and not ctx.spec.overwrite:
-            raise OutputExistsError(str(dest))
-        ctx.staging.promote(extra, dest)
-    # Runner promotes the first staged file to spec.output.
+    ctx.extra_outputs.extend((extra, out_dir / extra.name) for extra in staged[1:])
+    # Runner promotes the first staged file to spec.output, then the extras.
     return staged[0]
 
 def handle_reverse(ctx: JobContext) -> Path:
@@ -250,7 +253,7 @@ def handle_compare(ctx: JobContext) -> Path:
     ratio_dest = Path(ctx.spec.output).with_suffix(".compare_ratio.txt")
     ratio_staged = ctx.staging.stage_file(ratio_dest.name)
     ratio_staged.write_text(f"{result.overall_diff_ratio:.4f}", encoding="utf-8")
-    ctx.staging.promote(ratio_staged, ratio_dest)
+    ctx.extra_outputs.append((ratio_staged, ratio_dest))
     return ctx.staged_output
 
 
@@ -464,7 +467,49 @@ def handle_compare_report(ctx: JobContext) -> Path:
     ctx.progress(0.93, "Report validated…")
     return ctx.staged_output
 
+def handle_merge(ctx: JobContext) -> Path:
+    ctx.progress(0.3, "Merging PDFs…")
+    merge_pdf_files(
+        list(ctx.spec.inputs),
+        str(ctx.staged_output),
+        passwords=ctx.credentials.snapshot(),
+        cancel=ctx.cancel,
+    )
+    return ctx.staged_output
+
+def handle_images_to_pdf(ctx: JobContext) -> Path:
+    ctx.progress(0.3, "Creating PDF…")
+    try:
+        images_to_single_pdf(
+            list(ctx.spec.inputs), str(ctx.staged_output), cancel=ctx.cancel
+        )
+    except ImageConvertError as exc:
+        raise JobError(str(exc)) from exc
+    return ctx.staged_output
+
+def handle_images_to_pdfs(ctx: JobContext) -> Path:
+    """One PDF per image; ``spec.output`` is the first planned destination."""
+    ctx.progress(0.3, "Creating PDFs…")
+    images = list(ctx.spec.inputs)
+    planned = batch_output_paths(images, Path(ctx.spec.output).parent)
+    staged = [ctx.staged_output]
+    staged.extend(
+        ctx.staging.stage_file(f"{index:03d}_{dest.name}")
+        for index, dest in enumerate(planned[1:], start=1)
+    )
+    try:
+        for image, staged_path in zip(images, staged, strict=True):
+            ctx.cancel.check()
+            image_to_pdf_file(image, staged_path)
+    except ImageConvertError as exc:
+        raise JobError(str(exc)) from exc
+    ctx.extra_outputs.extend(zip(staged[1:], planned[1:], strict=True))
+    return staged[0]
+
 ORGANIZE_HANDLERS: dict[str, object] = {
+    "merge": handle_merge,
+    "images_to_pdf": handle_images_to_pdf,
+    "images_to_pdfs": handle_images_to_pdfs,
     "split": handle_split_ranges,
     "alternate": handle_alternate,
     "reverse": handle_reverse,

@@ -75,14 +75,6 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "ui/convert_file_grid.py — render_image_thumbnail_png under FITZ_LOCK; pool max 1",
     ),
     (
-        "_MergeWorker",
-        "ui/merge_window.py — merge_pdf_files under FITZ_LOCK; pool max 1",
-    ),
-    (
-        "_ConvertWorker",
-        "ui/convert_window.py — image_to_pdf under FITZ_LOCK; pool max 1",
-    ),
-    (
         "WatermarkPageRenderWorker",
         "ui/watermark_preview.py — via pdf_service under FITZ_LOCK; pool max 1",
     ),

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import fitz
 
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel
+from pagedrop.core.jobs.errors import JobCancelledError
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.supported_formats import is_supported_image
 from pagedrop.utils.list_utils import move_items
@@ -121,17 +123,18 @@ def validate_images(paths: list[str]) -> None:
         inspect_image(path)
 
 
-def images_to_single_pdf(paths: list[str], output_path: str) -> None:
+def images_to_single_pdf(
+    paths: list[str], output_path: str, *, cancel: CancelToken | None = None
+) -> None:
     if not paths:
         raise ImageConvertError("No images to convert.")
     doc = fitz.open()
     try:
         for path in paths:
+            check_cancel(cancel)
             _append_image_pdf(doc, path)
         doc.save(output_path)
-    except ImageConvertError:
-        raise
-    except OSError:
+    except (ImageConvertError, OSError, JobCancelledError):
         raise
     except Exception as exc:
         raise ImageConvertError(f"Could not write PDF: {exc}") from exc
@@ -161,33 +164,24 @@ def images_to_individual_pdfs(
         if out_path.exists() and not overwrite:
             out_path = _next_available_path(out_dir, stem)
 
-        doc = fitz.open()
-        try:
-            _append_image_pdf(doc, path)
-            doc.save(str(out_path))
-        except ImageConvertError:
-            raise
-        except Exception as exc:
-            raise ImageConvertError(
-                f"Could not write {out_path.name}: {exc}"
-            ) from exc
-        finally:
-            doc.close()
+        image_to_pdf_file(path, out_path)
         written.append(str(out_path))
 
     return written
 
 
-def planned_individual_outputs(paths: list[str], output_dir: str) -> list[Path]:
-    """Return output paths that would be written for *paths* (first occurrence only)."""
-    out_dir = Path(output_dir)
-    stem_counts: Counter[str] = Counter()
-    planned: list[Path] = []
-    for path in paths:
-        stem = Path(path).stem
-        stem_counts[stem] += 1
-        planned.append(_individual_output_path(out_dir, stem, stem_counts[stem]))
-    return planned
+def image_to_pdf_file(path: str, out_path: Path) -> None:
+    """Write one image as a one-page PDF at *out_path*."""
+    doc = fitz.open()
+    try:
+        _append_image_pdf(doc, path)
+        doc.save(str(out_path))
+    except ImageConvertError:
+        raise
+    except Exception as exc:
+        raise ImageConvertError(f"Could not write {out_path.name}: {exc}") from exc
+    finally:
+        doc.close()
 
 
 def _append_image_pdf(doc: fitz.Document, path: str) -> None:

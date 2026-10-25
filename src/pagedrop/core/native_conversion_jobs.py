@@ -7,6 +7,7 @@ from pathlib import Path
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
 from pagedrop.core.native_conversions import (
     MULTI_PAGE_EXPORT_IDS,
+    batch_output_paths,
     collision_safe_path,
     export_pdf,
     import_to_pdf,
@@ -27,24 +28,18 @@ def handle_import_to_pdf(ctx: JobContext) -> Path:
 
     out_dir = Path(str(output_dir or Path(ctx.spec.output).parent))
     out_dir.mkdir(parents=True, exist_ok=True)
+    dests = batch_output_paths(inputs, out_dir, avoid_existing=not ctx.spec.overwrite)
     pairs: list[tuple[Path, Path]] = []
-    for index, source in enumerate(inputs):
+    for index, (source, dest) in enumerate(zip(inputs, dests, strict=True)):
         ctx.cancel.check()
         ctx.progress(index / max(n, 1), f"Converting {Path(source).name}…")
-        name = f"{Path(source).stem}.pdf"
-        staged = ctx.staging.stage_file(f"{index:03d}_{name}")
+        staged = ctx.staging.stage_file(f"{index:03d}_{dest.name}")
         import_to_pdf(source, staged, overwrite=True)
-        dest = out_dir / name
-        if dest.exists() and not ctx.spec.overwrite:
-            dest = collision_safe_path(dest)
         pairs.append((staged, dest))
 
     first_staged, _first_dest = pairs[0]
-    for staged, dest in pairs[1:]:
-        ctx.staging.promote(staged, dest)
-    if first_staged != ctx.staged_output:
-        first_staged.replace(ctx.staged_output)
-    return ctx.staged_output
+    ctx.extra_outputs.extend(pairs[1:])
+    return first_staged
 
 def handle_export_from_pdf(ctx: JobContext) -> Path:
     """Export a PDF to a registered format (single- or multi-file)."""
@@ -76,17 +71,13 @@ def handle_export_from_pdf(ctx: JobContext) -> Path:
         )
         if not written:
             raise ValueError("Export produced no files")
-        for index, staged in enumerate(written):
+        for staged in written[1:]:
             dest = out_dir / staged.name
             if dest.exists() and not ctx.spec.overwrite:
                 dest = collision_safe_path(dest)
-            if index == 0:
-                if staged != ctx.staged_output:
-                    staged.replace(ctx.staged_output)
-                # Runner promotes staged_output → spec.output (first dest).
-                continue
-            ctx.staging.promote(staged, dest)
-        return ctx.staged_output
+            ctx.extra_outputs.append((staged, dest))
+        # Runner promotes the first staged file to spec.output, then the extras.
+        return written[0]
 
     export_pdf(
         source,

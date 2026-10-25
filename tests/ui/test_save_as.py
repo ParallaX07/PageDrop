@@ -82,6 +82,99 @@ def test_save_as_rejects_imported_source_and_keeps_tab_dirty(
     assert tab.is_dirty
 
 
+def _make_pdf(path):
+    doc = fitz.open()
+    try:
+        doc.new_page()
+        doc.save(str(path))
+    finally:
+        doc.close()
+    return path
+
+
+def _stub_save_dialog(monkeypatch, path):
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(path), "PDF Files (*.pdf)"),
+    )
+    warnings: list[tuple] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *args, **kwargs: warnings.append(args)
+    )
+    return warnings
+
+
+def test_save_as_rejects_source_of_another_tab_in_same_window(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+):
+    other = _make_pdf(tmp_path / "other.pdf")
+    other_hash = file_sha256(other)
+    main_window.showMinimized()
+    main_window._load_pdf(str(other))
+    wait_for_pdf_loaded(qtbot, main_window)
+    other_tab = _active_tab(main_window)
+    main_window._tab_manager.setCurrentWidget(main_window._tab_manager.add_blank_tab())
+    tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
+    assert tab is not other_tab
+    assert main_window._tab_manager.count() == 2
+    warnings = _stub_save_dialog(monkeypatch, other)
+
+    assert main_window._save_as(tab) is False
+    assert len(warnings) == 1
+    assert file_sha256(other) == other_hash
+    assert tab.is_dirty
+
+
+def test_save_as_rejects_source_of_tab_in_another_window(
+    qtbot, qapp, isolated_settings, five_page_pdf, tmp_path, monkeypatch
+):
+    from pagedrop.ui.window_manager import WindowManager
+
+    manager = WindowManager(qapp)
+    first = manager.create_window()
+    second = manager.create_window()
+    qtbot.addWidget(first)
+    qtbot.addWidget(second)
+    other = _make_pdf(tmp_path / "other.pdf")
+    other_hash = file_sha256(other)
+    first.showMinimized()
+    first._load_pdf(str(other))
+    wait_for_pdf_loaded(qtbot, first)
+    tab = _load_and_dirty(second, qtbot, five_page_pdf)
+    warnings = _stub_save_dialog(monkeypatch, other)
+
+    assert second._save_as(tab) is False
+    assert len(warnings) == 1
+    assert file_sha256(other) == other_hash
+    assert tab.is_dirty
+    first._temp_manager.cleanup()
+    second._temp_manager.cleanup()
+
+
+def test_save_as_to_unrelated_path_still_works_with_other_tab_open(
+    main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
+):
+    other = _make_pdf(tmp_path / "other.pdf")
+    other_hash = file_sha256(other)
+    source_hash = file_sha256(five_page_pdf)
+    main_window.showMinimized()
+    main_window._load_pdf(str(other))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window._tab_manager.setCurrentWidget(main_window._tab_manager.add_blank_tab())
+    tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
+    assert main_window._tab_manager.count() == 2
+    output = tmp_path / "unrelated.pdf"
+    warnings = _stub_save_dialog(monkeypatch, output)
+
+    assert main_window._save_as(tab) is True
+    _wait_for_editor_job(qtbot, main_window, tab)
+    assert not warnings
+    assert output.is_file()
+    assert file_sha256(other) == other_hash
+    assert file_sha256(five_page_pdf) == source_hash
+
+
 def test_dirty_flag_cleared_after_save(
     main_window, five_page_pdf, tmp_path, monkeypatch, qtbot
 ):

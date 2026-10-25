@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 
 import fitz
 
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.markup import MarkupEntry, apply_markup_entries, resolve_markup_entries
@@ -29,16 +30,19 @@ def merge_pdf_files(
     output_path: str,
     *,
     passwords: Mapping[str, str] | None = None,
+    cancel: CancelToken | None = None,
 ) -> None:
     """Merge whole PDFs in *file_paths* order, writing to *output_path*."""
     if not file_paths:
         raise ValueError("No PDF files to merge")
+    reject_source_overwrite(output_path, *file_paths)
 
     with FITZ_LOCK:
         docs: dict[str, fitz.Document] = {}
         out = fitz.open()
         try:
             for path in file_paths:
+                check_cancel(cancel)
                 src = _cached_doc(path, docs, passwords)
                 out.insert_pdf(src)
             out.save(output_path)

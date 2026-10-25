@@ -688,3 +688,65 @@ def test_invert_run_shows_raster_warning_dialog(
     assert any(RASTER_EFFECT_WARNING in t for t in warned)
     assert save_called["n"] == 0
     tools.close()
+
+def _bates_shell_with_same_stem_sources(qtbot, tmp_path, monkeypatch):
+    (tmp_path / "x").mkdir()
+    (tmp_path / "y").mkdir()
+    a = tmp_path / "x" / "Foo.PDF"
+    b = tmp_path / "y" / "Foo.PDF"
+    _write_pdf(a, text="A")
+    _write_pdf(b, text="B")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(out_dir)
+    )
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+    shell = open_modify_shell(tools, "bates")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(a), str(b)])
+    return shell, (a, b), out_dir
+
+
+def test_bates_multi_file_predicts_existing_outputs(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    shell, _sources, out_dir = _bates_shell_with_same_stem_sources(
+        qtbot, tmp_path, monkeypatch
+    )
+    (out_dir / "Foo_bates.pdf").write_bytes(b"%PDF-")
+    (out_dir / "Foo_2_bates.pdf").write_bytes(b"%PDF-")
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "pagedrop.ui.modify_tools_shell.run_tool_job",
+        lambda host, **kwargs: captured.update(kwargs),
+    )
+    shell._run_btn.click()
+
+    assert Path(captured["output"]) == out_dir / "Foo_bates.pdf"
+    assert captured["existing_paths"] == [
+        out_dir / "Foo_bates.pdf",
+        out_dir / "Foo_2_bates.pdf",
+    ]
+
+
+def test_bates_multi_file_same_stem_writes_distinct_pdfs(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    shell, sources, out_dir = _bates_shell_with_same_stem_sources(
+        qtbot, tmp_path, monkeypatch
+    )
+    hashes = [file_sha256(p) for p in sources]
+
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "Foo_2_bates.pdf",
+        "Foo_bates.pdf",
+    ]
+    assert [file_sha256(p) for p in sources] == hashes

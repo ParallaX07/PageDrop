@@ -406,3 +406,78 @@ def test_export_job_cancel_cleans_staged_partials(tmp_path, monkeypatch):
         assert not any(temp._dir.glob("job_*"))
     finally:
         temp.cleanup()
+
+
+def test_batch_output_paths_unique_within_batch(tmp_path):
+    sources = [tmp_path / "scan.png", tmp_path / "scan.jpg", tmp_path / "other.png"]
+    out = tmp_path / "out"
+    assert nc.batch_output_paths(sources, out) == [
+        out / "scan.pdf",
+        out / "scan_2.pdf",
+        out / "other.pdf",
+    ]
+    # A later source whose stem already looks like a renamed one is not clobbered.
+    more = [*sources[:2], tmp_path / "scan_2.png"]
+    assert nc.batch_output_paths(more, out)[2] == out / "scan_2_2.pdf"
+
+
+def _run_import_batch(tmp_path, out_dir, sources, output, *, overwrite=False):
+    from pagedrop.core.jobs import JobSpec, SerializedJobRunner
+    from pagedrop.core.native_conversion_jobs import register_native_conversion_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_native_conversion_handlers(runner)
+        runner.run(
+            JobSpec.create(
+                "import_to_pdf",
+                inputs=[str(s) for s in sources],
+                output=output,
+                options={"output_dir": str(out_dir)},
+                overwrite=overwrite,
+            )
+        )
+    finally:
+        temp.cleanup()
+
+
+def _make_shared_stem_sources(tmp_path: Path) -> tuple[Path, Path]:
+    txt = tmp_path / "scan.txt"
+    md = tmp_path / "scan.md"
+    txt.write_text("Alpha page", encoding="utf-8")
+    md.write_text("# Beta\n\nBody", encoding="utf-8")
+    return txt, md
+
+
+def test_import_batch_with_shared_stems_writes_distinct_outputs(tmp_path):
+    png, jpg = _make_shared_stem_sources(tmp_path)
+    hashes = (file_sha256(png), file_sha256(jpg))
+    out = tmp_path / "out"
+
+    _run_import_batch(tmp_path, out, [png, jpg], out / "scan.pdf")
+
+    assert sorted(p.name for p in out.iterdir()) == ["scan.pdf", "scan_2.pdf"]
+    assert (file_sha256(png), file_sha256(jpg)) == hashes
+
+
+def test_import_batch_disk_collision_does_not_reuse_batch_name(tmp_path):
+    png, jpg = _make_shared_stem_sources(tmp_path)
+    hashes = (file_sha256(png), file_sha256(jpg))
+    out = tmp_path / "out"
+    out.mkdir()
+    existing = out / "scan.pdf"
+    existing.write_bytes(b"%PDF-keep")
+    existing_hash = file_sha256(existing)
+
+    # Caller picks the disk-safe first name; the second must not reuse it.
+    _run_import_batch(tmp_path, out, [png, jpg], out / "scan_2.pdf")
+
+    assert sorted(p.name for p in out.iterdir()) == [
+        "scan.pdf",
+        "scan_2.pdf",
+        "scan_3.pdf",
+    ]
+    assert file_sha256(existing) == existing_hash
+    assert (file_sha256(png), file_sha256(jpg)) == hashes
