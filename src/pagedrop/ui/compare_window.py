@@ -195,7 +195,7 @@ def _render_page_pixmap(
     qpix = QPixmap()
     if not qpix.loadFromData(png):
         raise PdfLoadError(f"Could not decode page render for {Path(path).name}")
-    return qpix, fitz.Rect(0, 0, geom.width, geom.height)
+    return qpix, fitz.Rect(0, 0, *geom.visual_size)
 
 
 class _PathBrowseRow(QWidget):

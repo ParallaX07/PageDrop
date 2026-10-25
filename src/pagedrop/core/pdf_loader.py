@@ -84,7 +84,7 @@ class PdfLoader:
         self.path = path
         self.doc = open_pdf(path, password)
         self._size_cache: dict[tuple[int, int], tuple[int, int]] = {}
-        self._pt_size_cache: dict[int, tuple[float, float]] = {}
+        self._pt_size_cache: dict[int, tuple[float, float, int]] = {}
 
     @property
     def page_count(self) -> int:
@@ -98,14 +98,21 @@ class PdfLoader:
             self.doc, page_index, width_px=width_px, rotation=rotation
         )
 
-    def page_size_pt(self, page_index: int) -> tuple[float, float]:
-        """Unrotated page size in points (page.rect already honors /Rotate)."""
+    def _page_geom(self, page_index: int) -> tuple[float, float, int]:
         cached = self._pt_size_cache.get(page_index)
         if cached is None:
-            rect = self.doc[page_index].rect
-            cached = (float(rect.width), float(rect.height))
+            cached = unrotated_page_geom(self.doc[page_index])
             self._pt_size_cache[page_index] = cached
         return cached
+
+    def page_size_pt(self, page_index: int) -> tuple[float, float]:
+        """Unrotated page size in points (before the page's own /Rotate)."""
+        width, height, _rotation = self._page_geom(page_index)
+        return width, height
+
+    def page_rotation(self, page_index: int) -> int:
+        """The page's own /Rotate in {0, 90, 180, 270}."""
+        return self._page_geom(page_index)[2]
 
     def page_size_mm(self, page_index: int, *, rotation: int = 0) -> tuple[int, int]:
         """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
@@ -128,6 +135,16 @@ MAX_RENDER_DPI = 150  # documented legacy; width cap is the real safety limit
 MAX_RENDER_WIDTH_PX = 2048
 
 _MM_PER_POINT = 25.4 / 72.0
+
+
+def unrotated_page_geom(page: fitz.Page) -> tuple[float, float, int]:
+    """Return (width, height, /Rotate) with the size in unrotated PDF space.
+
+    ``page.rect`` is the rotated (visual) rect; text, annotation and redaction
+    coordinates live in the unrotated space this size describes.
+    """
+    rect = page.rect * page.derotation_matrix
+    return float(rect.width), float(rect.height), int(page.rotation) % 360
 
 
 def page_size_mm(
