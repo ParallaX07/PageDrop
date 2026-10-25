@@ -194,6 +194,12 @@ def test_page_geometry_is_unrotated_with_own_rotation(
     geom = page_geometry(str(path), 0)
     assert (geom.width, geom.height, geom.rotation) == (200, 400, rotation)
     assert geom.visual_size == ((400, 200) if rotation % 180 else (200, 400))
+    doc = fitz.open(str(path))
+    try:
+        expected = doc[0].rotation_matrix
+    finally:
+        doc.close()
+    assert tuple(geom.rotation_matrix) == pytest.approx(tuple(expected))
 
     # Link rects are mapped back to the unrotated space of the geometry.
     link = page_links(PageRef(str(path), 0))[0]

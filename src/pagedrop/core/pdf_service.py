@@ -128,6 +128,13 @@ class PageGeom:
     rotation: int = 0
 
     @property
+    def rotation_matrix(self) -> fitz.Matrix:
+        """Maps unrotated page coordinates to the displayed (own /Rotate) page."""
+        turn = fitz.Matrix(self.rotation)
+        origin = fitz.Rect(0, 0, self.width, self.height) * turn
+        return fitz.Matrix(turn.a, turn.b, turn.c, turn.d, -origin.x0, -origin.y0)
+
+    @property
     def visual_size(self) -> tuple[float, float]:
         """Width and height as displayed once the page's own /Rotate applies."""
         if self.rotation % 180 == 90:

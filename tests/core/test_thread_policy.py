@@ -354,7 +354,7 @@ def test_save_as_extract_compare_inspect_hold_fitz_lock(
     )
     compare_pdf_text_diff(str(pdf), str(pdf))
     inspect_image(str(png))
-    pix, _rect = _render_page_pixmap(str(pdf), 0, 64)
+    pix, _rect, _matrix = _render_page_pixmap(str(pdf), 0, 64)
     assert not pix.isNull()
 
     assert held_at_open, "expected at least one fitz.open"
