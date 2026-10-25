@@ -9,7 +9,7 @@ import pytest
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QImage, QKeyEvent
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.pdf_editor import PdfEditModel
@@ -982,3 +982,92 @@ def test_rotated_page_redaction_drag_covers_text(qtbot, rotated_viewer) -> None:
     rect = fitz.Rect(blocker.args[2]["rect"])
     assert rect.contains(hit)
     assert rect.width < hit.width + 12 and rect.height < hit.height + 12
+
+
+# --- fit modes and scrollbar feedback -----------------------------------------
+
+_FIT_SIZES = [(700, 400), (700, 420), (700, 440), (900, 400), (900, 500), (900, 580)]
+
+
+def _landscape_pdf(path: Path, *, own_rotation: int) -> None:
+    """One landscape page: 400x300 as drawn, or 300x400 shown through /Rotate 90."""
+    doc = fitz.open()
+    try:
+        if own_rotation:
+            page = doc.new_page(width=300, height=400)
+        else:
+            page = doc.new_page(width=400, height=300)
+        page.insert_text((40, 60), _ROT_TEXT, fontsize=14)
+        page.insert_link(
+            {"kind": fitz.LINK_URI, "from": _ROT_LINK, "uri": "https://example.com/x"}
+        )
+        if own_rotation:
+            page.set_rotation(own_rotation)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+
+@pytest.mark.parametrize("own_rotation", [0, 90], ids=["plain", "rotate90"])
+@pytest.mark.parametrize("zoom", [ZoomMode.FIT_WIDTH, ZoomMode.FIT_PAGE])
+def test_fit_modes_settle_for_landscape_page(
+    qtbot, monkeypatch, tmp_path: Path, own_rotation: int, zoom: ZoomMode
+) -> None:
+    """The scrollbar appearing must not feed back into the fit width forever."""
+    path = tmp_path / "landscape.pdf"
+    _landscape_pdf(path, own_rotation=own_rotation)
+    viewer, _model, loader = _bind_viewer(qtbot, path)
+    rebuilds = {"n": 0}
+    original = viewer._rebuild_canvas
+
+    def counting_rebuild() -> None:
+        rebuilds["n"] += 1
+        original()
+
+    monkeypatch.setattr(viewer, "_rebuild_canvas", counting_rebuild)
+    try:
+        viewer.set_zoom_mode(zoom)
+        for width, height in _FIT_SIZES:
+            viewer.setFixedSize(width, height)
+            rebuilds["n"] = 0
+            qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
+            settled = rebuilds["n"]
+            # Nothing keeps rebuilding once the tile has rendered.
+            QApplication.processEvents()
+            QApplication.processEvents()
+            assert rebuilds["n"] == settled, (width, height)
+            assert settled <= 3, (width, height, settled)
+    finally:
+        loader.close()
+
+
+def test_fit_width_uses_full_width_with_and_without_scrollbar(
+    qtbot, viewer_pdf: Path, tmp_path: Path
+) -> None:
+    from pagedrop.ui.pdf_viewer import PAGE_GAP_PX
+
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
+        viewer.setFixedSize(900, 500)
+        # Three portrait pages: the vertical bar is shown and the pages fill
+        # what is left of the viewport, with no extra gutter.
+        qtbot.waitUntil(lambda: viewer._scroll.verticalScrollBar().isVisible(), timeout=3000)
+        viewport = viewer._scroll.viewport()
+        assert viewer.render_width_px == viewport.width() - 2 * PAGE_GAP_PX
+    finally:
+        loader.close()
+
+    short = tmp_path / "short.pdf"
+    _landscape_pdf(short, own_rotation=0)
+    viewer, _model, loader = _bind_viewer(qtbot, short)
+    try:
+        viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
+        viewer.setFixedSize(900, 700)
+        # The page fits without a bar, so it spans the whole viewport width.
+        qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
+        assert not viewer._scroll.verticalScrollBar().isVisible()
+        viewport = viewer._scroll.viewport()
+        assert viewer.render_width_px == viewport.width() - 2 * PAGE_GAP_PX
+    finally:
+        loader.close()

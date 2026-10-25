@@ -3457,13 +3457,15 @@ class PdfViewerWidget(QWidget):
         tile.set_hits(hits, active=active)
         return tile
 
-    def _display_size_for(self, logical: int) -> tuple[int, int]:
+    def _display_size_for(
+        self, logical: int, render_width: int | None = None
+    ) -> tuple[int, int]:
+        width = self._render_width_px if render_width is None else render_width
         if logical >= len(self._page_sizes) or self._model is None:
-            return self._render_width_px, int(self._render_width_px * 1.4)
+            return width, int(width * 1.4)
         ref = self._model.page_at(logical)
         pw, ph = self._page_sizes[logical]
         dw, dh = _rotated_size(pw, ph, self._display_rotation(logical, ref))
-        width = self._render_width_px
         if self._layout == ViewerLayout.SPREAD:
             width = max(MIN_PREVIEW_RENDER_WIDTH // 2, width // 2 - PAGE_GAP_PX // 2)
         height = max(1, int(round(width * (dh / dw)))) if dw else width
@@ -3496,14 +3498,45 @@ class PdfViewerWidget(QWidget):
         self._canvas.resize(total_w, total_h)
         self._tiles[p].setGeometry(PAGE_GAP_PX, PAGE_GAP_PX, w, h)
 
-    def _fit_width_px(self) -> int:
+    def _content_height_at(self, render_width: int) -> int:
+        """Canvas height if the pages were rendered at *render_width* (no state change)."""
+        pages = self._pages_to_show()
+        if not pages:
+            return 0
+        heights = [self._display_size_for(p, render_width)[1] for p in pages]
+        if self._layout == ViewerLayout.CONTINUOUS:
+            return sum(heights) + (len(heights) + 1) * PAGE_GAP_PX
+        return max(heights) + 2 * PAGE_GAP_PX
+
+    def _fit_without_scrollbar_flip(self, fit: Callable[[int, int], int]) -> int:
+        """Run ``fit(width, height)`` against the scroll area's bar-free size.
+
+        The viewport shrinks when the vertical bar appears, which used to shrink
+        the fit width, hide the bar again and loop forever. The size is therefore
+        taken as if no bar were shown, and the bar's width is reserved only when
+        the content would not fit the full height at that width. The decision
+        depends on bar-independent inputs only, so it cannot oscillate and leaves
+        no gutter when the bar is not needed.
+        """
         viewport = self._scroll.viewport()
-        # Viewport already excludes visible scrollbars — no extra -24 reserve
-        # (that left a permanent gutter once the v-bar was shown).
-        available = max(viewport.width() - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
+        vbar = self._scroll.verticalScrollBar()
+        hbar = self._scroll.horizontalScrollBar()
+        bar = vbar.sizeHint().width()
+        full_w = viewport.width() + (vbar.width() if vbar.isVisible() else 0)
+        full_h = viewport.height() + (hbar.height() if hbar.isVisible() else 0)
+        width = fit(full_w, full_h)
+        if self._content_height_at(width) <= full_h:
+            return width
+        return fit(full_w - bar, full_h)
+
+    def _fit_width_for(self, viewport_w: int) -> int:
+        available = max(viewport_w - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
         if self._layout == ViewerLayout.SPREAD:
             available = max(MIN_PREVIEW_RENDER_WIDTH, (available - PAGE_GAP_PX) // 2 * 2)
         return min(MAX_RENDER_WIDTH_PX, available)
+
+    def _fit_width_px(self) -> int:
+        return self._fit_without_scrollbar_flip(lambda w, _h: self._fit_width_for(w))
 
     def _fit_page_px(self) -> int:
         """Return render width so the page (or spread) fits in the viewport.
@@ -3513,15 +3546,17 @@ class PdfViewerWidget(QWidget):
         """
         if self._model is None or not self._page_sizes:
             return self._fit_width_px()
+        return self._fit_without_scrollbar_flip(self._fit_page_for)
+
+    def _fit_page_for(self, viewport_w: int, viewport_h: int) -> int:
         logical = self._current_page
         ref = self._model.page_at(logical)
         pw, ph = self._page_sizes[min(logical, len(self._page_sizes) - 1)]
         dw, dh = _rotated_size(pw, ph, self._display_rotation(logical, ref))
-        viewport = self._scroll.viewport()
-        avail_w = max(viewport.width() - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
-        avail_h = max(viewport.height() - 2 * PAGE_GAP_PX, 200)
+        avail_w = max(viewport_w - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
+        avail_h = max(viewport_h - 2 * PAGE_GAP_PX, 200)
         if dh <= 0 or dw <= 0:
-            return self._fit_width_px()
+            return self._fit_width_for(viewport_w)
         # Per-page width budgets (spread: two pages share the viewport width).
         if self._layout == ViewerLayout.SPREAD:
             page_budget_w = max(100, (avail_w - PAGE_GAP_PX) // 2)
