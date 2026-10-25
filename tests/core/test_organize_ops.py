@@ -296,6 +296,66 @@ def test_normalize_page_size_fit(tmp_path: Path) -> None:
         out_doc.close()
 
 
+def _pdf_leaks_marker(path: Path, marker: bytes) -> bool:
+    """True when `marker` survives in the raw file bytes or any decoded stream."""
+    if marker in path.read_bytes():
+        return True
+    doc = fitz.open(str(path))
+    try:
+        for xref in range(1, doc.xref_length()):
+            if doc.xref_is_stream(xref) and marker in (doc.xref_stream(xref) or b""):
+                return True
+            if doc.xref_is_stream(xref) and marker in (doc.xref_stream_raw(xref) or b""):
+                return True
+        return False
+    finally:
+        doc.close()
+
+
+def test_attachment_remove_drops_payload_bytes_from_output(tmp_path: Path) -> None:
+    marker = b"PAGEDROP-SECRET-ATTACHMENT-PAYLOAD"
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.embfile_add("secret.bin", marker * 4, filename="secret.bin")
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = file_sha256(src)
+    assert _pdf_leaks_marker(src, marker)
+
+    out = tmp_path / "removed.pdf"
+    pdf_tools.attachment_remove(str(src), str(out), name="secret.bin")
+
+    assert out != src
+    assert file_sha256(src) == source_hash
+    assert pdf_tools.attachments_list(str(out)) == []
+    assert not _pdf_leaks_marker(out, marker)
+
+
+def test_attachment_add_overwrite_drops_replaced_payload(tmp_path: Path) -> None:
+    marker = b"PAGEDROP-OLD-ATTACHMENT-PAYLOAD"
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.embfile_add("a.bin", marker * 4, filename="a.bin")
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = file_sha256(src)
+
+    out = tmp_path / "replaced.pdf"
+    pdf_tools.attachment_add(
+        str(src), str(out), name="a.bin", data=b"new", filename="a.bin", overwrite=True
+    )
+
+    assert out != src
+    assert file_sha256(src) == source_hash
+    assert not _pdf_leaks_marker(out, marker)
+
+
 def test_attachments_add_extract_remove(tmp_path: Path) -> None:
     src = tmp_path / "src.pdf"
     doc = fitz.open()
@@ -691,6 +751,30 @@ def test_metadata_set_strip_and_xmp_v1(tmp_path: Path) -> None:
     meta2 = pdf_tools.metadata_get(str(out_strip))
     assert meta2["title"] == ""
     assert pdf_tools.xmp_get(str(out_strip)) == ""
+
+
+def test_metadata_strip_drops_xmp_bytes_from_output(tmp_path: Path) -> None:
+    marker = b"PAGEDROP-SECRET-XMP-MARKER"
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.set_xml_metadata(
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/">' + marker.decode() + "</x:xmpmeta>"
+        )
+        doc.save(str(src))
+    finally:
+        doc.close()
+    source_hash = file_sha256(src)
+    assert _pdf_leaks_marker(src, marker)
+
+    out = tmp_path / "strip.pdf"
+    pdf_tools.metadata_strip(str(src), str(out), strip_xmp_v1=True)
+
+    assert out != src
+    assert file_sha256(src) == source_hash
+    assert pdf_tools.xmp_get(str(out)) == ""
+    assert not _pdf_leaks_marker(out, marker)
 
 
 def test_page_labels_get_set(tmp_path: Path) -> None:

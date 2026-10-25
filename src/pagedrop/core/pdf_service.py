@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, TypeVar
 import fitz
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import open_pdf, render_page_png
+from pagedrop.core.pdf_loader import open_pdf, render_page_png, unrotated_page_geom
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 
 if TYPE_CHECKING:
@@ -118,10 +118,28 @@ class LinkInfo:
 
 @dataclass(frozen=True)
 class PageGeom:
-    """Unrotated page size in PDF points (before extra PageRef rotation)."""
+    """Unrotated page size in PDF points plus the page's own /Rotate.
+
+    Viewers compose ``(rotation + PageRef.rotation) % 360`` to display it.
+    """
 
     width: float
     height: float
+    rotation: int = 0
+
+    @property
+    def rotation_matrix(self) -> fitz.Matrix:
+        """Maps unrotated page coordinates to the displayed (own /Rotate) page."""
+        turn = fitz.Matrix(self.rotation)
+        origin = fitz.Rect(0, 0, self.width, self.height) * turn
+        return fitz.Matrix(turn.a, turn.b, turn.c, turn.d, -origin.x0, -origin.y0)
+
+    @property
+    def visual_size(self) -> tuple[float, float]:
+        """Width and height as displayed once the page's own /Rotate applies."""
+        if self.rotation % 180 == 90:
+            return self.height, self.width
+        return self.width, self.height
 
 
 @dataclass(frozen=True)
@@ -225,8 +243,7 @@ def page_count(path: str, *, password: str | None = None) -> int:
 def page_geometry(path: str, source_index: int, *, password: str | None = None) -> PageGeom:
     def _body() -> PageGeom:
         doc = _cache_get(path, password)
-        rect = doc[source_index].rect
-        return PageGeom(rect.width, rect.height)
+        return PageGeom(*unrotated_page_geom(doc[source_index]))
 
     return call(_body)
 
@@ -412,10 +429,13 @@ def page_links(
     def _body() -> list[LinkInfo]:
         doc = _cache_get(ref.source_path, password)
         out: list[LinkInfo] = []
-        for link in doc[ref.source_index].get_links():
+        page = doc[ref.source_index]
+        for link in page.get_links():
             r = link.get("from")
             if r is None:
                 continue
+            # Link rects come back in rotated space; the viewer expects unrotated.
+            r = r * page.derotation_matrix
             rect = (r.x0, r.y0, r.x1, r.y1)
             kind = link.get("kind")
             if kind == fitz.LINK_GOTO:

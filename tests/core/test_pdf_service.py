@@ -171,6 +171,41 @@ def test_doc_cache_reuses_open_across_helpers(
     assert not is_fitz_document(hits)
 
 
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_page_geometry_is_unrotated_with_own_rotation(
+    tmp_path: Path, rotation: int
+) -> None:
+    path = tmp_path / "rot.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=400)
+        page.insert_link(
+            {
+                "kind": fitz.LINK_URI,
+                "from": fitz.Rect(10, 30, 100, 60),
+                "uri": "https://example.com",
+            }
+        )
+        page.set_rotation(rotation)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+    geom = page_geometry(str(path), 0)
+    assert (geom.width, geom.height, geom.rotation) == (200, 400, rotation)
+    assert geom.visual_size == ((400, 200) if rotation % 180 else (200, 400))
+    doc = fitz.open(str(path))
+    try:
+        expected = doc[0].rotation_matrix
+    finally:
+        doc.close()
+    assert tuple(geom.rotation_matrix) == pytest.approx(tuple(expected))
+
+    # Link rects are mapped back to the unrotated space of the geometry.
+    link = page_links(PageRef(str(path), 0))[0]
+    assert link.rect == pytest.approx((10, 30, 100, 60))
+
+
 def test_doc_cache_lru_max_eight(tmp_path: Path) -> None:
     paths = []
     for i in range(pdf_service._DOC_CACHE_MAX + 1):

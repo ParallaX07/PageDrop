@@ -6,10 +6,10 @@ from pathlib import Path
 
 import fitz
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QImage, QKeyEvent
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.pdf_editor import PdfEditModel
@@ -24,7 +24,13 @@ from pagedrop.core.pdf_service import (
     render_ref_png,
     search_model,
 )
-from pagedrop.ui.pdf_viewer import AnnotTool, PdfViewerWidget, ViewerLayout, ZoomMode
+from pagedrop.ui.pdf_viewer import (
+    AnnotTool,
+    PdfViewerWidget,
+    ViewerLayout,
+    ZoomMode,
+    _map_pdf_rect_to_widget,
+)
 from pagedrop.ui.settings import set_viewer_panel_collapsed
 
 
@@ -90,9 +96,12 @@ def _bind_viewer(
     *,
     credentials: RuntimeCredentials | None = None,
     password: str | None = None,
+    extra_rotation: int = 0,
 ) -> tuple[PdfViewerWidget, PdfEditModel, PdfLoader]:
     loader = PdfLoader(str(path), password=password)
     model = PdfEditModel(str(path), loader.page_count)
+    if extra_rotation:
+        model.rotate_pages([0], extra_rotation, record_undo=False)
     cache = {loader.path: loader}
 
     def get_loader(p: str) -> PdfLoader:
@@ -833,3 +842,232 @@ def test_print_document_ponytail_marker() -> None:
     assert "ponytail:" in chunk
     assert "freeze" in chunk.lower()
     assert "MAX_PRINT_PAGES" in chunk
+
+
+# --- rotated pages -----------------------------------------------------------
+
+ROTATIONS = [(90, 0), (270, 0), (90, 90), (270, 180)]
+_ROT_TEXT = "Alpha unique"
+_ROT_LINK = fitz.Rect(30, 40, 200, 80)
+
+
+@pytest.fixture(params=ROTATIONS, ids=lambda p: f"rotate{p[0]}+extra{p[1]}")
+def rotated_viewer(request, qtbot, tmp_path: Path):
+    """Viewer bound to a page with its own /Rotate plus a logical rotation."""
+    own, extra = request.param
+    path = tmp_path / "rotated.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=300, height=400)
+        page.insert_text((40, 60), _ROT_TEXT, fontsize=14)
+        page.insert_link(
+            {"kind": fitz.LINK_URI, "from": _ROT_LINK, "uri": "https://example.com/x"}
+        )
+        page.set_rotation(own)
+        doc.save(str(path))
+    finally:
+        doc.close()
+    viewer, model, loader = _bind_viewer(qtbot, path, extra_rotation=extra)
+    # Layout changes (scrollbars, fit width) rebuild the tiles, so only take
+    # the tile once the current one has its links and rendered pixmap.
+    qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
+    tile = viewer._tiles[0]
+    yield viewer, model, tile, path, extra
+    loader.close()
+
+
+def _viewer_settled(viewer: PdfViewerWidget) -> bool:
+    tile = viewer._tiles.get(0)
+    return (
+        tile is not None
+        and bool(tile._links)
+        and tile._pixmap is not None
+        and not viewer._render_timer.isActive()
+        and viewer._pool.activeThreadCount() == 0
+    )
+
+
+def _visual_rect(path: Path, rect: fitz.Rect, extra: int, tile) -> tuple[float, ...]:
+    """Where an unrotated PDF rect should sit in *tile*, from PyMuPDF's own matrices."""
+    doc = fitz.open(str(path))
+    try:
+        page = doc[0]
+        box = fitz.Rect(page.rect)
+        r = fitz.Rect(rect) * page.rotation_matrix
+    finally:
+        doc.close()
+    m = fitz.Matrix(extra)
+    corner = box * m
+    r = r * m
+    scale = tile.width() / (corner.x1 - corner.x0)
+    return tuple(
+        v * scale
+        for v in (r.x0 - corner.x0, r.y0 - corner.y0, r.x1 - corner.x0, r.y1 - corner.y0)
+    )
+
+
+def _text_rect(path: Path) -> fitz.Rect:
+    doc = fitz.open(str(path))
+    try:
+        return doc[0].search_for(_ROT_TEXT)[0]
+    finally:
+        doc.close()
+
+
+def test_rotated_page_search_highlight_covers_rendered_text(
+    qtbot, rotated_viewer
+) -> None:
+    viewer, model, _tile, path, extra = rotated_viewer
+    viewer.search(_ROT_TEXT)
+    qtbot.waitUntil(
+        lambda: viewer.search_hit_count == 1
+        and 0 in viewer._tiles
+        and bool(viewer._tiles[0]._hits),
+        timeout=5000,
+    )
+    tile = viewer._tiles[0]
+
+    rect = _map_pdf_rect_to_widget(
+        tile._hits[0],
+        tile._page_w,
+        tile._page_h,
+        tile.width(),
+        tile.height(),
+        tile._rotation,
+    )
+    expected = _visual_rect(path, fitz.Rect(tile._hits[0]), extra, tile)
+    assert rect.left() == pytest.approx(expected[0], abs=1.5)
+    assert rect.top() == pytest.approx(expected[1], abs=1.5)
+    assert rect.right() == pytest.approx(expected[2], abs=1.5)
+    assert rect.bottom() == pytest.approx(expected[3], abs=1.5)
+
+    # The rendered page shows its ink inside the highlight.
+    image = QImage.fromData(render_ref_png(model.page_at(0), tile.width()))
+    assert image.width() == tile.width()
+    assert abs(image.height() - tile.height()) <= 1
+    dark = [
+        (x, y)
+        for y in range(image.height())
+        for x in range(image.width())
+        if image.pixelColor(x, y).lightness() < 100
+    ]
+    assert dark
+    assert rect.left() - 2 <= min(x for x, _ in dark)
+    assert max(x for x, _ in dark) <= rect.right() + 2
+    assert rect.top() - 2 <= min(y for _, y in dark)
+    assert max(y for _, y in dark) <= rect.bottom() + 2
+
+
+def test_rotated_page_link_click_at_visual_position(qtbot, rotated_viewer) -> None:
+    viewer, _model, _tile, path, extra = rotated_viewer
+    tile = viewer._tiles[0]
+    x0, y0, x1, y1 = _visual_rect(path, _ROT_LINK, extra, tile)
+    pos = QPoint(int((x0 + x1) / 2), int((y0 + y1) / 2))
+    with qtbot.waitSignal(tile.link_activated, timeout=1000) as blocker:
+        qtbot.mouseClick(tile, Qt.MouseButton.LeftButton, pos=pos)
+    assert blocker.args[1].uri == "https://example.com/x"
+
+
+def test_rotated_page_redaction_drag_covers_text(qtbot, rotated_viewer) -> None:
+    viewer, _model, _tile, path, extra = rotated_viewer
+    viewer.set_annot_tool(AnnotTool.REDACT)
+    tile = viewer._tiles[0]
+    hit = _text_rect(path)
+    x0, y0, x1, y1 = _visual_rect(path, hit, extra, tile)
+    start = QPoint(int(x0) - 2, int(y0) - 2)
+    end = QPoint(int(x1) + 3, int(y1) + 3)
+    with qtbot.waitSignal(tile.markup_gesture, timeout=1000) as blocker:
+        qtbot.mousePress(tile, Qt.MouseButton.LeftButton, pos=start)
+        qtbot.mouseRelease(tile, Qt.MouseButton.LeftButton, pos=end)
+    rect = fitz.Rect(blocker.args[2]["rect"])
+    assert rect.contains(hit)
+    assert rect.width < hit.width + 12 and rect.height < hit.height + 12
+
+
+# --- fit modes and scrollbar feedback -----------------------------------------
+
+_FIT_SIZES = [(700, 400), (700, 420), (700, 440), (900, 400), (900, 500), (900, 580)]
+
+
+def _landscape_pdf(path: Path, *, own_rotation: int) -> None:
+    """One landscape page: 400x300 as drawn, or 300x400 shown through /Rotate 90."""
+    doc = fitz.open()
+    try:
+        if own_rotation:
+            page = doc.new_page(width=300, height=400)
+        else:
+            page = doc.new_page(width=400, height=300)
+        page.insert_text((40, 60), _ROT_TEXT, fontsize=14)
+        page.insert_link(
+            {"kind": fitz.LINK_URI, "from": _ROT_LINK, "uri": "https://example.com/x"}
+        )
+        if own_rotation:
+            page.set_rotation(own_rotation)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+
+@pytest.mark.parametrize("own_rotation", [0, 90], ids=["plain", "rotate90"])
+@pytest.mark.parametrize("zoom", [ZoomMode.FIT_WIDTH, ZoomMode.FIT_PAGE])
+def test_fit_modes_settle_for_landscape_page(
+    qtbot, monkeypatch, tmp_path: Path, own_rotation: int, zoom: ZoomMode
+) -> None:
+    """The scrollbar appearing must not feed back into the fit width forever."""
+    path = tmp_path / "landscape.pdf"
+    _landscape_pdf(path, own_rotation=own_rotation)
+    viewer, _model, loader = _bind_viewer(qtbot, path)
+    rebuilds = {"n": 0}
+    original = viewer._rebuild_canvas
+
+    def counting_rebuild() -> None:
+        rebuilds["n"] += 1
+        original()
+
+    monkeypatch.setattr(viewer, "_rebuild_canvas", counting_rebuild)
+    try:
+        viewer.set_zoom_mode(zoom)
+        for width, height in _FIT_SIZES:
+            viewer.setFixedSize(width, height)
+            rebuilds["n"] = 0
+            qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
+            settled = rebuilds["n"]
+            # Nothing keeps rebuilding once the tile has rendered.
+            QApplication.processEvents()
+            QApplication.processEvents()
+            assert rebuilds["n"] == settled, (width, height)
+            assert settled <= 3, (width, height, settled)
+    finally:
+        loader.close()
+
+
+def test_fit_width_uses_full_width_with_and_without_scrollbar(
+    qtbot, viewer_pdf: Path, tmp_path: Path
+) -> None:
+    from pagedrop.ui.pdf_viewer import PAGE_GAP_PX
+
+    viewer, _model, loader = _bind_viewer(qtbot, viewer_pdf)
+    try:
+        viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
+        viewer.setFixedSize(900, 500)
+        # Three portrait pages: the vertical bar is shown and the pages fill
+        # what is left of the viewport, with no extra gutter.
+        qtbot.waitUntil(lambda: viewer._scroll.verticalScrollBar().isVisible(), timeout=3000)
+        viewport = viewer._scroll.viewport()
+        assert viewer.render_width_px == viewport.width() - 2 * PAGE_GAP_PX
+    finally:
+        loader.close()
+
+    short = tmp_path / "short.pdf"
+    _landscape_pdf(short, own_rotation=0)
+    viewer, _model, loader = _bind_viewer(qtbot, short)
+    try:
+        viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
+        viewer.setFixedSize(900, 700)
+        # The page fits without a bar, so it spans the whole viewport width.
+        qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
+        assert not viewer._scroll.verticalScrollBar().isVisible()
+        viewport = viewer._scroll.viewport()
+        assert viewer.render_width_px == viewport.width() - 2 * PAGE_GAP_PX
+    finally:
+        loader.close()
