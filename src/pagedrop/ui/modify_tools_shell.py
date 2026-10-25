@@ -41,6 +41,7 @@ from pagedrop.core.modify_ops import (
     detect_blank_pages,
     get_bookmarks,
 )
+from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
@@ -1005,10 +1006,9 @@ def _configure_bates(shell: ToolShellWindow) -> None:
         if not folder:
             return
         remember_directory(folder)
-        first_name = f"{Path(paths[0]).stem}_bates.pdf"
-        output = str(Path(folder) / first_name)
+        predicted = batch_output_paths(paths, folder, "_bates.pdf")
+        output = str(predicted[0])
         opts["output_dir"] = folder
-        predicted = [Path(folder) / f"{Path(p).stem}_bates.pdf" for p in paths]
         run_tool_job(
             shell,
             job_type="bates",

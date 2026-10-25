@@ -12,10 +12,10 @@ from pagedrop.core.image_to_pdf import (
     ImageConvertError,
     image_to_pdf_file,
     images_to_single_pdf,
-    planned_individual_outputs,
 )
 from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
+from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_writer import merge_pdf_files
 
 # ponytail: full-file read into RAM for embfile_add; 64 MiB is enough for
@@ -491,9 +491,12 @@ def handle_images_to_pdfs(ctx: JobContext) -> Path:
     """One PDF per image; ``spec.output`` is the first planned destination."""
     ctx.progress(0.3, "Creating PDFs…")
     images = list(ctx.spec.inputs)
-    planned = planned_individual_outputs(images, str(Path(ctx.spec.output).parent))
+    planned = batch_output_paths(images, Path(ctx.spec.output).parent)
     staged = [ctx.staged_output]
-    staged.extend(ctx.staging.stage_file(dest.name) for dest in planned[1:])
+    staged.extend(
+        ctx.staging.stage_file(f"{index:03d}_{dest.name}")
+        for index, dest in enumerate(planned[1:], start=1)
+    )
     try:
         for image, staged_path in zip(images, staged, strict=True):
             ctx.cancel.check()

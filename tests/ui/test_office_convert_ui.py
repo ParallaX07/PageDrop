@@ -189,3 +189,50 @@ def test_status_names_backend_used(qtbot, tmp_path, monkeypatch, isolated_settin
     assert "LibreOffice" in toast
     assert out.is_file()
     clear_cache()
+
+
+def test_office_job_overwrites_only_when_destination_exists(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    monkeypatch.setattr(
+        "pagedrop.ui.office_convert_window.capability_report",
+        lambda **_k: _report(lo=True),
+    )
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_office_convert_shell(tools)
+    assert shell is not None
+    qtbot.addWidget(shell)
+    monkeypatch.setattr(
+        "pagedrop.ui.office_convert_window.confirm_overwrite",
+        lambda *_a, **_k: True,
+    )
+
+    src = tmp_path / "note.docx"
+    src.write_bytes(b"docx")
+    out = tmp_path / "note.pdf"
+    overwrite_flags: list[bool] = []
+
+    class FakeRunner:
+        def run(self, spec, **_kwargs):
+            overwrite_flags.append(spec.overwrite)
+            Path(spec.output).write_bytes(_pdf_bytes())
+            return Path(spec.output)
+
+    monkeypatch.setattr(shell, "job_runner", lambda: FakeRunner())
+
+    def convert() -> None:
+        _run_office_conversion(
+            shell,
+            source=str(src),
+            output=str(out),
+            backend="libreoffice",
+            backend_label="LibreOffice",
+            refresh_status=lambda: None,
+        )
+
+    convert()
+    convert()  # the first run created the destination, so this one replaces it
+
+    assert overwrite_flags == [False, True]
+    clear_cache()

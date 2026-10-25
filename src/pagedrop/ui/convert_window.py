@@ -23,9 +23,9 @@ from pagedrop.core.image_to_pdf import (
     ConvertModel,
     ImageConvertError,
     inspect_image,
-    planned_individual_outputs,
     validate_images,
 )
+from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
 from pagedrop.core.supported_formats import (
     image_dialog_filter,
@@ -776,9 +776,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
             return
 
         remember_directory(folder)
-        self._start_convert(
-            paths, "images_to_pdfs", planned_individual_outputs(paths, folder)
-        )
+        self._start_convert(paths, "images_to_pdfs", batch_output_paths(paths, folder))
 
     def _start_convert(
         self, paths: list[str], job_type: str, outputs: list[Path]

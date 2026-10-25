@@ -23,6 +23,7 @@ from pagedrop.core.jobs import (
     preflight_pdf_inputs,
 )
 from pagedrop.core.capabilities import AbsenceReason
+from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_service import FITZ_LOCK, render_ref_png
 from pagedrop.utils.temp_manager import TempManager
@@ -749,5 +750,73 @@ def test_multi_output_handlers_promote_only_after_final_cancel_check(
             assert len(list(out_dir.glob("*.pdf"))) == expected_count
         assert not any(temp.get_dir().glob("job_*"))
         assert [file_sha256(p) for p in sources] == hashes
+    finally:
+        temp.cleanup()
+
+
+def test_failed_promotion_removes_new_outputs_and_names_replaced_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "in.pdf"
+    first = tmp_path / "out" / "a.pdf"
+    replaced = tmp_path / "out" / "b.pdf"
+    third = tmp_path / "out" / "c.pdf"
+    _write_pdf(src)
+    replaced.parent.mkdir()
+    replaced.write_bytes(b"old")
+    source_hash = file_sha256(src)
+
+    def handler(ctx: JobContext) -> Path:
+        shutil.copy2(ctx.spec.inputs[0], ctx.staged_output)
+        for name, dest in (("b.pdf", replaced), ("c.pdf", third)):
+            staged = ctx.staging.stage_file(name)
+            shutil.copy2(ctx.spec.inputs[0], staged)
+            ctx.extra_outputs.append((staged, dest))
+        return ctx.staged_output
+
+    real_promote = JobStaging.promote
+    calls: list[Path] = []
+
+    def flaky_promote(self, staged: Path, destination: Path) -> Path:
+        calls.append(destination)
+        if len(calls) == 3:
+            raise OSError("disk full")
+        return real_promote(self, staged, destination)
+
+    monkeypatch.setattr(JobStaging, "promote", flaky_promote)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("three", handler)
+        with pytest.raises(JobError) as info:
+            runner.run(
+                JobSpec.create(
+                    "three", inputs=[src], output=first, overwrite=True
+                )
+            )
+        assert str(replaced) in str(info.value)
+        assert str(first) not in str(info.value)
+        assert not first.exists()
+        assert not third.exists()
+        assert replaced.is_file()
+        assert replaced.read_bytes() != b"old"
+        assert file_sha256(src) == source_hash
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_extra_output_sharing_the_primary_destination_is_rejected(tmp_path: Path) -> None:
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("two", _two_output_handler(tmp_path / "out.pdf"))
+        with pytest.raises(JobError, match="share one destination"):
+            runner.run(
+                JobSpec.create("two", inputs=[src], output=tmp_path / "out.pdf")
+            )
+        assert not (tmp_path / "out.pdf").exists()
     finally:
         temp.cleanup()
