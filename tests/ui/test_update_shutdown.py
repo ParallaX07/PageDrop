@@ -8,7 +8,7 @@ from pagedrop.ui.update_checker import UpdateState
 from pagedrop.ui.window_manager import WindowManager
 from pagedrop.ui.settings import set_confirm_before_closing_dirty_tabs
 from tests.ui.test_save_as import _drop_init_blank_tab, _load_and_dirty
-from tests.conftest import file_sha256
+from tests.conftest import file_sha256, wait_for_pdf_loaded
 
 
 def _manager(qapp) -> WindowManager:
@@ -32,6 +32,30 @@ def test_preparation_blocks_jobs_in_an_inactive_window(qapp, monkeypatch):
     assert not manager.prepare_for_installation(first)
     assert manager.update_coordinator.state is UpdateState.READY
     assert first.isEnabled() and second.isEnabled()
+
+
+def test_preparation_blocked_by_editor_job_on_a_clean_tab(
+    qapp, five_page_pdf, qtbot, monkeypatch
+):
+    manager = _manager(qapp)
+    window = manager.create_window()
+    window.showMinimized()
+    window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, window)
+    tab = window._tab_manager.active_tab
+    assert tab is not None and not tab.is_dirty
+    errors: list[str] = []
+    monkeypatch.setattr(manager.update_presenter, "show_installation_error", errors.append)
+    window._begin_editor_job(tab, "Exporting pages…")
+
+    assert not manager.prepare_for_installation(window)
+    assert errors == ["Finish or cancel running tasks before installing. Your documents remain open."]
+    assert window.isEnabled()
+    assert manager.update_coordinator.state is UpdateState.READY
+
+    window._end_editor_job(tab)
+    assert manager.prepare_for_installation(window)
+    manager.cancel_installation_preparation()
 
 
 def test_discard_keeps_dirty_documents_intact_and_blocks_reentry(

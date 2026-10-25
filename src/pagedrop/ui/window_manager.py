@@ -147,6 +147,8 @@ class WindowManager(QObject):
 
     def _has_running_jobs(self) -> bool:
         for window in self._windows:
+            if window._editor_busy:
+                return True
             for widget in (window, *window.findChildren(QWidget)):
                 running = getattr(widget, "is_job_running", None)
                 if callable(running) and running():
