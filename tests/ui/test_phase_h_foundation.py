@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import collect_actions
-from pagedrop.ui.dialogs import prompt_unsaved_changes
+from pagedrop.ui import dialogs
 
 
 def test_action_registry_rejects_duplicate_keys(qtbot):
@@ -78,12 +78,16 @@ def test_toast_announces_message_to_assistive_tech(qtbot):
     assert toast._message.accessibleDescription() == "Success notification"
 
 
-def test_prompt_unsaved_centralised(monkeypatch, qtbot):
+def test_prompt_unsaved_centralised(monkeypatch, qtbot, unsaved_answer):
     parent = QWidget()
     qtbot.addWidget(parent)
 
-    monkeypatch.setenv("PAGEDROP_TESTING", "1")
-    assert prompt_unsaved_changes(parent, "Doc*") == "discard"
+    assert dialogs.prompt_unsaved_changes is unsaved_answer
+    assert unsaved_answer.answer == "discard"
+    assert unsaved_answer.real is not unsaved_answer
+    # The real prompt follows the dialog, never an environment short-circuit.
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    assert unsaved_answer.real(parent, "Doc*") == "cancel"
 
 
 @pytest.mark.parametrize(

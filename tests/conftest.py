@@ -62,6 +62,30 @@ def overwrite_answer(monkeypatch):
     return fake
 
 
+class UnsavedAnswer:
+    """Settable stand-in for the unsaved-changes prompt."""
+
+    def __init__(self, real) -> None:
+        self.answer = "discard"
+        self.calls: list[str] = []
+        self.real = real
+
+    def __call__(self, _parent, display_title: str) -> str:
+        self.calls.append(display_title)
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def unsaved_answer(monkeypatch):
+    """Answer unsaved-changes prompts with ``.answer`` (default discard) and record calls."""
+    from pagedrop.ui import dialogs
+
+    fake = UnsavedAnswer(dialogs.prompt_unsaved_changes)
+    for target in ("pagedrop.ui.dialogs", "pagedrop.ui.main_window"):
+        monkeypatch.setattr(f"{target}.prompt_unsaved_changes", fake)
+    return fake
+
+
 def _install_nonblocking_qt() -> None:
     """Patch modal Qt APIs before any widgets exist.
 

@@ -3105,6 +3105,13 @@ class MainWindow(QMainWindow):
         """Return ``save``, ``discard``, or ``cancel``."""
         return prompt_unsaved_changes(self, tab.tab_title)
 
+    def _save_and_wait(self, tab: PdfTab) -> bool:
+        """Save As, wait for the job, and report whether the tab is now clean."""
+        if not self._save_as(tab):
+            return False
+        self.wait_for_editor_job(tab)
+        return not tab.is_dirty
+
     def _try_close_tab(self, index: int) -> bool:
         if self._window_manager is not None and self._window_manager.preparing_installation:
             return False
@@ -3113,6 +3120,9 @@ class MainWindow(QMainWindow):
 
         tab = self._tab_manager.widget(index)
         if isinstance(tab, PdfTab):
+            if tab in self._editor_busy:
+                self._transient_status("Wait for the running task to finish before closing")
+                return False
             if tab.is_blank:
                 if self._is_only_blank_tab():
                     return False
@@ -3120,7 +3130,7 @@ class MainWindow(QMainWindow):
                 choice = self._prompt_unsaved_changes(tab)
                 if choice == "cancel":
                     return False
-                if choice == "save" and not self._save_as(tab):
+                if choice == "save" and not self._save_and_wait(tab):
                     return False
             self._tab_manager.close_tab(index)
             return True
@@ -3392,25 +3402,14 @@ class MainWindow(QMainWindow):
             prepared_shutdown = self._window_manager.prepared_shutdown
         else:
             prepared_shutdown = False
-        dirty_tabs: list[PdfTab] = []
-        for index in range(self._tab_manager.count()):
-            widget = self._tab_manager.widget(index)
-            if (
-                isinstance(widget, PdfTab)
-                and not widget.is_blank
-                and widget.is_dirty
-            ):
-                dirty_tabs.append(widget)
-
-        if confirm_before_closing_dirty_tabs() and not prepared_shutdown:
-            for tab in dirty_tabs:
-                choice = self._prompt_unsaved_changes(tab)
-                if choice == "cancel":
-                    event.ignore()
-                    return
-                if choice == "save" and not self._save_as(tab):
-                    event.ignore()
-                    return
+        if not prepared_shutdown:
+            if self._editor_busy:
+                self._transient_status("Wait for the running task to finish before closing")
+                event.ignore()
+                return
+            if not self._confirm_window_close():
+                event.ignore()
+                return
 
         QApplication.instance().removeEventFilter(self)
         for index in range(self._tab_manager.count()):
@@ -3423,6 +3422,24 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
         if event.isAccepted() and self._window_manager is not None:
             self._window_manager.notify_window_closed(self)
+
+    def _confirm_window_close(self) -> bool:
+        """Resolve unsaved edits first, then running tool jobs; False aborts the close."""
+        tabs = [self._tab_manager.widget(i) for i in range(self._tab_manager.count())]
+        if confirm_before_closing_dirty_tabs():
+            for tab in tabs:
+                if not isinstance(tab, PdfTab) or tab.is_blank or not tab.is_dirty:
+                    continue
+                choice = self._prompt_unsaved_changes(tab)
+                if choice == "cancel":
+                    return False
+                if choice == "save" and not self._save_and_wait(tab):
+                    return False
+        for tab in tabs:
+            request_close = None if isinstance(tab, PdfTab) else getattr(tab, "request_close", None)
+            if callable(request_close) and not request_close():
+                return False
+        return True
 
     def _should_persist_geometry(self) -> bool:
         """Only the primary editor (or unmanaged solo window) saves geometry."""
