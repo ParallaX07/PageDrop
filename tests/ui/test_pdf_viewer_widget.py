@@ -868,10 +868,23 @@ def rotated_viewer(request, qtbot, tmp_path: Path):
     finally:
         doc.close()
     viewer, model, loader = _bind_viewer(qtbot, path, extra_rotation=extra)
+    # Layout changes (scrollbars, fit width) rebuild the tiles, so only take
+    # the tile once the current one has its links and rendered pixmap.
+    qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
     tile = viewer._tiles[0]
-    qtbot.waitUntil(lambda: bool(tile._links), timeout=5000)
     yield viewer, model, tile, path, extra
     loader.close()
+
+
+def _viewer_settled(viewer: PdfViewerWidget) -> bool:
+    tile = viewer._tiles.get(0)
+    return (
+        tile is not None
+        and bool(tile._links)
+        and tile._pixmap is not None
+        and not viewer._render_timer.isActive()
+        and viewer._pool.activeThreadCount() == 0
+    )
 
 
 def _visual_rect(path: Path, rect: fitz.Rect, extra: int, tile) -> tuple[float, ...]:
@@ -904,9 +917,15 @@ def _text_rect(path: Path) -> fitz.Rect:
 def test_rotated_page_search_highlight_covers_rendered_text(
     qtbot, rotated_viewer
 ) -> None:
-    viewer, model, tile, path, extra = rotated_viewer
+    viewer, model, _tile, path, extra = rotated_viewer
     viewer.search(_ROT_TEXT)
-    qtbot.waitUntil(lambda: viewer.search_hit_count == 1 and bool(tile._hits), timeout=5000)
+    qtbot.waitUntil(
+        lambda: viewer.search_hit_count == 1
+        and 0 in viewer._tiles
+        and bool(viewer._tiles[0]._hits),
+        timeout=5000,
+    )
+    tile = viewer._tiles[0]
 
     rect = _map_pdf_rect_to_widget(
         tile._hits[0],
@@ -940,7 +959,8 @@ def test_rotated_page_search_highlight_covers_rendered_text(
 
 
 def test_rotated_page_link_click_at_visual_position(qtbot, rotated_viewer) -> None:
-    _viewer, _model, tile, path, extra = rotated_viewer
+    viewer, _model, _tile, path, extra = rotated_viewer
+    tile = viewer._tiles[0]
     x0, y0, x1, y1 = _visual_rect(path, _ROT_LINK, extra, tile)
     pos = QPoint(int((x0 + x1) / 2), int((y0 + y1) / 2))
     with qtbot.waitSignal(tile.link_activated, timeout=1000) as blocker:
@@ -949,8 +969,9 @@ def test_rotated_page_link_click_at_visual_position(qtbot, rotated_viewer) -> No
 
 
 def test_rotated_page_redaction_drag_covers_text(qtbot, rotated_viewer) -> None:
-    viewer, _model, tile, path, extra = rotated_viewer
+    viewer, _model, _tile, path, extra = rotated_viewer
     viewer.set_annot_tool(AnnotTool.REDACT)
+    tile = viewer._tiles[0]
     hit = _text_rect(path)
     x0, y0, x1, y1 = _visual_rect(path, hit, extra, tile)
     start = QPoint(int(x0) - 2, int(y0) - 2)
