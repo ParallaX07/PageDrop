@@ -1529,6 +1529,7 @@ class PdfViewerWidget(QWidget):
         self._generation = 0
         self._search_generation = 0
         self._page_sizes: list[tuple[float, float]] = []  # unrotated points
+        self._page_rots: list[int] = []  # each page's own /Rotate
         self._page_offsets: list[int] | None = None
         self._side_panel_dirty = False
         self._cache = _LruPixmapCache()
@@ -1668,6 +1669,7 @@ class PdfViewerWidget(QWidget):
         self._cache.clear()
         self._clear_tiles()
         self._page_sizes = []
+        self._page_rots = []
         self._invalidate_offsets()
         self._ocg_on.clear()
         self._ocg_source = None
@@ -1943,7 +1945,7 @@ class PdfViewerWidget(QWidget):
             ph,
             tile_w,
             tile_h,
-            ref.rotation,
+            self._display_rotation(logical, ref),
         )
         if self._layout == ViewerLayout.CONTINUOUS:
             offsets = self._page_y_offsets()
@@ -3149,24 +3151,31 @@ class PdfViewerWidget(QWidget):
     def _load_page_sizes(self) -> None:
         assert self._model is not None
         sizes: list[tuple[float, float]] = []
+        rots: list[int] = []
         for ref in self._model.iter_pages():
             try:
                 if self._get_loader is not None:
-                    sizes.append(
-                        self._get_loader(ref.source_path).page_size_pt(
-                            ref.source_index
-                        )
-                    )
+                    loader = self._get_loader(ref.source_path)
+                    size = loader.page_size_pt(ref.source_index)
+                    rot = loader.page_rotation(ref.source_index)
                 else:
                     geom = page_geometry(
                         ref.source_path,
                         ref.source_index,
                         password=self._password_for(ref.source_path),
                     )
-                    sizes.append((geom.width, geom.height))
+                    size, rot = (geom.width, geom.height), geom.rotation
             except Exception:
-                sizes.append((612.0, 792.0))
+                size, rot = (612.0, 792.0), 0
+            sizes.append(size)
+            rots.append(rot)
         self._page_sizes = sizes
+        self._page_rots = rots
+
+    def _display_rotation(self, logical: int, ref: PageRef) -> int:
+        """Page's own /Rotate plus the model's extra rotation."""
+        own = self._page_rots[logical] if logical < len(self._page_rots) else 0
+        return (own + ref.rotation) % 360
 
     def _refresh_side_panel_if_dirty(self) -> None:
         if not self._side_panel_dirty or self._model is None:
@@ -3453,7 +3462,7 @@ class PdfViewerWidget(QWidget):
             return self._render_width_px, int(self._render_width_px * 1.4)
         ref = self._model.page_at(logical)
         pw, ph = self._page_sizes[logical]
-        dw, dh = _rotated_size(pw, ph, ref.rotation)
+        dw, dh = _rotated_size(pw, ph, self._display_rotation(logical, ref))
         width = self._render_width_px
         if self._layout == ViewerLayout.SPREAD:
             width = max(MIN_PREVIEW_RENDER_WIDTH // 2, width // 2 - PAGE_GAP_PX // 2)
@@ -3507,7 +3516,7 @@ class PdfViewerWidget(QWidget):
         logical = self._current_page
         ref = self._model.page_at(logical)
         pw, ph = self._page_sizes[min(logical, len(self._page_sizes) - 1)]
-        dw, dh = _rotated_size(pw, ph, ref.rotation)
+        dw, dh = _rotated_size(pw, ph, self._display_rotation(logical, ref))
         viewport = self._scroll.viewport()
         avail_w = max(viewport.width() - 2 * PAGE_GAP_PX, MIN_PREVIEW_RENDER_WIDTH)
         avail_h = max(viewport.height() - 2 * PAGE_GAP_PX, 200)
@@ -3654,7 +3663,7 @@ class PdfViewerWidget(QWidget):
                 tile.set_page_meta(
                     pw,
                     ph,
-                    ref.rotation,
+                    self._display_rotation(logical, ref),
                     links,
                     text_provider=_text_provider,
                     widgets=widgets,

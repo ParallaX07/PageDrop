@@ -236,14 +236,15 @@ def test_shared_image_and_vector_fixture(tmp_path: Path) -> None:
         doc.close()
 
 
-def test_annots_rotated_incremental_fixtures(tmp_path: Path) -> None:
+@pytest.mark.parametrize("rotation", [90, 270])
+def test_annots_rotated_incremental_fixtures(tmp_path: Path, rotation: int) -> None:
     src = tmp_path / "annot_rot.pdf"
     doc = fitz.open()
     try:
         page = doc.new_page(width=400, height=300)
         page.insert_text((50, 100), SECRET, fontsize=14)
         page.add_highlight_annot(page.search_for(SECRET))
-        page.set_rotation(90)
+        page.set_rotation(rotation)
         doc.save(str(src))
     finally:
         doc.close()
