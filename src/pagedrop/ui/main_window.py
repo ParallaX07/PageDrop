@@ -764,6 +764,8 @@ class MainWindow(QMainWindow):
         self._editor_runner = SerializedJobRunner(self._temp_manager)
         register_editor_handlers(self._editor_runner)
         self._editor_busy: dict[PdfTab, tuple[BusyOverlay, CancelToken]] = {}
+        self._close_discarded: set[PdfTab] = set()
+        self._close_waiting = False
         self._last_tab_index = self._tab_manager.currentIndex()
         set_content_tab_order(
             self._toolbar,
@@ -3446,22 +3448,63 @@ class MainWindow(QMainWindow):
             self._window_manager.notify_window_closed(self)
 
     def _confirm_window_close(self) -> bool:
-        """Resolve unsaved edits first, then running tool jobs; False aborts the close."""
-        tabs = [self._tab_manager.widget(i) for i in range(self._tab_manager.count())]
+        """Resolve unsaved edits, then running tool jobs; False aborts or defers the close."""
+        discarded, self._close_discarded = self._close_discarded, set()
         if confirm_before_closing_dirty_tabs():
-            for tab in tabs:
-                if not isinstance(tab, PdfTab) or tab.is_blank or not tab.is_dirty:
-                    continue
+            prompted = set(discarded)
+            while True:
+                tab = next(
+                    (
+                        widget
+                        for widget in self._tab_widgets()
+                        if isinstance(widget, PdfTab)
+                        and not widget.is_blank
+                        and widget.is_dirty
+                        and widget not in prompted
+                    ),
+                    None,
+                )
+                if tab is None:
+                    break
+                prompted.add(tab)
                 choice = self._prompt_unsaved_changes(tab)
                 if choice == "cancel":
                     return False
-                if choice == "save" and not self._save_and_wait(tab):
-                    return False
-        for tab in tabs:
-            request_close = None if isinstance(tab, PdfTab) else getattr(tab, "request_close", None)
+                if choice == "save":
+                    if not self._save_and_wait(tab):
+                        return False
+                else:
+                    discarded.add(tab)
+        pages = [widget for widget in self._tab_widgets() if not isinstance(widget, PdfTab)]
+        for page in pages:
+            request_close = getattr(page, "request_close", None)
             if callable(request_close) and not request_close():
                 return False
-        return True
+        pending = [
+            page for page in pages if callable(getattr(page, "worker_pending", None)) and page.worker_pending()
+        ]
+        if not pending:
+            return True
+        # A cancelled job's worker may still be writing staging; close only after it ends.
+        self._close_discarded = discarded
+        self._persistent_status("Cancelling the running task…")
+        if not self._close_waiting:
+            self._close_waiting = True
+            remaining = len(pending)
+
+            def worker_done() -> None:
+                nonlocal remaining
+                remaining -= 1
+                if remaining == 0:
+                    self._close_waiting = False
+                    QTimer.singleShot(0, self.close)
+
+            for page in pending:
+                page.when_worker_finished(worker_done)
+        return False
+
+    def _tab_widgets(self) -> list[QWidget | None]:
+        return [self._tab_manager.widget(i) for i in range(self._tab_manager.count())]
 
     def _should_persist_geometry(self) -> bool:
         """Only the primary editor (or unmanaged solo window) saves geometry."""

@@ -421,19 +421,23 @@ class PdfTab(QWidget):
         """Open *path* in this tab. Raises PdfLoadError subclasses on failure."""
         # Open first: a cancelled password or a load error keeps the current document.
         loader = PdfLoader(path, password=password)
-        self.close_preview()
-        self._thumbnail_grid.cancel_rendering()
-        if self._edit_model is not None:
-            self._thumbnail_grid.clear()
-            self._close_loader_cache()
-        self._edit_model = None
-        self._pdf_path = None
-        self._custom_tab_title = None
-        self._quality_guidance_shown = False
+        try:
+            self.close_preview()
+            self._thumbnail_grid.cancel_rendering()
+            if self._edit_model is not None:
+                self._thumbnail_grid.clear()
+                self._close_loader_cache()
+            self._edit_model = None
+            self._pdf_path = None
+            self._custom_tab_title = None
+            self._quality_guidance_shown = False
 
-        if password is not None:
-            self._credentials.set(path, password)
-        self._loader_cache[path] = loader
+            if password is not None:
+                self._credentials.set(path, password)
+            self._loader_cache[path] = loader
+        except BaseException:
+            loader.close()
+            raise
         self._edit_model = PdfEditModel(path, loader.page_count)
         self._markup.bind_model(self._edit_model)
         self._markup.clear()

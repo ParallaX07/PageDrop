@@ -56,6 +56,8 @@ def test_unsaved_prompt_uses_custom_tab_title(
 ):
     tab = _load_and_dirty(main_window, qtbot, five_page_pdf)
     assert tab.set_custom_tab_title("Working Copy")
+    assert main_window._prompt_unsaved_changes(tab) == "discard"
+    assert unsaved_answer.calls == [tab.tab_title]
 
     seen: dict[str, str] = {}
 

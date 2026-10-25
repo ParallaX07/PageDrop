@@ -7,6 +7,7 @@ on ``ToolShellWindow`` (and similar hosts).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox, QWidget
@@ -60,6 +61,28 @@ class JobChromeMixin:
         self._job_running = False
         self._cancel_token = None
         self._job_runner = None
+        self._worker_pending = False
+        self._worker_callbacks: list[Callable[[], None]] = []
+
+    def worker_pending(self) -> bool:
+        """True from worker start until its final signal, even after the job UI ended."""
+        return self._worker_pending
+
+    def when_worker_finished(self, callback: Callable[[], None]) -> None:
+        """Run *callback* once the worker has really finished (now if none is pending)."""
+        if self._worker_pending:
+            self._worker_callbacks.append(callback)
+        else:
+            callback()
+
+    def _worker_started(self) -> None:
+        self._worker_pending = True
+
+    def _worker_finished(self) -> None:
+        self._worker_pending = False
+        callbacks, self._worker_callbacks = self._worker_callbacks, []
+        for callback in callbacks:
+            callback()
 
     def _make_job_chrome_widgets(self) -> None:
         """Create result bar, busy overlay, and toast on *self*."""
