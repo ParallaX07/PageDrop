@@ -9,6 +9,7 @@ output so no promoted redacted copy remains.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 import time
@@ -147,7 +148,8 @@ class _VerifyPlan:
 
     regions: list[dict[str, Any]] = field(default_factory=list)
     raw_scan_text: list[str] = field(default_factory=list)
-    image_digests: dict[int, list[str]] = field(default_factory=dict)
+    # Output page -> image pixel digest -> copies allowed to remain on the page.
+    image_digests: dict[int, dict[str, int]] = field(default_factory=dict)
 
 
 def _rect_hit(a: fitz.Rect, b: fitz.Rect) -> bool:
@@ -173,20 +175,78 @@ def _appears_outside_regions(
     return False
 
 
-def _region_image_digests(page: fitz.Page, rects: Sequence[fitz.Rect]) -> list[str]:
-    """Pixel digests of images under *rects* that no untouched image on the page shares.
+def _text_in_rect(page: fitz.Page, rect: fitz.Rect) -> str:
+    """Text of the characters whose bbox centre lies inside *rect*.
 
-    Pixel digests (not raw stream bytes) survive the recompressing GC save.
+    Glyphs that the rectangle only clips are kept by MuPDF's redaction, so they
+    are neither captured as secrets nor reported as remaining.
     """
-    touched: set[str] = set()
-    kept: set[str] = set()
-    for info in page.get_image_info(hashes=True):
+    lines: list[str] = []
+    for block in page.get_text("rawdict", clip=rect).get("blocks", ()):
+        for line in block.get("lines", ()):
+            chars: list[str] = []
+            for span in line.get("spans", ()):
+                for ch in span.get("chars", ()):
+                    x0, y0, x1, y1 = ch["bbox"]
+                    if rect.x0 <= (x0 + x1) / 2 < rect.x1 and rect.y0 <= (y0 + y1) / 2 < rect.y1:
+                        chars.append(ch["c"])
+            lines.append("".join(chars))
+    return _normalize_secret(" ".join(lines))
+
+
+def _covered_pixels_uniform(
+    doc: fitz.Document, info: Mapping[str, Any], area: fitz.Rect
+) -> bool:
+    """True if the image pixels under page-space *area* are a single colour.
+
+    Blanking such pixels changes nothing, so they hide no information. Any
+    doubt (inline image, decode failure) counts as not uniform.
+    """
+    xref = int(info.get("xref") or 0)
+    if xref <= 0:
+        return False
+    try:
+        pix = fitz.Pixmap(doc, xref)
+        inverse = ~fitz.Matrix(*info["transform"])
+        corners = [
+            fitz.Point(x, y) * inverse
+            for x in (area.x0, area.x1)
+            for y in (area.y0, area.y1)
+        ]
+        xs = [p.x * pix.width for p in corners]
+        ys = [p.y * pix.height for p in corners]
+        clip = fitz.IRect(
+            math.floor(min(xs)), math.floor(min(ys)), math.ceil(max(xs)), math.ceil(max(ys))
+        ) & pix.irect
+        if clip.is_empty:
+            return False
+        ratio, _colour = pix.color_topusage(clip)
+        return ratio >= 1.0
+    except Exception:
+        return False
+
+
+def _region_image_digests(
+    doc: fitz.Document, page: fitz.Page, rects: Sequence[fitz.Rect]
+) -> dict[str, int]:
+    """Pixel digest -> copies that may remain, for images the regions will blank.
+
+    Counts, not sets: a logo drawn twice with one copy under a region must
+    leave exactly one copy. Pixel digests (not raw stream bytes) survive the
+    recompressing GC save. Images whose covered pixels are one colour are skipped.
+    """
+    total: dict[str, int] = {}
+    touched: dict[str, int] = {}
+    for info in page.get_image_info(hashes=True, xrefs=True):
         digest = bytes(info.get("digest") or b"").hex()
         if not digest:
             continue
+        total[digest] = total.get(digest, 0) + 1
         bbox = fitz.Rect(info["bbox"])
-        (touched if any(_rect_hit(bbox, r) for r in rects) else kept).add(digest)
-    return sorted(touched - kept)
+        areas = [bbox & r for r in rects if _rect_hit(bbox, r)]
+        if any(not _covered_pixels_uniform(doc, info, area) for area in areas):
+            touched[digest] = touched.get(digest, 0) + 1
+    return {d: total[d] - n for d, n in touched.items()}
 
 
 def _plan_verification(
@@ -205,7 +265,7 @@ def _plan_verification(
     scan_candidates: list[str] = []
     for region in regions:
         page = doc[region.page_index]
-        captured = page.get_textbox(fitz.Rect(*region.rect)) or ""
+        captured = _text_in_rect(page, fitz.Rect(*region.rect))
         secrets: list[str] = []
         for raw in (captured, *region.expected_absent):
             secret = _normalize_secret(raw)
@@ -221,7 +281,7 @@ def _plan_verification(
             plan.raw_scan_text.append(secret)
 
     for index, rects in rects_by_page.items():
-        digests = _region_image_digests(doc[index], rects)
+        digests = _region_image_digests(doc, doc[index], rects)
         if digests:
             plan.image_digests[index] = digests
     return plan
@@ -293,7 +353,7 @@ def inspect_redaction_result(
     forbidden_image_xrefs: Sequence[int] = (),
     regions: Sequence[Mapping[str, Any]] = (),
     raw_scan_text: Sequence[str] = (),
-    forbidden_image_digests: Mapping[int, Sequence[str]] | None = None,
+    forbidden_image_digests: Mapping[int, Mapping[str, int]] | None = None,
 ) -> RedactionVerifyReport:
     """In-process inspection used by the fresh-process verifier.
 
@@ -301,7 +361,7 @@ def inspect_redaction_result(
     ``regions`` (``page``, ``rect``, ``secrets``) are checked only where they
     were redacted, so the same text elsewhere does not fail. ``raw_scan_text``
     is scanned in the raw bytes only, and ``forbidden_image_digests`` maps an
-    output page to image pixel digests that must no longer appear on it.
+    output page to ``{pixel digest: copies allowed to remain}``.
     """
     report = RedactionVerifyReport()
     doc = open_pdf(str(path), password=password)
@@ -352,7 +412,7 @@ def inspect_redaction_result(
                 continue
             page = doc[number]
             rect = fitz.Rect(*spec["rect"])
-            left = _normalize_secret(page.get_textbox(rect) or "")
+            left = _text_in_rect(page, rect)
             if left:
                 report.failures.append(
                     f"text remains under redaction region on page {number}: {left!r}"
@@ -376,13 +436,12 @@ def inspect_redaction_result(
             if not 0 <= number < doc.page_count:
                 report.failures.append(f"image check page {number} out of range")
                 continue
-            forbidden = set(digests)
+            counts: dict[str, int] = {}
             for info in doc[number].get_image_info(hashes=True):
-                if bytes(info.get("digest") or b"").hex() in forbidden:
-                    report.failures.append(
-                        f"redacted image still present on page {number}"
-                    )
-                    break
+                digest = bytes(info.get("digest") or b"").hex()
+                counts[digest] = counts.get(digest, 0) + 1
+            if any(counts.get(d, 0) > int(allowed) for d, allowed in digests.items()):
+                report.failures.append(f"redacted image still present on page {number}")
 
         if expect_no_redact_annots:
             for i, page in enumerate(doc):
@@ -440,7 +499,7 @@ def verify_redacted_pdf_fresh_process(
     forbidden_image_xrefs: Sequence[int] = (),
     regions: Sequence[Mapping[str, Any]] = (),
     raw_scan_text: Sequence[str] = (),
-    forbidden_image_digests: Mapping[int, Sequence[str]] | None = None,
+    forbidden_image_digests: Mapping[int, Mapping[str, int]] | None = None,
     timeout: float = 60.0,
     cancel: CancelToken | None = None,
 ) -> RedactionVerifyReport:
@@ -460,11 +519,16 @@ def verify_redacted_pdf_fresh_process(
         "regions": list(regions),
         "raw_scan_text": list(raw_scan_text),
         "forbidden_image_digests": {
-            str(k): list(v) for k, v in (forbidden_image_digests or {}).items()
+            str(k): dict(v) for k, v in (forbidden_image_digests or {}).items()
         },
     }
     check_cancel(cancel)
-    proc = popen_owned(verify_argv())
+    try:
+        proc = popen_owned(verify_argv())
+    except OSError as exc:
+        return RedactionVerifyReport(
+            failures=[f"could not start fresh-process verifier: {exc}"]
+        )
     deadline = time.monotonic() + timeout
     pending_input: str | None = json.dumps(payload)
     try:
@@ -490,6 +554,9 @@ def verify_redacted_pdf_fresh_process(
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier timed out after {timeout:.0f}s"]
         )
+    except BaseException:
+        kill_process_tree(proc.pid)
+        raise
     if proc.returncode not in (0, 2):
         detail = (stderr or stdout or "").strip() or f"exit {proc.returncode}"
         return RedactionVerifyReport(
@@ -540,7 +607,7 @@ def _verify_or_discard(
     forbidden_image_xrefs: Sequence[int],
     cancel: CancelToken | None,
 ) -> None:
-    """Verify *output* in a fresh process; delete it on failure or cancel."""
+    """Verify *output* in a fresh process; delete it on failure, cancel or error."""
     absent: list[str] = []
     for raw in extra_absent:
         secret = _normalize_secret(raw)
@@ -560,7 +627,7 @@ def _verify_or_discard(
             forbidden_image_digests=plan.image_digests,
             cancel=cancel,
         )
-    except JobCancelledError:
+    except BaseException:
         _delete_quiet(output)
         raise
     if not report.ok:

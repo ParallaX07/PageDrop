@@ -614,22 +614,38 @@ def test_surviving_region_text_fails_verification(
     assert any("region" in f for f in excinfo.value.failures)
 
 
-def _scanned_pdf(path: Path, tmp_path: Path) -> Path:
-    png = _png_rgb(tmp_path / "scan.png", width=64, height=64, rgb=(200, 180, 160))
+def _pattern_pixmap(white_left: int = 0, size: int = 64) -> fitz.Pixmap:
+    """Non-uniform RGB pixmap, optionally with a plain white left margin."""
+    data = bytearray()
+    for y in range(size):
+        for x in range(size):
+            if x < white_left:
+                data += b"\xff\xff\xff"
+            else:
+                data += bytes(((x * 7) % 256, (y * 13) % 256, ((x + y) * 5) % 256))
+    return fitz.Pixmap(fitz.csRGB, size, size, bytes(data), False)
+
+
+def _scanned_pdf(path: Path, tmp_path: Path, *, copies: int = 1, white_left: int = 0) -> Path:
     doc = fitz.open()
     try:
         page = doc.new_page(width=400, height=300)
-        page.insert_image(page.rect, filename=str(png))
+        pix = _pattern_pixmap(white_left)
+        if copies == 1:
+            page.insert_image(page.rect, pixmap=pix)
+        else:
+            for i in range(copies):
+                page.insert_image(fitz.Rect(20 + i * 190, 40, 190 + i * 190, 200), pixmap=pix)
         doc.save(str(path))
         return path
     finally:
         doc.close()
 
 
-def _page_image_digests(path: Path) -> set[str]:
+def _page_image_digests(path: Path) -> list[str]:
     doc = fitz.open(str(path))
     try:
-        return {i["digest"].hex() for i in doc[0].get_image_info(hashes=True)}
+        return [i["digest"].hex() for i in doc[0].get_image_info(hashes=True)]
     finally:
         doc.close()
 
@@ -645,7 +661,7 @@ def test_scanned_page_region_replaces_image_and_verifies(
     assert file_sha256(src) == before
     assert out.resolve() != src.resolve()
     assert len(verify_calls) == 1 and verify_calls[0].ok
-    assert not original & _page_image_digests(out)
+    assert not set(original) & set(_page_image_digests(out))
 
 
 def test_scanned_page_fails_when_image_not_redacted(
@@ -682,5 +698,110 @@ def test_cancel_during_verification_kills_child_and_deletes_output(
     with pytest.raises(JobCancelledError):
         redact_pdf(src, out, [RedactionRegion(0, _secret_rect(src))], verify=True, cancel=token)
     assert len(spawned) == 1 and spawned[0].poll() is not None
+    assert not out.exists()
+    assert file_sha256(src) == before
+
+
+def test_region_over_white_scan_margin_verifies(tmp_path: Path, verify_calls: list[object]) -> None:
+    src = _scanned_pdf(tmp_path / "scan.pdf", tmp_path, white_left=16)
+    before = file_sha256(src)
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [RedactionRegion(0, (10.0, 50.0, 80.0, 150.0))], verify=True)
+    assert file_sha256(src) == before and out.resolve() != src.resolve()
+    assert len(verify_calls) == 1 and verify_calls[0].ok
+
+
+def test_white_background_image_behind_text_verifies(
+    tmp_path: Path, verify_calls: list[object]
+) -> None:
+    white = _png_rgb(tmp_path / "white.png", width=16, height=16, rgb=(255, 255, 255))
+    src = tmp_path / "src.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=400, height=300)
+        page.insert_image(page.rect, filename=str(white))
+        page.insert_text((40, 80), f"Hello {SECRET} world", fontsize=14)
+        doc.save(str(src))
+    finally:
+        doc.close()
+    before = file_sha256(src)
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [RedactionRegion(0, _secret_rect(src))], verify=True)
+    assert file_sha256(src) == before and out.resolve() != src.resolve()
+    assert len(verify_calls) == 1 and verify_calls[0].ok
+    assert not _hits(out, SECRET)
+
+
+def test_repeated_image_one_copy_redacted_verifies_and_fails_when_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src = _scanned_pdf(tmp_path / "tiles.pdf", tmp_path, copies=2)
+    before = file_sha256(src)
+    region = RedactionRegion(0, (40.0, 60.0, 120.0, 140.0))
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [region], verify=True)
+    assert file_sha256(src) == before and out.resolve() != src.resolve()
+    original = _page_image_digests(src)
+    assert original[0] == original[1]
+    assert _page_image_digests(out).count(original[0]) == 1
+
+    monkeypatch.setattr(redact_module, "_IMAGES", fitz.PDF_REDACT_IMAGE_NONE)
+    failed = tmp_path / "failed.pdf"
+    with pytest.raises(RedactionVerifyError):
+        redact_pdf(src, failed, [region], verify=True)
+    assert not failed.exists() and file_sha256(src) == before
+
+
+def _glyph_edge_pdf(path: Path) -> tuple[Path, fitz.Rect]:
+    _page_pdf(path, [((40, 80), "ALPHA BRAVO CHARLIE")])
+    word = _hits(path, "BRAVO")[0]
+    # Reach 0.5pt into the glyphs on both sides (a space is about 3.9pt wide).
+    return path, fitz.Rect(word.x0 - 4.4, word.y0, word.x1 + 4.4, word.y1)
+
+
+def test_region_clipping_neighbouring_glyphs_verifies(
+    tmp_path: Path, verify_calls: list[object]
+) -> None:
+    src, rect = _glyph_edge_pdf(tmp_path / "src.pdf")
+    before = file_sha256(src)
+    out = tmp_path / "out.pdf"
+    redact_pdf(src, out, [RedactionRegion(0, tuple(rect))], verify=True)
+    assert file_sha256(src) == before and out.resolve() != src.resolve()
+    assert len(verify_calls) == 1 and verify_calls[0].ok
+    doc = fitz.open(str(out))
+    try:
+        text = doc[0].get_text()
+    finally:
+        doc.close()
+    assert "BRAVO" not in text and "ALPHA" in text and "CHARLIE" in text
+
+
+def test_region_over_secret_fails_when_text_removal_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src, rect = _glyph_edge_pdf(tmp_path / "src.pdf")
+    before = file_sha256(src)
+    out = tmp_path / "out.pdf"
+    monkeypatch.setattr(redact_module, "_TEXT", fitz.PDF_REDACT_TEXT_NONE)
+    with pytest.raises(RedactionVerifyError):
+        redact_pdf(src, out, [RedactionRegion(0, tuple(rect))], verify=True)
+    assert not out.exists() and file_sha256(src) == before
+
+
+@pytest.mark.parametrize("failure", [OSError("spawn failed"), RuntimeError("boom")])
+def test_verifier_launch_failure_deletes_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: Exception
+) -> None:
+    src = _text_pdf(tmp_path / "src.pdf")
+    before = file_sha256(src)
+    out = tmp_path / "out.pdf"
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(redact_module, "popen_owned", _boom)
+    expected = RedactionVerifyError if isinstance(failure, OSError) else RuntimeError
+    with pytest.raises(expected):
+        redact_pdf(src, out, [RedactionRegion(0, _secret_rect(src))], verify=True)
     assert not out.exists()
     assert file_sha256(src) == before
