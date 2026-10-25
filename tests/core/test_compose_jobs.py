@@ -191,6 +191,48 @@ def test_individual_pdf_job_writes_every_output(tmp_path: Path, runner) -> None:
     assert _no_staging_left(runner)
 
 
+def test_individual_pdf_job_gives_shared_stems_distinct_outputs(
+    tmp_path: Path, runner
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    images = [src_dir / name for name in ("a.png", "a.jpg", "a_2.png")]
+    for image in images:
+        _write_test_image(image, 100, 100)
+    hashes = [file_sha256(path) for path in images]
+    out_dir = tmp_path / "out"
+
+    result = runner.run(
+        JobSpec.create("images_to_pdfs", inputs=images, output=out_dir / "a.pdf")
+    )
+
+    assert result == out_dir / "a.pdf"
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "a.pdf",
+        "a_2.pdf",
+        "a_2_2.pdf",
+    ]
+    assert [file_sha256(path) for path in images] == hashes
+    assert _no_staging_left(runner)
+
+
+def test_individual_pdf_job_treats_names_differing_by_case_as_shared(
+    tmp_path: Path, runner
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    images = [src_dir / "Photo.png", src_dir / "photo.jpg"]
+    for image in images:
+        _write_test_image(image, 100, 100)
+    out_dir = tmp_path / "out"
+
+    runner.run(
+        JobSpec.create("images_to_pdfs", inputs=images, output=out_dir / "Photo.pdf")
+    )
+
+    assert sorted(p.name for p in out_dir.iterdir()) == ["Photo.pdf", "photo_2.pdf"]
+
+
 def test_individual_pdf_job_with_corrupt_third_image_publishes_nothing(
     tmp_path: Path, runner
 ) -> None:

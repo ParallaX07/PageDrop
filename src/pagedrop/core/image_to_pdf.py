@@ -184,18 +184,6 @@ def image_to_pdf_file(path: str, out_path: Path) -> None:
         doc.close()
 
 
-def planned_individual_outputs(paths: list[str], output_dir: str) -> list[Path]:
-    """Return output paths that would be written for *paths* (first occurrence only)."""
-    out_dir = Path(output_dir)
-    stem_counts: Counter[str] = Counter()
-    planned: list[Path] = []
-    for path in paths:
-        stem = Path(path).stem
-        stem_counts[stem] += 1
-        planned.append(_individual_output_path(out_dir, stem, stem_counts[stem]))
-    return planned
-
-
 def _append_image_pdf(doc: fitz.Document, path: str) -> None:
     filename = Path(path).name
     try:

@@ -243,7 +243,7 @@ def _run_office_conversion(
                 inputs=[source],
                 output=output,
                 options={"backend": engine},
-                overwrite=True,
+                overwrite=bool(existing),
             ),
             progress=shell.set_job_progress,
             cancel=token,

@@ -12,6 +12,7 @@ fitz-heavy handlers — same stage/promote/cancel API.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -66,15 +67,39 @@ def _validate_destinations(
     spec: JobSpec, extras: list[tuple[Path, Path]]
 ) -> None:
     """Check every destination before any file is promoted."""
-    seen: set[Path] = set()
+    seen: set[str] = set()
     for destination in (Path(spec.output), *(dest for _, dest in extras)):
-        resolved = destination.resolve()
+        resolved = os.path.normcase(str(destination.resolve()))
         if resolved in seen:
             raise JobError(f"Two outputs share one destination: {destination}")
         seen.add(resolved)
         reject_source_overwrite(destination, *spec.inputs)
         if destination.exists() and not spec.overwrite:
             raise OutputExistsError(str(destination))
+
+
+def _promote_all(staging: JobStaging, pairs: list[tuple[Path, Path]]) -> Path:
+    """Promote every pair; on failure undo the files this job newly created.
+
+    Destinations that existed before (confirmed overwrites) cannot be restored,
+    so the error names any that were already replaced.
+    """
+    existed = {dest for _, dest in pairs if dest.exists()}
+    done: list[Path] = []
+    try:
+        for staged, destination in pairs:
+            staging.promote(staged, destination)
+            done.append(destination)
+    except Exception as exc:
+        for destination in done:
+            if destination not in existed:
+                destination.unlink(missing_ok=True)
+        replaced = [str(dest) for dest in done if dest in existed]
+        message = f"Could not write all outputs: {exc}"
+        if replaced:
+            message += ". Already replaced: " + ", ".join(replaced)
+        raise JobError(message) from exc
+    return done[0]
 
 
 class SerializedJobRunner:
@@ -185,9 +210,9 @@ class SerializedJobRunner:
                 token.check()
             _validate_destinations(spec, ctx.extra_outputs)
             report(0.95, "Promoting output…")
-            promoted = staging.promote(result_staged, Path(spec.output))
-            for staged_extra, destination in ctx.extra_outputs:
-                staging.promote(staged_extra, destination)
+            promoted = _promote_all(
+                staging, [(result_staged, Path(spec.output)), *ctx.extra_outputs]
+            )
             report(1.0, "Done")
             return promoted
         except Exception as exc:

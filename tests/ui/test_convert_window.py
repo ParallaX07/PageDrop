@@ -161,6 +161,36 @@ def test_separate_mode_multi_file_copy_mentions_showing_first(
     assert window.editor is None
 
 
+def test_separate_mode_shared_stems_get_distinct_outputs(
+    qtbot, tmp_path, monkeypatch
+):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    images = [src_dir / name for name in ("a.png", "a.jpg", "a_2.png")]
+    for image in images:
+        _write_test_image(image, 100, 100)
+    out_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *a, **k: str(out_dir)
+    )
+
+    window = _convert_window(qtbot)
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+    window._add_paths([str(p) for p in images])
+    window._separate_mode_action.setChecked(True)
+    window._create_pdfs()
+
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "a.pdf",
+        "a_2.pdf",
+        "a_2_2.pdf",
+    ]
+    assert "Created 3 PDF files" in window.statusBar().currentMessage()
+
+
 def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monkeypatch):
     png = tmp_path / "solo.png"
     _write_test_image(png, 100, 100)
