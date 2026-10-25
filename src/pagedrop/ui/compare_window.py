@@ -186,8 +186,12 @@ def _render_page_pixmap(
     width_px: int,
     *,
     passwords: dict[str, str] | None = None,
-) -> tuple[QPixmap, fitz.Rect]:
-    """Render one compare pane via ``pdf_service`` (holds ``FITZ_LOCK``)."""
+) -> tuple[QPixmap, fitz.Rect, fitz.Matrix]:
+    """Render one compare pane via ``pdf_service`` (holds ``FITZ_LOCK``).
+
+    Returns the pixmap, the displayed page rect and the matrix that maps
+    unrotated (text-diff) coordinates onto it.
+    """
     target = max(1, min(int(width_px), COMPARE_MAX_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX))
     password = RuntimeCredentials.lookup(passwords, path)
     geom = page_geometry(path, page_index, password=password)
@@ -195,7 +199,7 @@ def _render_page_pixmap(
     qpix = QPixmap()
     if not qpix.loadFromData(png):
         raise PdfLoadError(f"Could not decode page render for {Path(path).name}")
-    return qpix, fitz.Rect(0, 0, *geom.visual_size)
+    return qpix, fitz.Rect(0, 0, *geom.visual_size), geom.rotation_matrix
 
 
 class _PathBrowseRow(QWidget):
@@ -235,13 +239,14 @@ class _PathBrowseRow(QWidget):
 
 
 class _ComparePageCanvas(QWidget):
-    """Page pixmap with translucent highlight rectangles in PDF space."""
+    """Page pixmap with translucent highlight rectangles in unrotated PDF space."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._pixmap = QPixmap()
         self._page_rect = fitz.Rect(0, 0, 1, 1)
         self._highlights: list[tuple[tuple[float, float, float, float], QColor]] = []
+        self._to_visual = fitz.Matrix(1, 0, 0, 1, 0, 0)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
     def set_content(
@@ -249,10 +254,12 @@ class _ComparePageCanvas(QWidget):
         pixmap: QPixmap,
         page_rect: fitz.Rect,
         highlights: list[tuple[tuple[float, float, float, float], QColor]],
+        to_visual: fitz.Matrix | None = None,
     ) -> None:
         self._pixmap = pixmap
         self._page_rect = page_rect
         self._highlights = highlights
+        self._to_visual = to_visual or fitz.Matrix(1, 0, 0, 1, 0, 0)
         if not pixmap.isNull():
             self.setFixedSize(pixmap.size())
         else:
@@ -269,9 +276,10 @@ class _ComparePageCanvas(QWidget):
         painter.drawPixmap(0, 0, self._pixmap)
         sx = self._pixmap.width() / max(1.0, float(self._page_rect.width))
         sy = self._pixmap.height() / max(1.0, float(self._page_rect.height))
-        for (x0, y0, x1, y1), color in self._highlights:
+        for rect, color in self._highlights:
+            r = fitz.Rect(rect) * self._to_visual
             painter.fillRect(
-                QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy),
+                QRectF(r.x0 * sx, r.y0 * sy, r.width * sx, r.height * sy),
                 color,
             )
 
@@ -317,8 +325,9 @@ class _ComparePane(QWidget):
         pixmap: QPixmap,
         page_rect: fitz.Rect,
         highlights: list[tuple[tuple[float, float, float, float], QColor]],
+        to_visual: fitz.Matrix | None = None,
     ) -> None:
-        self._canvas.set_content(pixmap, page_rect, highlights)
+        self._canvas.set_content(pixmap, page_rect, highlights, to_visual)
 
 
 class CompareWindow(JobChromeMixin, QWidget):
@@ -767,12 +776,13 @@ class CompareWindow(JobChromeMixin, QWidget):
         rects = change.rects_a or change.rects_b
         if not rects:
             return
-        x0, y0, _x1, _y1 = rects[0]
         # Approximate scroll using current canvas scale from pane A width.
         pane = self._pane_a if change.rects_a else self._pane_b
         canvas = pane.scroll.widget()
         if not isinstance(canvas, _ComparePageCanvas) or canvas._pixmap.isNull():
             return
+        shown = fitz.Rect(rects[0]) * canvas._to_visual
+        x0, y0 = shown.x0, shown.y0
         sy = canvas._pixmap.height() / max(1.0, float(canvas._page_rect.height))
         pane.scroll.ensureVisible(int(x0), int(y0 * sy), 40, 80)
 
@@ -842,17 +852,17 @@ class CompareWindow(JobChromeMixin, QWidget):
 
         if self._page_index < self._report.page_count_a:
             try:
-                pix_a, rect_a = _render_page_pixmap(
+                pix_a, rect_a, to_visual_a = _render_page_pixmap(
                     self._path_a,
                     self._page_index,
                     width,
                     passwords=passwords,
                 )
             except Exception as exc:
-                pix_a, rect_a = empty, empty_rect
+                pix_a, rect_a, to_visual_a = empty, empty_rect, None
                 errors.append(f"Original: {exc}")
             hl_a = self._highlights_for_page("a", self._page_index)
-            self._pane_a.set_content(pix_a, rect_a, hl_a)
+            self._pane_a.set_content(pix_a, rect_a, hl_a, to_visual_a)
             self._pane_a.set_notice(
                 "No extractable text on this page"
                 if self._page_index in self._report.textless_pages_a
@@ -864,17 +874,17 @@ class CompareWindow(JobChromeMixin, QWidget):
 
         if self._page_index < self._report.page_count_b:
             try:
-                pix_b, rect_b = _render_page_pixmap(
+                pix_b, rect_b, to_visual_b = _render_page_pixmap(
                     self._path_b,
                     self._page_index,
                     width,
                     passwords=passwords,
                 )
             except Exception as exc:
-                pix_b, rect_b = empty, empty_rect
+                pix_b, rect_b, to_visual_b = empty, empty_rect, None
                 errors.append(f"Revised: {exc}")
             hl_b = self._highlights_for_page("b", self._page_index)
-            self._pane_b.set_content(pix_b, rect_b, hl_b)
+            self._pane_b.set_content(pix_b, rect_b, hl_b, to_visual_b)
             self._pane_b.set_notice(
                 "No extractable text on this page"
                 if self._page_index in self._report.textless_pages_b
