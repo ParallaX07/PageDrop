@@ -72,7 +72,7 @@ def test_merge_has_workflow_header_and_demotes_rerun_after_success(
     assert header.findChild(QLabel, "ToolWorkflowTitle").text() == "Merge PDFs"
     window._add_paths([str(one_page_pdf)])
     window._merge_pdfs()
-    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
     button = window._toolbar.widgetForAction(window._merge_action)
     assert button.property("resultAvailable") is True
 
@@ -91,10 +91,10 @@ def test_merge_runs_in_background_without_blocking_ui(qtbot, one_page_pdf, five_
     window._add_paths([str(one_page_pdf), str(five_page_pdf)])
 
     window._merge_pdfs()
-    assert window._merging
+    assert window.is_job_running()
     assert window._busy_overlay.isVisible()
 
-    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
     assert output.is_file()
     qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
     assert "Merged 2 files" in window.statusBar().currentMessage()
@@ -102,7 +102,7 @@ def test_merge_runs_in_background_without_blocking_ui(qtbot, one_page_pdf, five_
     assert window._result_bar._path == str(output)
     assert window._toast.isVisible()
     assert window._toast._message.accessibleName()
-    assert "Merged 2 files" in window._toast._message.text()
+    assert window._toast._message.text() == "Completed"
     # Explicit result actions only — merge does not auto-open a PDF editor tab.
     assert window.editor is None
     assert window._result_bar._preview_btn.text() == "Preview"
@@ -298,7 +298,7 @@ def test_merge_encrypted_prompts_password_leaves_sources_unchanged(
     )
 
     window._merge_pdfs()
-    qtbot.waitUntil(lambda: not window._merging, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
 
     assert output.is_file()
     assert file_sha256(enc_a) == hash_a
@@ -313,7 +313,7 @@ def test_merge_encrypted_prompts_password_leaves_sources_unchanged(
 
 def test_request_close_while_merging_explains_busy(qtbot, monkeypatch):
     window = _merge_window(qtbot)
-    window._merging = True
+    window.begin_job("Merging PDFs…")
     toasts: list[tuple[str, str]] = []
     monkeypatch.setattr(
         window._toast,
@@ -321,15 +321,15 @@ def test_request_close_while_merging_explains_busy(qtbot, monkeypatch):
         lambda msg, kind="info": toasts.append((msg, kind)),
     )
 
+    assert window.is_job_running()
     assert window.request_close() is False
     assert "still running" in window.statusBar().currentMessage()
     assert toasts and toasts[-1] == ("Merge still running…", "info")
 
 
-def test_merge_failed_matches_end_job_feedback(qtbot, monkeypatch):
+def test_merge_failed_shows_shared_job_feedback(qtbot, monkeypatch):
     window = _merge_window(qtbot)
-    window._merging = True
-    window._busy_overlay.show_message("Merging PDFs…")
+    window.begin_job("Merging PDFs…")
     toasts: list[tuple[str, str]] = []
     dialogs: list[object] = []
     monkeypatch.setattr(
@@ -343,10 +343,68 @@ def test_merge_failed_matches_end_job_feedback(qtbot, monkeypatch):
         lambda *args, **kwargs: dialogs.append(args) or QMessageBox.StandardButton.Ok,
     )
 
-    window._on_merge_failed("merge boom")
+    window.end_job(error="merge boom", toast="Job failed", toast_kind="error")
 
-    assert not window._merging
+    assert not window.is_job_running()
     qtbot.waitUntil(lambda: not window._busy_overlay.isVisible(), timeout=1000)
-    assert window.statusBar().currentMessage() == "Merge failed"
-    assert toasts and toasts[-1] == ("Merge failed", "error")
+    assert window.statusBar().currentMessage() == "Job failed"
+    assert toasts and toasts[-1] == ("Job failed", "error")
     assert dialogs and "merge boom" in str(dialogs[-1])
+
+
+def test_merge_into_a_source_file_is_rejected_and_source_unchanged(
+    qtbot, one_page_pdf, five_page_pdf, monkeypatch
+):
+    before = file_sha256(five_page_pdf)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(five_page_pdf), "PDF Files (*.pdf)"),
+    )
+    window = _merge_window(qtbot)
+    window._add_paths([str(one_page_pdf), str(five_page_pdf)])
+
+    window._merge_pdfs()
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+
+    assert file_sha256(five_page_pdf) == before
+    assert window.statusBar().currentMessage() == "Job failed"
+    assert not window._result_bar.isVisible()
+
+
+def test_merge_cancel_stops_job_and_leaves_no_output(
+    qtbot, one_page_pdf, five_page_pdf, tmp_path, monkeypatch
+):
+    from pagedrop.core import pdf_writer
+
+    output = tmp_path / "merged.pdf"
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "PDF Files (*.pdf)"),
+    )
+    window = _merge_window(qtbot)
+    window._add_paths([str(one_page_pdf), str(five_page_pdf)])
+    real_cached_doc = pdf_writer._cached_doc
+
+    def cancel_after_first(path, docs, passwords):
+        doc = real_cached_doc(path, docs, passwords)
+        window._cancel_token.cancel()
+        return doc
+
+    monkeypatch.setattr(pdf_writer, "_cached_doc", cancel_after_first)
+    window._merge_pdfs()
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
+
+    assert not output.exists()
+    assert window.statusBar().currentMessage() == "Cancelled"
+
+
+def test_merge_overlay_cancel_requests_job_cancel(qtbot):
+    window = _merge_window(qtbot)
+    token = window.begin_job("Merging PDFs…")
+
+    window._busy_overlay.cancelled.emit()
+
+    assert token.is_cancelled()
+    window.end_job()

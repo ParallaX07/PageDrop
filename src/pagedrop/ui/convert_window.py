@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QPixmap, QResizeEvent, QShowEvent, QWheelEvent
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -22,14 +22,11 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.image_to_pdf import (
     ConvertModel,
     ImageConvertError,
-    images_to_individual_pdfs,
-    images_to_single_pdf,
     inspect_image,
-    planned_individual_outputs,
     validate_images,
 )
+from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX
-from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.supported_formats import (
     image_dialog_filter,
     is_pdf_path,
@@ -37,7 +34,7 @@ from pagedrop.core.supported_formats import (
 )
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.convert_file_grid import ConvertFileGrid, render_image_thumbnail_png
-from pagedrop.ui.dialogs import confirm_overwrite, prompt_discard_file_list
+from pagedrop.ui.dialogs import prompt_discard_file_list
 from pagedrop.ui import icons
 from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
 from pagedrop.ui.keyboard_nav import (
@@ -56,8 +53,8 @@ from pagedrop.ui.theme import (
     ZOOM_WHEEL_STEP,
 )
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
+from pagedrop.ui.tool_shell import run_tool_job
 from pagedrop.ui.zoom_controls import ZoomControls
-from pagedrop.utils.diagnostics import log_failure
 
 _PREVIEW_FOOTER_HINT = (
     "← → or ↑ ↓ change image  ·  Ctrl+scroll zoom  ·  Ctrl+0 fit width  ·  Esc back to grid"
@@ -273,71 +270,6 @@ class _ImagePreviewWidget(QWidget):
         self._image_label.adjustSize()
 
 
-class _ConvertWorker(QRunnable):
-    class Signals(QObject):
-        succeeded = pyqtSignal(object)
-        failed = pyqtSignal(str)
-
-    def __init__(
-        self,
-        paths: list[str],
-        output_mode: str,
-        output_path: str | None,
-        output_dir: str | None,
-        *,
-        overwrite: bool,
-    ) -> None:
-        super().__init__()
-        self.signals = self.Signals()
-        self._paths = paths
-        self._output_mode = output_mode
-        self._output_path = output_path
-        self._output_dir = output_dir
-        self._overwrite = overwrite
-        self.setAutoDelete(True)
-
-    def run(self) -> None:
-        # Paths only; FITZ_LOCK around fitz convert; pool max 1.
-        try:
-            with FITZ_LOCK:
-                if self._output_mode == _OUTPUT_SINGLE:
-                    assert self._output_path is not None
-                    images_to_single_pdf(self._paths, self._output_path)
-                    result: object = self._output_path
-                else:
-                    assert self._output_dir is not None
-                    result = images_to_individual_pdfs(
-                        self._paths,
-                        self._output_dir,
-                        overwrite=self._overwrite,
-                    )
-            self.signals.succeeded.emit(result)
-        except ImageConvertError as exc:
-            log_failure(
-                "Create PDF",
-                exc,
-                inputs=", ".join(self._paths),
-                output=self._output_path or self._output_dir,
-            )
-            self.signals.failed.emit(str(exc))
-        except OSError as exc:
-            log_failure(
-                "Create PDF",
-                exc,
-                inputs=", ".join(self._paths),
-                output=self._output_path or self._output_dir,
-            )
-            self.signals.failed.emit(f"Could not write PDF:\n{exc}")
-        except Exception as exc:
-            log_failure(
-                "Create PDF",
-                exc,
-                inputs=", ".join(self._paths),
-                output=self._output_path or self._output_dir,
-            )
-            self.signals.failed.emit(f"Could not create PDF:\n{exc}")
-
-
 class ConvertWindow(JobChromeMixin, QWidget):
     WINDOW_TITLE = "Create PDF"
     PAGE_ID = "create_pdf"
@@ -354,9 +286,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._model = ConvertModel()
         self._dimensions: dict[str, tuple[int, int]] = {}
         self._output_mode = _OUTPUT_SINGLE
-        self._converting = False
-        self._convert_pool = QThreadPool(self)
-        self._convert_pool.setMaxThreadCount(1)
+        self._init_job_chrome_state()
         self._status = StatusFooter()
 
         self.setWindowTitle(self.WINDOW_TITLE)
@@ -412,6 +342,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._root.addWidget(self._stack, stretch=1)
 
         self._busy_overlay = BusyOverlay(self._stack)
+        self._busy_overlay.cancelled.connect(self.cancel_active_job)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Create PDF", self)
@@ -547,8 +478,6 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._preview_widget.image_changed.connect(self._on_preview_image_changed)
         self._single_mode_action.toggled.connect(self._on_output_mode_changed)
         self._wire_result_actions()
-        # ponytail: whole-file convert has no CancelToken — Cancel stays hidden;
-        # Escape/close explain "still running…". Upgrade: cancel in images_to_* helpers.
         self._busy_overlay.escape_blocked.connect(self._explain_busy)
 
     def _selected_indices(self) -> list[int]:
@@ -590,13 +519,13 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._create_action.setVisible(not in_preview)
         self._zoom_controls.setVisible(not in_preview)
 
-        toolbar_enabled = not self._converting
+        toolbar_enabled = not self.is_job_running()
         self._add_action.setEnabled(toolbar_enabled)
         self._remove_action.setEnabled(has_selection and toolbar_enabled)
         self._move_up_action.setEnabled(self._can_move_up() and toolbar_enabled)
         self._move_down_action.setEnabled(self._can_move_down() and toolbar_enabled)
-        self._create_action.setEnabled(has_files and not self._converting)
-        self._zoom_controls.setEnabled(has_files and not in_preview and not self._converting)
+        self._create_action.setEnabled(has_files and not self.is_job_running())
+        self._zoom_controls.setEnabled(has_files and not in_preview and not self.is_job_running())
         self._output_mode_host.setEnabled(toolbar_enabled)
         self._set_result_precedence(self._result_bar.isVisible())
 
@@ -810,8 +739,9 @@ class ConvertWindow(JobChromeMixin, QWidget):
             return False
         return True
 
-    def _confirm_overwrite(self, paths: list[Path]) -> bool:
-        return confirm_overwrite(self, paths, window_title=self.WINDOW_TITLE)
+    def _set_job_controls_enabled(self, enabled: bool) -> None:
+        self._busy_overlay.set_cancellable(not enabled)
+        self._update_actions()
 
     def _create_pdfs(self) -> None:
         if self._model.file_count() == 0:
@@ -820,7 +750,6 @@ class ConvertWindow(JobChromeMixin, QWidget):
             return
 
         paths = self._model.all_paths()
-        overwrite = False
 
         if self._output_mode == _OUTPUT_SINGLE:
             path, _ = QFileDialog.getSaveFileName(
@@ -828,14 +757,14 @@ class ConvertWindow(JobChromeMixin, QWidget):
                 "Save PDF",
                 self._default_output_path(),
                 "PDF files (*.pdf);;All files (*)",
+                "",
+                QFileDialog.Option.DontConfirmOverwrite,
             )
             if not path:
                 return
             if not path.lower().endswith(".pdf"):
                 path = f"{path}.pdf"
-            if Path(path).exists() and not self._confirm_overwrite([Path(path)]):
-                return
-            self._start_convert(paths, output_path=path, overwrite=overwrite)
+            self._start_convert(paths, "images_to_pdf", [Path(path)])
             return
 
         folder = QFileDialog.getExistingDirectory(
@@ -846,43 +775,36 @@ class ConvertWindow(JobChromeMixin, QWidget):
         if not folder:
             return
 
-        planned = planned_individual_outputs(paths, folder)
-        existing = [path for path in planned if path.exists()]
-        if existing and not self._confirm_overwrite(existing):
-            return
-        overwrite = bool(existing)
         remember_directory(folder)
-        self._start_convert(paths, output_dir=folder, overwrite=overwrite)
+        self._start_convert(paths, "images_to_pdfs", batch_output_paths(paths, folder))
 
     def _start_convert(
-        self,
-        paths: list[str],
-        *,
-        output_path: str | None = None,
-        output_dir: str | None = None,
-        overwrite: bool = False,
+        self, paths: list[str], job_type: str, outputs: list[Path]
     ) -> None:
-        self._converting = True
-        self._result_bar.clear()
-        busy = (
-            "Creating PDF…"
-            if self._output_mode == _OUTPUT_SINGLE
-            else "Creating PDFs…"
-        )
-        self._busy_overlay.show_message(busy)
-        self.statusBar().showMessage(busy)
-        self._update_actions()
+        count = len(paths)
+        noun = "image" if count == 1 else "images"
+        written = len(outputs)
 
-        worker = _ConvertWorker(
-            paths,
-            self._output_mode,
-            output_path,
-            output_dir,
-            overwrite=overwrite,
+        def success_message(result: str) -> str:
+            remember_directory(result)
+            if job_type == "images_to_pdf":
+                return f"Created PDF from {count} {noun}: {Path(result).name}"
+            file_noun = "file" if written == 1 else "files"
+            status = f"Created {written} PDF {file_noun} from {count} {noun}"
+            # The result bar binds to the first path only.
+            return f"{status}. Showing first" if written > 1 else status
+
+        run_tool_job(
+            self,
+            job_type=job_type,
+            inputs=paths,
+            output=str(outputs[0]),
+            existing_paths=[path for path in outputs if path.exists()],
+            progress_message=(
+                "Creating PDF…" if job_type == "images_to_pdf" else "Creating PDFs…"
+            ),
+            success_toast=success_message,
         )
-        worker.signals.succeeded.connect(self._on_convert_succeeded)
-        worker.signals.failed.connect(self._on_convert_failed)
-        self._convert_pool.start(worker)
 
     def _explain_busy(self) -> None:
         explain_busy_running(
@@ -890,51 +812,6 @@ class ConvertWindow(JobChromeMixin, QWidget):
             toast=self._toast,
             label="Create PDF",
         )
-
-    def _finish_convert(self) -> None:
-        self._converting = False
-        self._busy_overlay.hide_overlay()
-        self._update_actions()
-
-    def _on_convert_succeeded(self, result: object) -> None:
-        self._finish_convert()
-        count = self._model.file_count()
-        noun = "image" if count == 1 else "images"
-
-        if isinstance(result, str):
-            remember_directory(result)
-            filename = Path(result).name
-            status = f"Created PDF from {count} {noun}: {filename}"
-            self.statusBar().showMessage(status)
-            self._toast.show_toast(status, kind="success")
-            self._result_bar.show_for(result, message=status)
-            self._set_result_precedence(True)
-            return
-
-        written = list(result)
-        if written:
-            remember_directory(written[0])
-        file_noun = "file" if len(written) == 1 else "files"
-        status = f"Created {len(written)} PDF {file_noun} from {count} {noun}"
-        # ResultActionsBar still binds to the first path only (O12 — no multi-file API).
-        if len(written) > 1:
-            status = f"{status}. Showing first"
-        self.statusBar().showMessage(status)
-        self._toast.show_toast(status, kind="success")
-        if written:
-            self._result_bar.show_for(
-                written[0],
-                message=status,
-                show_path=len(written) == 1,
-            )
-            self._set_result_precedence(True)
-
-    def _on_convert_failed(self, message: str) -> None:
-        self._finish_convert()
-        self._result_bar.clear()
-        self.statusBar().showMessage("Create PDF failed")
-        self._toast.show_toast("Create PDF failed", kind="error")
-        QMessageBox.critical(self, self.WINDOW_TITLE, message)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -960,7 +837,7 @@ class ConvertWindow(JobChromeMixin, QWidget):
         self._refresh_grid()
 
     def request_close(self) -> bool:
-        if self._converting:
+        if self.is_job_running():
             self._explain_busy()
             return False
 

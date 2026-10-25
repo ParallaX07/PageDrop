@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.command_palette import collect_actions
-from pagedrop.ui.dialogs import confirm_overwrite, prompt_unsaved_changes
+from pagedrop.ui.dialogs import prompt_unsaved_changes
 
 
 def test_action_registry_rejects_duplicate_keys(qtbot):
@@ -77,10 +78,25 @@ def test_toast_announces_message_to_assistive_tech(qtbot):
     assert toast._message.accessibleDescription() == "Success notification"
 
 
-def test_prompt_unsaved_and_overwrite_centralised(monkeypatch, qtbot):
+def test_prompt_unsaved_centralised(monkeypatch, qtbot):
     parent = QWidget()
     qtbot.addWidget(parent)
 
     monkeypatch.setenv("PAGEDROP_TESTING", "1")
     assert prompt_unsaved_changes(parent, "Doc*") == "discard"
-    assert confirm_overwrite(parent, [Path("/tmp/a.pdf")], window_title="T") is True
+
+
+@pytest.mark.parametrize(
+    ("button", "expected"),
+    [(QMessageBox.StandardButton.Yes, True), (QMessageBox.StandardButton.No, False)],
+)
+def test_confirm_overwrite_follows_dialog_answer(
+    monkeypatch, qtbot, overwrite_answer, button, expected
+):
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: button)
+    assert (
+        overwrite_answer.real(parent, [Path("/tmp/a.pdf")], window_title="T")
+        is expected
+    )

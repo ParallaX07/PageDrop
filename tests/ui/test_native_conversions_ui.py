@@ -18,6 +18,7 @@ from pagedrop.ui.native_convert_shell import (
 )
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
+from tests.conftest import file_sha256
 
 
 def _write_pdf(path: Path, pages: int = 3, text: str = "hello") -> None:
@@ -198,6 +199,66 @@ def test_convert_shell_batch_via_job_runner(
     assert (out_dir / "a.pdf").is_file()
     assert (out_dir / "b.pdf").is_file()
     assert shell._result_bar.isVisible()
+
+
+def _open_batch_shell(qtbot, paths, out_dir, monkeypatch):
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+    shell = open_conversion_shell(tools, "convert_to_pdf")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(p) for p in paths])
+    monkeypatch.setattr(
+        "pagedrop.ui.native_convert_shell._pick_folder",
+        lambda parent, title: str(out_dir),
+    )
+    return shell
+
+
+def _shared_stem_sources(tmp_path):
+    (tmp_path / "x").mkdir()
+    (tmp_path / "y").mkdir()
+    a = tmp_path / "x" / "scan.txt"
+    b = tmp_path / "y" / "scan.md"
+    a.write_text("Alpha page", encoding="utf-8")
+    b.write_text("# Beta\n\nBody", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    return a, b, out_dir
+
+
+def test_convert_shell_batch_predicts_distinct_names(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    a, b, out_dir = _shared_stem_sources(tmp_path)
+    (out_dir / "scan_2.pdf").write_bytes(b"%PDF-")
+    shell = _open_batch_shell(qtbot, [a, b], out_dir, monkeypatch)
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "pagedrop.ui.native_convert_shell.run_tool_job",
+        lambda host, **kwargs: captured.update(kwargs),
+    )
+    shell._run_btn.click()
+
+    assert Path(captured["output"]) == out_dir / "scan.pdf"
+    assert captured["existing_paths"] == [out_dir / "scan_2.pdf"]
+    assert captured["success_toast"] == "Wrote 2 PDF(s)"
+
+
+def test_convert_shell_batch_shared_stems_write_distinct_pdfs(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    a, b, out_dir = _shared_stem_sources(tmp_path)
+    hashes = (file_sha256(a), file_sha256(b))
+    shell = _open_batch_shell(qtbot, [a, b], out_dir, monkeypatch)
+
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=15000)
+
+    assert sorted(p.name for p in out_dir.iterdir()) == ["scan.pdf", "scan_2.pdf"]
+    assert (file_sha256(a), file_sha256(b)) == hashes
 
 
 def test_export_shell_cancel_mid_run_clears_busy_chrome(

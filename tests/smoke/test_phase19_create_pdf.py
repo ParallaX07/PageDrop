@@ -71,7 +71,7 @@ def test_smoke_combine_and_separate_modes(qtbot, tmp_path, monkeypatch):
         lambda *args, **kwargs: (str(ui_combined), "PDF Files (*.pdf)"),
     )
     window._create_pdfs()
-    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
     assert _page_count(ui_combined) == 3
 
     ui_separate_dir = tmp_path / "ui_separate"
@@ -82,7 +82,7 @@ def test_smoke_combine_and_separate_modes(qtbot, tmp_path, monkeypatch):
     )
     window._separate_mode_action.setChecked(True)
     window._create_pdfs()
-    qtbot.waitUntil(lambda: not window._converting, timeout=10000)
+    qtbot.waitUntil(lambda: not window.is_job_running(), timeout=10000)
 
     ui_written = sorted(ui_separate_dir.glob("*.pdf"))
     assert len(ui_written) == 3

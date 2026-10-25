@@ -803,3 +803,93 @@ def test_tool_shell_hides_idle_status_footer(qtbot):
     assert status.currentMessage() == "Working…"
     status.showMessage("")
     assert status.isHidden()
+
+
+class _RecordingHost:
+    WINDOW_TITLE = "Tools"
+
+    def __init__(self) -> None:
+        self.specs: list = []
+        self.ended: list[dict] = []
+        self._running = False
+        host = self
+
+        class _Runner:
+            def run(self, spec, **_kwargs):
+                host.specs.append(spec)
+                return spec.output
+
+        self._runner = _Runner()
+
+    def job_runner(self):
+        return self._runner
+
+    def set_job_progress(self, _fraction: float, _message: str) -> None:
+        pass
+
+    def begin_job(self, _message: str = "Working…") -> CancelToken:
+        self._running = True
+        return CancelToken()
+
+    def is_job_running(self) -> bool:
+        return self._running
+
+    def end_job(self, **kwargs) -> None:
+        self._running = False
+        self.ended.append(kwargs)
+
+
+def test_run_tool_job_rejects_source_output_before_asking_to_overwrite(
+    tmp_path: Path, overwrite_answer
+):
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    source_hash = file_sha256(src)
+    host = _RecordingHost()
+
+    run_tool_job(host, job_type="reverse", inputs=[str(src)], output=str(src))
+
+    assert overwrite_answer.calls == []
+    assert host.specs == []
+    assert host.ended[-1]["toast"] == "Cannot overwrite source"
+    assert file_sha256(src) == source_hash
+
+
+def test_run_tool_job_declined_overwrite_leaves_existing_file(
+    tmp_path: Path, overwrite_answer
+):
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+    out.write_bytes(b"existing")
+    source_hash = file_sha256(src)
+    overwrite_answer.answer = False
+    host = _RecordingHost()
+
+    run_tool_job(host, job_type="reverse", inputs=[str(src)], output=str(out))
+
+    assert overwrite_answer.calls == [[out]]
+    assert host.specs == []
+    assert host.ended[-1]["status"] == "Cancelled"
+    assert out.read_bytes() == b"existing"
+    assert file_sha256(src) == source_hash
+
+
+def test_run_tool_job_only_allows_overwrite_when_user_confirmed(
+    tmp_path: Path, qtbot, overwrite_answer
+):
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    fresh = tmp_path / "fresh.pdf"
+    taken = tmp_path / "taken.pdf"
+    taken.write_bytes(b"existing")
+    host = _RecordingHost()
+
+    run_tool_job(host, job_type="reverse", inputs=[str(src)], output=str(fresh))
+    qtbot.waitUntil(lambda: len(host.specs) == 1, timeout=5000)
+    run_tool_job(host, job_type="reverse", inputs=[str(src)], output=str(taken))
+    qtbot.waitUntil(lambda: len(host.specs) == 2, timeout=5000)
+
+    assert host.specs[0].overwrite is False
+    assert host.specs[1].overwrite is True
+    assert overwrite_answer.calls == [[taken]]

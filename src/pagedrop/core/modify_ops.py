@@ -19,6 +19,7 @@ import fitz
 
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.paths import reject_source_overwrite
+from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import open_pdf
 
 CropMode = Literal["cropbox", "rebuild"]
@@ -633,10 +634,9 @@ def add_bates_across_files(
     passwords = passwords or {}
     next_num = start
     written: list[Path] = []
-    for source in sources:
+    dests = batch_output_paths(sources, out_dir, f"{suffix}.pdf")
+    for source, dest in zip(sources, dests, strict=True):
         _check_cancel(cancel)
-        src_path = Path(source)
-        dest = out_dir / f"{src_path.stem}{suffix}{src_path.suffix}"
         reject_source_overwrite(dest, source)
         next_num = add_bates_numbers(
             source,

@@ -323,3 +323,16 @@ def test_write_batches_break_on_source_gap_and_rotation(tmp_path, monkeypatch):
         assert float(out[5].mediabox.width) == 140.0
     finally:
         out.close()
+
+
+def test_merge_pdf_files_rejects_output_equal_to_input(tmp_path: Path) -> None:
+    first = tmp_path / "a.pdf"
+    second = tmp_path / "b.pdf"
+    _write_distinct_pdf(first, [100])
+    _write_distinct_pdf(second, [110, 120])
+    before = file_sha256(first)
+
+    with pytest.raises(SourceOverwriteError):
+        merge_pdf_files([str(first), str(second)], str(first))
+
+    assert file_sha256(first) == before
