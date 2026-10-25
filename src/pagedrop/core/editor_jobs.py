@@ -28,6 +28,7 @@ def handle_editor_save(ctx: JobContext) -> Path:
             passwords=ctx.credentials.snapshot(),
             scope=ctx.spec.options.get("scope"),
             verify=True,
+            cancel=ctx.cancel,
         )
     else:
         write_pdf(

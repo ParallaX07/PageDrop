@@ -50,6 +50,8 @@ Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI
 
 External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
 
+Redaction rewrites to a new path, then a fresh interpreter re-opens the output and verifies it; a failed or cancelled verification deletes the output. Checks are scoped to what was redacted. For each region the text under its rectangle must be empty and none of its secrets may be found inside it, so the same words elsewhere on the page or in the document do not fail the save. Caller-supplied extra strings are still required to be absent everywhere, including the raw file bytes. A region's own secrets of four or more characters are also scanned in the raw bytes, unless the same text sat outside every region before redaction. Image-only regions (scanned pages) record pixel digests of the images they touch, and the output page must no longer contain an image with one of those digests; digests are used because the garbage-collecting save renumbers and recompresses image objects. The verifier runs outside `FITZ_LOCK` as an owned process: cancel or timeout kills its process tree, and cancel also removes the output.
+
 ## Comparison reports
 
 The Compare viewer uses the page-number-matched text diff from

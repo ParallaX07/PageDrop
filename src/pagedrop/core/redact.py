@@ -11,14 +11,17 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import fitz
 
-from pagedrop.core.jobs.errors import JobError
+from pagedrop.core.backends.process_tree import kill_process_tree, popen_owned
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel
+from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_service import FITZ_LOCK
@@ -138,30 +141,90 @@ def _file_contains_any(
     return None
 
 
-def _secrets_under_regions(
+@dataclass
+class _VerifyPlan:
+    """What the fresh-process verifier must check, captured before redaction."""
+
+    regions: list[dict[str, Any]] = field(default_factory=list)
+    raw_scan_text: list[str] = field(default_factory=list)
+    image_digests: dict[int, list[str]] = field(default_factory=dict)
+
+
+def _rect_hit(a: fitz.Rect, b: fitz.Rect) -> bool:
+    return not (a & b).is_empty
+
+
+def _appears_outside_regions(
+    doc: fitz.Document,
+    secret: str,
+    rects_by_page: Mapping[int, Sequence[fitz.Rect]],
+) -> bool:
+    """True if *secret* is found anywhere not covered by a region (pre-redaction)."""
+    for index, page in enumerate(doc):
+        if secret not in _normalize_secret(page.get_text("text") or ""):
+            continue
+        try:
+            hits = page.search_for(secret)
+        except Exception:
+            return False  # Fail closed: keep the stricter raw scan.
+        rects = rects_by_page.get(index, ())
+        if any(not any(_rect_hit(h, r) for r in rects) for h in hits):
+            return True
+    return False
+
+
+def _region_image_digests(page: fitz.Page, rects: Sequence[fitz.Rect]) -> list[str]:
+    """Pixel digests of images under *rects* that no untouched image on the page shares.
+
+    Pixel digests (not raw stream bytes) survive the recompressing GC save.
+    """
+    touched: set[str] = set()
+    kept: set[str] = set()
+    for info in page.get_image_info(hashes=True):
+        digest = bytes(info.get("digest") or b"").hex()
+        if not digest:
+            continue
+        bbox = fitz.Rect(info["bbox"])
+        (touched if any(_rect_hit(bbox, r) for r in rects) else kept).add(digest)
+    return sorted(touched - kept)
+
+
+def _plan_verification(
     doc: fitz.Document, regions: Sequence[RedactionRegion]
-) -> list[str]:
-    """Collect non-empty text under each region plus caller-supplied secrets."""
-    secrets: list[str] = []
-    seen: set[str] = set()
+) -> _VerifyPlan:
+    """Capture per-region secrets, raw-scan candidates and image digests."""
+    plan = _VerifyPlan()
+    rects_by_page: dict[int, list[fitz.Rect]] = {}
     for region in regions:
         if region.page_index < 0 or region.page_index >= doc.page_count:
             raise RedactionError(
                 f"Page index {region.page_index} out of range ({doc.page_count} pages)"
             )
+        rects_by_page.setdefault(region.page_index, []).append(fitz.Rect(*region.rect))
+
+    scan_candidates: list[str] = []
+    for region in regions:
         page = doc[region.page_index]
-        box = fitz.Rect(*region.rect)
-        captured = _normalize_secret(page.get_textbox(box) or "")
-        candidates = [captured, *region.expected_absent]
-        for raw in candidates:
+        captured = page.get_textbox(fitz.Rect(*region.rect)) or ""
+        secrets: list[str] = []
+        for raw in (captured, *region.expected_absent):
             secret = _normalize_secret(raw)
-            if len(secret) < 2:
-                continue
-            if secret in seen:
-                continue
-            seen.add(secret)
-            secrets.append(secret)
-    return secrets
+            if len(secret) >= 2 and secret not in secrets:
+                secrets.append(secret)
+        plan.regions.append(
+            {"page": region.page_index, "rect": list(region.rect), "secrets": secrets}
+        )
+        scan_candidates.extend(s for s in secrets if len(s) >= 4)
+
+    for secret in dict.fromkeys(scan_candidates):
+        if not _appears_outside_regions(doc, secret, rects_by_page):
+            plan.raw_scan_text.append(secret)
+
+    for index, rects in rects_by_page.items():
+        digests = _region_image_digests(doc[index], rects)
+        if digests:
+            plan.image_digests[index] = digests
+    return plan
 
 
 def _apply_regions(doc: fitz.Document, regions: Sequence[RedactionRegion]) -> None:
@@ -228,8 +291,18 @@ def inspect_redaction_result(
     expect_empty_metadata: bool = False,
     expect_no_attachments: bool = False,
     forbidden_image_xrefs: Sequence[int] = (),
+    regions: Sequence[Mapping[str, Any]] = (),
+    raw_scan_text: Sequence[str] = (),
+    forbidden_image_digests: Mapping[int, Sequence[str]] | None = None,
 ) -> RedactionVerifyReport:
-    """In-process inspection used by the fresh-process verifier."""
+    """In-process inspection used by the fresh-process verifier.
+
+    ``absent_text`` must be gone everywhere (text, search and raw bytes).
+    ``regions`` (``page``, ``rect``, ``secrets``) are checked only where they
+    were redacted, so the same text elsewhere does not fail. ``raw_scan_text``
+    is scanned in the raw bytes only, and ``forbidden_image_digests`` maps an
+    output page to image pixel digests that must no longer appear on it.
+    """
     report = RedactionVerifyReport()
     doc = open_pdf(str(path), password=password)
     try:
@@ -264,6 +337,52 @@ def inspect_redaction_result(
                 report.failures.append(
                     f"raw file bytes still contain {secret!r} ({leaked!r})"
                 )
+
+        for secret in raw_scan_text:
+            leaked = _file_contains_any(path_obj, _secret_byte_forms(secret))
+            if leaked is not None:
+                report.failures.append(
+                    f"raw file bytes still contain {secret!r} ({leaked!r})"
+                )
+
+        for spec in regions:
+            number = int(spec["page"])
+            if not 0 <= number < doc.page_count:
+                report.failures.append(f"redaction region page {number} out of range")
+                continue
+            page = doc[number]
+            rect = fitz.Rect(*spec["rect"])
+            left = _normalize_secret(page.get_textbox(rect) or "")
+            if left:
+                report.failures.append(
+                    f"text remains under redaction region on page {number}: {left!r}"
+                )
+            for secret in spec.get("secrets") or ():
+                try:
+                    hits = page.search_for(secret)
+                except Exception as exc:
+                    # Fail closed: search errors are not "no hits".
+                    report.failures.append(
+                        f"search_for failed for {secret!r}: {type(exc).__name__}"
+                    )
+                    continue
+                if any(_rect_hit(hit, rect) for hit in hits):
+                    report.failures.append(
+                        f"search_for still hits {secret!r} in redaction region on page {number}"
+                    )
+
+        for number, digests in (forbidden_image_digests or {}).items():
+            number = int(number)
+            if not 0 <= number < doc.page_count:
+                report.failures.append(f"image check page {number} out of range")
+                continue
+            forbidden = set(digests)
+            for info in doc[number].get_image_info(hashes=True):
+                if bytes(info.get("digest") or b"").hex() in forbidden:
+                    report.failures.append(
+                        f"redacted image still present on page {number}"
+                    )
+                    break
 
         if expect_no_redact_annots:
             for i, page in enumerate(doc):
@@ -319,9 +438,17 @@ def verify_redacted_pdf_fresh_process(
     expect_empty_metadata: bool = False,
     expect_no_attachments: bool = False,
     forbidden_image_xrefs: Sequence[int] = (),
+    regions: Sequence[Mapping[str, Any]] = (),
+    raw_scan_text: Sequence[str] = (),
+    forbidden_image_digests: Mapping[int, Sequence[str]] | None = None,
     timeout: float = 60.0,
+    cancel: CancelToken | None = None,
 ) -> RedactionVerifyReport:
-    """Re-open *path* in a fresh interpreter and run ``inspect_redaction_result``."""
+    """Re-open *path* in a fresh interpreter and run ``inspect_redaction_result``.
+
+    Cancelling (or timing out) kills the owned verifier process tree; cancel
+    raises ``JobCancelledError``.
+    """
     payload = {
         "path": str(Path(path).resolve()),
         "absent_text": list(absent_text),
@@ -330,26 +457,45 @@ def verify_redacted_pdf_fresh_process(
         "expect_empty_metadata": expect_empty_metadata,
         "expect_no_attachments": expect_no_attachments,
         "forbidden_image_xrefs": list(forbidden_image_xrefs),
+        "regions": list(regions),
+        "raw_scan_text": list(raw_scan_text),
+        "forbidden_image_digests": {
+            str(k): list(v) for k, v in (forbidden_image_digests or {}).items()
+        },
     }
+    check_cancel(cancel)
+    proc = popen_owned(verify_argv())
+    deadline = time.monotonic() + timeout
+    pending_input: str | None = json.dumps(payload)
     try:
-        proc = subprocess.run(
-            verify_argv(),
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
+        while True:
+            check_cancel(cancel)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            try:
+                stdout, stderr = proc.communicate(pending_input, timeout=min(0.1, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                pending_input = None
+    except (JobCancelledError, subprocess.TimeoutExpired) as exc:
+        kill_process_tree(proc.pid)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        if isinstance(exc, JobCancelledError):
+            raise
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier timed out after {timeout:.0f}s"]
         )
     if proc.returncode not in (0, 2):
-        detail = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        detail = (stderr or stdout or "").strip() or f"exit {proc.returncode}"
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier crashed: {detail}"]
         )
-    raw = (proc.stdout or "").strip()
+    raw = (stdout or "").strip()
     if not raw:
         return RedactionVerifyReport(
             failures=["fresh-process verifier returned empty stdout"]
@@ -358,19 +504,19 @@ def verify_redacted_pdf_fresh_process(
         data = json.loads(raw)
     except json.JSONDecodeError:
         return RedactionVerifyReport(
-            failures=[f"fresh-process verifier returned non-JSON: {proc.stdout!r}"]
+            failures=[f"fresh-process verifier returned non-JSON: {stdout!r}"]
         )
     if not isinstance(data, dict) or "failures" not in data:
         return RedactionVerifyReport(
             failures=[
-                f"fresh-process verifier missing failures key: {proc.stdout!r}"
+                f"fresh-process verifier missing failures key: {stdout!r}"
             ]
         )
     failures = data["failures"]
     if not isinstance(failures, list):
         return RedactionVerifyReport(
             failures=[
-                f"fresh-process verifier failures not a list: {proc.stdout!r}"
+                f"fresh-process verifier failures not a list: {stdout!r}"
             ]
         )
     return RedactionVerifyReport(failures=list(failures))
@@ -384,6 +530,48 @@ def _delete_quiet(path: Path) -> None:
         pass
 
 
+def _verify_or_discard(
+    output: Path,
+    plan: _VerifyPlan,
+    extra_absent: Sequence[str],
+    scope: RedactionScope,
+    *,
+    password: str | None,
+    forbidden_image_xrefs: Sequence[int],
+    cancel: CancelToken | None,
+) -> None:
+    """Verify *output* in a fresh process; delete it on failure or cancel."""
+    absent: list[str] = []
+    for raw in extra_absent:
+        secret = _normalize_secret(raw)
+        if secret and secret not in absent:
+            absent.append(secret)
+    try:
+        report = verify_redacted_pdf_fresh_process(
+            output,
+            absent_text=absent,
+            password=password,
+            expect_no_redact_annots=True,
+            expect_empty_metadata=scope.strip_metadata,
+            expect_no_attachments=scope.remove_attachments,
+            forbidden_image_xrefs=forbidden_image_xrefs,
+            regions=plan.regions,
+            raw_scan_text=plan.raw_scan_text,
+            forbidden_image_digests=plan.image_digests,
+            cancel=cancel,
+        )
+    except JobCancelledError:
+        _delete_quiet(output)
+        raise
+    if not report.ok:
+        _delete_quiet(output)
+        raise RedactionVerifyError(
+            "Redaction verification failed; no redacted copy was produced. "
+            + "; ".join(report.failures),
+            failures=report.failures,
+        )
+
+
 def redact_pdf(
     source_pdf: str | Path,
     output_path: str | Path,
@@ -394,6 +582,7 @@ def redact_pdf(
     extra_absent: Sequence[str] = (),
     verify: bool = True,
     forbidden_image_xrefs: Sequence[int] = (),
+    cancel: CancelToken | None = None,
 ) -> Path:
     """Apply *regions*, GC-rewrite to *output_path*, optionally verify.
 
@@ -409,16 +598,11 @@ def redact_pdf(
         raise RedactionError("No redaction regions to apply")
 
     effective_scope = scope or RedactionScope()
-    secrets: list[str] = []
     # In-process MuPDF only — fresh-process verify stays outside the lock.
     with FITZ_LOCK:
         doc = open_pdf(str(source), password=password)
         try:
-            secrets = _secrets_under_regions(doc, regions)
-            for raw in extra_absent:
-                secret = _normalize_secret(raw)
-                if secret and secret not in secrets:
-                    secrets.append(secret)
+            plan = _plan_verification(doc, regions)
             _apply_regions(doc, regions)
             _apply_scope(doc, effective_scope)
             _gc_save(doc, output)
@@ -431,22 +615,15 @@ def redact_pdf(
     if not verify:
         return output
 
-    report = verify_redacted_pdf_fresh_process(
+    _verify_or_discard(
         output,
-        absent_text=secrets,
+        plan,
+        extra_absent,
+        effective_scope,
         password=password,
-        expect_no_redact_annots=True,
-        expect_empty_metadata=effective_scope.strip_metadata,
-        expect_no_attachments=effective_scope.remove_attachments,
         forbidden_image_xrefs=forbidden_image_xrefs,
+        cancel=cancel,
     )
-    if not report.ok:
-        _delete_quiet(output)
-        raise RedactionVerifyError(
-            "Redaction verification failed; no redacted copy was produced. "
-            + "; ".join(report.failures),
-            failures=report.failures,
-        )
     return output
 
 
@@ -460,6 +637,7 @@ def redact_document(
     verify: bool = True,
     forbidden_image_xrefs: Sequence[int] = (),
     password: str | None = None,
+    cancel: CancelToken | None = None,
 ) -> Path:
     """Apply redaction to an already-open assembled document, then GC-save.
 
@@ -470,11 +648,7 @@ def redact_document(
     if not regions:
         raise RedactionError("No redaction regions to apply")
     effective_scope = scope or RedactionScope()
-    secrets = _secrets_under_regions(doc, regions)
-    for raw in extra_absent:
-        secret = _normalize_secret(raw)
-        if secret and secret not in secrets:
-            secrets.append(secret)
+    plan = _plan_verification(doc, regions)
     try:
         _apply_regions(doc, regions)
         _apply_scope(doc, effective_scope)
@@ -486,22 +660,15 @@ def redact_document(
     if not verify:
         return output
 
-    report = verify_redacted_pdf_fresh_process(
+    _verify_or_discard(
         output,
-        absent_text=secrets,
+        plan,
+        extra_absent,
+        effective_scope,
         password=password,
-        expect_no_redact_annots=True,
-        expect_empty_metadata=effective_scope.strip_metadata,
-        expect_no_attachments=effective_scope.remove_attachments,
         forbidden_image_xrefs=forbidden_image_xrefs,
+        cancel=cancel,
     )
-    if not report.ok:
-        _delete_quiet(output)
-        raise RedactionVerifyError(
-            "Redaction verification failed; no redacted copy was produced. "
-            + "; ".join(report.failures),
-            failures=report.failures,
-        )
     return output
 
 
@@ -516,6 +683,7 @@ def redact_edit_model(
     extra_absent: Sequence[str] = (),
     verify: bool = True,
     forbidden_image_xrefs: Sequence[int] = (),
+    cancel: CancelToken | None = None,
 ) -> Path:
     """Write *model* logical pages, apply non-redaction *markup*, then redact.
 
@@ -542,6 +710,7 @@ def redact_edit_model(
             extra_absent=extra_absent,
             verify=verify,
             forbidden_image_xrefs=forbidden_image_xrefs,
+            cancel=cancel,
         )
     finally:
         _delete_quiet(staged)
@@ -558,6 +727,9 @@ def _cli_verify() -> int:
         expect_empty_metadata=bool(payload.get("expect_empty_metadata", False)),
         expect_no_attachments=bool(payload.get("expect_no_attachments", False)),
         forbidden_image_xrefs=payload.get("forbidden_image_xrefs") or (),
+        regions=payload.get("regions") or (),
+        raw_scan_text=payload.get("raw_scan_text") or (),
+        forbidden_image_digests=payload.get("forbidden_image_digests") or None,
     )
     print(json.dumps({"failures": report.failures}))
     return 0 if report.ok else 2
