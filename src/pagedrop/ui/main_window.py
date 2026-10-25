@@ -1031,7 +1031,12 @@ class MainWindow(QMainWindow):
             if tab is None or not tab.is_blank or restored:
                 tab = self._tab_manager.add_blank_tab()
             try:
-                tab.restore_recovery_draft(path)
+                tab.restore_recovery_draft(
+                    path,
+                    lambda source, incorrect: self._prompt_pdf_password(
+                        Path(source).name, incorrect=incorrect
+                    ),
+                )
             except (RecoveryError, PdfLoadError, OSError) as exc:
                 failures.append(str(exc))
                 if tab.is_blank and self._tab_manager.count() > 1:
@@ -1174,6 +1179,10 @@ class MainWindow(QMainWindow):
     def _detach_tab_to_new_window(self, index: int) -> None:
         tab = self._tab_manager.widget(index)
         if not isinstance(tab, PdfTab):
+            return
+
+        if tab in self._editor_busy:
+            self._transient_status("Wait for the running task to finish before moving")
             return
 
         if self._window_manager is None:
@@ -2762,7 +2771,8 @@ class MainWindow(QMainWindow):
 
         choice = self._ask_open_target(path)
         if choice == "current":
-            self._load_pdf(path, tab=active)
+            if self._confirm_replace_tab(active):
+                self._load_pdf(path, tab=active)
         elif choice == "new":
             tab = self._tab_manager.add_blank_tab()
             self._tab_manager.setCurrentWidget(tab)
@@ -3111,6 +3121,18 @@ class MainWindow(QMainWindow):
             return False
         self.wait_for_editor_job(tab)
         return not tab.is_dirty
+
+    def _confirm_replace_tab(self, tab: PdfTab) -> bool:
+        """True when *tab* may be replaced: idle, and saved or explicitly discarded."""
+        if tab in self._editor_busy:
+            self._transient_status("Wait for the running task to finish before opening")
+            return False
+        if not tab.is_dirty:
+            return True
+        choice = self._prompt_unsaved_changes(tab)
+        if choice == "cancel":
+            return False
+        return choice != "save" or self._save_and_wait(tab)
 
     def _try_close_tab(self, index: int) -> bool:
         if self._window_manager is not None and self._window_manager.preparing_installation:
