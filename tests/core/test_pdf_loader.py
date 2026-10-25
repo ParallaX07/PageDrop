@@ -50,3 +50,24 @@ def test_empty_file_raises_corrupt_error(tmp_path):
     empty_bytes.write_bytes(b"")
     with pytest.raises(PdfCorruptError, match="empty"):
         PdfLoader(str(empty_bytes))
+
+
+@pytest.mark.parametrize("rotation", [90, 270])
+def test_page_size_pt_is_unrotated_with_own_rotation(tmp_path, rotation):
+    import fitz
+
+    path = tmp_path / "rot.pdf"
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=200, height=400)
+        page.set_rotation(rotation)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+    loader = PdfLoader(str(path))
+    try:
+        assert loader.page_size_pt(0) == (200, 400)
+        assert loader.page_rotation(0) == rotation
+    finally:
+        loader.close()

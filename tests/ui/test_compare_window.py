@@ -181,7 +181,11 @@ def test_compare_viewer_shows_textless_page_notices(qtbot, monkeypatch):
     monkeypatch.setattr(
         compare_module,
         "_render_page_pixmap",
-        lambda *_args, **_kwargs: (QPixmap(40, 40), fitz.Rect(0, 0, 40, 40)),
+        lambda *_args, **_kwargs: (
+            QPixmap(40, 40),
+            fitz.Rect(0, 0, 40, 40),
+            fitz.Matrix(1, 0, 0, 1, 0, 0),
+        ),
     )
 
     window._render_pages()
@@ -425,4 +429,51 @@ def test_compare_export_cancellation_waits_for_worker_cleanup(qtbot):
     window.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
     assert not window.is_job_running()
     assert window.request_close() is True
+    window.close()
+
+
+def _write_rotated_line_pdf(path: Path, text: str, rotation: int) -> None:
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((72, 260), text, fontsize=10)
+        page.set_rotation(rotation)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+
+def test_compare_highlights_follow_rotated_pages(qtbot, tmp_path: Path):
+    """Highlights land on the changed word's displayed position on /Rotate pages."""
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    _write_rotated_line_pdf(a, "alpha", 90)
+    _write_rotated_line_pdf(b, "beta", 270)
+
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window._row_a.set_text(str(a))
+    window._row_b.set_text(str(b))
+    window._run_compare()
+    qtbot.waitUntil(lambda: window._report is not None, timeout=5000)
+    qtbot.waitUntil(lambda: not window._comparing, timeout=5000)
+    window._change_list.setCurrentRow(0)
+
+    for pane, path, word in ((window._pane_a, a, "alpha"), (window._pane_b, b, "beta")):
+        canvas = pane._canvas
+        doc = fitz.open(str(path))
+        try:
+            page = doc[0]
+            shown = page.search_for(word)[0] * page.rotation_matrix
+            sx = canvas._pixmap.width() / page.rect.width
+            sy = canvas._pixmap.height() / page.rect.height
+        finally:
+            doc.close()
+        x = int((shown.x0 + shown.x1) / 2 * sx)
+        y = int((shown.y0 + shown.y1) / 2 * sy)
+        plain = canvas._pixmap.toImage().pixelColor(x, y)
+        painted = canvas.grab().toImage().pixelColor(x, y)
+        assert painted != plain, f"no highlight over {word!r} at {(x, y)}"
+
     window.close()

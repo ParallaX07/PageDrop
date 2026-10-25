@@ -27,6 +27,9 @@ STANDARD_METADATA_KEYS: tuple[str, ...] = (
     "trapped",
 )
 
+# Saves that remove or replace content must drop the orphaned objects too.
+_PRUNING_SAVE: dict[str, Any] = {"garbage": 3, "deflate": True}
+
 # Compare streams one page-pair at a time; never keep full-doc pixmaps.
 COMPARE_MAX_RENDER_WIDTH_PX = 2048
 # Stride (px) for in-page sampling — fixed 3×3 cell probes miss thin text lines.
@@ -567,7 +570,7 @@ def attachment_add(
             ufilename=ufilename,
             desc=desc,
         )
-        src.save(output_path)
+        src.save(output_path, **_PRUNING_SAVE)
     finally:
         src.close()
 
@@ -587,11 +590,11 @@ def attachment_remove(
         names = set(src.embfile_names())
         if name not in names:
             if missing_ok:
-                src.save(output_path)
+                src.save(output_path, **_PRUNING_SAVE)
                 return
             raise FileNotFoundError(f"Attachment not found: {name}")
         src.embfile_del(name)
-        src.save(output_path)
+        src.save(output_path, **_PRUNING_SAVE)
     finally:
         src.close()
 
@@ -677,7 +680,7 @@ def metadata_set(
             # Keep fitz happy: all standard fields are stored as strings.
             meta[key] = "" if value is None else str(value)
         doc.set_metadata(cast(dict[str, Any], meta))
-        doc.save(output_path)
+        doc.save(output_path, **_PRUNING_SAVE)
     finally:
         doc.close()
 
@@ -707,7 +710,7 @@ def metadata_strip(
         if strip_xmp_v1:
             doc.del_xml_metadata()
 
-        doc.save(output_path)
+        doc.save(output_path, **_PRUNING_SAVE)
     finally:
         doc.close()
 
@@ -742,7 +745,7 @@ def page_labels_set(
     doc = open_pdf(source_pdf, password=password)
     try:
         doc.set_page_labels(labels)
-        doc.save(output_path)
+        doc.save(output_path, **_PRUNING_SAVE)
     finally:
         doc.close()
 

@@ -32,6 +32,8 @@ main.py → WindowManager → MainWindow(s)
 | `rotation` | Extra rotation in {0, 90, 180, 270} |
 | `instance_id` | Immutable UUID for one logical page occurrence |
 
+Page geometry is always unrotated PDF space. `PageGeom` / `PdfLoader.page_size_pt` give the unrotated page size and the page's own `/Rotate` (`PdfLoader.page_rotation`); the viewer displays a page at `(page /Rotate + PageRef.rotation) % 360`. Text search hits, text-selection boxes, widgets, annotations and redaction regions are already unrotated in PyMuPDF; link rects are returned in rotated space, so `core/` maps them back with `page.derotation_matrix`. The viewer maps these unrotated rects to the display, and pointer positions back, using only that composed rotation.
+
 UI counts and labels use `logical_count()` after insert/delete/reorder — not the source loader’s page count. Writers and extractors follow the model; Save As / extract / merge always write **new** paths and never truncate the user’s original. After a staged Save As has been validated and promoted, the output becomes the model's fresh page baseline; protected-source history remains so neither the original nor earlier imported/saved sources can later be overwritten.
 
 Pending annotations, page-scoped form creation, and redactions retain a `PageRef.instance_id`, not a numeric output position. Reordering and rotation retain it; every insert or duplicate receives a new ID. The writer resolves live IDs to output indices immediately before applying markup, and deleted targets stay hidden until an undo restores their page occurrence.
@@ -49,6 +51,8 @@ Batch Tools and editor Save As work through a **serialized job runner** (`Serial
 Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI can configure / recheck without crashing the app. Core thumbnail / edit / merge / Create PDF must remain usable when optional backends are absent.
 
 External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
+
+Redaction rewrites to a new path, then a fresh interpreter re-opens the output and verifies it; a failed or cancelled verification deletes the output. Checks are scoped to what was redacted. For each region the text under its rectangle (characters whose centre lies inside it, since glyphs the rectangle only clips are kept by MuPDF) must be empty and none of its secrets may be found inside it, so the same words elsewhere on the page or in the document do not fail the save. Caller-supplied extra strings are still required to be absent everywhere, including the raw file bytes. A region's own secrets of four or more characters are also scanned in the raw bytes, unless the same text sat outside every region before redaction. Image-only regions (scanned pages) record pixel digests of the images they touch, skipping images whose covered pixels are a single colour (blanking those changes nothing), and the output page must keep no more copies of each digest than the regions left untouched; digests are used because the garbage-collecting save renumbers and recompresses image objects. The verifier runs outside `FITZ_LOCK` as an owned process: cancel or timeout kills its process tree, and cancel also removes the output.
 
 ## Comparison reports
 

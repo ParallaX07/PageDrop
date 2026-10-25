@@ -100,9 +100,8 @@ class WatermarkPageRenderWorker(QRunnable):
             )
             if self._is_cancelled(self._generation):
                 return
-            self.signals.finished.emit(
-                self._generation, png, geom.width, geom.height
-            )
+            width, height = geom.visual_size
+            self.signals.finished.emit(self._generation, png, width, height)
         except Exception as exc:
             if not self._is_cancelled(self._generation):
                 self.signals.error.emit(self._generation, str(exc))
