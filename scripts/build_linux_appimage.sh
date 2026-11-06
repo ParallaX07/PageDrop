@@ -31,6 +31,7 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
   "$APPDIR/usr/share/applications"
 cp -a "$ROOT/dist/pagedrop/." "$APPDIR/usr/bin/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$APPDIR/usr/share/licenses/pagedrop/"
+cp "$ROOT/licenses/GPL-3.0.txt" "$ROOT/licenses/LGPL-3.0.txt" "$APPDIR/usr/share/licenses/pagedrop/"
 (cd "$ROOT" && uv run --locked python scripts/generate_icons.py --png "$APPDIR/pagedrop.png")
 cp "$APPDIR/pagedrop.png" "$APPDIR/.DirIcon"
 cp "$APPDIR/pagedrop.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/pagedrop.png"

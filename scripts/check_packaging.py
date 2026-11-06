@@ -24,7 +24,7 @@ APP_MUTEX = r"Global\PageDropInstallerMutex"
 
 
 def _assert_notices_content(text: str) -> None:
-    """PyQt6 is GPLv3/commercial — not LGPL. Qt remains LGPL; PyMuPDF is AGPL."""
+    """PyQt6 is GPLv3 — not LGPL. Qt remains LGPL; PyMuPDF is AGPL (Artifex)."""
     lower = text.lower()
     assert "pyqt6" in lower, "notices must mention PyQt6"
     assert "gplv3" in lower or "gpl v3" in lower or "gpl-3" in lower, (
@@ -42,7 +42,87 @@ def _assert_notices_content(text: str) -> None:
     )
     assert "gpl" in license_lines[0].lower(), "PyQt6 License line must state GPL"
     assert "agpl" in lower, "notices must mention PyMuPDF AGPL"
-    assert "artifex" in lower, "notices must mention Artifex commercial option"
+    assert "artifex" in lower, "notices must name Artifex as the PyMuPDF licensor"
+
+
+LICENSE_TEXTS = {
+    "GPL-3.0.txt": "GNU GENERAL PUBLIC LICENSE",
+    "LGPL-3.0.txt": "GNU LESSER GENERAL PUBLIC LICENSE",
+}
+NOTICE_SECTIONS = ("## pywin32", "## openpyxl", "## et-xmlfile", "## Pillow", "## Written offer")
+LICENCE_GATE = re.compile(r"commercial|\bMIT\b", re.IGNORECASE)
+
+
+def _assert_license_texts() -> None:
+    """Verbatim GPL/LGPL texts exist and every packaging path ships them."""
+    for name, title in LICENSE_TEXTS.items():
+        path = ROOT / "licenses" / name
+        assert path.is_file() and path.stat().st_size > 0, f"missing non-empty {path}"
+        head = path.read_text(encoding="utf-8")[:200]
+        assert title in head, f"{path} must be the {title.title()} text"
+    shippers = {
+        "pagedrop.spec": ('ROOT / "licenses"',),
+        "installer/windows.iss": ("licenses\\*", "{app}\\licenses"),
+        "scripts/build_linux_appimage.sh": tuple(f"licenses/{name}" for name in LICENSE_TEXTS),
+    }
+    for rel, needles in shippers.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for needle in needles:
+            assert needle in text, f"{rel} must ship the licenses/ texts ({needle})"
+
+
+def _assert_notices_sections(text: str) -> None:
+    """Every bundled codec has a notice, and the written offer is present."""
+    for heading in NOTICE_SECTIONS:
+        assert heading in text, f"notices must have a '{heading}' section"
+    offer = text.split("## Written offer", 1)[1]
+    assert "github.com/ParallaX07/PageDrop/issues" in offer, (
+        "written offer must say how to request corresponding source"
+    )
+
+
+def _assert_license_wording() -> None:
+    """Docs, README and the release-notes template state the free licence."""
+    for rel in ("docs/licensing.md", "README.md", "release-notes/TEMPLATE.md"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "AGPL-3.0-or-later" in text, f"{rel} must state AGPL-3.0-or-later"
+    template = (ROOT / "release-notes" / "TEMPLATE.md").read_text(encoding="utf-8")
+    assert "tree/v{{version}}" in template, "release-notes/TEMPLATE.md must link the source tag"
+    about = (ROOT / "src" / "pagedrop" / "ui" / "main_window.py").read_text(encoding="utf-8")
+    about = about.split("def _show_about", 1)[1].split("\n    def ", 1)[0]
+    for needle in ("AGPL-3.0-or-later", "/tree/v"):
+        assert needle in about, f"About dialog must contain {needle}"
+
+
+def _assert_no_paid_licence_wording() -> None:
+    """README and docs describe free software only (same gate as the release check)."""
+    files = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+    for path in files:
+        match = LICENCE_GATE.search(path.read_text(encoding="utf-8"))
+        assert match is None, f"{path.relative_to(ROOT)} must not contain {match.group(0)!r}"
+
+
+def _assert_dist_licences(data_root: Path, *, windows: bool) -> None:
+    """A built bundle carries the project, GPL/LGPL and bundled-codec licence files."""
+    fix = "rebuild with current pagedrop.spec"
+    files = [data_root / "LICENSE", *(data_root / "licenses" / name for name in LICENSE_TEXTS)]
+    for path in files:
+        assert path.is_file() and path.stat().st_size > 0, (
+            f"onedir bundle must include non-empty {path} ({fix})"
+        )
+    for name in ("openpyxl", "et_xmlfile", "pillow") + (("pywin32",) if windows else ()):
+        infos = [
+            d for d in data_root.iterdir()
+            if d.is_dir() and d.name.lower().startswith(f"{name}-") and d.name.endswith(".dist-info")
+        ]
+        assert infos, f"onedir bundle must include the {name} dist-info ({fix})"
+        if name == "pywin32":
+            continue  # licence file name is not verified without a Windows build
+        assert any(
+            f.is_file() and f.stat().st_size > 0 and f.name.lower().startswith("licen")
+            for info in infos
+            for f in info.rglob("*")
+        ), f"{name} dist-info must include its non-empty licence file ({fix})"
 
 
 def _assert_notices_in_spec(spec_text: str) -> None:
@@ -107,6 +187,7 @@ def _assert_onedir_dist_if_present() -> None:
     assert f"Version: {read_version()}\n" in metadata_text, (
         "frozen metadata version must match scripts/read_version.py"
     )
+    _assert_dist_licences(data_root, windows=exe.name == "pagedrop.exe")
     _assert_frozen_backends(bundle, exe, data_root)
 
 
@@ -241,6 +322,10 @@ def main() -> None:
     )
     notices_text = NOTICES.read_text(encoding="utf-8")
     _assert_notices_content(notices_text)
+    _assert_notices_sections(notices_text)
+    _assert_license_texts()
+    _assert_license_wording()
+    _assert_no_paid_licence_wording()
 
     assert SPEC.is_file(), f"missing {SPEC}"
     spec_text = SPEC.read_text(encoding="utf-8")
