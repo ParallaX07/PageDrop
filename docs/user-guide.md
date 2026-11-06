@@ -180,4 +180,4 @@ close every old PageDrop process manually before upgrading.
 
 Ctrl+Tab toggles the most recently used previous tab rather than moving sequentially. Ctrl+Shift+Tab cycles backward through all tabs. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab).
 
-For cross-window page drags: dropping copies pages; Shift+drop moves them.
+For cross-window page drags: dropping copies pages; Shift+drop moves them. If the pages come from another PageDrop process, they are always copied and PageDrop says so. The tab bar does not accept drops from another process; drop on the page grid instead.

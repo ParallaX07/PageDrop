@@ -40,7 +40,7 @@ Pending annotations, page-scoped form creation, and redactions retain a `PageRef
 
 ## Drag and drop
 
-Outbound page drag uses `QDrag` with `file://` URLs so Explorer, Finder, and other file managers accept drops as real files. Internal transfers use app mime types (page indices, page refs, merge-file order) defined in `core/drag_mime.py`. Cross-window drop copies by default; Shift+drop moves.
+Outbound page drag uses `QDrag` with `file://` URLs so Explorer, Finder, and other file managers accept drops as real files. Internal transfers use app mime types (page indices, page refs, merge-file order) defined in `core/drag_mime.py`. Cross-window drop copies by default; Shift+drop moves when the source is a window of the same PageDrop process. A drop from another PageDrop process always copies (Shift is ignored) and the app says so; the tab bar rejects drops from another process with a message, and the page grid accepts them. Files made for an outbound drag stay in the session temp folder after the drag returns, because the drop target may read them later; closing the window removes them, and the temp quota evicts the oldest first.
 
 Inbound drops (PDF onto the grid, images onto Create PDF, files onto tool shells) go through the same tab/grid hosts so behaviour matches the menu-driven paths.
 
@@ -50,7 +50,7 @@ Batch Tools and editor Save As work through a **serialized job runner** (`Serial
 
 Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI can configure / recheck without crashing the app. Core thumbnail / edit / merge / Create PDF must remain usable when optional backends are absent.
 
-External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
+External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel and timeout kill only owned process trees and clean partial staging outputs. For Office COM, the helper reports the PID of the Office app it launched, and that app is also killed on cancel, timeout, or a helper crash; an Office app the user started is never touched.
 
 Redaction rewrites to a new path, then a fresh interpreter re-opens the output and verifies it; a failed or cancelled verification deletes the output. Checks are scoped to what was redacted. For each region the text under its rectangle (characters whose centre lies inside it, since glyphs the rectangle only clips are kept by MuPDF) must be empty and none of its secrets may be found inside it, so the same words elsewhere on the page or in the document do not fail the save. Caller-supplied extra strings are still required to be absent everywhere, including the raw file bytes. A region's own secrets of four or more characters are also scanned in the raw bytes, unless the same text sat outside every region before redaction. Image-only regions (scanned pages) record pixel digests of the images they touch, skipping images whose covered pixels are a single colour (blanking those changes nothing), and the output page must keep no more copies of each digest than the regions left untouched; digests are used because the garbage-collecting save renumbers and recompresses image objects. The verifier runs outside `FITZ_LOCK` as an owned process: cancel or timeout kills its process tree, and cancel also removes the output.
 
