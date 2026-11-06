@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -170,14 +171,21 @@ class TempManager:
             shutil.rmtree(self._dir, ignore_errors=True)
 
     def _dir_size(self) -> int:
-        # full rglob on each create — fine under 512 MiB / few dirs;
-        # callers can write outside TempManager, so a running counter needs write
-        # hooks (upgrade if enforce shows up in profiles).
+        # Full rglob on each create: cheap while session dirs stay small. Callers
+        # (job handlers, drag extraction) write outside the lock and can remove
+        # files mid-walk, so a vanished entry just counts as zero. A running
+        # counter would need write hooks (upgrade if enforce shows up in profiles).
         if not self._dir.exists():
             return 0
-        return sum(
-            path.stat().st_size for path in self._dir.rglob("*") if path.is_file()
-        )
+        total = 0
+        for path in self._dir.rglob("*"):
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                total += info.st_size
+        return total
 
     @staticmethod
     def _evict_dir_sort_key(path: Path) -> tuple[int, str]:

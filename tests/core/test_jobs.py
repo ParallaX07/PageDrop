@@ -967,3 +967,72 @@ def test_password_protected_pdf_output_is_promoted(tmp_path: Path) -> None:
     result = _run_writer(tmp_path, handler, "locked.pdf")
     with fitz.open(str(result)) as doc:
         assert doc.needs_pass
+
+
+# --- Job dir is released on every path; cancel wins over a validation wait ---
+
+
+def test_successful_job_releases_its_pin_and_removes_leftovers(tmp_path: Path) -> None:
+    def handler(ctx: JobContext) -> Path:
+        _write_pdf(ctx.staged_output)
+        (ctx.staging.job_dir / "scratch.bin").write_bytes(b"x" * 1000)
+        return ctx.staged_output
+
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("write", handler)
+        runner.run(JobSpec.create("write", inputs=[src], output=tmp_path / "out.pdf"))
+        assert temp._pinned == set()
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_cancel_during_the_validation_wait_promotes_nothing(tmp_path: Path) -> None:
+    from pagedrop.core.jobs import runner as runner_module
+    from tests.conftest import hold_fitz_lock
+
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+    source_hash = file_sha256(src)
+    token = CancelToken()
+    validating = threading.Event()
+    real_validate = runner_module.validate_pdf_output
+
+    def signalling_validate(path: Path, label: str | None = None) -> None:
+        validating.set()
+        real_validate(path, label)  # blocks on FITZ_LOCK held by the test
+
+    temp = TempManager()
+    outcome: list[BaseException | Path] = []
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("copy", _copy_handler, holds_fitz=False)
+
+        def run() -> None:
+            try:
+                outcome.append(
+                    runner.run(JobSpec.create("copy", inputs=[src], output=out), cancel=token)
+                )
+            except BaseException as exc:  # noqa: BLE001 — captured for the assertion
+                outcome.append(exc)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(runner_module, "validate_pdf_output", signalling_validate)
+            with hold_fitz_lock():
+                thread = threading.Thread(target=run)
+                thread.start()
+                assert validating.wait(10)
+                token.cancel()
+            thread.join(10)
+        assert len(outcome) == 1 and isinstance(outcome[0], JobCancelledError)
+        assert not out.exists()
+        assert file_sha256(src) == source_hash
+        assert temp._pinned == set()
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()

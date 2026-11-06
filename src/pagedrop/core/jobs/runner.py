@@ -216,6 +216,8 @@ class SerializedJobRunner:
             for staged_path, destination in pairs:
                 if destination.suffix.lower() == ".pdf":
                     validate_pdf_output(staged_path, destination.name)
+            # Validation can wait on FITZ_LOCK; a cancel during that wait must win.
+            token.check()
             report(0.95, "Promoting output…")
             promoted = _promote_all(staging, pairs)
             report(1.0, "Done")
@@ -228,15 +230,12 @@ class SerializedJobRunner:
                 inputs=", ".join(map(str, spec.inputs)),
                 output=spec.output,
             )
-            staging.cleanup()
             raise
         finally:
             runtime_secrets.clear()
             with self._active_lock:
                 if self._active_cancel is token:
                     self._active_cancel = None
-            if staging.job_dir.exists():
-                try:
-                    staging.job_dir.rmdir()
-                except OSError:
-                    pass
+            # Success too: promoted results live at their destinations, so
+            # leftovers go and the job dir is released for eviction.
+            staging.cleanup()

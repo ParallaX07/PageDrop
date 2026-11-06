@@ -403,3 +403,28 @@ def test_concurrent_creates_get_distinct_dirs():
         assert len(set(created)) == 200
     finally:
         tm.cleanup()
+
+
+def test_dir_size_ignores_a_file_that_vanishes_mid_walk(monkeypatch):
+    tm = TempManager(max_bytes=100)
+    try:
+        job = tm.create_job_dir()
+        (job / "gone.bin").write_bytes(b"x" * 50)
+        (job / "kept.bin").write_bytes(b"x" * 30)
+        real_stat = Path.stat
+        real_is_file = Path.is_file
+
+        def flaky_stat(self, *args, **kwargs):
+            if self.name == "gone.bin":
+                raise FileNotFoundError(self.name)
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", flaky_stat)
+        monkeypatch.setattr(
+            Path, "is_file", lambda self: self.name == "gone.bin" or real_is_file(self)
+        )
+        assert tm._dir_size() >= 30
+        tm.create_drag_dir()  # runs the quota check; must not raise
+    finally:
+        monkeypatch.undo()
+        tm.cleanup()
