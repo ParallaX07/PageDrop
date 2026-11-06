@@ -98,6 +98,95 @@ def test_convert_excel_and_powerpoint_export_pdf() -> None:
     ppt.Quit.assert_called_once()
 
 
+def test_word_and_excel_open_with_no_prompt_password() -> None:
+    word = MagicMock()
+    word_client = MagicMock()
+    word_client.DispatchEx.return_value = word
+    worker._convert_word(word_client, r"C:\in.docx", r"C:\out.pdf")
+    word_kwargs = word.Documents.Open.call_args.kwargs
+    assert word_kwargs["FileName"] == r"C:\in.docx"
+    assert word_kwargs["PasswordDocument"] == worker._NO_PROMPT_PASSWORD
+    assert word_kwargs["ReadOnly"] is True
+
+    excel = MagicMock()
+    excel_client = MagicMock()
+    excel_client.DispatchEx.return_value = excel
+    worker._convert_excel(excel_client, r"C:\in.xlsx", r"C:\out.pdf")
+    excel_kwargs = excel.Workbooks.Open.call_args.kwargs
+    assert excel_kwargs["Filename"] == r"C:\in.xlsx"
+    assert excel_kwargs["Password"] == worker._NO_PROMPT_PASSWORD
+    assert excel_kwargs["ReadOnly"] is True
+
+
+class _ComError(Exception):
+    """Stand-in for pywintypes.com_error carrying ``excepinfo``."""
+
+    def __init__(self, text: str, excepinfo=None) -> None:
+        super().__init__(text)
+        self.excepinfo = excepinfo
+
+
+def _run_failing_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> dict:
+    src = tmp_path / "doc.docx"
+    src.write_bytes(b"PK")
+    pythoncom = MagicMock()
+    monkeypatch.setattr(worker.sys, "platform", "win32")
+    monkeypatch.setattr(worker, "_import_com", lambda: (pythoncom, MagicMock()))
+    monkeypatch.setitem(
+        worker._CONVERTERS, "word", MagicMock(side_effect=error)
+    )
+    return worker.handle_request(
+        {"input": str(src), "output": str(tmp_path / "out.pdf")}
+    )
+
+
+def test_password_failure_text_maps_to_password_protected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for text in (
+        "The password is incorrect. Word cannot open the document.",
+        "The password you supplied is not correct.",
+    ):
+        result = _run_failing_request(tmp_path, monkeypatch, _ComError(text))
+        assert result["ok"] is False
+        assert result["code"] == "password_protected"
+        assert "password-protected" in result["error"]
+
+
+def test_path_containing_password_is_not_a_password_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_failing_request(
+        tmp_path,
+        monkeypatch,
+        _ComError(r"Word cannot open C:\passwords\password-list.docx"),
+    )
+    assert result["code"] == "com_failed"
+
+
+def test_password_failure_scode_maps_without_password_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    excepinfo = (0, "Microsoft Word", "Falsches Kennwort", None, 0, -2146822880)
+    assert (-2146822880 & 0xFFFF) == 5408
+    result = _run_failing_request(
+        tmp_path, monkeypatch, _ComError("Fehler", excepinfo)
+    )
+    assert result["code"] == "password_protected"
+
+
+@pytest.mark.parametrize("excepinfo", [None, (0, "Word"), (0, 0, 0, 0, 0, -2147352567)])
+def test_other_com_failure_stays_com_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, excepinfo
+) -> None:
+    result = _run_failing_request(
+        tmp_path, monkeypatch, _ComError("Disk full", excepinfo)
+    )
+    assert result["code"] == "com_failed"
+
+
 def test_worker_main_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker.sys, "platform", "linux")
     req = tmp_path / "req.json"
