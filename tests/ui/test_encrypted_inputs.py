@@ -909,3 +909,42 @@ def test_decrypt_reports_owner_restricted_pdf_without_prompting(
     assert file_sha256(src) == digest
     shell.close()
     tools.close()
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "picker"), [("metadata", ORG), ("reverse", ORG)]
+)
+def test_tool_opened_from_an_unlocked_tab_does_not_prompt(
+    qtbot, main_window, tmp_path, monkeypatch, isolated_settings, tool_id, picker
+):
+    """Metadata probes on open, Reverse at Run; both reuse the tab's password."""
+    src = tmp_path / "locked.pdf"
+    _build_pdf(src, password=PASSWORD)
+    source_hash = file_sha256(src)
+    prompts = _count_password_prompts(monkeypatch, [(PASSWORD, True)])
+    main_window._load_pdf(str(src))
+    tab = main_window._active_tab()
+    qtbot.waitUntil(
+        lambda: tab.edit_model is not None and tab.edit_model.logical_count() == PAGES,
+        timeout=15_000,
+    )
+    assert prompts == [False]
+
+    tools = ToolsWindow(editor=main_window)
+    qtbot.addWidget(tools)
+    shell = open_organize_shell(tools, tool_id)
+    assert isinstance(shell, ToolShellWindow)
+    qtbot.addWidget(shell)
+    assert prompts == [False]
+
+    out = tmp_path / f"{tool_id}.pdf"
+    monkeypatch.setattr(picker, lambda *a, **k: str(out))
+    shell._run_btn.click()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=30_000)
+
+    assert prompts == [False]
+    assert shell._result_bar._path == str(out), shell.statusBar().currentMessage()
+    with _opened(out) as doc:
+        assert doc.page_count == PAGES
+    assert out.resolve() != src.resolve()
+    assert file_sha256(src) == source_hash

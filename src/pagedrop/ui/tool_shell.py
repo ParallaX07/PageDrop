@@ -649,8 +649,9 @@ def probe_pdf_input(shell, path: str) -> tuple[int, RuntimeCredentials] | None:
     """Unlock *path* (prompting once, retrying a wrong password) and count pages.
 
     Returns ``(count, credentials)`` or ``None`` when the user cancels the
-    prompt. Other errors propagate so callers keep their own wording. The
-    password is remembered on ``shell.tool_credentials`` for the job that follows.
+    prompt (the status bar then reads "Cancelled"). Other errors propagate so
+    callers keep their own wording. The password is remembered on
+    ``shell.tool_credentials`` for the job that follows.
     """
     try:
         creds = preflight_pdf_inputs(
@@ -664,6 +665,7 @@ def probe_pdf_input(shell, path: str) -> tuple[int, RuntimeCredentials] | None:
             ),
         )
     except JobCancelledError:
+        shell.statusBar().showMessage("Cancelled")
         return None
     return gui_fitz_call(pdf_page_count, path, password=creds.get(path)), creds
 

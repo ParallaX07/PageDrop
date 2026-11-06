@@ -1408,6 +1408,7 @@ def test_probe_pdf_input_returns_none_when_prompt_cancelled(
     assert probe_pdf_input(shell, str(enc)) is None
     assert prompts == [False]
     assert shell.tool_credentials.get(str(enc)) is None
+    assert shell.statusBar().currentMessage() == "Cancelled"
 
 
 def test_run_tool_job_defaults_to_shell_credentials(qtbot, tmp_path, monkeypatch):

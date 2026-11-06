@@ -27,7 +27,7 @@ from pagedrop.core.supported_formats import (
     is_native_import_path,
     is_pdf_path,
 )
-from pagedrop.ui.organize_tools import editor_pdf_context
+from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
@@ -368,6 +368,7 @@ def open_conversion_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow |
                 ranges_edit.setText(ctx.range_prefill)
 
     if tool_id == "export_from_pdf" and ctx is not None and Path(ctx.path).is_file():
+        adopt_context_credentials(shell, ctx)
         shell.drop_zone.set_paths([ctx.path])
 
     present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")

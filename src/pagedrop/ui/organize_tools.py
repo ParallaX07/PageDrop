@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QWidget
 
-from pagedrop.core.jobs import SerializedJobRunner
+from pagedrop.core.jobs import RuntimeCredentials, SerializedJobRunner
 from pagedrop.core.organize_jobs import register_organize_handlers
 from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.utils.temp_manager import TempManager
@@ -46,6 +46,14 @@ class EditorPdfContext:
     path: str
     page_count: int
     range_prefill: str = ""
+    # The tab's in-memory passwords; never persisted.
+    credentials: RuntimeCredentials | None = None
+
+
+def adopt_context_credentials(shell: QWidget, ctx: EditorPdfContext) -> None:
+    """Hand the tab's password for ``ctx.path`` to *shell* before it probes the file."""
+    if ctx.credentials is not None:
+        shell.tool_credentials.adopt(ctx.credentials, [ctx.path])  # type: ignore[attr-defined]
 
 
 def editor_pdf_context(editor: QWidget | None) -> EditorPdfContext | None:
@@ -87,6 +95,7 @@ def editor_pdf_context(editor: QWidget | None) -> EditorPdfContext | None:
         path=str(path),
         page_count=model.logical_count(),
         range_prefill=range_prefill,
+        credentials=getattr(tab, "credentials", None),
     )
 
 

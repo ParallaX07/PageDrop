@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core import pdf_tools
 from pagedrop.ui.job_chrome import gui_fitz_call
-from pagedrop.ui.organize_tools import editor_pdf_context
+from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
@@ -840,8 +840,10 @@ def open_organize_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | N
             # Prefill first slot only; user adds the rest.
             existing = shell.drop_zone.paths()
             if not existing:
+                adopt_context_credentials(shell, ctx)
                 shell.drop_zone.set_paths([ctx.path])
         else:
+            adopt_context_credentials(shell, ctx)
             shell.drop_zone.set_paths([ctx.path])
 
     present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")
