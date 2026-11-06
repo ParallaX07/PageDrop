@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -231,19 +233,71 @@ def test_unencodable_text_is_escaped_not_dropped(diag):
     assert "end" in _read_log(path)
 
 
-def test_rollover_failure_keeps_appending(diag, monkeypatch):
-    configure_terminal_logging()
-    path = configure_app_logging(["pagedrop"])
+def _logging_handler(path: Path):
     handler = next(h for h in diagnostics._LOG.handlers if h.name == "pagedrop-file")
     handler.maxBytes = 200
+    backups = {}
+    for i, name in enumerate((".1", ".2", ".3"), start=1):
+        backup = Path(str(path) + name)
+        backup.write_text(f"old history {i}\n", encoding="utf-8")
+        backups[backup] = backup.read_text(encoding="utf-8")
+    return handler, backups
 
-    def locked(*_a, **_k):
-        raise PermissionError("file is open in another instance")
 
-    monkeypatch.setattr(type(handler), "rotate", locked)
-    diagnostics._LOG.error("x" * 400)
-    diagnostics._LOG.error("record after the failed rollover")
-    assert "record after the failed rollover" in _read_log(path)
+def test_blocked_rollover_keeps_history_and_stops_retrying(diag, monkeypatch):
+    configure_terminal_logging()
+    path = configure_app_logging(["pagedrop"])
+    handler, backups = _logging_handler(path)
+    real_rename = diagnostics.os.rename
+    attempts: list[str] = []
+
+    def rename(src, dst):
+        if os.fspath(src) == str(path):
+            attempts.append(os.fspath(dst))
+            raise PermissionError("file is open in another instance")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(diagnostics.os, "rename", rename)
+    for i in range(5):
+        diagnostics._LOG.error("record %d %s", i, "x" * 300)
+
+    text = _read_log(path)
+    assert all(f"record {i} " in text for i in range(5))
+    assert {p: p.read_text(encoding="utf-8") for p in backups} == backups
+    assert len(attempts) == 1
+    assert handler.stream is not None
+
+
+def test_rollover_resumes_once_the_file_can_be_renamed(diag, monkeypatch):
+    configure_terminal_logging()
+    path = configure_app_logging(["pagedrop"])
+    handler, backups = _logging_handler(path)
+    real_rename = diagnostics.os.rename
+    blocked = [True]
+
+    def rename(src, dst):
+        if blocked[0] and os.fspath(src) == str(path):
+            raise PermissionError("file is open in another instance")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(diagnostics.os, "rename", rename)
+    diagnostics._LOG.error("held %s", "x" * 300)
+    diagnostics._LOG.error("still held %s", "x" * 300)
+    assert handler._rollover_not_before > time.monotonic()
+
+    blocked[0] = False
+    diagnostics._LOG.error("inside the wait %s", "x" * 300)
+    assert Path(str(path) + ".1").read_text(encoding="utf-8") == "old history 1\n"
+
+    handler._rollover_not_before = 0.0  # the wait is over
+    diagnostics._LOG.error("after the wait")
+    rolled = Path(str(path) + ".1").read_text(encoding="utf-8")
+    assert "inside the wait" in rolled
+    assert Path(str(path) + ".2").read_text(encoding="utf-8") == "old history 1\n"
+    assert Path(str(path) + ".3").read_text(encoding="utf-8") == "old history 2\n"
+    assert "after the wait" in _read_log(path)
+    assert "inside the wait" not in _read_log(path)
+    assert not Path(str(path) + ".rollover").exists()
 
 
 def test_unwritable_log_folder_does_not_stop_startup(diag, monkeypatch, capsys):

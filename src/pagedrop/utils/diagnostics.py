@@ -13,6 +13,7 @@ import platform
 import re
 import sys
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from logging.handlers import RotatingFileHandler
@@ -30,6 +31,7 @@ _ORG_AND_APP = ("PageDrop", "PageDrop")
 HELPER_FLAG_PREFIX = "--pagedrop-"
 _MAX_LOG_BYTES = 1024 * 1024
 _LOG_BACKUPS = 3
+_ROLLOVER_RETRY_SECONDS = 60.0
 
 _app_logging_enabled = False
 _log_path: Path | None = None
@@ -111,18 +113,34 @@ class _AppendingRotatingFileHandler(RotatingFileHandler):
     """Rotating handler that keeps appending when a rollover cannot rename the file.
 
     A second running copy of PageDrop holding the file open makes the rename fail on
-    Windows; the stock handler would then drop every later record.
+    Windows. The stock rollover shifts and deletes the older copies before that
+    rename, so a failure would destroy history and retry on every record. Here the
+    rename is proven first, and after a failure the handler just appends for a while.
     """
 
+    _rollover_not_before = 0.0
+
     def doRollover(self) -> None:  # noqa: N802
+        if time.monotonic() < self._rollover_not_before:
+            return
         try:
+            self._prove_active_file_can_be_renamed()
             super().doRollover()
         except OSError:
+            self._rollover_not_before = time.monotonic() + _ROLLOVER_RETRY_SECONDS
             if self.stream is None:
                 try:
                     self.stream = self._open()
                 except OSError:
                     pass
+
+    def _prove_active_file_can_be_renamed(self) -> None:
+        if self.stream:
+            self.stream.close()
+            self.stream = None  # type: ignore[assignment]
+        probe = self.baseFilename + ".rollover"
+        os.rename(self.baseFilename, probe)
+        os.rename(probe, self.baseFilename)
 
 
 def _app_local_data_dir() -> Path:

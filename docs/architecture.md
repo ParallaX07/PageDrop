@@ -98,7 +98,7 @@ Tool pages use the same order: title and purpose, input, options, one valid exec
 
 ## Logs and crash reports
 
-`utils/diagnostics.py` logs to stderr and to a rotating file, `logs/pagedrop.log` inside the per-user app data folder (the same folder Qt calls the app local data location, worked out without Qt because logging starts before the application exists). The file keeps 1 MiB per file and three older copies. Packaged builds have no console, so the file is the only record. If a second copy of PageDrop holds the file open and a rollover cannot rename it, the log keeps appending instead of dropping records. If the file cannot be opened, PageDrop starts anyway and says so on stderr.
+`utils/diagnostics.py` logs to stderr and to a rotating file, `logs/pagedrop.log` inside the per-user app data folder (the same folder Qt calls the app local data location, worked out without Qt because logging starts before the application exists). The file keeps 1 MiB per file and three older copies. Packaged builds have no console, so the file is the only record. If a second copy of PageDrop holds the file open and a rollover cannot rename it, the log keeps appending instead of dropping records or older copies: it grows past its limit until the rename works, and rotates then. If the file cannot be opened, PageDrop starts anyway and says so on stderr.
 
 Helper processes (Office conversion, redaction verification, secure compression) are started with a `--pagedrop-` flag and stay out of the log: they create no folder or file, and their stdout stays clean for the JSON the parent reads. On a build without a console, native crash tracebacks go to `logs/native-crash.log`, a separate file so it never blocks rotation of the main log.
 
