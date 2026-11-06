@@ -29,12 +29,23 @@ class UpdateStorage:
         if self.root.is_symlink():
             raise UpdateStorageError("Update storage directory must not be a link")
         self.root.mkdir(parents=True, exist_ok=True)
-        self.session_dir = self.root / uuid.uuid4().hex
-        self.session_dir.mkdir()
-        self._lock = QLockFile(str(self.session_dir / ".active.lock"))
-        self._lock.setStaleLockTime(0)
-        if not self._lock.tryLock(0):
+        for _attempt in range(3):
+            # Another process may lock or remove the new folder before we lock it.
+            session = self.root / uuid.uuid4().hex
+            try:
+                session.mkdir()
+                lock = QLockFile(str(session / ".active.lock"))
+                lock.setStaleLockTime(0)
+                if lock.tryLock(0):
+                    break
+            except OSError:
+                pass
+            with contextlib.suppress(OSError):
+                session.rmdir()
+        else:
             raise UpdateStorageError("Could not reserve update storage")
+        self.session_dir = session
+        self._lock = lock
         self.cleanup()
 
     def destination(self, release: ReleaseInfo) -> Path:
@@ -47,7 +58,12 @@ class UpdateStorage:
         with contextlib.closing(self._inactive_sessions()) as sessions:
             for session in sessions:
                 older = session / release.installer_name
-                if older.is_symlink() or not older.is_file() or not self._verified(older, release):
+                if older.is_symlink() or not older.is_file():
+                    continue
+                try:
+                    if not self._verified(older, release):
+                        continue
+                except OSError:  # Unreadable leftover from another session.
                     continue
                 try:
                     older.rename(candidate)

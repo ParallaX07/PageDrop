@@ -15,6 +15,7 @@ from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
 from pagedrop.ui.update_storage import UpdateStorage
 from pagedrop.utils.update_checker import RateLimitedError
 from pagedrop.utils.update_checker import ReleaseInfo
+from pagedrop.utils.update_checker import UpdateStorageError
 
 
 def _release(payload: bytes = b"installer") -> ReleaseInfo:
@@ -384,9 +385,18 @@ def test_start_download_reuses_a_closed_sessions_installer(qtbot, qapp, isolated
     coordinator.stop()
 
 
-def test_session_lock_is_released_when_verification_raises(tmp_path, monkeypatch):
+def _lock_is_free(session) -> bool:
     from PyQt6.QtCore import QLockFile
 
+    lock = QLockFile(str(session / ".active.lock"))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(0):
+        return False
+    lock.unlock()
+    return True
+
+
+def test_unreadable_installer_in_a_closed_session_is_skipped(tmp_path, monkeypatch):
     root = tmp_path / "updates"
     release = _release()
     closed = _closed_session(root)
@@ -396,13 +406,71 @@ def test_session_lock_is_released_when_verification_raises(tmp_path, monkeypatch
     def boom(*_args):
         raise OSError("disk error")
 
+    with monkeypatch.context() as patch:
+        patch.setattr(UpdateStorage, "_verified", staticmethod(boom))
+        assert storage.reusable_installer(release) is None
+
+    assert _lock_is_free(closed)
+    # A later retry is not blocked and still adopts the installer once it reads fine.
+    assert storage.reusable_installer(release) == storage.destination(release)
+    storage.close()
+
+
+def test_session_lock_is_released_when_a_step_raises(tmp_path, monkeypatch):
+    root = tmp_path / "updates"
+    release = _release()
+    closed = _closed_session(root)
+    (closed / release.installer_name).write_bytes(b"installer")
+    storage = UpdateStorage(root)
+
+    def boom(*_args):
+        raise RuntimeError("unexpected")
+
     monkeypatch.setattr(UpdateStorage, "_verified", staticmethod(boom))
-    with pytest.raises(OSError) as caught:  # The traceback keeps the frame alive here.
+    with pytest.raises(RuntimeError) as caught:  # The traceback keeps the frame alive here.
         storage.reusable_installer(release)
 
-    lock = QLockFile(str(closed / ".active.lock"))
-    lock.setStaleLockTime(0)
-    assert lock.tryLock(0)
-    lock.unlock()
+    assert _lock_is_free(closed)
     assert caught.value is not None
     storage.close()
+
+
+def _flaky_lock(monkeypatch, *, failures: int):
+    from PyQt6.QtCore import QLockFile
+
+    from pagedrop.ui import update_storage
+
+    calls = [0]
+
+    class Flaky(QLockFile):
+        def tryLock(self, timeout=0):  # noqa: N802
+            calls[0] += 1
+            if calls[0] <= failures:
+                return False
+            return super().tryLock(timeout)
+
+    monkeypatch.setattr(update_storage, "QLockFile", Flaky)
+    return calls
+
+
+def test_new_session_retries_when_the_first_lock_attempt_fails(tmp_path, monkeypatch):
+    root = tmp_path / "updates"
+    calls = _flaky_lock(monkeypatch, failures=1)
+
+    storage = UpdateStorage(root)
+
+    assert calls[0] >= 2
+    assert storage.session_dir.is_dir()
+    assert [p for p in root.iterdir()] == [storage.session_dir]
+    storage.close()
+
+
+def test_new_session_gives_up_after_three_attempts_and_leaves_no_folder(tmp_path, monkeypatch):
+    root = tmp_path / "updates"
+    calls = _flaky_lock(monkeypatch, failures=99)
+
+    with pytest.raises(UpdateStorageError):
+        UpdateStorage(root)
+
+    assert calls[0] == 3
+    assert list(root.iterdir()) == []
