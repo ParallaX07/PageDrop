@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import ctypes
+import math
 import os
 import sys
 from pathlib import Path
@@ -83,7 +85,7 @@ from pagedrop.ui.onboarding import (
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
 from pagedrop.ui.accessibility import refresh_themed_widgets
-from pagedrop.ui import icons
+from pagedrop.ui import icons, native_frame
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
@@ -206,6 +208,9 @@ class MainWindow(QMainWindow):
         self._window_drag_offset: QPoint | None = None
         self._edge_cursor_active = False
         self._edge_resize: tuple[Qt.Edge, QPoint, QRect] | None = None
+        self._native_frame_checked = False
+        self._native_frame_failed = False
+        self._native_event_error_logged = False
 
         self.setWindowTitle(self.APP_TITLE)
         # Offscreen Qt has no window manager and does not support custom chrome.
@@ -876,6 +881,15 @@ class MainWindow(QMainWindow):
         if not self._tab_order_applied:
             self._tab_order_applied = True
             self._apply_tab_order()
+        if not self._native_frame_checked:
+            self._native_frame_checked = True
+            if self._uses_native_frame():
+                try:
+                    native_frame.apply_frame_styles(int(self.winId()))
+                except (OSError, ctypes.ArgumentError) as exc:
+                    # The window still shows; edge resizing falls back to Qt's.
+                    self._native_frame_failed = True
+                    log_failure("Apply native window frame", exc)
 
     def _status_page(self) -> QWidget | None:
         return self._tab_manager.currentWidget()
@@ -2422,15 +2436,120 @@ class MainWindow(QMainWindow):
             return
         self._window_manager.update_presenter.check_manually(self)
 
+    def _uses_native_frame(self) -> bool:
+        """True where Windows supplies resize, snap and the caption for this window."""
+        return (
+            native_frame.IS_WINDOWS
+            and bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint)
+            and not self._native_frame_failed
+        )
+
     def _uses_qt_edge_resize(self) -> bool:
         """True where Qt must provide edge resizing for the frameless window."""
         return (
             bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint)
-            and sys.platform != "win32"
+            and (sys.platform != "win32" or self._native_frame_failed)
             and not self.isMaximized()
             and not self.isFullScreen()
             and QApplication.activeModalWidget() is None
         )
+
+    def nativeEvent(self, eventType, message):  # noqa: ANN001, ANN201, N802
+        if not self._uses_native_frame() or bytes(eventType) != b"windows_generic_MSG":
+            return super().nativeEvent(eventType, message)
+        try:
+            handled, result = self._handle_native_message(
+                native_frame.read_message(int(message))
+            )
+        except (OSError, ctypes.ArgumentError) as exc:
+            # An exception escaping a Qt virtual is fatal; log once and let
+            # Windows' default handling carry on.
+            if not self._native_event_error_logged:
+                self._native_event_error_logged = True
+                log_failure("Handle native window message", exc)
+            handled, result = False, 0
+        if handled:
+            return True, result
+        return super().nativeEvent(eventType, message)
+
+    def _handle_native_message(self, msg) -> tuple[bool, int]:  # noqa: ANN001
+        kind = msg.message
+        hwnd = int(msg.hwnd or 0)
+        if kind == native_frame.WM_NCCALCSIZE:
+            # Whole window is client area. Maximized, Windows places the window
+            # past the screen edge by the frame thickness, so pull it back in.
+            # wParam false passes a bare RECT instead of NCCALCSIZE_PARAMS and
+            # needs the same adjustment, which calc_size_rect resolves.
+            if msg.lParam and native_frame.is_zoomed(hwnd) and not self.isFullScreen():
+                thickness_x, thickness_y = native_frame.resize_frame_thickness(hwnd)
+                native_frame.inset_rect(
+                    native_frame.calc_size_rect(msg.wParam, msg.lParam),
+                    thickness_x,
+                    thickness_y,
+                )
+            return True, 0
+        if kind == native_frame.WM_NCHITTEST:
+            return True, self._native_hit_test(hwnd, msg.lParam)
+        button = self._maximize_button
+        if kind == native_frame.WM_NCLBUTTONDOWN and msg.wParam == native_frame.HTMAXBUTTON:
+            button.setDown(True)
+            return True, 0
+        if kind == native_frame.WM_NCLBUTTONUP and msg.wParam == native_frame.HTMAXBUTTON:
+            # Swallow the release even without a matching press so Windows does
+            # not maximize on its own.
+            pressed = button.isDown()
+            button.setDown(False)
+            if pressed:
+                self._toggle_maximized()
+            return True, 0
+        # Hover tracking leaves these unhandled: Windows' default handling of
+        # them is what shows the Snap Layouts flyout over the maximize button.
+        if kind == native_frame.WM_NCMOUSEMOVE:
+            self._set_native_maximize_hover(msg.wParam == native_frame.HTMAXBUTTON, hwnd)
+        elif kind == native_frame.WM_NCMOUSELEAVE:
+            self._set_native_maximize_hover(False, hwnd)
+        return False, 0
+
+    def _native_hit_test(self, hwnd: int, lparam: int) -> int:
+        origin_x, origin_y = native_frame.window_origin(hwnd)
+        screen_x, screen_y = native_frame.lparam_point(lparam)
+        ratio = self.devicePixelRatioF()
+        point = QPoint(
+            math.floor((screen_x - origin_x) / ratio),
+            math.floor((screen_y - origin_y) / ratio),
+        )
+        if not (self.isMaximized() or self.isFullScreen()):
+            code = native_frame.hit_test_for_edges(resize_edges_at(point, self.size()))
+            if code:
+                return code
+        button = self._maximize_button
+        if button.isVisible() and QRect(button.mapTo(self, QPoint(0, 0)), button.size()).contains(point):
+            return native_frame.HTMAXBUTTON
+        if self._is_title_area_at(point):
+            return native_frame.HTCAPTION
+        return native_frame.HTCLIENT
+
+    def _is_title_area_at(self, point: QPoint) -> bool:
+        """True over blank title bar space, the title text or blank menu bar space."""
+        child = self.childAt(point)
+        if child is None:
+            return False
+        if child in self._title_drag_widgets:
+            return True
+        return child is self._menu_bar and self._menu_bar.actionAt(child.mapFrom(self, point)) is None
+
+    def _set_native_maximize_hover(self, hover: bool, hwnd: int) -> None:
+        button = self._maximize_button
+        if not hover:
+            button.setDown(False)
+        if bool(button.property("nativeHover")) == hover:
+            return
+        if hover:
+            native_frame.track_nonclient_leave(hwnd)
+        button.setProperty("nativeHover", hover)
+        style = button.style()
+        style.unpolish(button)
+        style.polish(button)
 
     def _set_edge_cursor(self, shape: Qt.CursorShape | None) -> None:
         """Keep at most one override cursor pushed on behalf of edge resizing."""
