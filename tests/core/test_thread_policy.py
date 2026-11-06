@@ -853,3 +853,273 @@ def test_pdf_loader_cached_geometry_does_not_wait_for_fitz_lock(
         release.set()
         holder.join(timeout=10)
         loader.close()
+
+
+# --- Long jobs lock per page, not for the whole run ---------------------------
+
+
+def _track_fitz_lock(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[bool]]:
+    """Record whether FITZ_LOCK is owned at every open / save / close."""
+    owned: dict[str, list[bool]] = {"open": [], "save": [], "close": []}
+
+    def spy(name: str, real):
+        def wrapper(*args: object, **kwargs: object):
+            owned[name].append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+            return real(*args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(fitz, "open", spy("open", fitz.open))
+    monkeypatch.setattr(fitz.Document, "save", spy("save", fitz.Document.save))
+    monkeypatch.setattr(fitz.Document, "close", spy("close", fitz.Document.close))
+    return owned
+
+
+def _run_with_lock_waiter(mid, run_job) -> float:
+    """Run *run_job*; a thread takes FITZ_LOCK once *mid* is set. Returns its wait."""
+    import threading
+    import time
+
+    waits: list[float] = []
+
+    def waiter() -> None:
+        assert mid.wait(timeout=10), "job never reached a middle page"
+        t0 = time.perf_counter()
+        with FITZ_LOCK:
+            pass
+        waits.append(time.perf_counter() - t0)
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    try:
+        run_job()
+    finally:
+        thread.join(timeout=30)
+    assert waits, "waiter thread did not acquire FITZ_LOCK"
+    return waits[0]
+
+
+def _assert_all_owned(owned: dict[str, list[bool]]) -> None:
+    for name, flags in owned.items():
+        assert flags, f"no fitz {name} observed"
+        assert all(flags), f"fitz {name} ran without FITZ_LOCK (owned={flags})"
+
+
+def test_ocr_job_locks_per_page_and_waiter_waits_one_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    import time
+
+    from pagedrop.core.capabilities import clear_cache
+    from pagedrop.core.jobs import JobSpec, SerializedJobRunner
+    from pagedrop.core.ocr_jobs import register_ocr_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    pdf = tmp_path / "scan.pdf"
+    _write_pdf(pdf, pages=12)
+    tessdata = tmp_path / "tessdata"
+    tessdata.mkdir()
+    (tessdata / "eng.traineddata").write_bytes(b"x")
+    out = tmp_path / "ocr.pdf"
+    before = file_sha256(pdf)
+
+    tiny = fitz.open()
+    tiny.new_page(width=72, height=72)
+    tiny_bytes = tiny.tobytes()
+    tiny.close()
+
+    page_n = {"n": 0}
+    mid = threading.Event()
+    ocr_owned: list[bool] = []
+
+    def slow_ocr(self: fitz.Pixmap, *args: object, **kwargs: object) -> bytes:
+        page_n["n"] += 1
+        ocr_owned.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        if page_n["n"] == 3:
+            mid.set()
+        time.sleep(0.025)
+        return tiny_bytes
+
+    monkeypatch.setattr(fitz.Pixmap, "pdfocr_tobytes", slow_ocr)
+    owned = _track_fitz_lock(monkeypatch)
+
+    progress_owned: list[bool] = []
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_ocr_handlers(runner)
+        assert runner._handlers["ocr_pdf"].holds_fitz is False
+        assert runner._handlers["extract_tables"].holds_fitz is True
+
+        def run_job() -> None:
+            runner.run(
+                JobSpec.create(
+                    "ocr_pdf",
+                    inputs=[pdf],
+                    output=out,
+                    options={"tessdata": str(tessdata), "dpi": 72},
+                ),
+                progress=lambda *_a: progress_owned.append(
+                    FITZ_LOCK._is_owned()  # type: ignore[attr-defined]
+                ),
+            )
+
+        wait = _run_with_lock_waiter(mid, run_job)
+    finally:
+        temp.cleanup()
+        clear_cache()
+        monkeypatch.undo()  # the checks below open files outside the job
+
+    assert out.is_file() and out.resolve() != pdf.resolve()
+    assert file_sha256(pdf) == before
+    with fitz.open(str(out)) as result:
+        assert result.page_count == 12
+    assert len(ocr_owned) == 12 and all(ocr_owned)
+    _assert_all_owned(owned)
+    assert progress_owned and not any(progress_owned), "runner held FITZ_LOCK"
+    # A whole-job hold would leave ~9 pages x 25 ms; per-page stays near one page.
+    assert wait < 0.12, f"waiter blocked {wait:.3f}s behind OCR job"
+
+
+@pytest.mark.parametrize(
+    ("effect", "slow_attr"),
+    [("greyscale", "recolor"), ("invert", "get_pixmap"), ("background", "new_shape")],
+)
+def test_color_effects_job_locks_per_page_and_waiter_waits_one_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, effect: str, slow_attr: str
+) -> None:
+    import threading
+    import time
+
+    from pagedrop.core.jobs import JobSpec, SerializedJobRunner
+    from pagedrop.core.modify_jobs import register_modify_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    pdf = tmp_path / "pages.pdf"
+    _write_pdf(pdf, pages=12)
+    out = tmp_path / "effect.pdf"
+    before = file_sha256(pdf)
+
+    page_n = {"n": 0}
+    mid = threading.Event()
+    page_owned: list[bool] = []
+    real = getattr(fitz.Page, slow_attr)
+
+    def slow_page_op(self: fitz.Page, *args: object, **kwargs: object):
+        page_n["n"] += 1
+        page_owned.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        if page_n["n"] == 3:
+            mid.set()
+        time.sleep(0.025)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Page, slow_attr, slow_page_op)
+    owned = _track_fitz_lock(monkeypatch)
+
+    progress_owned: list[bool] = []
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_modify_handlers(runner)
+        assert runner._handlers["color_effects"].holds_fitz is False
+        assert runner._handlers["crop"].holds_fitz is True
+
+        def run_job() -> None:
+            runner.run(
+                JobSpec.create(
+                    "color_effects",
+                    inputs=[pdf],
+                    output=out,
+                    options={"effect": effect, "dpi": 36},
+                ),
+                progress=lambda *_a: progress_owned.append(
+                    FITZ_LOCK._is_owned()  # type: ignore[attr-defined]
+                ),
+            )
+
+        wait = _run_with_lock_waiter(mid, run_job)
+    finally:
+        temp.cleanup()
+        monkeypatch.undo()  # the checks below open files outside the job
+
+    assert out.is_file() and out.resolve() != pdf.resolve()
+    assert file_sha256(pdf) == before
+    with fitz.open(str(out)) as result:
+        assert result.page_count == 12
+    assert len(page_owned) == 12 and all(page_owned)
+    _assert_all_owned(owned)
+    assert progress_owned and not any(progress_owned), "runner held FITZ_LOCK"
+    assert wait < 0.12, f"waiter blocked {wait:.3f}s behind {effect} job"
+
+
+@pytest.mark.parametrize("job", ["ocr_pdf", "color_effects"])
+def test_long_job_cancel_releases_documents_under_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, job: str
+) -> None:
+    """Cancel mid-run still closes the job's documents while owning FITZ_LOCK."""
+    from pagedrop.core.capabilities import clear_cache
+    from pagedrop.core.jobs import CancelToken, JobCancelledError, JobSpec, SerializedJobRunner
+    from pagedrop.core.modify_jobs import register_modify_handlers
+    from pagedrop.core.ocr_jobs import register_ocr_handlers
+    from pagedrop.utils.temp_manager import TempManager
+
+    pdf = tmp_path / "pages.pdf"
+    _write_pdf(pdf, pages=6)
+    out = tmp_path / "out.pdf"
+    before = file_sha256(pdf)
+    tessdata = tmp_path / "tessdata"
+    tessdata.mkdir()
+    (tessdata / "eng.traineddata").write_bytes(b"x")
+    token = CancelToken()
+    calls = {"n": 0}
+
+    tiny = fitz.open()
+    tiny.new_page(width=72, height=72)
+    tiny_bytes = tiny.tobytes()
+    tiny.close()
+
+    def cancelling_ocr(self: fitz.Pixmap, *args: object, **kwargs: object) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            token.cancel()
+        return tiny_bytes
+
+    real_get_pixmap = fitz.Page.get_pixmap
+
+    def cancelling_pixmap(self: fitz.Page, *args: object, **kwargs: object):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            token.cancel()
+        return real_get_pixmap(self, *args, **kwargs)
+
+    monkeypatch.setattr(fitz.Pixmap, "pdfocr_tobytes", cancelling_ocr)
+    monkeypatch.setattr(fitz.Page, "get_pixmap", cancelling_pixmap)
+    owned = _track_fitz_lock(monkeypatch)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_ocr_handlers(runner)
+        register_modify_handlers(runner)
+        options = (
+            {"tessdata": str(tessdata), "dpi": 72}
+            if job == "ocr_pdf"
+            else {"effect": "invert", "dpi": 36}
+        )
+        with pytest.raises(JobCancelledError):
+            runner.run(
+                JobSpec.create(job, inputs=[pdf], output=out, options=options),
+                cancel=token,
+            )
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+        clear_cache()
+        monkeypatch.undo()
+
+    assert not out.exists()
+    assert file_sha256(pdf) == before
+    assert owned["save"] == []
+    assert owned["open"] and owned["close"]
+    assert all(owned["open"]) and all(owned["close"])

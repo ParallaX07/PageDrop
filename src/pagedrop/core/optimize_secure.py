@@ -53,12 +53,20 @@ annotations.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import time
+from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import fitz
 
+from pagedrop.core.backends.process_tree import kill_process_tree, popen_owned
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
+from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.pdf_loader import open_pdf
 from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS
@@ -66,6 +74,11 @@ from pagedrop.core.pdf_tools import STANDARD_METADATA_KEYS
 SaveProfileName = Literal["fast", "lossless", "max"]
 LossyProfileName = Literal["screen", "ebook", "print"]
 CompressProfileName = SaveProfileName | LossyProfileName
+
+# Frozen: the lossy-compress child re-enters the exe before Qt starts (main.py).
+COMPRESS_WORKER_FLAG = "--pagedrop-compress-worker"
+# Generous cap for very large scans; a stuck child is killed with its tree.
+COMPRESS_WORKER_TIMEOUT_S = 1800.0
 
 # All permission bits MuPDF exposes (matches Document.save default 4095 intent).
 _ALL_PERMISSIONS = (
@@ -277,6 +290,90 @@ def compress_pdf(
         doc.close()
 
 
+class CompressWorkerError(JobError):
+    """Raised when the lossy-compress child process fails or times out."""
+
+
+def compress_worker_argv() -> list[str]:
+    """Argv that starts the lossy-compress child in a fresh interpreter / frozen exe."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, COMPRESS_WORKER_FLAG, "--compress-json"]
+    return [sys.executable, "-m", "pagedrop.core.optimize_secure", "--compress-json"]
+
+
+def _reap_worker(proc: subprocess.Popen[str]) -> None:
+    kill_process_tree(proc.pid)
+    try:
+        proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def compress_pdf_lossy_in_child(
+    source_pdf: str,
+    output_path: str,
+    profile: LossyProfile,
+    *,
+    password: str | None = None,
+    cancel: CancelToken | None = None,
+    timeout: float = COMPRESS_WORKER_TIMEOUT_S,
+) -> None:
+    """Run lossy ``compress_pdf`` in an owned child process, writing *output_path*.
+
+    ``Document.rewrite_images`` is one uninterruptible call, so it runs outside
+    this process: the caller needs no ``FITZ_LOCK`` and cancel or timeout kills
+    the child tree. The password goes over stdin, never argv or the environment.
+    """
+    reject_source_overwrite(output_path, source_pdf)
+    payload = json.dumps(
+        {
+            "source": str(Path(source_pdf).resolve()),
+            "output": str(Path(output_path).resolve()),
+            "name": profile.name,
+            "dpi": profile.dpi,
+            "jpeg_quality": profile.jpeg_quality,
+            "dpi_threshold": profile.dpi_threshold,
+            "password": password,
+        }
+    )
+    _check_cancel(cancel)
+    try:
+        proc = popen_owned(compress_worker_argv())
+    except OSError as exc:
+        raise CompressWorkerError(f"Could not start the compression process: {exc}") from exc
+    deadline = time.monotonic() + timeout
+    pending_input: str | None = payload
+    try:
+        while True:
+            _check_cancel(cancel)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            try:
+                _stdout, stderr = proc.communicate(pending_input, timeout=min(0.1, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                pending_input = None
+    except (JobCancelledError, subprocess.TimeoutExpired) as exc:
+        _reap_worker(proc)
+        if isinstance(exc, JobCancelledError):
+            raise
+        raise CompressWorkerError(
+            f"Compression timed out after {timeout:.0f}s and was stopped"
+        ) from None
+    except BaseException:
+        kill_process_tree(proc.pid)
+        raise
+    if proc.returncode != 0:
+        detail = (stderr or "").strip()[-1000:] or f"exit code {proc.returncode}"
+        if password:
+            detail = detail.replace(password, "…")
+        raise CompressWorkerError(f"Compression process failed: {detail}")
+    if not Path(output_path).is_file():
+        raise CompressWorkerError("Compression process finished without writing output")
+
+
 def repair_pdf(
     source_pdf: str,
     output_path: str,
@@ -405,3 +502,39 @@ def sanitize_pdf(
         _save_with_profile(doc, output_path, SAVE_PROFILES["lossless"])
     finally:
         doc.close()
+
+
+def _cli_compress() -> int:
+    """Read the compress payload from stdin and write the lossy output."""
+    payload = json.loads(sys.stdin.read() or "{}")
+    try:
+        compress_pdf(
+            payload["source"],
+            payload["output"],
+            profile=LossyProfile(
+                name=payload["name"],
+                dpi=int(payload["dpi"]),
+                jpeg_quality=int(payload["jpeg_quality"]),
+                dpi_threshold=int(payload["dpi_threshold"]),
+            ),
+            password=payload.get("password"),
+        )
+    except Exception as exc:  # noqa: BLE001 — reported to the parent via stderr
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv[1:])
+    if args and args[0] == "--compress-json":
+        return _cli_compress()
+    print(
+        "Usage: python -m pagedrop.core.optimize_secure --compress-json < payload.json",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

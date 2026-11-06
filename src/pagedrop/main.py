@@ -36,6 +36,14 @@ def main() -> int:
         argv = [a for a in sys.argv[1:] if a != REDACT_VERIFY_FLAG]
         return redact_main(argv)
 
+    from pagedrop.core.optimize_secure import COMPRESS_WORKER_FLAG
+
+    if COMPRESS_WORKER_FLAG in sys.argv:
+        from pagedrop.core.optimize_secure import main as compress_main
+
+        argv = [a for a in sys.argv[1:] if a != COMPRESS_WORKER_FLAG]
+        return compress_main(argv)
+
     from PyQt6.QtCore import QEvent, QTimer
     from PyQt6.QtWidgets import QApplication
 
