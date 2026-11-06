@@ -22,33 +22,41 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import fitz
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
-from pagedrop.core.pdf_loader import open_pdf, render_page_png, unrotated_page_geom
+from pagedrop.core.pdf_loader import (
+    PdfPasswordRequiredError,
+    open_pdf,
+    render_page_png,
+    unrotated_page_geom,
+)
 from pagedrop.core.thread_policy import FITZ_LOCK, ensure_no_fitz_document
 
 if TYPE_CHECKING:
     from pagedrop.core.annotations import AnnotationOp
 
 
+def _cache_key(path: str) -> str:
+    # Same resolve rules as RuntimeCredentials.lookup.
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return str(Path(path))
+
+
 def _password_for(
     passwords: Mapping[str, str] | None, path: str
 ) -> str | None:
     # Inline lookup — do not import jobs here (runner imports FITZ_LOCK).
-    # Same resolve rules as RuntimeCredentials.lookup.
     if not passwords:
         return None
     found = passwords.get(path)
     if found is not None:
         return found
-    try:
-        key = str(Path(path).resolve())
-    except OSError:
-        key = str(Path(path))
-    return passwords.get(key)
+    return passwords.get(_cache_key(path))
 
 T = TypeVar("T")
 
@@ -165,7 +173,7 @@ def invalidate_doc_cache(path: str | None = None) -> None:
         if path is None:
             _clear_doc_cache_locked()
         else:
-            _evict_doc_locked(path)
+            _evict_doc_locked(_cache_key(path))
 
 
 def doc_cache_size() -> int:
@@ -207,16 +215,19 @@ def _cache_get(path: str, password: str | None = None) -> fitz.Document:
 
     Caller must already hold ``FITZ_LOCK`` (via ``call``).
     """
+    ensure_no_fitz_document(path, what="pdf_service path")
+    key = _cache_key(path)
     now = time.monotonic()
     _purge_idle_locked(now)
 
-    entry = _doc_cache.get(path)
+    entry = _doc_cache.get(key)
     if entry is not None:
-        if entry.password != password:
-            _evict_doc_locked(path)
+        # No password reuses an entry that was unlocked earlier.
+        if password is not None and entry.password != password:
+            _evict_doc_locked(key)
         else:
             entry.last_used = now
-            _doc_cache.move_to_end(path)
+            _doc_cache.move_to_end(key)
             return entry.doc
 
     while len(_doc_cache) >= _DOC_CACHE_MAX:
@@ -224,7 +235,7 @@ def _cache_get(path: str, password: str | None = None) -> fitz.Document:
         old_entry.doc.close()
 
     doc = _open(path, password)
-    _doc_cache[path] = _DocCacheEntry(doc, password, now)
+    _doc_cache[key] = _DocCacheEntry(doc, password, now)
     return doc
 
 
@@ -232,7 +243,27 @@ def page_count(path: str, *, password: str | None = None) -> int:
     """Page count under ``FITZ_LOCK`` — GUI tool probes use this, not unlocked ``PdfLoader``."""
 
     def _body() -> int:
+        # This is the credential probe: jobs reopen the file with the supplied
+        # password, so a password-less probe must not pass via an unlocked entry.
+        ensure_no_fitz_document(path, what="pdf_service path")
+        entry = _doc_cache.get(_cache_key(path))
+        if password is None and entry is not None and entry.password is not None:
+            raise PdfPasswordRequiredError(f"PDF is password-protected: {path}")
         return len(_cache_get(path, password))
+
+    return call(_body)
+
+
+def encryption_state(path: str) -> Literal["none", "password", "restricted"]:
+    """Classify *path*: needs an open password, owner-restricted, or neither."""
+
+    def _body() -> Literal["none", "password", "restricted"]:
+        try:
+            page_count(path)
+        except PdfPasswordRequiredError:
+            return "password"
+        meta = _cache_get(path).metadata
+        return "restricted" if meta and meta.get("encryption") else "none"
 
     return call(_body)
 

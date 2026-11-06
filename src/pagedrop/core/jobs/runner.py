@@ -177,7 +177,7 @@ class SerializedJobRunner:
 
         token = cancel or CancelToken()
         report = progress or _noop_progress
-        creds = credentials or RuntimeCredentials()
+        creds = credentials if credentials is not None else RuntimeCredentials()
         runtime_secrets = dict(secrets or {})
         staging = JobStaging(self._temp_manager)
         staged = staging.stage_file(Path(spec.output).name)
