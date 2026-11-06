@@ -43,12 +43,13 @@ def test_worker_audit_covers_known_fitz_pools() -> None:
         "_MergeThumbnailWorker",
         "_ConvertThumbnailWorker",
         "WatermarkPageRenderWorker",
+        "_CompareRenderWorker",
         "CompareWindow",
         "_BlankDetectWorker",
     }
     for _name, note in WORKER_AUDIT:
         assert "FITZ_LOCK" in note or "pdf_service" in note
-        # Pool workers stay max 1; GUI-thread Compare sites are not pooled.
+        # Pool workers stay max 1.
         if "pool" in note.lower():
             assert "max 1" in note
 
@@ -327,7 +328,7 @@ def test_save_as_extract_compare_inspect_hold_fitz_lock(
     from pagedrop.core.pdf_editor import PdfEditModel
     from pagedrop.core.pdf_tools import compare_pdf_text_diff
     from pagedrop.core.pdf_writer import write_pdf
-    from pagedrop.ui.compare_window import _render_page_pixmap
+    from pagedrop.ui.compare_window import _render_page_image
 
     pdf = tmp_path / "doc.pdf"
     png = tmp_path / "img.png"
@@ -354,8 +355,8 @@ def test_save_as_extract_compare_inspect_hold_fitz_lock(
     )
     compare_pdf_text_diff(str(pdf), str(pdf))
     inspect_image(str(png))
-    pix, _rect, _matrix = _render_page_pixmap(str(pdf), 0, 64)
-    assert not pix.isNull()
+    image, _rect, _matrix = _render_page_image(str(pdf), 0, 64)
+    assert not image.isNull()
 
     assert held_at_open, "expected at least one fitz.open"
     assert all(held_at_open), (
@@ -428,7 +429,7 @@ def test_redact_edit_model_holds_fitz_lock_verify_outside(
 
 def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     """Do not raise pool size to paper over MuPDF contention."""
-    from pagedrop.ui.compare_window import _compare_text_pool
+    from pagedrop.ui.compare_window import _compare_render_pool, _compare_text_pool
     from pagedrop.ui.convert_window import ConvertWindow
     from pagedrop.ui.merge_window import MergeWindow
     from pagedrop.ui.page_preview import PagePreviewWidget
@@ -454,6 +455,7 @@ def test_ui_fitz_pools_max_thread_count_one(qtbot) -> None:
     assert viewer._pool.maxThreadCount() == 1
     assert viewer._search_pool.maxThreadCount() == 1
     assert _compare_text_pool().maxThreadCount() == 1
+    assert _compare_render_pool().maxThreadCount() == 1
 
 
 def test_thumbnail_worker_releases_lock_between_pages(

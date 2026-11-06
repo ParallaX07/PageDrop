@@ -158,6 +158,16 @@ def wait_for_pdf_loaded(qtbot: QtBot, window, *, timeout: int = RENDER_TIMEOUT_M
     )
 
 
+def wait_for_compare_render(
+    qtbot: QtBot, window, *, timeout: int = RENDER_TIMEOUT_MS
+) -> None:
+    """Wait until a CompareWindow's requested pane render has landed."""
+    qtbot.waitUntil(
+        lambda: window._render_landed and not window._render_timer.isActive(),
+        timeout=timeout,
+    )
+
+
 def load_pdf_in_active_tab(window, path: str) -> None:
     """Load a PDF into the active tab (test helper)."""
     window._load_pdf(str(path))
