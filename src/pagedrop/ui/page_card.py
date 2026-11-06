@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -21,7 +22,6 @@ from PyQt6.QtGui import (
     QFont,
     QMouseEvent,
     QPainter,
-    QPalette,
     QPixmap,
     QResizeEvent,
 )
@@ -51,7 +51,6 @@ from pagedrop.ui.theme import (
     SPACE_1,
     SPACE_2,
     accent_qcolor,
-    chrome_text_muted_qcolor,
     on_accent_qcolor,
     shadow_qcolor,
 )
@@ -181,11 +180,7 @@ class PageCard(BaseFileCard):
         self._failed = True
         self.clear_skeleton_pulse()
         self._thumbnail_label.setText("Page unavailable")
-        palette = self._thumbnail_label.palette()
-        palette.setColor(
-            QPalette.ColorRole.WindowText, chrome_text_muted_qcolor()
-        )
-        self._thumbnail_label.setPalette(palette)
+        self._set_failed_style(True)
         self._sync_page_overlay_visibility()
         self._sync_accessible()
 
@@ -194,7 +189,15 @@ class PageCard(BaseFileCard):
             return
         self._failed = False
         self._thumbnail_label.clear()
+        self._set_failed_style(False)
         self._sync_accessible()
+
+    def _set_failed_style(self, failed: bool) -> None:
+        # Colour comes from the app stylesheet so theme switches restyle it.
+        self._thumbnail_label.setProperty("failed", failed)
+        style = self._thumbnail_label.style()
+        style.unpolish(self._thumbnail_label)
+        style.polish(self._thumbnail_label)
 
     def set_selected(self, selected: bool) -> None:
         super().set_selected(selected)
@@ -548,8 +551,13 @@ class PageCard(BaseFileCard):
                 drag.exec(Qt.DropAction.CopyAction)
         finally:
             QApplication.restoreOverrideCursor()
-            # Temp files stay: a drop target may read the file:// URLs after exec()
-            # returns. Window-close cleanup and the quota evict them.
+            # A drop inside the app carries the pages as refs and indices, so the
+            # extracted files are done with. With no target, a file manager may
+            # still read the file:// URLs after exec() returns: keep them for
+            # window-close cleanup and the quota to evict.
+            # A platform drag may already have freed the QDrag: no target then.
+            if not sip.isdeleted(drag) and drag.target() is not None:
+                self._temp_manager.cleanup_paths(temp_paths)
             restore = getattr(window, "_restore_document_status", None)
             if callable(restore):
                 restore()

@@ -406,6 +406,11 @@ class PdfTab(QWidget):
             if entry.annotation is not None
         )
 
+    def set_temp_manager(self, temp_manager: TempManager) -> None:
+        """Move this tab's temp files to another window's manager (tab move)."""
+        self._temp_manager = temp_manager
+        self._thumbnail_grid.set_temp_manager(temp_manager)
+
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""
         cached = self._loader_cache.get(path)

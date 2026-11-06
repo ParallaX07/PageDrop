@@ -270,3 +270,19 @@ def test_render_failure_on_inactive_tab_is_still_reported(
 
     assert [kind for _message, kind in toasts] == ["error"]
     assert modal_calls == []
+
+
+def test_failed_card_style_comes_from_a_property_not_a_palette(
+    qtbot, tmp_path, five_page_pdf
+):
+    grid, _second, _errors = _mixed_grid(
+        qtbot, tmp_path, five_page_pdf, delete_second=True
+    )
+    wait_for_grid_loaded(qtbot, grid)
+    failed_label = grid._cards[1]._thumbnail_label
+    ok_label = grid._cards[0]._thumbnail_label
+    assert failed_label.property("failed") is True
+    assert not ok_label.property("failed")
+
+    grid._cards[1].release_thumbnail()
+    assert failed_label.property("failed") is False
