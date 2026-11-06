@@ -205,6 +205,16 @@ def isolated_settings(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture
+def capability_registry(isolated_settings):
+    """Hand back the process-wide capability registry, restored after the test."""
+    from pagedrop.core import capabilities
+    from pagedrop.ui.settings import apply_optional_settings_to_capabilities
+
+    yield capabilities
+    apply_optional_settings_to_capabilities()
+
+
 @pytest.fixture(autouse=True)
 def _limit_qtbot_default_timeout(request):
     """Cap qtbot waits when a test actually uses Qt — do not force QApplication."""
