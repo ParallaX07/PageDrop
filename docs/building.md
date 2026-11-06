@@ -31,6 +31,8 @@ AppImage with `make build-appimage` after building the onedir bundle; the script
 pins and verifies its AppImage tooling and emits a matching `.zsync` file and
 SHA-256 checksum.
 
+On a frozen Linux build, PyInstaller's bootloader points `LD_LIBRARY_PATH` at the bundle. The app restores the original value (or removes the variable) at startup so programs it launches, such as LibreOffice and `xdg-open`, don't load the bundled libraries. The running process keeps its own libraries, and PageDrop's own helper processes get the bundle path back.
+
 ## Smoke the build
 
 Unix (builds first unless you skip build in the script):

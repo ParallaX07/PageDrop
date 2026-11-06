@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING, Any
 
 import fitz
 
-from pagedrop.core.backends.process_tree import kill_process_tree, popen_owned
+from pagedrop.core.backends.process_tree import (
+    frozen_child_env,
+    kill_process_tree,
+    popen_owned,
+)
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel
 from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
@@ -524,7 +528,7 @@ def verify_redacted_pdf_fresh_process(
     }
     check_cancel(cancel)
     try:
-        proc = popen_owned(verify_argv())
+        proc = popen_owned(verify_argv(), env=frozen_child_env())
     except OSError as exc:
         return RedactionVerifyReport(
             failures=[f"could not start fresh-process verifier: {exc}"]

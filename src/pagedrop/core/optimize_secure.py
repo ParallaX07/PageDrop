@@ -64,7 +64,11 @@ from typing import Literal
 
 import fitz
 
-from pagedrop.core.backends.process_tree import kill_process_tree, popen_owned
+from pagedrop.core.backends.process_tree import (
+    frozen_child_env,
+    kill_process_tree,
+    popen_owned,
+)
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
@@ -339,7 +343,7 @@ def compress_pdf_lossy_in_child(
     )
     _check_cancel(cancel)
     try:
-        proc = popen_owned(compress_worker_argv())
+        proc = popen_owned(compress_worker_argv(), env=frozen_child_env())
     except OSError as exc:
         raise CompressWorkerError(f"Could not start the compression process: {exc}") from exc
     deadline = time.monotonic() + timeout

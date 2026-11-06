@@ -1,10 +1,33 @@
+import os
 import sys
+from collections.abc import MutableMapping
 
 _APP_NAME = "PageDrop"
 _ORG_NAME = "PageDrop"
 
 # Frozen: helpers re-enter this exe before Qt starts.
 _OFFICE_COM_WORKER_FLAG = "--pagedrop-office-com-worker"
+
+
+def restore_inherited_library_path(
+    environ: MutableMapping[str, str],
+    *,
+    frozen: bool,
+    platform: str,
+) -> None:
+    """Undo the bootloader's ``LD_LIBRARY_PATH`` so child programs don't load bundled libs.
+
+    The dynamic loader reads the variable once at process start, so this
+    process keeps its bundled libraries; only children (``soffice``,
+    ``xdg-open`` and the apps it starts) stop inheriting it.
+    """
+    if not frozen or not platform.startswith("linux"):
+        return
+    original = environ.get("LD_LIBRARY_PATH_ORIG")
+    if original is None:
+        environ.pop("LD_LIBRARY_PATH", None)
+    else:
+        environ["LD_LIBRARY_PATH"] = original
 
 
 def _app_version() -> str:
@@ -14,6 +37,9 @@ def _app_version() -> str:
 
 
 def main() -> int:
+    restore_inherited_library_path(
+        os.environ, frozen=getattr(sys, "frozen", False), platform=sys.platform
+    )
     from pagedrop.utils.diagnostics import (
         configure_terminal_logging,
         install_qt_message_handler,
