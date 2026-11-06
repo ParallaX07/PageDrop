@@ -388,8 +388,10 @@ def main(argv: list[str] | None = None) -> int:
             "error": f"Failed to read request: {exc}",
             "code": "bad_request",
         }
-    sys.stdout.write(json.dumps(response) + "\n")
-    sys.stdout.flush()
+    # A windowed build started without handles has no stdout; nobody is listening.
+    if sys.stdout is not None:
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
     return 0 if response.get("ok") else 1
 
 

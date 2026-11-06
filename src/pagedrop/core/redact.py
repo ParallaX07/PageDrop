@@ -767,20 +767,35 @@ def redact_edit_model(
 
 
 def _cli_verify() -> int:
-    """Read verify payload from stdin; print JSON report; exit 0/2."""
-    payload = json.loads(sys.stdin.read() or "{}")
-    report = inspect_redaction_result(
-        payload["path"],
-        absent_text=payload.get("absent_text") or (),
-        password=payload.get("password"),
-        expect_no_redact_annots=bool(payload.get("expect_no_redact_annots", True)),
-        expect_empty_metadata=bool(payload.get("expect_empty_metadata", False)),
-        expect_no_attachments=bool(payload.get("expect_no_attachments", False)),
-        forbidden_image_xrefs=payload.get("forbidden_image_xrefs") or (),
-        regions=payload.get("regions") or (),
-        raw_scan_text=payload.get("raw_scan_text") or (),
-        forbidden_image_digests=payload.get("forbidden_image_digests") or None,
-    )
+    """Read verify payload from stdin; print JSON report; exit 0/2.
+
+    Any failure to read the request or inspect the file is reported as a failed
+    verification (exit 2) instead of a traceback, so the parent fails closed and
+    a windowed build never blocks on an error dialog.
+    """
+    password: str | None = None
+    try:
+        payload = json.loads((sys.stdin.read() if sys.stdin is not None else "") or "{}")
+        path = payload["path"]
+        password = payload.get("password")
+        report = inspect_redaction_result(
+            path,
+            absent_text=payload.get("absent_text") or (),
+            password=password,
+            expect_no_redact_annots=bool(payload.get("expect_no_redact_annots", True)),
+            expect_empty_metadata=bool(payload.get("expect_empty_metadata", False)),
+            expect_no_attachments=bool(payload.get("expect_no_attachments", False)),
+            forbidden_image_xrefs=payload.get("forbidden_image_xrefs") or (),
+            regions=payload.get("regions") or (),
+            raw_scan_text=payload.get("raw_scan_text") or (),
+            forbidden_image_digests=payload.get("forbidden_image_digests") or None,
+        )
+    except Exception as exc:  # noqa: BLE001 — reported to the parent as a failed verification
+        detail = f"{type(exc).__name__}: {exc}"
+        if password:
+            detail = detail.replace(password, "…")
+        print(json.dumps({"failures": [f"verifier could not check the file: {detail}"]}))
+        return 2
     print(json.dumps({"failures": report.failures}))
     return 0 if report.ok else 2
 
