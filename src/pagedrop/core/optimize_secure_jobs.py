@@ -8,6 +8,7 @@ import fitz
 
 from pagedrop.core import optimize_secure as ops
 from pagedrop.core.jobs.runner import JobContext, SerializedJobRunner
+from pagedrop.core.thread_policy import FITZ_LOCK
 
 def handle_compress(ctx: JobContext) -> Path:
     profile_name = str(ctx.spec.options.get("profile") or "lossless")
@@ -19,7 +20,7 @@ def handle_compress(ctx: JobContext) -> Path:
         dpi_threshold = int(ctx.spec.options.get("dpi_threshold") or lossy.dpi_threshold)
         if dpi_threshold <= dpi:
             dpi_threshold = dpi + 1
-        profile: ops.LossyProfile | str = ops.LossyProfile(
+        profile = ops.LossyProfile(
             name=lossy.name,
             dpi=dpi,
             jpeg_quality=jpeg_quality,
@@ -29,22 +30,32 @@ def handle_compress(ctx: JobContext) -> Path:
             0.3,
             f"Compressing PDF (lossy {lossy.name}, {dpi} DPI, Q{jpeg_quality})…",
         )
-    else:
-        # Validate early so unknown names fail before opening the PDF.
-        if profile_name not in ops.SAVE_PROFILES:
-            known = ", ".join([*ops.SAVE_PROFILES, *ops.LOSSY_PROFILES])
-            raise ValueError(
-                f"Unknown compress profile {profile_name!r}; expected one of: {known}"
-            )
-        profile = profile_name
-        ctx.progress(0.3, "Compressing PDF…")
+        # rewrite_images cannot be split per page or interrupted, so it runs in
+        # an owned child process and this thread never holds FITZ_LOCK.
+        ops.compress_pdf_lossy_in_child(
+            ctx.spec.inputs[0],
+            str(ctx.staged_output),
+            profile,
+            password=ctx.password(),
+            cancel=ctx.cancel,
+        )
+        return ctx.staged_output
 
-    ops.compress_pdf(
-        ctx.spec.inputs[0],
-        str(ctx.staged_output),
-        profile=profile,
-        password=ctx.password(),
-    )
+    # Validate early so unknown names fail before opening the PDF.
+    if profile_name not in ops.SAVE_PROFILES:
+        known = ", ".join([*ops.SAVE_PROFILES, *ops.LOSSY_PROFILES])
+        raise ValueError(
+            f"Unknown compress profile {profile_name!r}; expected one of: {known}"
+        )
+    ctx.progress(0.3, "Compressing PDF…")
+
+    with FITZ_LOCK:
+        ops.compress_pdf(
+            ctx.spec.inputs[0],
+            str(ctx.staged_output),
+            profile=profile_name,  # type: ignore[arg-type]
+            password=ctx.password(),
+        )
     return ctx.staged_output
 
 def handle_repair(ctx: JobContext) -> Path:
@@ -131,4 +142,10 @@ OPTIMIZE_SECURE_HANDLERS: dict[str, object] = {
 
 def register_optimize_secure_handlers(runner: SerializedJobRunner) -> None:
     for job_type, handler in OPTIMIZE_SECURE_HANDLERS.items():
-        runner.register(job_type, handler)  # type: ignore[arg-type]
+        # compress locks only for the lossless in-process path; the lossy path
+        # waits on a child process and must not hold FITZ_LOCK.
+        runner.register(
+            job_type,
+            handler,  # type: ignore[arg-type]
+            holds_fitz=job_type != "compress",
+        )

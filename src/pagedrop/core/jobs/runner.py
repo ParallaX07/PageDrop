@@ -5,7 +5,8 @@ Handlers open documents by path inside the handler (see ``thread_policy``).
 Fitz-using handlers take the shared ``FITZ_LOCK`` around the handler body so
 tool jobs serialize with the viewer PDF service. Handlers that only wait on
 external converters (Office COM / LibreOffice) register with
-``holds_fitz=False`` so subprocess waits never stall interactive fitz work.
+``holds_fitz=False`` so subprocess waits never stall interactive fitz work;
+so do handlers that take the lock themselves per page or step.
 Long-term upgrade: dedicated PDF service process (multiprocessing) for
 fitz-heavy handlers — same stage/promote/cancel API.
 """
@@ -137,8 +138,9 @@ class SerializedJobRunner:
         """Register *handler* for *job_type*.
 
         *holds_fitz* (default True): wrap the handler in ``FITZ_LOCK``. Pass
-        False for Office / LibreOffice / other long external waits; those
-        handlers must lock only around any brief fitz validate/open/close.
+        False for Office / LibreOffice / other long external waits and for
+        long page loops; those handlers must lock only around each fitz
+        open/page/save/close (objects included).
         """
         self._handlers[job_type] = _HandlerEntry(handler, holds_fitz=holds_fitz)
 

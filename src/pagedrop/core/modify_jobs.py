@@ -225,6 +225,13 @@ MODIFY_HANDLERS: dict[str, object] = {
     "color_effects": handle_color_effects,
 }
 
+# Handlers that take FITZ_LOCK per page themselves instead of for the whole run.
+_PER_PAGE_LOCK_JOBS = frozenset({"color_effects"})
+
 def register_modify_handlers(runner: SerializedJobRunner) -> None:
     for job_type, handler in MODIFY_HANDLERS.items():
-        runner.register(job_type, handler)  # type: ignore[arg-type]
+        runner.register(
+            job_type,
+            handler,  # type: ignore[arg-type]
+            holds_fitz=job_type not in _PER_PAGE_LOCK_JOBS,
+        )
