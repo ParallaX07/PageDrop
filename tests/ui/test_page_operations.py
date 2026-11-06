@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import fitz
+import pytest
 
-from pagedrop.core.drag_mime import decode_page_refs, encode_page_refs
+from pagedrop.core.drag_mime import (
+    PageTransferPayloadError,
+    decode_page_refs,
+    encode_page_refs,
+)
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import render_page_png
 from pagedrop.ui.window_manager import WindowManager
@@ -22,6 +27,11 @@ def test_page_ref_rotation_mime_roundtrip():
 def test_legacy_mime_defaults_rotation_to_zero():
     payload = b'[{"source_path":"/tmp/a.pdf","source_index":1}]'
     assert decode_page_refs(payload) == [PageRef("/tmp/a.pdf", 1, 0)]
+
+
+def test_decode_rejects_a_payload_that_is_not_a_page_list():
+    with pytest.raises(PageTransferPayloadError):
+        decode_page_refs(b'{"source_path": "/tmp/a.pdf", "source_index": 0}')
 
 
 def test_render_page_png_accepts_rotation(tmp_path):

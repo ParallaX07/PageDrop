@@ -521,6 +521,33 @@ def test_thumbnail_worker_releases_lock_between_pages(
     )
 
 
+def test_thumbnail_worker_continues_after_a_failed_page(tmp_path: Path) -> None:
+    """One unreadable page is reported and the rest of the batch still renders."""
+    good = tmp_path / "good.pdf"
+    _write_pdf(good, pages=3)
+    missing = tmp_path / "missing.pdf"
+    pages = [
+        (0, PageRef(str(good), 0)),
+        (1, PageRef(str(missing), 0)),
+        (2, PageRef(str(good), 1)),
+    ]
+    worker = ThumbnailWorker(
+        pages, generation=1, width_px=64, is_cancelled=lambda _g: False
+    )
+    ready: list[int] = []
+    failed: list[int] = []
+    finished: list[int] = []
+    worker.signals.page_ready.connect(lambda _g, index, _png: ready.append(index))
+    worker.signals.error.connect(lambda _g, index, _msg: failed.append(index))
+    worker.signals.finished.connect(finished.append)
+
+    worker.run()
+
+    assert ready == [0, 2]
+    assert failed == [1]
+    assert finished == [1]
+
+
 def test_search_model_releases_lock_between_pages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

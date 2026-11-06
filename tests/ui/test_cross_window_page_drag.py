@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import fitz
+import pytest
 from PyQt6.QtCore import QMimeData, QPointF, Qt
 from PyQt6.QtGui import QDrag, QDropEvent
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
     PAGE_TRANSFER_MIME,
+    PageTransferPayloadError,
     decode_page_refs,
     encode_page_indices,
     encode_page_refs,
@@ -17,7 +20,7 @@ from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
-from tests.conftest import wait_for_grid_loaded
+from tests.conftest import file_sha256, wait_for_grid_loaded
 
 
 def _load_grid(qtbot, pdf_path) -> ThumbnailGrid:
@@ -393,3 +396,229 @@ def test_merge_opens_as_editor_tab(qtbot, five_page_pdf, qapp):
     assert merge is not None
     assert editor._tab_manager.currentWidget() is merge
     assert editor._tab_manager.indexOf(merge) >= 0
+
+BAD_PAYLOADS = [
+    pytest.param(b"not json", id="bad-json"),
+    pytest.param(b"\xff\xfe", id="not-utf8"),
+    pytest.param(b'{"source_path": "x", "source_index": 0}', id="object-not-list"),
+    pytest.param(b"[42]", id="item-not-object"),
+    pytest.param(b'[{"source_index": 0}]', id="missing-path"),
+    pytest.param(b'[{"source_path": "x"}]', id="missing-index"),
+    pytest.param(b'[{"source_path": "x", "source_index": "zero"}]', id="text-index"),
+    pytest.param(b'[{"source_path": "x", "source_index": 1.5}]', id="float-index"),
+    pytest.param(b'[{"source_path": "x", "source_index": null}]', id="null-index"),
+    pytest.param(b'[{"source_path": 7, "source_index": 0}]', id="numeric-path"),
+]
+
+
+@pytest.mark.parametrize("payload", BAD_PAYLOADS)
+def test_decode_page_refs_rejects_malformed_payload(payload):
+    with pytest.raises(PageTransferPayloadError):
+        decode_page_refs(payload)
+
+
+def _raw_drop(target, payload: bytes, source, monkeypatch, *, shift=False) -> QDropEvent:
+    mime = QMimeData()
+    mime.setData(PAGE_TRANSFER_MIME, payload)
+    monkeypatch.setattr(
+        ThumbnailGrid, "_grid_for_widget", staticmethod(lambda _widget: source)
+    )
+    drop = QDropEvent(
+        QPointF(10, 10),
+        Qt.DropAction.MoveAction if shift else Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier,
+    )
+    target.dropEvent(drop)
+    return drop
+
+
+def _out_of_range_payloads(path) -> list[bytes]:
+    return [
+        encode_page_refs([PageRef(str(path), 5)]),
+        encode_page_refs([PageRef(str(path), -1)]),
+        # One bad ref rejects the whole drop, even next to valid ones.
+        encode_page_refs([PageRef(str(path), 0), PageRef(str(path), 99)]),
+    ]
+
+
+@pytest.mark.parametrize("payload", BAD_PAYLOADS)
+def test_malformed_grid_drop_is_rejected_visibly(
+    qtbot, five_page_pdf, one_page_pdf, monkeypatch, payload
+):
+    source = _load_grid(qtbot, five_page_pdf)
+    target = _load_grid(qtbot, one_page_pdf)
+    before = _model_refs(target)
+    source_hash = file_sha256(five_page_pdf)
+    errors: list[str] = []
+    target.page_transfer_failed.connect(errors.append)
+
+    drop = _raw_drop(target, payload, source, monkeypatch)
+
+    assert not drop.isAccepted()
+    assert len(errors) == 1
+    assert _model_refs(target) == before
+    assert file_sha256(five_page_pdf) == source_hash
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_out_of_range_grid_drop_is_rejected_visibly(
+    qtbot, five_page_pdf, one_page_pdf, monkeypatch, index
+):
+    source = _load_grid(qtbot, five_page_pdf)
+    target = _load_grid(qtbot, one_page_pdf)
+    before = _model_refs(target)
+    source_hash = file_sha256(five_page_pdf)
+    errors: list[str] = []
+    target.page_transfer_failed.connect(errors.append)
+
+    payload = _out_of_range_payloads(five_page_pdf)[index]
+    drop = _raw_drop(target, payload, source, monkeypatch)
+
+    assert not drop.isAccepted()
+    assert len(errors) == 1
+    assert _model_refs(target) == before
+    assert file_sha256(five_page_pdf) == source_hash
+
+
+def test_out_of_range_drop_into_blank_tab_leaves_it_blank(
+    qtbot, five_page_pdf, monkeypatch
+):
+    source = _load_grid(qtbot, five_page_pdf)
+    tab = _blank_tab(qtbot)
+    errors: list[str] = []
+    tab.thumbnail_grid.page_transfer_failed.connect(errors.append)
+
+    payload = encode_page_refs([PageRef(str(five_page_pdf), 5)])
+    drop = _raw_drop(tab.thumbnail_grid, payload, source, monkeypatch)
+
+    assert not drop.isAccepted()
+    assert len(errors) == 1
+    assert tab.is_blank
+    assert tab.edit_model is None
+    assert tab._loader_cache == {}
+
+
+def test_shift_drop_from_another_process_reports_copy_not_move(
+    qtbot, five_page_pdf, one_page_pdf, monkeypatch
+):
+    source = _load_grid(qtbot, five_page_pdf)
+    target = _load_grid(qtbot, one_page_pdf)
+    assert source._model is not None
+    payload = encode_page_refs([source._model.page_at(1), source._model.page_at(2)])
+    copied: list[int] = []
+    inserted: list[tuple[int, str]] = []
+    target.pages_copied_not_moved.connect(copied.append)
+    target.cross_window_pages_inserted.connect(
+        lambda count, name: inserted.append((count, name))
+    )
+
+    drop = _raw_drop(target, payload, None, monkeypatch, shift=True)
+
+    assert drop.isAccepted()
+    assert copied == [2]
+    assert inserted == []
+    assert len(_model_refs(target)) == 3
+    assert source._model.logical_count() == 5
+
+
+def test_plain_drop_from_another_process_keeps_insert_wording(
+    qtbot, five_page_pdf, one_page_pdf, monkeypatch
+):
+    source = _load_grid(qtbot, five_page_pdf)
+    target = _load_grid(qtbot, one_page_pdf)
+    assert source._model is not None
+    payload = encode_page_refs([source._model.page_at(1)])
+    copied: list[int] = []
+    inserted: list[tuple[int, str]] = []
+    target.pages_copied_not_moved.connect(copied.append)
+    target.cross_window_pages_inserted.connect(
+        lambda count, name: inserted.append((count, name))
+    )
+
+    drop = _raw_drop(target, payload, None, monkeypatch)
+
+    assert drop.isAccepted()
+    assert copied == []
+    assert inserted == [(1, five_page_pdf.name)]
+
+
+def _unlocked_encrypted_tab(qtbot, tmp_path) -> tuple[PdfTab, str]:
+    path = tmp_path / "locked.pdf"
+    doc = fitz.open()
+    try:
+        for n in range(3):
+            doc.new_page(width=200, height=200).insert_text((40, 80), f"secret {n}")
+        doc.save(
+            str(path),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="pw",
+            owner_pw="pw",
+        )
+    finally:
+        doc.close()
+    tab = _blank_tab(qtbot)
+    tab.load_pdf(str(path), password="pw")
+    wait_for_grid_loaded(qtbot, tab.thumbnail_grid)
+    return tab, str(path)
+
+
+def test_encrypted_pages_drop_on_loaded_tab(qtbot, tmp_path, one_page_pdf):
+    source_tab, path = _unlocked_encrypted_tab(qtbot, tmp_path)
+    target_tab = _load_tab(qtbot, one_page_pdf)
+    source_hash = file_sha256(path)
+    errors: list[str] = []
+    target_tab.thumbnail_grid.page_transfer_failed.connect(errors.append)
+
+    assert _cross_window_drop(
+        target_tab.thumbnail_grid, source_tab.thumbnail_grid, [0, 2], drop_index=1
+    )
+
+    assert errors == []
+    assert _model_refs(target_tab.thumbnail_grid) == [
+        (str(one_page_pdf), 0),
+        (path, 0),
+        (path, 2),
+    ]
+    wait_for_grid_loaded(qtbot, target_tab.thumbnail_grid)
+    assert file_sha256(path) == source_hash
+
+
+def test_encrypted_pages_drop_on_blank_tab(qtbot, tmp_path):
+    source_tab, path = _unlocked_encrypted_tab(qtbot, tmp_path)
+    target_tab = _blank_tab(qtbot)
+    source_hash = file_sha256(path)
+    errors: list[str] = []
+    target_tab.thumbnail_grid.page_transfer_failed.connect(errors.append)
+
+    assert _cross_window_drop(
+        target_tab.thumbnail_grid, source_tab.thumbnail_grid, [1]
+    )
+
+    assert errors == []
+    assert not target_tab.is_blank
+    assert _model_refs(target_tab.thumbnail_grid) == [(path, 1)]
+    wait_for_grid_loaded(qtbot, target_tab.thumbnail_grid)
+    assert file_sha256(path) == source_hash
+
+
+def test_rejected_encrypted_drop_on_blank_tab_keeps_nothing_open(qtbot, tmp_path):
+    source_tab, path = _unlocked_encrypted_tab(qtbot, tmp_path)
+    target_tab = _blank_tab(qtbot)
+    errors: list[str] = []
+    target_tab.thumbnail_grid.page_transfer_failed.connect(errors.append)
+    refs = [PageRef(path, 9)]
+
+    assert not target_tab.thumbnail_grid._handle_page_transfer(
+        refs,
+        0,
+        move=False,
+        source_grid=source_tab.thumbnail_grid,
+        mime=_transfer_mime(refs, [9]),
+    )
+
+    assert len(errors) == 1
+    assert target_tab.is_blank
+    assert target_tab._loader_cache == {}
+    assert target_tab.credentials.get(path) is None

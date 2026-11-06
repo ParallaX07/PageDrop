@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
 from PyQt6.QtCore import QMimeData, QPointF, Qt
 from PyQt6.QtGui import QDropEvent
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
@@ -12,10 +13,13 @@ from pagedrop.core.drag_mime import (
     encode_page_indices,
     encode_page_refs,
 )
+from pagedrop.core.pdf_editor import PageRef
+from pagedrop.core.pdf_loader import PdfEmptyError
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
-from tests.conftest import RENDER_TIMEOUT_MS
+from tests.conftest import RENDER_TIMEOUT_MS, file_sha256
+from tests.ui.test_cross_window_page_drag import BAD_PAYLOADS
 
 
 def _tab_at(window: MainWindow, index: int) -> PdfTab:
@@ -238,3 +242,149 @@ def test_target_tab_title_shows_dirty_after_drop(
     assert target.is_dirty
     assert "*" in main_window._tab_manager.tabText(target_index)
     assert main_window._tab_manager.currentIndex() == 0
+
+
+@pytest.fixture
+def modal_calls(monkeypatch):
+    calls: list[str] = []
+    for name in ("critical", "warning"):
+        monkeypatch.setattr(
+            QMessageBox,
+            name,
+            staticmethod(lambda _parent, _title, text, _n=name: calls.append(text)),
+        )
+    return calls
+
+
+def _raw_tab_bar_drop(
+    window: MainWindow, target_index: int, payload: bytes, source_grid, monkeypatch,
+    *, shift: bool = False,
+) -> bool:
+    mime = QMimeData()
+    mime.setData(PAGE_TRANSFER_MIME, payload)
+    monkeypatch.setattr(
+        ThumbnailGrid, "_grid_for_widget", staticmethod(lambda _w: source_grid)
+    )
+    tab_bar = window._tab_manager.detachable_tab_bar
+    drop = QDropEvent(
+        QPointF(tab_bar.tabRect(target_index).center()),
+        Qt.DropAction.MoveAction if shift else Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier,
+    )
+    tab_bar.dropEvent(drop)
+    return drop.isAccepted()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        *BAD_PAYLOADS,
+        pytest.param(
+            encode_page_refs([PageRef("PLACEHOLDER", 99)]), id="index-past-end"
+        ),
+        pytest.param(
+            encode_page_refs([PageRef("PLACEHOLDER", -1)]), id="negative-index"
+        ),
+    ],
+)
+def test_bad_tab_bar_payload_is_rejected_visibly_on_inactive_tab(
+    main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot, modal_calls, payload
+):
+    source, target = _two_loaded_tabs(
+        main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot
+    )
+    main_window._tab_manager.setCurrentIndex(0)  # the drop target is inactive
+    payload = payload.replace(b"PLACEHOLDER", str(five_page_pdf).encode())
+    before = _model_refs(target)
+    source_hash = file_sha256(five_page_pdf)
+    errors: list[str] = []
+    target.thumbnail_grid.page_transfer_failed.connect(errors.append)
+
+    assert not _raw_tab_bar_drop(
+        main_window, 1, payload, source.thumbnail_grid, monkeypatch
+    )
+
+    assert len(errors) == 1
+    assert modal_calls == [errors[0]]
+    assert main_window._status_by_page[target] == errors[0]
+    assert main_window._status_by_page.get(source) != errors[0]
+    assert _model_refs(target) == before
+    assert file_sha256(five_page_pdf) == source_hash
+
+
+def test_tab_bar_drop_from_another_process_is_reported(
+    main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot, modal_calls
+):
+    source, target = _two_loaded_tabs(
+        main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot
+    )
+    assert source.edit_model is not None
+    payload = encode_page_refs([source.edit_model.page_at(0)])
+    before = _model_refs(target)
+
+    assert not _raw_tab_bar_drop(main_window, 1, payload, None, monkeypatch)
+
+    assert modal_calls == [
+        "Could not transfer pages: tabs can't accept drops from another PageDrop "
+        "process. Drop on the page grid instead."
+    ]
+    assert _model_refs(target) == before
+
+
+def test_pdf_drop_failure_on_inactive_tab_is_reported(
+    main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot, modal_calls
+):
+    source, target = _two_loaded_tabs(
+        main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot
+    )
+    main_window._tab_manager.setCurrentIndex(0)
+    main_window._status_by_page[source] = "Marker"
+
+    target.thumbnail_grid.pdf_drop_failed.emit(PdfEmptyError("PDF has no pages: x"))
+
+    assert modal_calls == ["PDF has no pages: x"]
+    assert main_window._status_by_page[target] == "Ready"
+    assert main_window._status_by_page[source] == "Marker"
+
+
+def test_shift_drop_from_another_process_toasts_copy_not_move(
+    main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot
+):
+    source, target = _two_loaded_tabs(
+        main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot
+    )
+    main_window._tab_manager.setCurrentIndex(1)
+    assert source.edit_model is not None
+    toasts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window,
+        "_show_toast",
+        lambda message, *, kind="info", on_undo=None: toasts.append((message, kind)),
+    )
+    payload = encode_page_refs([source.edit_model.page_at(0)])
+    mime = QMimeData()
+    mime.setData(PAGE_TRANSFER_MIME, payload)
+    monkeypatch.setattr(
+        ThumbnailGrid, "_grid_for_widget", staticmethod(lambda _w: None)
+    )
+    drop = QDropEvent(
+        QPointF(10, 10),
+        Qt.DropAction.MoveAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier,
+    )
+
+    target.thumbnail_grid.dropEvent(drop)
+
+    assert drop.isAccepted()
+    assert len(toasts) == 1
+    message, kind = toasts[0]
+    assert message == (
+        "Copied 1 page, not moved: the source is in another PageDrop process"
+    )
+    assert kind == "info"
+    assert source.edit_model.logical_count() == 5
+    assert len(_model_refs(target)) == 2

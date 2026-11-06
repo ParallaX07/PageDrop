@@ -16,7 +16,15 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
+from PyQt6.QtGui import (
+    QDrag,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPalette,
+    QPixmap,
+    QResizeEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -43,6 +51,7 @@ from pagedrop.ui.theme import (
     SPACE_1,
     SPACE_2,
     accent_qcolor,
+    chrome_text_muted_qcolor,
     on_accent_qcolor,
     shadow_qcolor,
 )
@@ -68,6 +77,7 @@ class PageCard(BaseFileCard):
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
         self._is_skeleton = True
+        self._failed = False
         self._page_overlay_wanted = False
         self._size_provider: Callable[[], tuple[int, int]] | None = None
         self._size_cached: tuple[int, int] | None = None
@@ -159,8 +169,32 @@ class PageCard(BaseFileCard):
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         self._is_skeleton = False
         self.clear_skeleton_pulse()
+        self._reset_failed()
         super().set_thumbnail(pixmap)
         self._sync_page_overlay_visibility()
+
+    def set_failed(self) -> None:
+        """Static placeholder for a page that could not be rendered (no pulse)."""
+        self._source_pixmap = None
+        self._thumbnail_label.clear()
+        self._is_skeleton = False
+        self._failed = True
+        self.clear_skeleton_pulse()
+        self._thumbnail_label.setText("Page unavailable")
+        palette = self._thumbnail_label.palette()
+        palette.setColor(
+            QPalette.ColorRole.WindowText, chrome_text_muted_qcolor()
+        )
+        self._thumbnail_label.setPalette(palette)
+        self._sync_page_overlay_visibility()
+        self._sync_accessible()
+
+    def _reset_failed(self) -> None:
+        if not self._failed:
+            return
+        self._failed = False
+        self._thumbnail_label.clear()
+        self._sync_accessible()
 
     def set_selected(self, selected: bool) -> None:
         super().set_selected(selected)
@@ -186,6 +220,7 @@ class PageCard(BaseFileCard):
         if self._source_pixmap is None and self._is_skeleton:
             return False
         had_pixmap = self._source_pixmap is not None
+        self._reset_failed()
         self._source_pixmap = None
         self._thumbnail_label.clear()
         self._is_skeleton = True
@@ -276,6 +311,8 @@ class PageCard(BaseFileCard):
         page_num = self.page_index + 1
         self.setAccessibleName(f"Page {page_num}")
         selected = "Selected · " if self._selected else ""
+        if self._failed:
+            selected += "Page unavailable · "
         if self._size_cached is not None:
             width_mm, height_mm = self._size_cached
             self.setAccessibleDescription(
