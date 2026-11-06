@@ -109,8 +109,12 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "ui/compare_window.py — compare_pdf_text_diff under FITZ_LOCK; pool max 1",
     ),
     (
+        "_CompareRenderWorker",
+        "ui/compare_window.py — pdf_service pane render under FITZ_LOCK; pool max 1",
+    ),
+    (
         "CompareWindow",
-        "ui/compare_window.py — pdf_service pane render on GUI; text-diff via _CompareTextWorker",
+        "ui/compare_window.py — pdf_service pane render via _CompareRenderWorker; text-diff via _CompareTextWorker",
     ),
     (
         "_BlankDetectWorker",
