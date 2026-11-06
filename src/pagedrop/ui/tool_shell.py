@@ -40,7 +40,11 @@ from pagedrop.ui.dialogs import (
     confirm_overwrite,
     prompt_pdf_password,
 )
-from pagedrop.ui.job_chrome import JobChromeMixin
+from pagedrop.ui.job_chrome import (
+    JobChromeMixin,
+    fitz_lock_released,
+    run_with_fitz_lock,
+)
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 
@@ -394,119 +398,142 @@ def run_tool_job(
     )
 
     token = begin(progress_message)
+
+    def end_for(exc: Exception) -> None:
+        if isinstance(exc, JobCancelledError):
+            end(status="Cancelled", toast="Job cancelled", toast_kind="info")
+        elif isinstance(exc, SourceOverwriteError):
+            end(
+                error=f"Output must not overwrite a source file:\n{exc}",
+                toast="Cannot overwrite source",
+                toast_kind="error",
+            )
+        elif isinstance(exc, OutputExistsError):
+            end(
+                error=f"Output already exists:\n{exc}",
+                toast="Output exists",
+                toast_kind="error",
+            )
+        elif isinstance(
+            exc, (JobError, PdfLoadError, OSError, ValueError, FileNotFoundError, FileExistsError)
+        ):
+            end(error=str(exc), toast="Job failed", toast_kind="error")
+        else:
+            end(
+                error=f"Unexpected error:\n{exc}",
+                toast="Job failed",
+                toast_kind="error",
+            )
+
     try:
         for path in (out, *existing):
             reject_source_overwrite(path, *inputs)
-        credentials = preflight_pdf_inputs(
+    except Exception as exc:
+        end_for(exc)
+        return
+
+    def probe() -> RuntimeCredentials:
+        return preflight_pdf_inputs(
             inputs,
-            prompt=lambda name, incorrect: prompt_pdf_password(
-                host, name, incorrect=incorrect
+            prompt=fitz_lock_released(
+                lambda name, incorrect: prompt_pdf_password(
+                    host, name, incorrect=incorrect
+                )
             ),
             credentials=credentials,
             cancel=token,
         )
-        if existing and not confirm_overwrite(host, existing, window_title=title):
-            end(status="Cancelled", toast="Cancelled", toast_kind="info")
-            return
-    except JobCancelledError:
-        end(status="Cancelled", toast="Job cancelled", toast_kind="info")
-        return
-    except SourceOverwriteError as exc:
-        end(
-            error=f"Output must not overwrite a source file:\n{exc}",
-            toast="Cannot overwrite source",
-            toast_kind="error",
-        )
-        return
-    except OutputExistsError as exc:
-        end(
-            error=f"Output already exists:\n{exc}",
-            toast="Output exists",
-            toast_kind="error",
-        )
-        return
-    except (JobError, PdfLoadError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
-        end(error=str(exc), toast="Job failed", toast_kind="error")
-        return
-    except Exception as exc:
-        end(
-            error=f"Unexpected error:\n{exc}",
-            toast="Job failed",
-            toast_kind="error",
-        )
-        return
 
-    spec = JobSpec.create(
-        job_type,
-        inputs=inputs,
-        output=output,
-        options=options or {},
-        overwrite=bool(existing),
-    )
-    worker = _ToolJobWorker(
-        runner,
-        spec,
-        credentials=credentials,
-        cancel=token,
-        secrets=secrets,
-    )
-    signals = worker.signals
-    _TOOL_JOB_SIGNAL_REFS.append(signals)
-    worker_started = getattr(host, "_worker_started", None)
-    if callable(worker_started):
-        worker_started()
-
-    def _still_running() -> bool:
-        check = getattr(host, "is_job_running", None)
-        return True if not callable(check) else bool(check())
-
-    def _release_signals() -> None:
+    def preflighted(checked: object, error: Exception | None) -> None:
+        # The fitz lock is released here, so the overwrite dialog and any
+        # error dialog from ``end`` never run while the GUI holds it.
         try:
-            _TOOL_JOB_SIGNAL_REFS.remove(signals)
-        except ValueError:
-            pass
-        worker_finished = getattr(host, "_worker_finished", None)
-        if callable(worker_finished):
-            worker_finished()
-
-    def on_progress(fraction: float, message: str) -> None:
-        if _still_running():
-            set_progress(fraction, message)
-
-    def on_succeeded(result_path: str) -> None:
-        _release_signals()
-        if not _still_running():
+            if error is not None:
+                raise error
+            if existing and not confirm_overwrite(host, existing, window_title=title):
+                end(status="Cancelled", toast="Cancelled", toast_kind="info")
+                return
+        except Exception as exc:
+            end_for(exc)
             return
-        name = Path(result_path).name
-        message = (
-            success_toast(result_path)
-            if callable(success_toast)
-            else success_toast or f"Saved {name}"
+        _start_worker(checked)
+
+    def _start_worker(credentials: RuntimeCredentials) -> None:
+        spec = JobSpec.create(
+            job_type,
+            inputs=inputs,
+            output=output,
+            options=options or {},
+            overwrite=bool(existing),
         )
-        end(
-            status=message,
-            toast="Completed",
-            toast_kind="success",
-            result_path=result_path,
+        worker = _ToolJobWorker(
+            runner,
+            spec,
+            credentials=credentials,
+            cancel=token,
+            secrets=secrets,
         )
+        signals = worker.signals
+        _TOOL_JOB_SIGNAL_REFS.append(signals)
+        worker_started = getattr(host, "_worker_started", None)
+        if callable(worker_started):
+            worker_started()
 
-    def on_cancelled() -> None:
-        _release_signals()
-        if not _still_running():
-            return
-        end(status="Cancelled", toast="Job cancelled", toast_kind="info")
+        def _still_running() -> bool:
+            check = getattr(host, "is_job_running", None)
+            return True if not callable(check) else bool(check())
 
-    def on_failed(error: str, toast: str) -> None:
-        _release_signals()
-        if not _still_running():
-            return
-        end(error=error, toast=toast, toast_kind="error")
+        def _release_signals() -> None:
+            try:
+                _TOOL_JOB_SIGNAL_REFS.remove(signals)
+            except ValueError:
+                pass
+            worker_finished = getattr(host, "_worker_finished", None)
+            if callable(worker_finished):
+                worker_finished()
 
-    signals.progress.connect(on_progress)
-    signals.succeeded.connect(on_succeeded)
-    signals.cancelled.connect(on_cancelled)
-    signals.failed.connect(on_failed)
-    _tool_job_pool().start(worker)
+        def on_progress(fraction: float, message: str) -> None:
+            if _still_running():
+                set_progress(fraction, message)
+
+        def on_succeeded(result_path: str) -> None:
+            _release_signals()
+            if not _still_running():
+                return
+            name = Path(result_path).name
+            message = (
+                success_toast(result_path)
+                if callable(success_toast)
+                else success_toast or f"Saved {name}"
+            )
+            end(
+                status=message,
+                toast="Completed",
+                toast_kind="success",
+                result_path=result_path,
+            )
+
+        def on_cancelled() -> None:
+            _release_signals()
+            if not _still_running():
+                return
+            end(status="Cancelled", toast="Job cancelled", toast_kind="info")
+
+        def on_failed(error: str, toast: str) -> None:
+            _release_signals()
+            if not _still_running():
+                return
+            end(error=error, toast=toast, toast_kind="error")
+
+        signals.progress.connect(on_progress)
+        signals.succeeded.connect(on_succeeded)
+        signals.cancelled.connect(on_cancelled)
+        signals.failed.connect(on_failed)
+        _tool_job_pool().start(worker)
+
+    run_with_fitz_lock(
+        host, token, message=progress_message, probe=probe, done=preflighted
+    )
 
 
 def _options_has_controls(widget: QWidget) -> bool:

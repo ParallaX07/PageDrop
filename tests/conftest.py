@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +34,29 @@ RENDER_POOL_DRAIN_MS = 2000
 def file_sha256(path: Path | str) -> str:
     """Return the hex SHA-256 of a file, for source-unchanged assertions."""
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+@contextlib.contextmanager
+def hold_fitz_lock():
+    """Hold ``FITZ_LOCK`` from a helper thread; yields until the block ends."""
+    from pagedrop.core.thread_policy import FITZ_LOCK
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with FITZ_LOCK:
+            held.set()
+            release.wait(15)
+
+    thread = threading.Thread(target=hold, daemon=True)
+    thread.start()
+    try:
+        assert held.wait(5)
+        yield
+    finally:
+        release.set()
+        thread.join(5)
 
 
 class OverwriteAnswer:
