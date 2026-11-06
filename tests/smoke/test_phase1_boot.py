@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+
+import pytest
 
 
 def test_imports():
@@ -105,3 +108,27 @@ def test_compress_worker_flag_dispatches_without_creating_a_qapplication(monkeyp
 
     assert main_module.main() == 7
     assert received == [["--compress-json"]]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux library path")
+def test_main_restores_the_library_path_before_dispatching_worker_flags(monkeypatch):
+    """Frozen Linux: the worker flag sees the original path, not the bundled one."""
+    from pagedrop import main as main_module
+    from pagedrop.core import optimize_secure
+    from pagedrop.utils import diagnostics
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(diagnostics, "configure_terminal_logging", lambda: None)
+    monkeypatch.setattr(diagnostics, "log_startup", lambda **_kw: None)
+    monkeypatch.setattr(
+        optimize_secure, "main", lambda _argv: seen.append(os.environ.get("LD_LIBRARY_PATH")) or 0
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        sys, "argv", ["pagedrop", optimize_secure.COMPRESS_WORKER_FLAG, "--compress-json"]
+    )
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundle/_internal:/usr/lib/x")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/x")
+
+    assert main_module.main() == 0
+    assert seen == ["/usr/lib/x"]

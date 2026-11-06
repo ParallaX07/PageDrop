@@ -46,6 +46,24 @@ def kill_process_tree(pid: int) -> None:
             return
 
 
+def frozen_child_env() -> dict[str, str] | None:
+    """Environment for PageDrop's own frozen helpers (``None``: inherit as-is).
+
+    The frozen app clears the bundled ``LD_LIBRARY_PATH`` from its environment so
+    external programs don't load bundled libraries. A helper that re-enters this
+    exe inherits the bootloader's markers and skips setting the path itself, so
+    it gets the bundle directory back to keep using the libraries it shipped with.
+    """
+    if not (getattr(sys, "frozen", False) and sys.platform.startswith("linux")):
+        return None
+    env = os.environ.copy()
+    bundle = str(getattr(sys, "_MEIPASS", ""))
+    if bundle:
+        inherited = env.get("LD_LIBRARY_PATH")
+        env["LD_LIBRARY_PATH"] = f"{bundle}:{inherited}" if inherited else bundle
+    return env
+
+
 def popen_owned(argv: list[str], **kwargs: Any) -> subprocess.Popen[str]:
     """``Popen`` configured so :func:`kill_process_tree` can reap children.
 

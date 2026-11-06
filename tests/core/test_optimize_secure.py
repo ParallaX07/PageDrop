@@ -408,7 +408,11 @@ def test_compress_lossy_password_goes_over_stdin_not_argv_or_env(
         assert doc.page_count == 1 and doc[0].get_images()
     assert out.stat().st_size < locked.stat().st_size
     assert all("s3cret-pw" not in arg for argv in spy.argvs for arg in argv)
-    assert all("env" not in kwargs for kwargs in spy.kwargs)
+    assert not any(
+        "s3cret-pw" in value
+        for kwargs in spy.kwargs
+        for value in (kwargs.get("env") or {}).values()
+    )
 
 
 def test_compress_lossy_wrong_password_reports_typed_error_without_secret(
