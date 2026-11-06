@@ -445,3 +445,15 @@ def test_extract_page_refs_to_pdf_preserves_rotation_and_multi_source(
         ]
     finally:
         doc.close()
+
+
+def test_folder_export_releases_its_job_dir_pin(five_page_pdf: Path, tmp_path: Path) -> None:
+    temp = TempManager()
+    try:
+        extract_page_refs_to_folder(
+            [PageRef(str(five_page_pdf), 0)], tmp_path / "out", "report", temp_manager=temp
+        )
+        assert temp._pinned == set()
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
