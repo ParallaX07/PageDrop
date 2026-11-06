@@ -4,7 +4,16 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import (
+    QEvent,
+    QEventLoop,
+    QObject,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
@@ -33,7 +42,13 @@ from pagedrop.core.capabilities import (
     clear_cache,
     probe,
 )
-from pagedrop.core.tessdata_pack import ENG_FAST_URL, download_eng_fast, user_tessdata_dir
+from pagedrop.core.jobs import CancelToken, JobCancelledError
+from pagedrop.core.tessdata_pack import (
+    ENG_FAST_URL,
+    download_eng_fast,
+    user_tessdata_dir,
+)
+from pagedrop.ui.busy_overlay import BusyOverlay
 from pagedrop.ui.settings import (
     DELETE_CONFIRM_THRESHOLD,
     confirm_before_deleting_multiple_pages,
@@ -461,16 +476,140 @@ def build_missing_tessdata_dialog(
     return message
 
 
-def _download_eng_tessdata(parent: QWidget | None) -> str:
-    """Download eng.traineddata after an explicit confirm; wire into Settings."""
+_TESSDATA_TITLE = "Download eng tessdata"
+_TESSDATA_POOL: QThreadPool | None = None
+# Keep each run (and its worker signals) alive until the worker's last signal lands.
+_TESSDATA_RUNS: list[QObject] = []
+
+
+def _tessdata_pool() -> QThreadPool:
+    global _TESSDATA_POOL
+    if _TESSDATA_POOL is None:
+        _TESSDATA_POOL = QThreadPool()
+        _TESSDATA_POOL.setMaxThreadCount(1)
+        _TESSDATA_POOL.setObjectName("PageDropTessdataPool")
+    return _TESSDATA_POOL
+
+
+class _TessdataWorker(QRunnable):
+    """Run ``download_eng_fast`` off the UI thread (no ``fitz`` involved)."""
+
+    class Signals(QObject):
+        progress = pyqtSignal(object)
+        succeeded = pyqtSignal(object)
+        cancelled = pyqtSignal()
+        failed = pyqtSignal(str)
+
+    def __init__(self, dest: Path, cancel: CancelToken) -> None:
+        super().__init__()
+        self.signals = self.Signals()
+        self._dest = dest
+        self._cancel = cancel
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        try:
+            path = download_eng_fast(
+                dest_dir=self._dest,
+                cancel=self._cancel,
+                on_progress=self.signals.progress.emit,
+            )
+        except JobCancelledError:
+            self.signals.cancelled.emit()
+        except Exception as exc:  # worker boundary: always report back
+            self.signals.failed.emit(str(exc))
+        else:
+            self.signals.succeeded.emit(path)
+
+
+class _TessdataRun(QObject):
+    """One download: busy overlay on *host*, finished through a local event loop."""
+
+    def __init__(self, host: QWidget, dest: Path) -> None:
+        super().__init__()
+        self._host = host
+        self._token = CancelToken()
+        self._loop = QEventLoop()
+        self._path: Path | None = None
+        self._error = ""
+        self._host_gone = False
+        self._worker = _TessdataWorker(dest, self._token)
+        self.signals = self._worker.signals
+        self._overlay = BusyOverlay(host)
+        self._overlay.set_cancellable(True)
+        self._overlay.cancelled.connect(self._on_cancel_clicked)
+        self.signals.progress.connect(self._overlay.set_progress)
+        self.signals.succeeded.connect(self._on_succeeded)
+        self.signals.cancelled.connect(self._on_finished)
+        self.signals.failed.connect(self._on_failed)
+
+    def run(self) -> tuple[Path | None, str]:
+        _TESSDATA_RUNS.append(self)
+        self._host.installEventFilter(self)
+        self._host.destroyed.connect(self._on_host_destroyed)
+        self._overlay.show_message("Downloading English language data…")
+        _tessdata_pool().start(self._worker)
+        self._loop.exec()
+        if not self._host_gone:
+            self._host.removeEventFilter(self)
+            self._overlay.hide_overlay()
+            self._overlay.deleteLater()
+        return self._path, self._error
+
+    def _on_succeeded(self, path: object) -> None:
+        self._path = path if isinstance(path, Path) else None
+        self._on_finished()
+
+    def _on_failed(self, message: str) -> None:
+        self._error = message
+        self._on_finished()
+
+    def _on_finished(self) -> None:
+        # The worker emits exactly one terminal signal; only now is the run done.
+        if self in _TESSDATA_RUNS:
+            _TESSDATA_RUNS.remove(self)
+        self._loop.quit()
+
+    def _on_cancel_clicked(self) -> None:
+        self._token.cancel()
+        self._overlay.set_cancelling()
+
+    def _abandon(self) -> None:
+        """The host went away mid-download: cancel and stop waiting for the worker."""
+        self._token.cancel()
+        self._loop.quit()
+
+    def _on_host_destroyed(self) -> None:
+        self._host_gone = True
+        self._abandon()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self._host and self._host.isWindow():
+            if event.type() == QEvent.Type.Close:
+                # Refuse the close while running; cancel so a second close succeeds.
+                event.ignore()
+                self._on_cancel_clicked()
+                return True
+            if event.type() == QEvent.Type.Hide and not event.spontaneous():
+                # Spontaneous hides (minimise) keep the download running.
+                self._abandon()
+        return super().eventFilter(watched, event)
+
+
+def run_tessdata_download(parent: QWidget | None) -> Path | None:
+    """Confirm, then download eng.traineddata without blocking the UI.
+
+    Returns the saved path, or ``None`` when the user declined or cancelled, the
+    host closed mid-download, or the download failed (failures show a warning).
+    """
     dest = user_tessdata_dir()
     confirm = QMessageBox(parent)
     confirm.setIcon(QMessageBox.Icon.Question)
-    confirm.setWindowTitle("Download eng tessdata")
+    confirm.setWindowTitle(_TESSDATA_TITLE)
     confirm.setText("Download English (tessdata_fast) language data?")
     confirm.setInformativeText(
         f"Saves eng.traineddata to:\n{dest}\n\n"
-        "Only continues if you click Download."
+        "PageDrop never downloads language data silently, only when you ask."
     )
     download_btn = confirm.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
     confirm.addButton(QMessageBox.StandardButton.Cancel)
@@ -478,11 +617,27 @@ def _download_eng_tessdata(parent: QWidget | None) -> str:
     fit_message_box_buttons(confirm)
     confirm.exec()
     if confirm.clickedButton() is not download_btn:
-        return "cancel"
-    try:
-        path = download_eng_fast(dest_dir=dest)
-    except RuntimeError as exc:
-        QMessageBox.warning(parent, "Download eng tessdata", str(exc))
+        return None
+    host = parent
+    if host is None:
+        host = QWidget()
+        host.setWindowTitle(_TESSDATA_TITLE)
+        host.setWindowModality(Qt.WindowModality.ApplicationModal)
+        host.resize(360, 180)
+        host.show()
+    run = _TessdataRun(host, dest)
+    path, error = run.run()
+    if parent is None:
+        host.close()
+    if error:
+        QMessageBox.warning(parent, _TESSDATA_TITLE, error)
+    return path
+
+
+def _download_eng_tessdata(parent: QWidget | None) -> str:
+    """Download eng.traineddata after an explicit confirm; wire into Settings."""
+    path = run_tessdata_download(parent)
+    if path is None:
         return "cancel"
     set_tessdata_path(path.parent)
     clear_cache()

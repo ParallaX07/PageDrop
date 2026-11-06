@@ -24,7 +24,8 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core.backends.office import capability_report
 from pagedrop.core.capabilities import TESSDATA, clear_cache, probe, probe_all
-from pagedrop.core.tessdata_pack import download_eng_fast, user_tessdata_dir
+from pagedrop.core.tessdata_pack import user_tessdata_dir
+from pagedrop.ui.dialogs import run_tessdata_download
 from pagedrop.ui.settings import (
     apply_office_settings_to_capabilities,
     apply_tessdata_settings_to_capabilities,
@@ -298,27 +299,8 @@ class PreferencesDialog(QDialog):
             self._tessdata.setText(chosen)
 
     def _on_download_eng(self) -> None:
-        confirm = QMessageBox(self)
-        confirm.setIcon(QMessageBox.Icon.Question)
-        confirm.setWindowTitle("Download eng tessdata")
-        dest = user_tessdata_dir()
-        confirm.setText("Download English (tessdata_fast) language data?")
-        confirm.setInformativeText(
-            f"Saves eng.traineddata to:\n{dest}\n\n"
-            "PageDrop never downloads language data silently, only when you ask."
-        )
-        download_btn = confirm.addButton(
-            "Download", QMessageBox.ButtonRole.AcceptRole
-        )
-        confirm.addButton(QMessageBox.StandardButton.Cancel)
-        confirm.setDefaultButton(download_btn)
-        confirm.exec()
-        if confirm.clickedButton() is not download_btn:
-            return
-        try:
-            path = download_eng_fast(dest_dir=dest)
-        except RuntimeError as exc:
-            QMessageBox.warning(self, "Download eng tessdata", str(exc))
+        path = run_tessdata_download(self)
+        if path is None:
             return
         self._tessdata.setText(str(path.parent))
         set_tessdata_path(path.parent)
