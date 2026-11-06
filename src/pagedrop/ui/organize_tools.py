@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import QWidget
 
 from pagedrop.core.jobs import SerializedJobRunner
 from pagedrop.core.organize_jobs import register_organize_handlers
-from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.utils.temp_manager import TempManager
 
@@ -64,11 +63,6 @@ def editor_pdf_context(editor: QWidget | None) -> EditorPdfContext | None:
     if not path or not Path(path).is_file():
         return None
 
-    try:
-        count = pdf_page_count(path)
-    except Exception:
-        count = model.logical_count()
-
     range_prefill = ""
     grid = getattr(tab, "thumbnail_grid", None)
     selection = set()
@@ -91,7 +85,7 @@ def editor_pdf_context(editor: QWidget | None) -> EditorPdfContext | None:
 
     return EditorPdfContext(
         path=str(path),
-        page_count=count,
+        page_count=model.logical_count(),
         range_prefill=range_prefill,
     )
 

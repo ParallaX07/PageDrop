@@ -408,12 +408,14 @@ class PdfTab(QWidget):
 
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""
-        if path not in self._loader_cache:
-            self._loader_cache[path] = PdfLoader(
-                path, password=self._credentials.get(path)
-            )
+        cached = self._loader_cache.get(path)
+        if cached is not None:
+            return cached
+        loader = self._loader_cache[path] = PdfLoader(
+            path, password=self._credentials.get(path)
+        )
         self._evict_idle_loaders(keep={path})
-        return self._loader_cache[path]
+        return loader
 
     def load_pdf(
         self, path: str, password: str | None = None
