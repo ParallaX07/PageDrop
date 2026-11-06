@@ -45,6 +45,7 @@ from pagedrop.core.annotations import AnnotationOp
 from pagedrop.core.drag_mime import (
     INTERNAL_PAGE_MIME,
     PAGE_TRANSFER_MIME,
+    PageTransferPayloadError,
     decode_page_indices,
     decode_page_refs,
 )
@@ -107,7 +108,7 @@ class ThumbnailWorker(QRunnable):
         # PNG bytes — QPixmap is GUI-thread only (see PreviewRenderWorker).
         page_ready = pyqtSignal(int, int, bytes)  # generation, logical_index, png
         finished = pyqtSignal(int)  # generation
-        error = pyqtSignal(int, str)  # generation, message
+        error = pyqtSignal(int, int, str)  # generation, logical_index, message
 
     def __init__(
         self,
@@ -139,29 +140,34 @@ class ThumbnailWorker(QRunnable):
         # Ceiling: pool maxThreadCount=1 — do not raise to "fix" thumbs
         # (MuPDF races). Upgrade: O10 process service if measured overlap still
         # stalls interactive work.
-        try:
-            for logical_index, ref in self._pages:
-                if self._is_cancelled(self._generation):
-                    return
+        for logical_index, ref in self._pages:
+            if self._is_cancelled(self._generation):
+                return
+            try:
                 png = render_ref_png(
                     ref,
                     self._width_px,
                     passwords=self._passwords,
                     annotations=self._annotations.get(logical_index, ()),
                 )
+            except Exception as exc:
+                # One bad page must not abandon the rest of the batch.
+                if self._is_cancelled(self._generation):
+                    return
+                self.signals.error.emit(
+                    self._generation, logical_index, str(exc)
+                )
+            else:
                 if self._is_cancelled(self._generation):
                     return
                 self.signals.page_ready.emit(
                     self._generation, logical_index, png
                 )
-                # Yield so FITZ_LOCK waiters (viewer) can acquire between pages —
-                # sleep(0) is not enough: this thread can reacquire before waiters run.
-                time.sleep(0.001)
-            if not self._is_cancelled(self._generation):
-                self.signals.finished.emit(self._generation)
-        except Exception as exc:
-            if not self._is_cancelled(self._generation):
-                self.signals.error.emit(self._generation, str(exc))
+            # Yield so FITZ_LOCK waiters (viewer) can acquire between pages —
+            # sleep(0) is not enough: this thread can reacquire before waiters run.
+            time.sleep(0.001)
+        if not self._is_cancelled(self._generation):
+            self.signals.finished.emit(self._generation)
 
 
 @dataclass
@@ -237,6 +243,7 @@ class ThumbnailGrid(QScrollArea):
         int, str, bool, object
     )  # count, target filename, moved, undo callable|None
     page_transfer_failed = pyqtSignal(str)
+    pages_copied_not_moved = pyqtSignal(int)  # Shift+drop from another process
     pdf_drop_failed = pyqtSignal(object)
     open_pdfs_requested = pyqtSignal(list)  # blank-tab file-manager drops
     open_pdf_requested = pyqtSignal()  # blank-tab empty-state button
@@ -337,6 +344,7 @@ class ThumbnailGrid(QScrollArea):
         self._progress_active = False
         self._batch_total = 0
         self._batch_rendered = 0
+        self._render_failure_reported = False
         self._skeleton_count = 0
         self._render_pool = QThreadPool(self)
         self._render_pool.setMaxThreadCount(1)
@@ -449,6 +457,8 @@ class ThumbnailGrid(QScrollArea):
     ) -> None:
         self.cancel_rendering()
         self._clear_cards()
+        if model is not self._model:
+            self._render_failure_reported = False
         self._model = model
         self._get_loader = get_loader
         self._last_rendered_width_px = 0
@@ -654,7 +664,7 @@ class ThumbnailGrid(QScrollArea):
         )
         worker.signals.page_ready.connect(self._on_page_ready)
         worker.signals.finished.connect(self._on_rendering_finished)
-        worker.signals.error.connect(self._on_rendering_error)
+        worker.signals.error.connect(self._on_page_failed)
         self._worker_signals.append(worker.signals)
         self._busy_render_generation = generation
         if not silent:
@@ -897,6 +907,7 @@ class ThumbnailGrid(QScrollArea):
         self._model = None
         self._get_loader = None
         self._page_render_width = []
+        self._render_failure_reported = False
         self._last_clicked_index = None
         self._focused_index = None
         self.selection_manager.set_page_count(0)
@@ -1401,8 +1412,28 @@ class ThumbnailGrid(QScrollArea):
     ) -> bool:
         if source_grid is self:
             return False
+        if not refs:
+            self.page_transfer_failed.emit(
+                "Could not transfer pages: nothing to insert."
+            )
+            return False
 
         tab = self._parent_tab()
+        # Unlocked sources must reach the target before its loaders open them.
+        if source_grid is not None and tab is not None:
+            source_tab = source_grid._parent_tab()
+            if source_tab is not None:
+                tab.credentials.adopt(
+                    source_tab.credentials, {ref.source_path for ref in refs}
+                )
+        if not self._page_refs_in_range(refs, tab):
+            self.page_transfer_failed.emit(
+                "Could not transfer pages: the dropped pages do not match "
+                "their source document."
+            )
+            if self._model is None and tab is not None:
+                tab._close_loader_cache()  # a blank tab keeps no source open
+            return False
         source_filename = Path(refs[0].source_path).name
 
         # Tab-bar drops always append; grid drops (cross-window and same-window
@@ -1429,6 +1460,9 @@ class ThumbnailGrid(QScrollArea):
         inited_blank_tab = False
         if self._model is None:
             if tab is None or not tab.is_blank:
+                self.page_transfer_failed.emit(
+                    "Could not transfer pages: this tab cannot accept pages."
+                )
                 return False
             source_tab = (
                 source_grid._parent_tab() if source_grid is not None else None
@@ -1437,14 +1471,8 @@ class ThumbnailGrid(QScrollArea):
             tab.init_from_page_refs(refs, credentials=creds)
             inited_blank_tab = True
         else:
-            if source_grid is not None and tab is not None:
-                source_tab = source_grid._parent_tab()
-                if source_tab is not None:
-                    tab.credentials.adopt(
-                        source_tab.credentials,
-                        {ref.source_path for ref in refs},
-                    )
             if not self.insert_page_refs(refs, drop_index):
+                self.page_transfer_failed.emit("Could not insert the dropped pages.")
                 return False
             if tab is not None:
                 tab._on_pages_inserted()
@@ -1487,7 +1515,12 @@ class ThumbnailGrid(QScrollArea):
         else:
             move_undo = None
 
-        if via_tab_bar:
+        # Shift asked for a move, but only a window in this process can remove
+        # the source pages: say it was a copy.
+        copied_not_moved = move and source_grid is None
+        if copied_not_moved:
+            self.pages_copied_not_moved.emit(len(refs))
+        elif via_tab_bar:
             notifier = source_grid if source_grid is not None else self
             notifier.pages_transferred_via_tab_bar.emit(
                 len(refs), target_name, move, move_undo
@@ -1497,6 +1530,25 @@ class ThumbnailGrid(QScrollArea):
                 assert source_grid is not None
                 source_grid.pages_moved_out.emit(len(refs), target_name, move_undo)
             self.cross_window_pages_inserted.emit(len(refs), source_filename)
+        return True
+
+    def _page_refs_in_range(self, refs: list[PageRef], tab) -> bool:
+        """True when every ref names a real page of its source document.
+
+        ``source_index`` is a physical page of the source file, so the raw
+        loader page count is the right bound (not a logical count).
+        """
+        get_loader = self._get_loader
+        if get_loader is None and tab is not None:
+            get_loader = tab.get_loader
+        if get_loader is None:
+            return True
+        counts: dict[str, int] = {}
+        for ref in refs:
+            if ref.source_path not in counts:
+                counts[ref.source_path] = get_loader(ref.source_path).page_count
+            if not 0 <= ref.source_index < counts[ref.source_path]:
+                return False
         return True
 
     def drop_index_at_pos(self, pos: QPoint) -> int:
@@ -1673,7 +1725,14 @@ class ThumbnailGrid(QScrollArea):
             return
 
         if mime.hasFormat(PAGE_TRANSFER_MIME) and source_grid is not self:
-            refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+            try:
+                refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+            except PageTransferPayloadError:
+                self.page_transfer_failed.emit(
+                    "Could not transfer pages: the dropped data was not valid."
+                )
+                event.ignore()
+                return
             if not refs:
                 event.ignore()
                 return
@@ -2115,6 +2174,9 @@ class ThumbnailGrid(QScrollArea):
             return
         pixmap = QPixmap()
         if not pixmap.loadFromData(png, "PNG") or pixmap.isNull():
+            self._on_page_failed(
+                generation, page_index, "The rendered page could not be decoded"
+            )
             return
         card = self._cards[page_index]
         was_skeleton = card._is_skeleton
@@ -2142,14 +2204,31 @@ class ThumbnailGrid(QScrollArea):
             self._leave_busy("rendering")
         self._maybe_continue_or_dismiss_progress()
 
-    def _on_rendering_error(self, generation: int, message: str) -> None:
+    def _on_page_failed(
+        self, generation: int, page_index: int, message: str
+    ) -> None:
         if self._is_cancelled(generation):
             return
-        if generation == self._busy_render_generation:
-            self._busy_render_generation = -1
-            self._leave_busy("rendering")
-        self._dismiss_progress()
-        self.rendering_error.emit(message)
+        if page_index >= len(self._cards):
+            return
+        card = self._cards[page_index]
+        if card._is_skeleton:  # a card with an older thumbnail keeps it
+            card.set_failed()
+            if self._skeleton_count > 0:
+                self._skeleton_count -= 1
+        # Done at this width: not retried until the target width changes.
+        self._page_render_width[page_index] = (
+            self._busy_render_width or self._target_render_width()
+        )
+        self._batch_rendered += 1
+        self._sync_rendered_width_state()
+        if self._skeleton_count <= 0:
+            self._stop_skeleton_pulse()
+        if self._progress_active and self._batch_total > 0:
+            self.rendering_progress.emit(self._batch_rendered, self._batch_total)
+        if not self._render_failure_reported:
+            self._render_failure_reported = True
+            self.rendering_error.emit(f"Page {page_index + 1}: {message}")
 
     def _enter_busy(self, reason: str, message: str) -> None:
         # Status + pulsing skeletons + progress bar; no blocking overlay.

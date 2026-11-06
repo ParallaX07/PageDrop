@@ -14,7 +14,11 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QToolButton, QWidget
 
-from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, decode_page_refs
+from pagedrop.core.drag_mime import (
+    PAGE_TRANSFER_MIME,
+    PageTransferPayloadError,
+    decode_page_refs,
+)
 from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.ui import icons
 from pagedrop.ui.pdf_tab import PdfTab
@@ -195,8 +199,13 @@ class DetachableTabBar(QTabBar):
             event.ignore()
             return
 
+        target_grid = target_widget.thumbnail_grid
         source_grid = ThumbnailGrid._grid_for_widget(event.source())
         if source_grid is None:
+            target_grid.page_transfer_failed.emit(
+                "Could not transfer pages: tabs can't accept drops from "
+                "another PageDrop process. Drop on the page grid instead."
+            )
             event.ignore()
             return
 
@@ -208,13 +217,19 @@ class DetachableTabBar(QTabBar):
             event.ignore()
             return
 
-        refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        try:
+            refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        except PageTransferPayloadError:
+            target_grid.page_transfer_failed.emit(
+                "Could not transfer pages: the dropped data was not valid."
+            )
+            event.ignore()
+            return
         if not refs:
             event.ignore()
             return
 
         move = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        target_grid = target_widget.thumbnail_grid
         try:
             if target_grid.handle_tab_bar_page_drop(
                 refs,

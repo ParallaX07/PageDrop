@@ -964,6 +964,7 @@ class MainWindow(QMainWindow):
         )
         grid.pages_reordered.connect(self._on_pages_reordered)
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
+        grid.pages_copied_not_moved.connect(self._on_pages_copied_not_moved)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
         grid.bind_page_actions(
@@ -1085,6 +1086,7 @@ class MainWindow(QMainWindow):
             ),
             (grid.pages_reordered, self._on_pages_reordered),
             (grid.page_transfer_failed, self._on_page_transfer_failed),
+            (grid.pages_copied_not_moved, self._on_pages_copied_not_moved),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
@@ -3284,15 +3286,28 @@ class MainWindow(QMainWindow):
         self._transient_status(f"{verb} {count} {noun}{suffix}")
         self._sync_toolbar_from_active_tab()
 
+    def _on_pages_copied_not_moved(self, count: int) -> None:
+        if not self._grid_belongs_to_window(self.sender()):
+            return
+        noun = "page" if count == 1 else "pages"
+        message = (
+            f"Copied {count} {noun}, not moved: the source is in another "
+            "PageDrop process"
+        )
+        self._transient_status(message, page=self._sender_tab())
+        self._show_toast(message, kind="info")
+        self._sync_toolbar_from_active_tab()
+
     def _on_page_transfer_failed(self, message: str) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        if not self._grid_belongs_to_window(self.sender()):
             return
         QMessageBox.warning(self, "Page transfer", message)
-        self._transient_status(message)
+        self._transient_status(message, page=self._sender_tab())
 
     def _on_pdf_drop_failed(self, exc: object) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        if not self._grid_belongs_to_window(self.sender()):
             return
+        tab = self._sender_tab()
         if isinstance(exc, PdfEmptyError):
             QMessageBox.warning(
                 self,
@@ -3311,18 +3326,17 @@ class MainWindow(QMainWindow):
                 "Insert PDF",
                 f"Could not insert PDF:\n{exc}",
             )
-        self._persistent_status("Ready")
+        self._persistent_status("Ready", page=tab)
 
     def _on_rendering_error(self, message: str) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        # One notice per loaded document; the grid keeps rendering other pages.
+        if not self._grid_belongs_to_window(self.sender()):
             return
-        self._progress_bar.hide()
-        QMessageBox.critical(
-            self,
-            "Render thumbnails",
-            f"Could not render thumbnails:\n{message}",
+        self._show_toast("Some thumbnails could not be rendered", kind="error")
+        self._transient_status(
+            f"Some thumbnails could not be rendered: {message}",
+            page=self._sender_tab(),
         )
-        self._transient_status("Rendering failed")
 
     def _on_preview_render_error(self, message: str) -> None:
         tab = self._active_tab()
