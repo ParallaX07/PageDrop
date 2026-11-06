@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import pytest
+from PyQt6.QtCore import QPoint, QRect, Qt
 from PyQt6.QtGui import QKeySequence, QStatusTipEvent
 from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QToolBar, QWidget
 
@@ -178,3 +179,97 @@ def test_toolbar_hover_shows_status_tip(main_window, qtbot):
     assert tip
     QApplication.sendEvent(main_window, QStatusTipEvent(tip))
     assert main_window.statusBar().currentMessage() == tip
+
+
+def _tips_host(qtbot, *, size=(900, 600), light=False):
+    """A shown host with a focusable control, a styled tips overlay on top."""
+    from pagedrop.ui.onboarding import TipsOverlay
+    from pagedrop.ui.theme import app_stylesheet
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.setStyleSheet(app_stylesheet(light=light))
+    host.resize(*size)
+    behind = QPushButton("Behind", host)
+    behind.move(10, 10)
+    other = QPushButton("Other", host)
+    other.move(120, 10)
+    host.show()
+    qtbot.waitExposed(host)
+    host.activateWindow()
+    qtbot.waitUntil(host.isActiveWindow, timeout=2000)
+    behind.setFocus(Qt.FocusReason.OtherFocusReason)
+    qtbot.waitUntil(behind.hasFocus, timeout=2000)
+    return host, behind, other, TipsOverlay(host)
+
+
+def test_tips_overlay_focuses_got_it_and_restores_focus(isolated_settings, qtbot):
+    host, behind, _other, tips = _tips_host(qtbot)
+    tips.show_tips()
+    qtbot.waitUntil(tips._got_it.hasFocus, timeout=2000)
+
+    qtbot.mouseClick(tips._got_it, Qt.MouseButton.LeftButton)
+    assert not tips.isVisible()
+    assert behind.hasFocus()
+
+
+def test_tips_overlay_escape_and_enter_dismiss_from_got_it(isolated_settings, qtbot):
+    for key in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        set_has_seen_tips(False)
+        host, behind, _other, tips = _tips_host(qtbot)
+        tips.show_tips()
+        qtbot.waitUntil(tips._got_it.hasFocus, timeout=2000)
+        qtbot.keyClick(tips._got_it, key)
+        assert not tips.isVisible(), key
+        assert has_seen_tips() is True
+        assert behind.hasFocus()
+
+
+def test_tips_overlay_skips_restoring_a_hidden_focus_widget(isolated_settings, qtbot):
+    host, behind, _other, tips = _tips_host(qtbot)
+    tips.show_tips()
+    behind.hide()
+    qtbot.keyClick(tips._got_it, Qt.Key.Key_Escape)
+    assert not tips.isVisible()
+    assert not behind.hasFocus()
+
+
+def test_tips_overlay_tab_stays_on_got_it(isolated_settings, qtbot):
+    host, behind, other, tips = _tips_host(qtbot)
+    tips.show_tips()
+    qtbot.waitUntil(tips._got_it.hasFocus, timeout=2000)
+    for key, mods in (
+        (Qt.Key.Key_Tab, Qt.KeyboardModifier.NoModifier),
+        (Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier),
+        (Qt.Key.Key_Tab, Qt.KeyboardModifier.NoModifier),
+    ):
+        qtbot.keyClick(tips._got_it, key, mods)
+        assert tips._got_it.hasFocus()
+        assert not behind.hasFocus() and not other.hasFocus()
+        assert tips.isVisible()
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_tips_overlay_dim_paints(isolated_settings, qtbot, light):
+    host, _behind, _other, tips = _tips_host(qtbot, light=light)
+    corner = QPoint(host.width() - 6, host.height() - 6)
+
+    def sample() -> int:
+        return host.grab().toImage().pixel(corner)
+
+    clear = sample()
+    tips.show_tips()
+    assert sample() != clear
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_tips_overlay_fits_the_smallest_window(isolated_settings, qtbot, light):
+    host, _behind, _other, tips = _tips_host(qtbot, size=(480, 320), light=light)
+    tips.show_tips()
+    qtbot.waitUntil(tips._got_it.hasFocus, timeout=2000)
+    bounds = host.rect()
+    button = QRect(
+        tips._got_it.mapTo(host, QPoint(0, 0)), tips._got_it.size()
+    )
+    assert bounds.contains(button)
+    assert tips._got_it.isVisible()
