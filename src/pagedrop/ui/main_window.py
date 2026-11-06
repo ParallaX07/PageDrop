@@ -68,6 +68,7 @@ from pagedrop.ui.dialogs import (
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
+    text_input_has_focus,
 )
 from pagedrop.ui.onboarding import (
     KeyboardShortcutsDialog,
@@ -173,6 +174,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(720, 480)
         self.resize(960, 680)
 
+        self._tab_order_applied = False
         self._build_actions()
         self._build_menu()
         self._build_toolbar()
@@ -767,11 +769,29 @@ class MainWindow(QMainWindow):
         self._close_discarded: set[PdfTab] = set()
         self._close_waiting = False
         self._last_tab = self._tab_manager.currentWidget()
+        self._apply_tab_order()
+        self._tab_manager.currentChanged.connect(self._on_tab_order_stale)
+
+    def _on_tab_order_stale(self, _index: int) -> None:
+        self._apply_tab_order()
+
+    def _apply_tab_order(self) -> None:
         set_content_tab_order(
             self._toolbar,
             self._tab_manager,
             status_bar=self.statusBar(),
+            status_controls=(
+                self._move_undo_button,
+                *self._zoom_controls.focus_widgets(),
+            ),
         )
+
+    def showEvent(self, event) -> None:  # noqa: ANN001, N802
+        super().showEvent(event)
+        # Toolbar widgets only report visible once shown, so build the chain then.
+        if not self._tab_order_applied:
+            self._tab_order_applied = True
+            self._apply_tab_order()
 
     def _status_page(self) -> QWidget | None:
         return self._tab_manager.currentWidget()
@@ -2211,6 +2231,9 @@ class MainWindow(QMainWindow):
             event.type() != QEvent.Type.KeyPress
             or not isinstance(event, QKeyEvent)
             or QApplication.activeModalWidget() is not None
+            or not isinstance(obj, QWidget)
+            or obj.window() is not self
+            or text_input_has_focus()
         ):
             return super().eventFilter(obj, event)
 

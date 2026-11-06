@@ -188,3 +188,161 @@ def test_tool_shell_run_lives_in_actions_row(qtbot):
         if w.objectName() == "ToolbarPrimary" and w.text() == "Run"
     ]
     assert runs == [shell._run_btn]
+
+
+def _show(qtbot, window) -> None:
+    window.show()
+    qtbot.waitExposed(window, timeout=5000)
+
+
+def test_status_controls_stay_focusable_after_show(main_window, qtbot):
+    _show(qtbot, main_window)
+    for widget in (
+        main_window._move_undo_button,
+        *main_window._zoom_controls.focus_widgets(),
+    ):
+        assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert main_window.statusBar().focusPolicy() == Qt.FocusPolicy.NoFocus
+    assert main_window._progress_bar.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+
+def test_tab_chain_runs_toolbar_then_content_then_status_controls(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+
+    content = main_window._tab_manager
+    assert focusable_toolbar_widgets(main_window._toolbar)
+    assert main_window._toolbar.isAncestorOf(content.previousInFocusChain())
+
+    # Walk forward from the content: its whole subtree comes first, then the
+    # status-bar controls in order.
+    chain = [content]
+    while len(chain) < 2000:
+        nxt = chain[-1].nextInFocusChain()
+        if nxt is content:
+            break
+        chain.append(nxt)
+    status = [main_window._move_undo_button, *main_window._zoom_controls.focus_widgets()]
+    positions = [chain.index(w) for w in status]
+    assert positions == sorted(positions)
+    assert all(content.isAncestorOf(w) for w in chain[1 : positions[0]])
+
+
+def _two_loaded_windows(qtbot, qapp, pdf_path):
+    from tests.ui.test_window_manager import (
+        _ensure_window_manager,
+        _tab_at,
+        _wait_for_tab_loaded,
+    )
+
+    manager = _ensure_window_manager(qapp)
+    window_a = manager.open_new_window()
+    window_b = manager.open_new_window()
+    qtbot.addWidget(window_a)
+    qtbot.addWidget(window_b)
+    tabs = []
+    for window in (window_a, window_b):
+        tab = _tab_at(window, 0)
+        window._load_pdf(str(pdf_path), tab=tab)
+        _wait_for_tab_loaded(qtbot, tab)
+        tab.set_zoom_level(160)
+        tabs.append(tab)
+    tabs[0].thumbnail_grid.selection_manager.select_single(1)
+    tabs[1].thumbnail_grid.selection_manager.select_single(2)
+    return window_a, window_b, tabs[0], tabs[1]
+
+
+def _focus(qtbot, widget) -> None:
+    widget.window().activateWindow()
+    widget.setFocus()
+    qtbot.waitUntil(widget.hasFocus, timeout=3000)
+
+
+def test_text_input_in_one_window_does_not_drive_any_grid(
+    qtbot, qapp, five_page_pdf, isolated_settings
+):
+    from PyQt6.QtWidgets import QLineEdit
+
+    window_a, window_b, tab_a, tab_b = _two_loaded_windows(qtbot, qapp, five_page_pdf)
+    window_a.show()
+    window_b.show()
+    qtbot.waitExposed(window_b, timeout=5000)
+    field = QLineEdit(window_b)
+    field.show()
+    _focus(qtbot, field)
+
+    zoom_a, zoom_b = tab_a.zoom_level, tab_b.zoom_level
+    selection_a = set(tab_a.thumbnail_grid.selection_manager.selection)
+    selection_b = set(tab_b.thumbnail_grid.selection_manager.selection)
+
+    qtbot.keyClicks(field, "-")
+    qtbot.keyClick(field, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+
+    assert tab_a.zoom_level == zoom_a
+    assert tab_b.zoom_level == zoom_b
+    assert set(tab_a.thumbnail_grid.selection_manager.selection) == selection_a
+    assert set(tab_b.thumbnail_grid.selection_manager.selection) == selection_b
+    assert field.text() == "-"
+    assert field.selectedText() == "-"
+
+
+def test_spin_box_focus_blocks_grid_zoom(main_window, five_page_pdf, qtbot):
+    from PyQt6.QtWidgets import QSpinBox
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    tab = main_window._active_tab()
+    tab.set_zoom_level(160)
+    spin = QSpinBox(main_window)
+    spin.setMinimum(-50)
+    spin.show()
+    _focus(qtbot, spin)
+
+    qtbot.keyClick(spin, Qt.Key.Key_Minus)
+
+    assert tab.zoom_level == 160
+
+
+def test_minus_key_zooms_only_the_window_it_targets(
+    qtbot, qapp, five_page_pdf, isolated_settings
+):
+    window_a, window_b, tab_a, tab_b = _two_loaded_windows(qtbot, qapp, five_page_pdf)
+    window_a.show()
+    window_b.show()
+    qtbot.waitExposed(window_b, timeout=5000)
+
+    _focus(qtbot, tab_b.thumbnail_grid)
+    qtbot.keyClick(tab_b.thumbnail_grid, Qt.Key.Key_Minus)
+    assert tab_b.zoom_level < 160
+    assert tab_a.zoom_level == 160
+
+    tab_b.set_zoom_level(160)
+    _focus(qtbot, tab_a.thumbnail_grid)
+    qtbot.keyClick(tab_a.thumbnail_grid, Qt.Key.Key_Minus)
+    assert tab_a.zoom_level < 160
+    assert tab_b.zoom_level == 160
+
+
+def test_grid_shortcuts_still_work_through_key_events(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    tab = main_window._active_tab()
+    grid = tab.thumbnail_grid
+    tab.set_zoom_level(160)
+    _focus(qtbot, grid)
+
+    qtbot.keyClick(grid, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    assert len(grid.selection_manager.selection) == 5
+
+    qtbot.keyClick(grid, Qt.Key.Key_Plus, Qt.KeyboardModifier.ShiftModifier)
+    assert tab.zoom_level > 160
+    larger = tab.zoom_level
+    qtbot.keyClick(grid, Qt.Key.Key_Minus)
+    assert tab.zoom_level < larger
