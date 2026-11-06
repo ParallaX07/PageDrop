@@ -514,7 +514,8 @@ def run_tool_job(
             prompt=fitz_lock_released(
                 lambda name, incorrect: prompt_pdf_password(
                     host, name, incorrect=incorrect
-                )
+                ),
+                token,
             ),
             credentials=credentials,
             cancel=token,
@@ -622,6 +623,15 @@ def show_field_error(field: QWidget, message: str) -> QLabel:
                 break
     field.setFocus(Qt.FocusReason.OtherFocusReason)
     return error
+
+
+def source_still_loaded(shell, source: str, *, notify: bool = True) -> bool:
+    """False when *source* left the drop zone while a GUI probe waited on the lock."""
+    if source in shell.drop_zone.paths():
+        return True
+    if notify:
+        shell.statusBar().showMessage("Source file changed; try again")
+    return False
 
 
 def clear_field_error(field: QWidget) -> None:

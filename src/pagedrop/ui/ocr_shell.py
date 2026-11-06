@@ -27,6 +27,7 @@ from pagedrop.core.capabilities import (
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.dialogs import prompt_missing_capability
+from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.preferences_dialog import open_preferences
 from pagedrop.ui.settings import (
@@ -39,6 +40,7 @@ from pagedrop.ui.tool_shell import (
     clear_field_error,
     run_tool_job,
     show_field_error,
+    source_still_loaded,
 )
 from pagedrop.utils.page_jump import parse_page_ranges
 
@@ -228,9 +230,11 @@ def _configure_ocr(shell: ToolShellWindow, *, range_prefill: str = "") -> None:
             return
 
         try:
-            page_count = pdf_page_count(source)
+            page_count = gui_fitz_call(pdf_page_count, source)
         except Exception as exc:
             QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
+            return
+        if not source_still_loaded(shell, source):
             return
 
         page_indices = _page_indices_from_text(ranges.text(), page_count)
@@ -327,9 +331,11 @@ def _configure_extract_tables(
                 return
 
         try:
-            page_count = pdf_page_count(source)
+            page_count = gui_fitz_call(pdf_page_count, source)
         except Exception as exc:
             QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
+            return
+        if not source_still_loaded(shell, source):
             return
 
         page_indices = _page_indices_from_text(ranges.text(), page_count)

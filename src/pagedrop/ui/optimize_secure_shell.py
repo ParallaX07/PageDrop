@@ -22,10 +22,11 @@ from pagedrop.core import optimize_secure as ops
 from pagedrop.core.pdf_loader import PdfPasswordRequiredError
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
+from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job
+from pagedrop.ui.tool_shell import ToolShellWindow, run_tool_job, source_still_loaded
 
 # Shown when a lossy compress preset is selected (visible before Run).
 _LOSSY_QUALITY_WARNING = (
@@ -103,7 +104,7 @@ def _suggested_output(source: str, tool_id: str) -> str:
 
 def _pdf_needs_password(path: str) -> bool:
     try:
-        pdf_page_count(path)
+        gui_fitz_call(pdf_page_count, path)
     except PdfPasswordRequiredError:
         return True
     else:
@@ -343,7 +344,10 @@ def _configure_decrypt(shell: ToolShellWindow) -> None:
         if not paths:
             return
         source = paths[0]
-        if not _pdf_needs_password(source):
+        needs_password = _pdf_needs_password(source)
+        if not source_still_loaded(shell, source):
+            return
+        if not needs_password:
             QMessageBox.information(
                 shell,
                 shell.WINDOW_TITLE,

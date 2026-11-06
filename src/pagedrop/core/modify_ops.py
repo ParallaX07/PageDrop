@@ -18,6 +18,7 @@ from typing import Literal, Sequence
 import fitz
 
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
+from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import open_pdf
@@ -882,6 +883,10 @@ def remove_blank_pages(
         doc.close()
 
 
+class ColorEffectError(JobError):
+    """Raised when MuPDF fails while applying a colour effect to a page."""
+
+
 def _color_page(
     effect: str,
     doc: fitz.Document,
@@ -896,6 +901,7 @@ def _color_page(
     a MuPDF call fails.
     """
     page = shape = pix = new_page = None
+    failure: str | None = None
     try:
         page = doc[index]
         if effect == "greyscale":
@@ -909,9 +915,16 @@ def _color_page(
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             pix.invert_irect(pix.irect)
             new_page = out.new_page(width=page.rect.width, height=page.rect.height)
-            new_page.insert_image(new_page.rect, pixmap=pix)
+            try:
+                new_page.insert_image(new_page.rect, pixmap=pix)
+            except Exception as exc:  # noqa: BLE001 — surfaced as ColorEffectError below
+                failure = str(exc)
     finally:
         page = shape = pix = new_page = None
+    if failure is not None:
+        # Raised outside the except block so the failed call's traceback, which
+        # would pin the pixmap, is already released under the lock.
+        raise ColorEffectError(f"Colour effect failed on page {index + 1}: {failure}")
 
 
 def apply_color_effect(

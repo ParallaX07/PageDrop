@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QTimer
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtCore import QEventLoop, QObject, QTimer
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
 
 from pagedrop.core.jobs import CancelToken, JobCancelledError, SerializedJobRunner
 from pagedrop.core.thread_policy import FITZ_LOCK
@@ -39,15 +39,53 @@ _LOCK_TICK_MS = 50
 _LOCK_TICK_ACQUIRE_S = 0.02
 
 
-def fitz_lock_released(fn: Callable):
-    """Wrap a modal callback so the GUI thread's ``FITZ_LOCK`` is free while it runs."""
+class _LockNotHeldError(JobCancelledError):
+    """Cancelled while re-taking ``FITZ_LOCK``; the GUI thread does not hold it."""
+
+
+def _acquire_pumped(
+    flags: QEventLoop.ProcessEventsFlag, token: CancelToken | None = None
+) -> None:
+    """Take ``FITZ_LOCK`` on the GUI thread, pumping events while a job holds it.
+
+    The uncontended path pumps nothing. Cancelling *token* during the wait
+    raises ``_LockNotHeldError`` without holding the lock.
+    """
+    while not FITZ_LOCK.acquire(timeout=_LOCK_TICK_ACQUIRE_S):
+        if token is not None and token.is_cancelled():
+            raise _LockNotHeldError("Job cancelled")
+        QApplication.processEvents(flags)
+
+
+def gui_fitz_call(fn: Callable, *args, **kwargs):
+    """Run a GUI-thread PDF probe under ``FITZ_LOCK`` without freezing the window.
+
+    While a job holds the lock, painting, timers and window-system events keep
+    running but user input is not processed, so nothing can re-enter the
+    caller. Exceptions from *fn* propagate unchanged. Never open a modal inside
+    *fn*; keep prompts and retry loops outside the call.
+    """
+    _acquire_pumped(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        FITZ_LOCK.release()
+
+
+def fitz_lock_released(fn: Callable, token: CancelToken | None = None):
+    """Wrap a modal callback so the GUI thread's ``FITZ_LOCK`` is free while it runs.
+
+    The lock is re-taken afterwards with an event-pumping wait (all events, so
+    the busy overlay's Cancel works). Cancelling *token* during that wait raises
+    ``JobCancelledError`` without the lock held.
+    """
 
     def wrapper(*args, **kwargs):
         FITZ_LOCK.release()
         try:
             return fn(*args, **kwargs)
         finally:
-            FITZ_LOCK.acquire()
+            _acquire_pumped(QEventLoop.ProcessEventsFlag.AllEvents, token)
 
     return wrapper
 
@@ -73,12 +111,17 @@ def run_with_fitz_lock(
     def finish() -> None:
         result: object = None
         error: Exception | None = None
+        held = True
         try:
             result = probe()
+        except _LockNotHeldError as exc:
+            held = False
+            error = exc
         except Exception as exc:
             error = exc
         finally:
-            FITZ_LOCK.release()
+            if held:
+                FITZ_LOCK.release()
         done(result, error)
 
     if FITZ_LOCK.acquire(timeout=_LOCK_FIRST_TRY_S):

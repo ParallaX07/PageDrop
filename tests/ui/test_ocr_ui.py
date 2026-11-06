@@ -87,15 +87,19 @@ class _Download:
         self.thread: int | None = None
         self.token = None
         self.error: Exception | None = None
+        self.ignore_cancel = False
+        self.timeout: float | None = None
 
     def __call__(self, *, dest_dir, cancel=None, on_progress=None, **_kw) -> Path:
         self.thread = threading.get_ident()
         self.token = cancel
+        self.timeout = _kw.get("timeout")
         self.started.set()
         for _ in range(500):  # bounded so a blocked GUI thread fails, not hangs
             if self.release.wait(0.01):
                 break
-            cancel.check()
+            if not self.ignore_cancel:
+                cancel.check()
         else:
             raise TessdataDownloadError("stub timed out")
         if self.error is not None:
@@ -184,6 +188,7 @@ def test_tessdata_download_runs_off_gui_thread_and_saves(qtbot, download, entry)
     _drive(qtbot, call, download, finish)
 
     assert download.thread != threading.get_ident()
+    assert download.timeout == 30.0
     assert tessdata_path() == str(download.dest)
     assert (download.dest / "eng.traineddata").exists()
     assert download.warnings == []
@@ -229,6 +234,27 @@ def test_closing_preferences_during_download_cancels_without_hanging(qtbot, down
     assert download.token.is_cancelled()
     assert not tessdata_path()
     assert dialog.close() is True
+
+
+def test_second_close_abandons_a_download_that_ignores_cancel(qtbot, download):
+    download.ignore_cancel = True
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.show()
+    closes: list[bool] = []
+
+    def close_twice() -> None:
+        closes.append(host.close())
+        closes.append(host.close())
+
+    result = _drive(
+        qtbot, lambda: dialogs.run_tessdata_download(host), download, close_twice
+    )
+
+    assert closes == [False, True]
+    assert result is None
+    assert download.token.is_cancelled()
+    assert not host.isVisible()
 
 
 def test_rejecting_preferences_during_download_cancels_without_hanging(qtbot, download):

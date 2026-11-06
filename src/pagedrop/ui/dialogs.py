@@ -491,6 +491,10 @@ def _tessdata_pool() -> QThreadPool:
     return _TESSDATA_POOL
 
 
+# Cancel is only seen between reads, so a stalled read must give up quickly.
+_TESSDATA_SOCKET_TIMEOUT_S = 30.0
+
+
 class _TessdataWorker(QRunnable):
     """Run ``download_eng_fast`` off the UI thread (no ``fitz`` involved)."""
 
@@ -511,6 +515,7 @@ class _TessdataWorker(QRunnable):
         try:
             path = download_eng_fast(
                 dest_dir=self._dest,
+                timeout=_TESSDATA_SOCKET_TIMEOUT_S,
                 cancel=self._cancel,
                 on_progress=self.signals.progress.emit,
             )
@@ -533,6 +538,7 @@ class _TessdataRun(QObject):
         self._path: Path | None = None
         self._error = ""
         self._host_gone = False
+        self._close_refused = False
         self._worker = _TessdataWorker(dest, self._token)
         self.signals = self._worker.signals
         self._overlay = BusyOverlay(host)
@@ -586,7 +592,12 @@ class _TessdataRun(QObject):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if watched is self._host and self._host.isWindow():
             if event.type() == QEvent.Type.Close:
-                # Refuse the close while running; cancel so a second close succeeds.
+                if self._close_refused:
+                    # Second close: stop waiting for the worker and let it through.
+                    self._abandon()
+                    return super().eventFilter(watched, event)
+                # First close: refuse and cancel; a second close abandons the run.
+                self._close_refused = True
                 event.ignore()
                 self._on_cancel_clicked()
                 return True

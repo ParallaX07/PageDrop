@@ -26,11 +26,15 @@ def preflight_pdf_inputs(
     prompt: PasswordPrompt,
     credentials: RuntimeCredentials | None = None,
     cancel: CancelToken | None = None,
+    page_count: Callable[..., int] | None = None,
 ) -> RuntimeCredentials:
     """Unlock each PDF input; one stored credential per path; retry / cancel cleanly.
 
     Probes via locked ``pdf_service.page_count`` — no unlocked ephemeral opens.
+    GUI callers pass *page_count* (same signature) to wait for the lock without
+    freezing the event loop.
     """
+    probe = page_count or pdf_page_count
     creds = credentials or RuntimeCredentials()
     for raw in paths:
         if cancel is not None:
@@ -46,7 +50,7 @@ def preflight_pdf_inputs(
             if cancel is not None:
                 cancel.check()
             try:
-                pdf_page_count(path, password=password)
+                probe(path, password=password)
             except PdfPasswordRequiredError:
                 password = prompt(filename, False)
                 if password is None:
