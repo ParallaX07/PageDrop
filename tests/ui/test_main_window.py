@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from PyQt6.QtCore import QEvent, QPointF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
 from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -53,13 +53,16 @@ def test_window_title_default(main_window):
     assert main_window.windowTitle() == "PageDrop"
 
 
-def test_custom_title_controls_are_in_the_menu_bar(main_window, qtbot):
+def test_custom_title_controls_are_in_the_title_bar(main_window, qtbot):
     if QApplication.platformName() == "offscreen":
         assert not main_window.windowFlags() & Qt.WindowType.FramelessWindowHint
     else:
         assert main_window.windowFlags() & Qt.WindowType.FramelessWindowHint
     title = main_window.findChild(type(main_window._title_label), "WindowTitle")
     assert title.text() == "PageDrop"
+    assert main_window._window_controls.parent() is main_window._title_bar
+    assert main_window.menuBar().parent() is main_window._title_bar
+    assert main_window.menuWidget() is main_window._title_bar
     maximize = main_window.findChild(type(main_window._maximize_button), "WindowMaximize")
     maximize.click()
     qtbot.waitUntil(main_window.isMaximized)
@@ -332,7 +335,11 @@ def test_title_does_not_overlap_window_controls(main_window, qtbot):
     assert buttons
     assert (
         main_window._window_controls.geometry().right()
-        <= main_window.menuBar().rect().right()
+        <= main_window._title_bar.rect().right()
+    )
+    assert (
+        main_window.menuBar().geometry().right()
+        < main_window._window_controls.geometry().left()
     )
     assert all(button.isVisible() and button.width() > 0 for button in buttons)
     assert main_window._title_label.geometry().right() < min(
@@ -369,10 +376,11 @@ def test_shell_uses_rendered_geometry_after_menu_font_growth(
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     menu_bar = main_window.menuBar()
-    # Exercise a menu bar narrower than the window, too: all measurements must
-    # stay in menu-bar coordinates, including after a platform layout change.
+    # Exercise a menu bar capped narrower than the window, too: all
+    # measurements must stay in menu-bar coordinates, including after a
+    # platform layout change.
     if menu_width is not None:
-        menu_bar.setFixedWidth(menu_width)
+        menu_bar.setMaximumWidth(menu_width)
     # Windows' offscreen font produces wide caption buttons. Also exercise
     # that pressure on platforms whose default caption font is narrower.
     if control_width is not None:
@@ -458,3 +466,400 @@ def test_undo_labels_and_viewer_guidance_follow_current_history(
     assert main_window._undo_action.toolTip() == (
         "Return to the page grid to undo delete 2 pages"
     )
+
+
+# --- title bar, window controls and edge resize ---------------------------------
+
+
+def _mouse(kind, local, global_pos, button=Qt.MouseButton.LeftButton, buttons=None):
+    if buttons is None:
+        buttons = (
+            Qt.MouseButton.NoButton
+            if kind == QEvent.Type.MouseButtonRelease
+            else button
+        )
+    return QMouseEvent(
+        kind,
+        QPointF(*local),
+        QPointF(*global_pos),
+        button,
+        buttons,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+
+@pytest.fixture
+def no_override_cursor():
+    yield
+    while QApplication.overrideCursor() is not None:
+        QApplication.restoreOverrideCursor()
+
+
+def test_menu_bar_is_the_single_title_bar_menu(main_window):
+    from PyQt6.QtWidgets import QMenuBar
+
+    assert main_window.menuBar() is main_window.menuBar()
+    assert main_window.menuBar() is main_window._menu_bar
+    assert main_window.menuWidget() is main_window._title_bar
+    assert main_window.findChildren(QMenuBar) == [main_window.menuBar()]
+
+
+def test_window_controls_are_keyboard_reachable(main_window):
+    for name in ("WindowMinimize", "WindowMaximize", "WindowClose"):
+        button = main_window.findChild(QToolButton, name)
+        assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        assert button.accessibleName()
+
+
+def test_hiding_menu_and_toolbar_keeps_window_controls_working(main_window, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    assert main_window._window_controls.isVisible()
+
+    main_window._chrome_visible_action.trigger()
+    assert main_window.menuBar().isHidden()
+    assert main_window._toolbar.isHidden()
+    assert main_window._title_bar.isVisible()
+    controls = main_window._window_controls
+    qtbot.waitUntil(lambda: controls.isVisible() and controls.width() > 0)
+    buttons = controls.findChildren(QToolButton)
+    assert len(buttons) == 3
+    assert all(button.isVisible() for button in buttons)
+    # Controls stay on the right edge with the menu gone.
+    assert controls.geometry().right() == main_window._title_bar.rect().right()
+
+    maximize = main_window.findChild(QToolButton, "WindowMaximize")
+    maximize.click()
+    qtbot.waitUntil(main_window.isMaximized)
+    maximize.click()
+    qtbot.waitUntil(lambda: not main_window.isMaximized())
+
+    minimize = main_window.findChild(QToolButton, "WindowMinimize")
+    minimize.click()
+    qtbot.waitUntil(main_window.isMinimized)
+    main_window.showNormal()
+    qtbot.waitUntil(lambda: not main_window.isMinimized())
+
+    main_window._chrome_visible_action.trigger()
+    assert not main_window.menuBar().isHidden()
+    assert not main_window._toolbar.isHidden()
+    qtbot.waitUntil(main_window.menuBar().isVisible)
+
+    main_window._chrome_visible_action.trigger()
+    main_window.findChild(QToolButton, "WindowClose").click()
+    qtbot.waitUntil(lambda: not main_window.isVisible())
+
+
+def test_double_click_on_title_toggles_maximize(main_window, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    double = _mouse(QEvent.Type.MouseButtonDblClick, (10, 10), (110, 110))
+
+    assert main_window.eventFilter(main_window._title_label, double)
+    qtbot.waitUntil(main_window.isMaximized)
+    assert main_window.eventFilter(main_window._title_bar, double)
+    qtbot.waitUntil(lambda: not main_window.isMaximized())
+
+
+def test_double_click_on_menu_action_does_not_toggle_maximize(main_window, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    menu_bar = main_window.menuBar()
+    file_action = menu_bar.actions()[0]
+    spot = menu_bar.actionGeometry(file_action).center()
+    double = _mouse(
+        QEvent.Type.MouseButtonDblClick, (spot.x(), spot.y()), (spot.x(), spot.y())
+    )
+
+    assert not main_window.eventFilter(menu_bar, double)
+    assert not main_window.isMaximized()
+
+    blank = _mouse(QEvent.Type.MouseButtonDblClick, (menu_bar.width() - 2, 2), (5, 5))
+    assert main_window.eventFilter(menu_bar, blank)
+    qtbot.waitUntil(main_window.isMaximized)
+
+
+def test_title_drag_starts_only_after_the_drag_distance(main_window, qtbot, monkeypatch):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    moves = []
+    monkeypatch.setattr(
+        main_window.windowHandle(), "startSystemMove", lambda: moves.append(1) or True
+    )
+    title = main_window._title_label
+    threshold = QApplication.startDragDistance()
+    press = _mouse(QEvent.Type.MouseButtonPress, (10, 10), (110, 110))
+    assert main_window.eventFilter(title, press)
+    assert moves == []
+
+    small = _mouse(
+        QEvent.Type.MouseMove,
+        (10 + threshold - 2, 10),
+        (110 + threshold - 2, 110),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+    )
+    main_window.eventFilter(title, small)
+    assert moves == []
+
+    far = _mouse(
+        QEvent.Type.MouseMove,
+        (10 + threshold, 10),
+        (110 + threshold, 110),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+    )
+    assert main_window.eventFilter(title, far)
+    assert moves == [1]
+    # A single drag asks the system once.
+    main_window.eventFilter(title, far)
+    assert moves == [1]
+
+
+@pytest.mark.parametrize(
+    ("pos", "edges", "cursor"),
+    [
+        ((0, 300), Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
+        ((799, 300), Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+        ((400, 0), Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
+        ((400, 599), Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+        ((0, 0), Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeFDiagCursor),
+        (
+            (799, 599),
+            Qt.Edge.RightEdge | Qt.Edge.BottomEdge,
+            Qt.CursorShape.SizeFDiagCursor,
+        ),
+        ((799, 0), Qt.Edge.RightEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeBDiagCursor),
+        ((0, 599), Qt.Edge.LeftEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeBDiagCursor),
+        ((400, 300), Qt.Edge(0), None),
+        ((6, 300), Qt.Edge(0), None),
+        ((793, 593), Qt.Edge(0), None),
+    ],
+)
+def test_resize_edge_hit_testing(pos, edges, cursor):
+    from PyQt6.QtCore import QPoint, QSize
+
+    from pagedrop.ui.main_window import (
+        RESIZE_MARGIN,
+        cursor_for_edges,
+        resize_edges_at,
+    )
+
+    assert RESIZE_MARGIN == 6
+    found = resize_edges_at(QPoint(*pos), QSize(800, 600))
+    assert found == edges
+    assert cursor_for_edges(found) == cursor
+
+
+@pytest.fixture
+def edge_window(main_window, qtbot, monkeypatch, no_override_cursor):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    monkeypatch.setattr(main_window, "_uses_qt_edge_resize", lambda: True)
+    return main_window
+
+
+def test_hovering_the_margin_sets_and_restores_the_resize_cursor(edge_window):
+    handle = edge_window.windowHandle()
+    hover = _mouse(
+        QEvent.Type.MouseMove, (3, 300), (3, 300), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton
+    )
+    edge_window.eventFilter(handle, hover)
+    assert QApplication.overrideCursor().shape() == Qt.CursorShape.SizeHorCursor
+
+    corner = _mouse(
+        QEvent.Type.MouseMove, (3, 3), (3, 3), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton
+    )
+    edge_window.eventFilter(handle, corner)
+    assert QApplication.overrideCursor().shape() == Qt.CursorShape.SizeFDiagCursor
+
+    inside = _mouse(
+        QEvent.Type.MouseMove, (300, 300), (300, 300), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton
+    )
+    edge_window.eventFilter(handle, inside)
+    assert QApplication.overrideCursor() is None
+
+    edge_window.eventFilter(handle, hover)
+    assert QApplication.overrideCursor() is not None
+    edge_window.eventFilter(handle, QEvent(QEvent.Type.Leave))
+    assert QApplication.overrideCursor() is None
+
+    edge_window.eventFilter(handle, hover)
+    edge_window.eventFilter(edge_window, QEvent(QEvent.Type.WindowDeactivate))
+    assert QApplication.overrideCursor() is None
+
+
+def test_resize_cursor_does_not_leak_on_hide_or_close(edge_window, qtbot):
+    handle = edge_window.windowHandle()
+    hover = _mouse(
+        QEvent.Type.MouseMove, (3, 300), (3, 300), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton
+    )
+    edge_window.eventFilter(handle, hover)
+    edge_window.hide()
+    assert QApplication.overrideCursor() is None
+
+    edge_window.show()
+    qtbot.waitExposed(edge_window, timeout=5000)
+    edge_window.eventFilter(edge_window.windowHandle(), hover)
+    assert QApplication.overrideCursor() is not None
+    edge_window.close()
+    assert QApplication.overrideCursor() is None
+
+
+def test_margin_press_starts_a_system_resize(edge_window, monkeypatch):
+    handle = edge_window.windowHandle()
+    requested = []
+    monkeypatch.setattr(
+        handle, "startSystemResize", lambda edges: requested.append(edges) or True
+    )
+    press = _mouse(QEvent.Type.MouseButtonPress, (edge_window.width() - 2, 400), (500, 500))
+    assert edge_window.eventFilter(handle, press)
+    assert requested == [Qt.Edge.RightEdge]
+
+    # The margin wins over the title bar: a press on the top edge resizes.
+    top = _mouse(QEvent.Type.MouseButtonPress, (200, 1), (200, 1))
+    assert edge_window.eventFilter(handle, top)
+    assert requested[-1] == Qt.Edge.TopEdge
+
+    inside = _mouse(QEvent.Type.MouseButtonPress, (300, 300), (300, 300))
+    assert not edge_window.eventFilter(handle, inside)
+    assert len(requested) == 2
+
+
+def test_manual_resize_fallback_pins_the_opposite_edge(edge_window, monkeypatch):
+    handle = edge_window.windowHandle()
+    monkeypatch.setattr(handle, "startSystemResize", lambda edges: False)
+    edge_window.setGeometry(100, 100, 960, 680)
+    start = edge_window.geometry()
+
+    press = _mouse(QEvent.Type.MouseButtonPress, (958, 678), (1058, 778))
+    assert edge_window.eventFilter(handle, press)
+    drag = _mouse(
+        QEvent.Type.MouseMove, (0, 0), (1108, 808), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton
+    )
+    assert edge_window.eventFilter(handle, drag)
+    grown = edge_window.geometry()
+    assert grown.topLeft() == start.topLeft()
+    assert (grown.width(), grown.height()) == (1010, 710)
+    assert edge_window.eventFilter(
+        handle, _mouse(QEvent.Type.MouseButtonRelease, (0, 0), (1108, 808))
+    )
+    assert edge_window._edge_resize is None
+
+    # Dragging the left/top edge far inward stops at the minimum size and
+    # leaves the right/bottom edge where it was.
+    before = edge_window.geometry()
+    press = _mouse(QEvent.Type.MouseButtonPress, (1, 1), (before.x() + 1, before.y() + 1))
+    assert edge_window.eventFilter(handle, press)
+    drag = _mouse(
+        QEvent.Type.MouseMove,
+        (0, 0),
+        (before.x() + 2000, before.y() + 2000),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+    )
+    edge_window.eventFilter(handle, drag)
+    shrunk = edge_window.geometry()
+    assert shrunk.width() == edge_window.minimumSize().width()
+    assert shrunk.height() == edge_window.minimumSize().height()
+    assert shrunk.right() == before.right()
+    assert shrunk.bottom() == before.bottom()
+    edge_window.eventFilter(handle, _mouse(QEvent.Type.MouseButtonRelease, (0, 0), (0, 0)))
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform == "win32", reason="native resize is used on Windows"
+)
+def test_qt_edge_resize_is_off_when_maximized_or_not_frameless(main_window, qtbot):
+    assert not main_window._uses_qt_edge_resize()  # framed offscreen window
+    main_window.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    assert main_window._uses_qt_edge_resize()
+    main_window.showMaximized()
+    qtbot.waitUntil(main_window.isMaximized)
+    assert not main_window._uses_qt_edge_resize()
+    handle = main_window.windowHandle()
+    hover = _mouse(
+        QEvent.Type.MouseMove, (3, 300), (3, 300), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton
+    )
+    main_window.eventFilter(handle, hover)
+    assert QApplication.overrideCursor() is None
+
+
+def test_restored_geometry_is_applied_before_the_window_is_shown(
+    qapp, isolated_settings, monkeypatch, qtbot
+):
+    from pagedrop.ui.window_manager import WindowManager
+
+    calls = []
+    monkeypatch.setattr(
+        MainWindow, "restore_saved_geometry", lambda self: calls.append("restore") or True
+    )
+    monkeypatch.setattr(MainWindow, "show", lambda self: calls.append("show"))
+    manager = WindowManager(qapp)
+    window = manager.open_new_window(restore_geometry=True)
+    qtbot.addWidget(window)
+    assert calls == ["restore", "show"]
+
+    calls.clear()
+    other = manager.open_new_window()
+    qtbot.addWidget(other)
+    assert calls == ["show"]
+
+
+def _focus_chain(window):
+    chain, widget = [], window.nextInFocusChain()
+    while widget is not window:
+        if widget.focusPolicy() in (
+            Qt.FocusPolicy.StrongFocus,
+            Qt.FocusPolicy.TabFocus,
+        ):
+            chain.append(widget)
+        widget = widget.nextInFocusChain()
+    return chain
+
+
+def test_window_controls_come_last_in_the_focus_chain(main_window, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    chain = _focus_chain(main_window)
+    controls = list(main_window._window_control_buttons)
+    assert len(controls) == 3
+    assert chain[0] not in controls
+    zoom = main_window._zoom_controls.focus_widgets()
+    last_zoom = max(chain.index(w) for w in zoom)
+    assert [chain.index(w) for w in controls] == sorted(chain.index(w) for w in controls)
+    assert min(chain.index(w) for w in controls) > last_zoom
+    main_window.activateWindow()
+    qtbot.wait(50)
+    assert main_window.focusWidget() not in controls
+
+
+def test_title_drag_continues_across_a_menu_action(main_window, qtbot, monkeypatch):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    moves = []
+    monkeypatch.setattr(
+        main_window.windowHandle(), "startSystemMove", lambda: moves.append(1) or True
+    )
+    menu_bar = main_window.menuBar()
+    action_rect = menu_bar.actionGeometry(menu_bar.actions()[0])
+    blank_x = menu_bar.width() - 2
+    assert menu_bar.actionAt(QPoint(blank_x, 2)) is None
+    press = _mouse(QEvent.Type.MouseButtonPress, (blank_x, 2), (blank_x, 2))
+    assert main_window.eventFilter(menu_bar, press)
+
+    spot = action_rect.center()
+    far = _mouse(
+        QEvent.Type.MouseMove,
+        (spot.x(), spot.y()),
+        (spot.x() - 40, spot.y() + 40),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+    )
+    assert main_window.eventFilter(menu_bar, far)
+    assert moves == [1]
+
+    # Without a press in flight, the same spot is a normal menu hover.
+    assert not main_window.eventFilter(menu_bar, far)

@@ -99,10 +99,10 @@ def main() -> int:
         except WindowsUpdateError as exc:
             mutex_error = str(exc)
     manager = WindowManager(app, update_mutex=mutex, update_mutex_error=mutex_error)
-    win = manager.open_new_window()
-    win.restore_saved_geometry()
-    win.setWindowIcon(icon)
-    QTimer.singleShot(0, win.restore_recovery_drafts)
+    win = manager.open_new_window(restore_geometry=True)
+    if win is not None:
+        win.setWindowIcon(icon)
+        QTimer.singleShot(0, win.restore_recovery_drafts)
     exit_code = app.exec()
 
     # Flush top-level widgets before interpreter shutdown. Leaving the viewer's

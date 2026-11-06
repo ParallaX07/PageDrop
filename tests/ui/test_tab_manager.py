@@ -639,3 +639,64 @@ def test_detach_tab_in_preview_mode(
     detached_tab = _tab_at(detached, 0)
     assert detached_tab.is_preview_visible()
     assert detached_tab.preview_widget.current_page == 2
+
+
+def test_open_tabs_button_shares_one_corner_with_new_tab_and_chrome_toggle(
+    main_window, qtbot
+):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QToolButton, QWidget
+
+    manager = main_window._tab_manager
+    corner = manager.cornerWidget(Qt.Corner.TopRightCorner)
+    assert corner.objectName() == "TabCorner"
+    assert manager.cornerWidget(Qt.Corner.TopLeftCorner) is None
+    new_tab = corner.findChild(QToolButton, "NewTabButton")
+    toggle = corner.findChild(QToolButton, "ChromeToggleButton")
+    assert new_tab is main_window._tab_manager.findChild(QToolButton, "NewTabButton")
+    assert toggle is main_window._chrome_toggle_btn
+    assert manager._open_tabs_button.parent() is corner
+
+    for title in ("One", "Two", "Three", "Four"):
+        assert manager.add_blank_tab().set_custom_tab_title(title)
+    main_window.setMinimumWidth(360)
+    main_window.resize(360, 500)
+    main_window.show()
+    qtbot.waitUntil(lambda: manager._open_tabs_button.isVisible(), timeout=3000)
+
+    def buttons_laid_out():
+        rects = [
+            b.geometry()
+            for b in (manager._open_tabs_button, new_tab, toggle)
+            if b.isVisible()
+        ]
+        return (
+            len(rects) == 3
+            and all(corner.rect().contains(r) for r in rects)
+            and not any(
+                a.intersects(b) for i, a in enumerate(rects) for b in rects[i + 1 :]
+            )
+        )
+
+    qtbot.waitUntil(buttons_laid_out, timeout=3000)
+    # The corner is where the tab strip ends: the tab bar does not run under it.
+    assert manager.tabBar().geometry().right() < corner.geometry().left()
+    assert corner.geometry().right() <= manager.rect().right()
+
+    manager._populate_open_tabs_menu()
+    assert [a.text() for a in manager._open_tabs_menu.actions()][-4:] == [
+        "One",
+        "Two",
+        "Three",
+        "Four",
+    ]
+
+    # Hiding the button shrinks the corner without leaving a gap or overlap.
+    main_window.resize(1200, 500)
+    qtbot.waitUntil(lambda: manager._open_tabs_button.isHidden(), timeout=3000)
+    qtbot.waitUntil(
+        lambda: new_tab.geometry().left() == 0
+        and toggle.geometry().left() > new_tab.geometry().right(),
+        timeout=3000,
+    )
+    assert isinstance(corner, QWidget)

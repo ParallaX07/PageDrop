@@ -629,8 +629,8 @@ def test_progress_and_empty_state_accessible_names(main_window, qtbot):
     assert grid._empty_state.accessibleName()
     assert grid._empty_logo.accessibleName() == "PageDrop logo"
 
-    new_tab = main_window._tab_manager.cornerWidget(Qt.Corner.TopRightCorner)
-    assert isinstance(new_tab, QToolButton)
+    corner = main_window._tab_manager.cornerWidget(Qt.Corner.TopRightCorner)
+    new_tab = corner.findChild(QToolButton, "NewTabButton")
     assert new_tab.accessibleName() == "New tab"
 
     zoom = main_window._zoom_controls

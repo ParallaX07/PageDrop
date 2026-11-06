@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, QEventLoop, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QCursor,
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
@@ -26,9 +28,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QToolBar,
     QToolButton,
     QWIDGETSIZE_MAX,
@@ -127,6 +131,38 @@ from pagedrop.utils.diagnostics import log_failure
 
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
+RESIZE_MARGIN = 6
+
+
+def resize_edges_at(pos, size, margin: int = RESIZE_MARGIN) -> Qt.Edge:
+    """Return the window edges (corners are two flags) a point lies within."""
+    edges = Qt.Edge(0)
+    if pos.x() < margin:
+        edges |= Qt.Edge.LeftEdge
+    elif pos.x() >= size.width() - margin:
+        edges |= Qt.Edge.RightEdge
+    if pos.y() < margin:
+        edges |= Qt.Edge.TopEdge
+    elif pos.y() >= size.height() - margin:
+        edges |= Qt.Edge.BottomEdge
+    return edges
+
+
+def cursor_for_edges(edges: Qt.Edge) -> Qt.CursorShape | None:
+    """Return the resize cursor for an edge set, or None when it is empty."""
+    left = bool(edges & Qt.Edge.LeftEdge)
+    right = bool(edges & Qt.Edge.RightEdge)
+    top = bool(edges & Qt.Edge.TopEdge)
+    bottom = bool(edges & Qt.Edge.BottomEdge)
+    if (left and top) or (right and bottom):
+        return Qt.CursorShape.SizeFDiagCursor
+    if (right and top) or (left and bottom):
+        return Qt.CursorShape.SizeBDiagCursor
+    if left or right:
+        return Qt.CursorShape.SizeHorCursor
+    if top or bottom:
+        return Qt.CursorShape.SizeVerCursor
+    return None
 
 
 class MainWindow(QMainWindow):
@@ -162,6 +198,10 @@ class MainWindow(QMainWindow):
         self._transient_status_timer.setSingleShot(True)
         self._transient_status_timer.timeout.connect(self._restore_active_status)
         self._updating_responsive_shell = False
+        self._title_press_pos: QPoint | None = None
+        self._window_drag_offset: QPoint | None = None
+        self._edge_cursor_active = False
+        self._edge_resize: tuple[Qt.Edge, QPoint, QRect] | None = None
 
         self.setWindowTitle(self.APP_TITLE)
         # Offscreen Qt has no window manager and does not support custom chrome.
@@ -544,8 +584,23 @@ class MainWindow(QMainWindow):
         a["extract_selected"].setIcon(icons.icon("export"))
         self._set_toolbar_primary()
 
+    def menuBar(self) -> QMenuBar:  # noqa: N802
+        # The menu bar lives inside the title bar; the base implementation
+        # would install a second, empty menu bar over it.
+        return self._menu_bar
+
     def _build_menu(self) -> None:
-        menubar = self.menuBar()
+        title_bar = QWidget(self)
+        title_bar.setObjectName("WindowTitleBar")
+        title_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(0)
+        menubar = QMenuBar(title_bar)
+        # The title bar's layout, not the menu items, decides this width.
+        menubar.setSizePolicy(QSizePolicy.Policy.Ignored, menubar.sizePolicy().verticalPolicy())
+        self._menu_bar = menubar
+        self._title_bar = title_bar
         a = self._actions
 
         file_menu = menubar.addMenu("&File")
@@ -616,7 +671,7 @@ class MainWindow(QMainWindow):
         ):
             self._install_menu_focus_restore(menu)
 
-        window_controls = QWidget(menubar)
+        window_controls = QWidget(title_bar)
         window_controls.setObjectName("WindowControls")
         layout = QHBoxLayout(window_controls)
         layout.setContentsMargins(8, 0, 4, 0)
@@ -635,14 +690,19 @@ class MainWindow(QMainWindow):
             button.setText(text)
             button.setToolTip(label)
             button.setAccessibleName(label)
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             button.clicked.connect(slot)
             layout.addWidget(button)
             if name == "WindowMaximize":
                 self._maximize_button = button
-        menubar.setCornerWidget(window_controls, Qt.Corner.TopRightCorner)
-        self._menu_bar = menubar
+        self._window_control_buttons = tuple(
+            window_controls.findChildren(QToolButton)
+        )
+        title_layout.addWidget(menubar, 1)
+        title_layout.addWidget(window_controls, 0, Qt.AlignmentFlag.AlignRight)
+        self.setMenuWidget(title_bar)
         self._window_controls = window_controls
-        self._title_drag_widgets = (window_controls, self._title_label)
+        self._title_drag_widgets = (title_bar, window_controls, self._title_label)
         QTimer.singleShot(0, self._update_responsive_shell)
 
     def _build_toolbar(self) -> None:
@@ -735,24 +795,17 @@ class MainWindow(QMainWindow):
         )
         self._tab_manager.tab_rename_requested.connect(self._rename_tab)
 
-        self._chrome_toggle_btn = QToolButton()
-        self._chrome_toggle_btn.setObjectName("ChromeToggleButton")
-        self._chrome_toggle_btn.clicked.connect(self._toggle_chrome_visible)
-        self._tab_manager.setCornerWidget(
-            self._chrome_toggle_btn,
-            Qt.Corner.TopLeftCorner,
-        )
-
         new_tab_button = QToolButton()
         new_tab_button.setObjectName("NewTabButton")
         new_tab_button.setText("+")
         new_tab_button.setToolTip("New tab (Ctrl+T)")
         new_tab_button.setAccessibleName("New tab")
         new_tab_button.clicked.connect(self._new_blank_tab)
-        self._tab_manager.setCornerWidget(
-            new_tab_button,
-            Qt.Corner.TopRightCorner,
-        )
+        self._chrome_toggle_btn = QToolButton()
+        self._chrome_toggle_btn.setObjectName("ChromeToggleButton")
+        self._chrome_toggle_btn.clicked.connect(self._toggle_chrome_visible)
+        self._tab_manager.add_corner_widget(new_tab_button)
+        self._tab_manager.add_corner_widget(self._chrome_toggle_btn)
 
         if self._initial_tab is not None:
             self._adopt_tab(self._initial_tab)
@@ -783,6 +836,8 @@ class MainWindow(QMainWindow):
             status_controls=(
                 self._move_undo_button,
                 *self._zoom_controls.focus_widgets(),
+                # Last, so a newly activated window never lands on Minimize.
+                *self._window_control_buttons,
             ),
         )
 
@@ -2109,8 +2164,10 @@ class MainWindow(QMainWindow):
         self._set_chrome_visible(visible)
 
     def _set_chrome_visible(self, visible: bool, *, persist: bool = True) -> None:
-        self.menuBar().setVisible(visible)
+        # The title bar and its window controls stay; only the menus go.
+        self._menu_bar.setVisible(visible)
         self._toolbar.setVisible(visible)
+        QTimer.singleShot(0, self._update_responsive_shell)
         action = getattr(self, "_chrome_visible_action", None)
         if action is not None and action.isChecked() != visible:
             action.blockSignals(True)
@@ -2202,29 +2259,130 @@ class MainWindow(QMainWindow):
             return
         self._window_manager.update_presenter.check_manually(self)
 
+    def _uses_qt_edge_resize(self) -> bool:
+        """True where Qt must provide edge resizing for the frameless window."""
+        return (
+            bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint)
+            and sys.platform != "win32"
+            and not self.isMaximized()
+            and not self.isFullScreen()
+            and QApplication.activeModalWidget() is None
+        )
+
+    def _set_edge_cursor(self, shape: Qt.CursorShape | None) -> None:
+        """Keep at most one override cursor pushed on behalf of edge resizing."""
+        if shape is None:
+            if self._edge_cursor_active:
+                self._edge_cursor_active = False
+                QApplication.restoreOverrideCursor()
+        elif self._edge_cursor_active:
+            QApplication.changeOverrideCursor(QCursor(shape))
+        else:
+            self._edge_cursor_active = True
+            QApplication.setOverrideCursor(QCursor(shape))
+
+    def _clear_edge_state(self) -> None:
+        self._edge_resize = None
+        self._set_edge_cursor(None)
+
+    def _start_edge_resize(self, edges: Qt.Edge, global_pos: QPoint) -> None:
+        handle = self.windowHandle()
+        if handle is not None and handle.startSystemResize(edges):
+            return
+        self._edge_resize = (edges, global_pos, self.geometry())
+
+    def _apply_edge_resize(self, global_pos: QPoint) -> None:
+        edges, start, base = self._edge_resize
+        delta = global_pos - start
+        minimum = self.minimumSize()
+        x, y, width, height = base.x(), base.y(), base.width(), base.height()
+        if edges & Qt.Edge.LeftEdge:
+            width = max(minimum.width(), base.width() - delta.x())
+            x = base.x() + base.width() - width
+        elif edges & Qt.Edge.RightEdge:
+            width = max(minimum.width(), base.width() + delta.x())
+        if edges & Qt.Edge.TopEdge:
+            height = max(minimum.height(), base.height() - delta.y())
+            y = base.y() + base.height() - height
+        elif edges & Qt.Edge.BottomEdge:
+            height = max(minimum.height(), base.height() + delta.y())
+        self.setGeometry(x, y, width, height)
+
+    def _handle_edge_resize_event(self, event) -> bool:
+        kind = event.type()
+        if kind == QEvent.Type.Leave:
+            if self._edge_resize is None:
+                self._set_edge_cursor(None)
+            return False
+        if not isinstance(event, QMouseEvent):
+            return False
+        if self._edge_resize is not None:
+            if kind == QEvent.Type.MouseMove:
+                self._apply_edge_resize(event.globalPosition().toPoint())
+                return True
+            if kind == QEvent.Type.MouseButtonRelease:
+                self._clear_edge_state()
+                return True
+            return False
+        if not self._uses_qt_edge_resize():
+            self._set_edge_cursor(None)
+            return False
+        edges = resize_edges_at(event.position().toPoint(), self.size())
+        if kind == QEvent.Type.MouseMove and not event.buttons():
+            self._set_edge_cursor(cursor_for_edges(edges))
+        elif (
+            kind == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+            and edges
+        ):
+            self._start_edge_resize(edges, event.globalPosition().toPoint())
+            return True
+        return False
+
     def eventFilter(self, obj, event) -> bool:
+        handle = self.windowHandle()
+        if handle is not None and obj is handle:
+            if self._handle_edge_resize_event(event):
+                return True
+        elif obj is self and event.type() == QEvent.Type.WindowDeactivate:
+            self._clear_edge_state()
         is_title_area = obj in getattr(self, "_title_drag_widgets", ())
         if obj is getattr(self, "_menu_bar", None) and isinstance(event, QMouseEvent):
-            is_title_area = self._menu_bar.actionAt(event.position().toPoint()) is None
+            dragging = (
+                self._title_press_pos is not None or self._window_drag_offset is not None
+            )
+            is_title_area = (
+                dragging or self._menu_bar.actionAt(event.position().toPoint()) is None
+            )
         if is_title_area and isinstance(event, QMouseEvent):
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() != Qt.MouseButton.LeftButton:
-                    return super().eventFilter(obj, event)
-                system_move = (
-                    self.windowHandle() is not None
-                    and self.windowHandle().startSystemMove()
-                )
-                if not system_move:
-                    self._window_drag_offset = (
-                        event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                    )
+            kind = event.type()
+            left = event.button() == Qt.MouseButton.LeftButton
+            if kind == QEvent.Type.MouseButtonPress and left:
+                # The move starts once the pointer travels, so a double-click
+                # is never swallowed by a system move grab.
+                self._title_press_pos = event.globalPosition().toPoint()
+                self._window_drag_offset = None
                 return True
-            if event.type() == QEvent.Type.MouseMove:
-                offset = getattr(self, "_window_drag_offset", None)
-                if offset is not None:
-                    self.move(event.globalPosition().toPoint() - offset)
+            if kind == QEvent.Type.MouseButtonDblClick and left:
+                self._title_press_pos = None
+                self._window_drag_offset = None
+                self._toggle_maximized()
+                return True
+            if kind == QEvent.Type.MouseMove:
+                pos = event.globalPosition().toPoint()
+                if self._window_drag_offset is not None:
+                    self.move(pos - self._window_drag_offset)
                     return True
-            if event.type() == QEvent.Type.MouseButtonRelease:
+                press = self._title_press_pos
+                if press is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                    if (pos - press).manhattanLength() >= QApplication.startDragDistance():
+                        self._title_press_pos = None
+                        if handle is None or not handle.startSystemMove():
+                            self._window_drag_offset = press - self.frameGeometry().topLeft()
+                            self.move(pos - self._window_drag_offset)
+                    return True
+            if kind == QEvent.Type.MouseButtonRelease:
+                self._title_press_pos = None
                 self._window_drag_offset = None
                 return True
         if (
@@ -2298,17 +2456,8 @@ class MainWindow(QMainWindow):
         try:
             # Start with no title reservation: filename identity gives way before
             # any destination moves. Geometry, rather than text-width guesses,
-            # accounts for the active font, display scale, and corner controls.
-            self._title_label.setFixedWidth(0)
-            self._window_controls.setMinimumWidth(0)
-            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
-            self._window_controls.layout().invalidate()
-            self._window_controls.setFixedWidth(
-                self._window_controls.layout().sizeHint().width()
-            )
-            self._menu_bar.setCornerWidget(
-                self._window_controls, Qt.Corner.TopRightCorner
-            )
+            # accounts for the active font, display scale, and title controls.
+            self._fit_window_controls(0)
             self._flush_menu_layout()
             direct = list(self._responsive_menu_actions)
             overflowed: list[QAction] = []
@@ -2320,25 +2469,22 @@ class MainWindow(QMainWindow):
                 self._relocate_application_actions(direct, overflowed)
                 self._flush_menu_layout()
 
-            title_width = min(180, max(0, self._menu_action_slack()))
-            self._title_label.setFixedWidth(title_width)
-            # The corner widget was sized while the title reservation was zero.
-            # Refresh it before painting so the label cannot spill into controls.
-            self._window_controls.setMinimumWidth(0)
-            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
-            self._window_controls.layout().invalidate()
-            self._window_controls.setFixedWidth(
-                self._window_controls.layout().sizeHint().width()
-            )
-            self._menu_bar.setCornerWidget(
-                self._window_controls, Qt.Corner.TopRightCorner
-            )
-            self._window_controls.updateGeometry()
+            # With the menu hidden the title has the whole strip to itself.
+            room = 180 if self._menu_bar.isHidden() else self._menu_action_slack()
+            self._fit_window_controls(min(180, max(0, room)))
             self._flush_menu_layout()
             self._sync_custom_title()
         finally:
             self._updating_responsive_shell = False
         self._update_thumbnail_zoom_host()
+
+    def _fit_window_controls(self, title_width: int) -> None:
+        self._title_label.setFixedWidth(title_width)
+        controls = self._window_controls
+        controls.setMinimumWidth(0)
+        controls.setMaximumWidth(QWIDGETSIZE_MAX)
+        controls.layout().invalidate()
+        controls.setFixedWidth(controls.layout().sizeHint().width())
 
     def _relocate_application_actions(
         self, direct: list[QAction], overflowed: list[QAction]
@@ -2355,6 +2501,8 @@ class MainWindow(QMainWindow):
             self._application_overflow_menu.addAction(action)
 
     def _flush_menu_layout(self) -> None:
+        self._title_bar.layout().invalidate()
+        self._title_bar.layout().activate()
         self._menu_bar.updateGeometry()
         # Refresh only this layout; pumping the application here can dispatch
         # timers/deletions while Qt is still applying a stylesheet or resizing.
@@ -2369,15 +2517,14 @@ class MainWindow(QMainWindow):
             (self._menu_bar.actionGeometry(action).right() + 1 for action in actions),
             default=0,
         )
-        # QMenuBar may not have repositioned its corner widget after a font or
-        # title-width change. Budget its assigned width in menu-bar coordinates;
-        # the window width and the corner's sizeHint can both overstate the room.
-        menu_right = self._menu_bar.contentsRect().right() + 1
-        if not self.isVisible():
-            # Before first show, QMainWindow has not laid out the menu bar yet.
-            menu_right = self.contentsRect().right() + 1
-        controls_left = menu_right - self._window_controls.width()
-        return controls_left - right
+        # The menu bar takes whatever the title bar leaves beside the controls.
+        # Before first show (or while hidden) nothing has been laid out, so
+        # budget from the window width instead.
+        if self.isVisible() and not self._menu_bar.isHidden():
+            menu_right = self._menu_bar.contentsRect().right() + 1
+        else:
+            menu_right = self.contentsRect().width() - self._window_controls.width()
+        return menu_right - right
 
     def _menu_actions_fit(self) -> bool:
         return self._menu_action_slack() >= 0
@@ -3432,7 +3579,12 @@ class MainWindow(QMainWindow):
                 "Drag selected pages to a folder to export them as PDF files.",
             )
 
+    def hideEvent(self, event) -> None:  # noqa: ANN001, N802
+        self._clear_edge_state()
+        super().hideEvent(event)
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._clear_edge_state()
         if self._window_manager is not None:
             if self._window_manager.preparing_installation:
                 event.ignore()
