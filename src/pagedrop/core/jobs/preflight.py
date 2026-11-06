@@ -35,7 +35,7 @@ def preflight_pdf_inputs(
     freezing the event loop.
     """
     probe = page_count or pdf_page_count
-    creds = credentials or RuntimeCredentials()
+    creds = credentials if credentials is not None else RuntimeCredentials()
     for raw in paths:
         if cancel is not None:
             cancel.check()

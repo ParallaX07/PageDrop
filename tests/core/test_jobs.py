@@ -20,6 +20,7 @@ from pagedrop.core.jobs import (
     OutputExistsError,
     SerializedJobRunner,
     SourceOverwriteError,
+    RuntimeCredentials,
     preflight_pdf_inputs,
 )
 from pagedrop.core.capabilities import AbsenceReason
@@ -276,6 +277,59 @@ def test_protected_pdf_uses_runtime_credential_without_persisting_it(
 
     after_keys = set(ui_settings._settings().allKeys())
     assert after_keys == before_keys
+
+
+def test_preflight_fills_callers_empty_credentials_in_place(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_service import invalidate_doc_cache, page_count
+
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    invalidate_doc_cache()
+    try:
+        creds = RuntimeCredentials()
+        result = preflight_pdf_inputs(
+            [enc], prompt=lambda _f, _i: "secret", credentials=creds
+        )
+        assert result is creds
+        assert creds.get(enc) == "secret"
+
+        # An unlocked cached open must not let a later preflight skip the prompt.
+        assert page_count(str(enc), password="secret") == 1
+        prompts: list[str] = []
+
+        def prompt(filename: str, _incorrect: bool) -> str | None:
+            prompts.append(filename)
+            return "secret"
+
+        again = preflight_pdf_inputs([enc], prompt=prompt)
+        assert prompts == ["locked.pdf"]
+        assert again.get(enc) == "secret"
+    finally:
+        invalidate_doc_cache()
+
+
+def test_runner_passes_callers_empty_credentials_to_context(tmp_path: Path) -> None:
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    creds = RuntimeCredentials()
+    seen: list[RuntimeCredentials] = []
+
+    def handler(ctx: JobContext) -> Path:
+        seen.append(ctx.credentials)
+        return _copy_handler(ctx)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("copy", handler)
+        runner.run(
+            JobSpec.create("copy", inputs=[src], output=tmp_path / "out.pdf"),
+            credentials=creds,
+        )
+    finally:
+        temp.cleanup()
+    assert seen == [creds]
+    assert seen[0] is creds
 
 
 def test_preflight_cancel_aborts_cleanly(tmp_path: Path) -> None:
