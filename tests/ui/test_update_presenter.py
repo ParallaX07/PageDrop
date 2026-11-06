@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QUrl
 from PyQt6.QtWidgets import QTextBrowser, QWidget
 
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
@@ -80,10 +80,10 @@ def test_available_offer_displays_release_notes(presenter):
     c._set_state(UpdateState.AVAILABLE)
     presenter._show_offer(presenter._manager.primary)
     assert "Download update" in labels(presenter)
-    assert presenter.dialog.notes.toPlainText() == "plain notes"
+    assert presenter.dialog.notes.toPlainText() == "<b>plain notes</b>"
 
 
-def test_offer_renders_markdown_in_a_roomy_release_notes_browser(presenter):
+def test_offer_shows_release_notes_as_plain_text_in_a_roomy_browser(presenter):
     c = presenter._coordinator
     c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1,
                              "# What's changed\n\n* **Polished** [release notes](https://example.com)", "a" * 64)
@@ -96,9 +96,41 @@ def test_offer_renders_markdown_in_a_roomy_release_notes_browser(presenter):
     assert dialog.minimumSize().height() >= 480
     assert dialog.notes.maximumHeight() > 160
     assert dialog.layout().stretch(dialog.layout().indexOf(dialog.notes)) == 1
-    html = dialog.notes.document().toHtml()
-    assert "<h1" in html
-    assert 'href="https://example.com"' in html
+    assert dialog.notes.toPlainText() == c.release.notes
+    assert "<h1" not in dialog.notes.toHtml()
+
+
+def test_release_notes_never_become_links(presenter, monkeypatch):
+    import pagedrop.ui.update_presenter as module
+    opened = []
+    monkeypatch.setattr(module.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+    notes = '<a href="file:///etc/passwd">x</a>\n\n[x](file:///etc/passwd)'
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, notes, "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._show_offer(presenter._manager.primary)
+    browser = presenter.dialog.notes
+
+    assert browser.toPlainText() == notes
+    assert "<a href" not in browser.toHtml()
+    assert not browser.openLinks()
+    assert not browser.openExternalLinks()
+    browser.anchorClicked.emit(QUrl("file:///etc/passwd"))
+    assert opened == []
+    assert browser.toPlainText() == notes
+
+
+def test_focus_events_only_schedule_a_presentation_when_an_offer_is_pending(presenter, monkeypatch):
+    import pagedrop.ui.update_presenter as module
+    scheduled = []
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda *args: scheduled.append(args))
+    event = QEvent(QEvent.Type.FocusIn)
+
+    presenter.eventFilter(presenter._manager.primary, event)
+    assert scheduled == []
+    presenter._pending_offer = True
+    presenter.eventFilter(presenter._manager.primary, event)
+    assert len(scheduled) == 1
 
 
 def test_offer_actions_are_centered_and_fit(presenter, qtbot):
@@ -128,7 +160,7 @@ def test_manual_check_refreshes_an_available_release(presenter, qtbot):
         presenter.check_manually(presenter._manager.primary)
 
     assert c.release == refreshed
-    assert presenter.dialog.notes.toPlainText() == "Current notes"
+    assert presenter.dialog.notes.toPlainText() == "# Current notes"
 
 
 def test_download_progress_keeps_cancel_button_and_cancellation_state(presenter):

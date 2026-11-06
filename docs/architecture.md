@@ -115,21 +115,29 @@ The Qt-independent service in `utils/update_checker.py` fetches the public
 best-effort fetches the matching public GitHub release body for current display
 notes. It validates schema version 1, the strict numeric version, positive installer
 size, SHA-256, and string notes within a 1 MiB UTF-8 response. A failed or malformed
-live-notes response falls back to the manifest notes and never affects installer trust.
-Additive fields are ignored. Installer names and URLs are derived locally;
+live-notes response falls back to the manifest notes and never affects installer trust. The update dialog shows the notes as plain
+text: nothing in them becomes a link, so a release body cannot offer a
+clickable address. Additive fields are ignored. Installer names and URLs are derived locally;
 the digest comes from the manifest, avoiding a separate checksum request.
 Trusted HTTPS redirects, exact size, and SHA-256 are verified before atomically
 promoting downloaded bytes. HTTPS plus SHA-256
 detects corrupt or mismatched release assets; it is not independent publisher
 authentication if the release account is compromised.
 
-On supported packaged Windows builds, automatic checking starts five seconds
+The updater is supported only in a frozen (packaged) Windows build. A source run
+on Windows, or any other platform, shows a message and the releases page instead
+of checking.
+
+On supported builds, automatic checking starts five seconds
 after launch when due, then runs 24 hours after a successful check. Failures wait
 at least one hour and retain any longer GitHub rate-limit deadline. Settings use
 UTC values under `updates/`; malformed or implausibly future values cannot create
 a request loop. Manual checks bypass the daily, reminder, and skip suppression
 and ordinary failure backoff, but still honour a separately persisted
-`server_retry_after_utc` deadline. Server throttling without a valid deadline
+`server_retry_after_utc` deadline. A server deadline more than 48 hours ahead is
+treated as implausible and cut back to 48 hours from the moment it is read. The
+cut-back value is saved, so a bad stored date ends at that fixed time instead of
+moving forward with the clock. Server throttling without a valid deadline
 uses one minute; automatic failures retain their one-hour backoff in
 `retry_after_utc`. The legacy retry value is automatic-only, so an old API
 cooldown cannot block manual manifest checks. The first failed check schedules
@@ -139,8 +147,13 @@ scheduled checks, never a download already approved by the user.
 
 `UpdateStorage` uses the Qt application-local `updates/` directory and gives each
 process a locked session subdirectory. It revalidates a cached installer before
-reuse, removes only recognised inactive updater files, and expires inactive
-verified installers after seven days. It never uses PDF paths or the shared PDF
+reuse. When the current session has none, it looks in sessions no process is
+using: a verified installer for the same release is moved into the current
+session instead of being downloaded again, and one that fails verification is
+deleted. Cleanup removes only recognised inactive updater files, expires inactive
+verified installers after seven days, and deletes an inactive session folder once
+it is empty. A folder holding anything the updater does not recognise is left
+alone. It never uses PDF paths or the shared PDF
 temporary-file lifecycle. Storage is created lazily for an approved download;
 storage failures cannot prevent application startup. Failed cache verification
 removes the owned invalid installer and offers another download.

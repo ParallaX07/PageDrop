@@ -132,7 +132,9 @@ class UpdateCoordinator(QObject):
         ))
         self._clock = clock or (lambda: datetime.now(UTC))
         self._monotonic = monotonic
-        self._supported = sys.platform == "win32" if supported is None else supported
+        self._supported = (
+            sys.platform == "win32" and bool(getattr(sys, "frozen", False)) if supported is None else supported
+        )
         self.storage = storage
         self._launch = launch or launch_installer
         self._pool = QThreadPool(self)
@@ -416,13 +418,18 @@ class UpdateCoordinator(QObject):
 
     def _retry_deadline(self, now: datetime) -> datetime | None:
         stored = settings.server_retry_after_utc()
-        if self._server_retry_deadline is not None:
-            return max(self._server_retry_deadline, stored) if stored else self._server_retry_deadline
-        return stored
+        deadline = max(filter(None, (self._server_retry_deadline, stored)), default=None)
+        limit = now + _IMPLAUSIBLE_FUTURE
+        if deadline is not None and deadline > limit:
+            # Pin the clamp: a limit relative to "now" would otherwise keep sliding forward.
+            deadline = self._server_retry_deadline = limit
+            settings.set_server_retry_after_utc(limit)
+            settings._settings().sync()
+        return deadline
 
     def _record_throttle(self, error: RateLimitedError, now: datetime) -> None:
         deadline = error.retry_after or now + timedelta(minutes=1)
-        deadline = max(now + timedelta(seconds=1), deadline)
+        deadline = min(max(now + timedelta(seconds=1), deadline), now + _IMPLAUSIBLE_FUTURE)
         previous = self._retry_deadline(now)
         self._server_retry_deadline = max(deadline, previous) if previous else deadline
         settings.set_server_retry_after_utc(self._server_retry_deadline)
