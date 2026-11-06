@@ -163,7 +163,9 @@ def _fake_bundle(tmp_path, monkeypatch, modules, *, windows, dlls=True):
         licence.parent.mkdir(parents=True)
         licence.write_text("licence", encoding="utf-8")
     if windows:
-        (data / "pywin32-311.dist-info").mkdir()
+        licence = data / "pywin32-311.dist-info" / "licenses" / "win32" / "License.txt"
+        licence.parent.mkdir(parents=True)
+        licence.write_text("licence", encoding="utf-8")
     (data / "pagedrop" / "assets" / "icons" / "icon.svg").write_text("svg", encoding="utf-8")
     (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
     dist_info = data / f"pagedrop-{check_packaging.read_version()}.dist-info"
@@ -530,7 +532,12 @@ def test_frozen_bundle_without_a_licence_file_fails(tmp_path, monkeypatch, windo
 def test_windows_bundle_without_pywin32_dist_info_fails(tmp_path, monkeypatch):
     modules = {"openpyxl", "PIL.Image", "win32com.client"}
     _fake_bundle(tmp_path, monkeypatch, modules, windows=True)
-    (tmp_path / "dist" / "pagedrop" / "_internal" / "pywin32-311.dist-info").rmdir()
+    info = tmp_path / "dist" / "pagedrop" / "_internal" / "pywin32-311.dist-info"
+    licence = info / "licenses" / "win32" / "License.txt"
+    licence.unlink()  # dist-info without its licence file must fail
+    with pytest.raises(AssertionError, match="pywin32 dist-info must include its non-empty licence"):
+        check_packaging._assert_onedir_dist_if_present()
+    shutil.rmtree(info)
     with pytest.raises(AssertionError, match="pywin32 dist-info"):
         check_packaging._assert_onedir_dist_if_present()
     # A Linux bundle never needs it.
@@ -594,6 +601,24 @@ def test_license_texts_check_fails_when_a_text_or_shipper_breaks(
         check_packaging._assert_license_texts()
 
 
+@pytest.mark.parametrize(
+    "link",
+    [
+        "pypi.org/project/PyQt6",
+        "download.qt.io/official_releases/qt",
+        "pypi.org/project/PyMuPDF",
+        "mupdf.com/releases",
+    ],
+)
+def test_license_wording_check_fails_when_the_template_drops_a_component_source(
+    tmp_path, monkeypatch, link
+):
+    _licence_tree(tmp_path, monkeypatch)
+    _edit(tmp_path, "release-notes/TEMPLATE.md", link, "example.invalid")
+    with pytest.raises(AssertionError, match="link source"):
+        check_packaging._assert_license_wording()
+
+
 def test_license_texts_check_fails_when_a_text_is_missing(tmp_path, monkeypatch):
     _licence_tree(tmp_path, monkeypatch)
     (tmp_path / "licenses" / "GPL-3.0.txt").unlink()
@@ -619,6 +644,8 @@ def test_notices_check_fails_without_a_required_section(heading):
         ("release-notes/TEMPLATE.md", "tree/v{{version}}"),
         ("src/pagedrop/ui/main_window.py", "free software under AGPL-3.0-or-later"),
         ("src/pagedrop/ui/main_window.py", "/tree/v"),
+        ("src/pagedrop/ui/main_window.py", "/blob/v"),
+        ("src/pagedrop/ui/main_window.py", "NO WARRANTY"),
     ],
 )
 def test_license_wording_check_fails_when_a_statement_is_dropped(tmp_path, monkeypatch, rel, old):

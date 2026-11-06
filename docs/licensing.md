@@ -16,14 +16,14 @@ PageDrop is free software under **AGPL-3.0-or-later**. Anyone may use, study, mo
 
 A permissive licence is not possible: the free PyQt6 (GPLv3) and PyMuPDF (AGPL) wheels make every PageDrop build an AGPL-covered combined work. The only obligations fall on people who distribute PageDrop, or host a modified build: they must pass the same freedom on, with source.
 
-**Published binary builds** ship those free wheels, so the corresponding source (this repository at the exact release tag, `uv.lock`, `pagedrop.spec`, and installer scripts) must be available at no charge from the same release page, with a clear link beside the binary. Every build also carries a written offer for corresponding source (see `THIRD_PARTY_NOTICES.md`).
+**Published binary builds** ship those free wheels, so the corresponding source must be reachable at no charge from the release page, with clear links beside the binary: PageDrop itself (this repository at the exact release tag, with `uv.lock`, `pagedrop.spec`, and installer scripts) and the bundled GPL, LGPL and AGPL components (PyQt6, Qt, PyMuPDF and MuPDF), whose versions `uv.lock` pins at that tag. Every build also carries a written offer for corresponding source (see `THIRD_PARTY_NOTICES.md`) as a fallback, not the only route.
 
 ## What redistributors must do
 
 For every tagged binary package:
 
 1. Pass on the same licence: keep PageDrop under AGPL-3.0-or-later and provide the corresponding source for the build.
-2. Release notes, About, and installer materials identify PageDrop as AGPL-3.0-or-later and link to the matching source release.
+2. Release notes, About, and installer materials identify PageDrop as AGPL-3.0-or-later and link to the matching source release. The release page also links the source of the bundled PyQt6, Qt, PyMuPDF and MuPDF components.
 3. `THIRD_PARTY_NOTICES.md`, `LICENSE`, and the `licenses/` folder (GPL-3.0 and LGPL-3.0 texts) ship inside the Windows installation and Linux AppImage (and in the onedir tree for local/frozen smoke). Third-party licence files travel in the bundled `*.dist-info` folders.
 4. Qt LGPL obligations below are addressed for that release (texts + source/offer; see replaceability note).
 

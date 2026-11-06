@@ -90,8 +90,15 @@ def _assert_license_wording() -> None:
     assert "tree/v{{version}}" in template, "release-notes/TEMPLATE.md must link the source tag"
     about = (ROOT / "src" / "pagedrop" / "ui" / "main_window.py").read_text(encoding="utf-8")
     about = about.split("def _show_about", 1)[1].split("\n    def ", 1)[0]
-    for needle in ("AGPL-3.0-or-later", "/tree/v"):
+    for needle in ("AGPL-3.0-or-later", "/tree/v", "/blob/v", "NO WARRANTY"):
         assert needle in about, f"About dialog must contain {needle}"
+    for link in (
+        "pypi.org/project/PyQt6",
+        "download.qt.io/official_releases/qt",
+        "pypi.org/project/PyMuPDF",
+        "mupdf.com/releases",
+    ):
+        assert link in template, f"release-notes/TEMPLATE.md must link source: {link}"
 
 
 def _assert_no_paid_licence_wording() -> None:
@@ -99,7 +106,7 @@ def _assert_no_paid_licence_wording() -> None:
     files = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
     for path in files:
         match = LICENCE_GATE.search(path.read_text(encoding="utf-8"))
-        assert match is None, f"{path.relative_to(ROOT)} must not contain {match.group(0)!r}"
+        assert match is None, f"{path.relative_to(ROOT).as_posix()} must not contain {match.group(0)!r}"
 
 
 def _assert_dist_licences(data_root: Path, *, windows: bool) -> None:
@@ -116,8 +123,6 @@ def _assert_dist_licences(data_root: Path, *, windows: bool) -> None:
             if d.is_dir() and d.name.lower().startswith(f"{name}-") and d.name.endswith(".dist-info")
         ]
         assert infos, f"onedir bundle must include the {name} dist-info ({fix})"
-        if name == "pywin32":
-            continue  # licence file name is not verified without a Windows build
         assert any(
             f.is_file() and f.stat().st_size > 0 and f.name.lower().startswith("licen")
             for info in infos

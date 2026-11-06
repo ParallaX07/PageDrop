@@ -2161,14 +2161,18 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         version = QApplication.instance().applicationVersion()
+        repo = "https://github.com/ParallaX07/PageDrop"
         box = QMessageBox(self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.setWindowTitle("About PageDrop")
         box.setTextFormat(Qt.TextFormat.RichText)
         box.setText(
             f"<p>PageDrop version {version}</p>"
-            "<p>PageDrop is free software under AGPL-3.0-or-later.</p>"
-            '<p>Source: <a href="https://github.com/ParallaX07/PageDrop/tree/v'
-            f'{version}">https://github.com/ParallaX07/PageDrop/tree/v{version}</a></p>'
+            "<p>Copyright (C) PageDrop contributors</p>"
+            "<p>PageDrop is free software under AGPL-3.0-or-later. "
+            "This program comes with ABSOLUTELY NO WARRANTY.</p>"
+            f'<p><a href="{repo}/blob/v{version}/LICENSE">Read the licence</a></p>'
+            f'<p>Source: <a href="{repo}/tree/v{version}">{repo}/tree/v{version}</a></p>'
         )
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         icon = self.windowIcon()
