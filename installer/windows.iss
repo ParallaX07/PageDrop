@@ -1,8 +1,8 @@
 ; PageDrop — Windows installer (Inno Setup 6+)
 ;
 ; Prerequisites:
-;   uv sync --group dev
-;   uv run --with pillow python scripts/generate_icons.py   ; if app-icon.ico missing
+;   uv sync --group dev --group codecs --group office
+;   uv run python scripts/generate_icons.py   ; if app-icon.ico missing
 ;   uv run pyinstaller --noconfirm pagedrop.spec            ; dist/pagedrop/pagedrop.exe
 ;
 ; Build installer (version from pyproject.toml via /DAppVersion=…):

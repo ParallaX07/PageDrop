@@ -29,7 +29,7 @@ smoke-exe: build-exe
 	./scripts/smoke_exe.sh
 
 generate-icons:
-	uv run --with pillow python scripts/generate_icons.py
+	uv run python scripts/generate_icons.py
 
 # Windows only — requires Inno Setup 6+ (iscc).
 build-installer:

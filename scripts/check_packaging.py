@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from hashlib import sha256
 from pathlib import Path
 
@@ -82,7 +83,8 @@ def _assert_onedir_dist_if_present() -> None:
     if not bundle.is_dir():
         return
     exe_candidates = [bundle / "pagedrop.exe", bundle / "pagedrop"]
-    if not any(p.is_file() for p in exe_candidates):
+    exe = next((p for p in exe_candidates if p.is_file()), None)
+    if exe is None:
         return
     data_root = _onedir_data_root(bundle)
     notices = data_root / "THIRD_PARTY_NOTICES.md"
@@ -105,6 +107,31 @@ def _assert_onedir_dist_if_present() -> None:
     assert f"Version: {read_version()}\n" in metadata_text, (
         "frozen metadata version must match scripts/read_version.py"
     )
+    _assert_frozen_backends(bundle, exe, data_root)
+
+
+def _frozen_modules(exe: Path) -> set[str]:
+    """Module names in the frozen executable's embedded PYZ archive."""
+    from PyInstaller.archive.readers import CArchiveReader
+
+    return set(CArchiveReader(str(exe)).open_embedded_archive("PYZ.pyz").toc)
+
+
+def _assert_frozen_backends(bundle: Path, exe: Path, data_root: Path) -> None:
+    """The release bundle must carry every backend the docs advertise."""
+    fix = "sync with `--group codecs` (and `--group office` on Windows) and rebuild"
+    modules = _frozen_modules(exe)
+    required = ["openpyxl", "PIL.Image"]
+    is_windows = (bundle / "pagedrop.exe").is_file()
+    if is_windows:
+        required.append("win32com.client")
+    missing = [name for name in required if name not in modules]
+    assert not missing, f"frozen bundle is missing {', '.join(missing)}: {fix}"
+    if is_windows:
+        for pattern in ("pywintypes*.dll", "pythoncom*.dll"):
+            assert any(data_root.rglob(pattern)), (
+                f"Windows bundle is missing {pattern} under {data_root}: {fix}"
+            )
 
 
 def _assert_installer_if_present(version: str) -> None:
@@ -122,6 +149,36 @@ def _assert_installer_if_present(version: str) -> None:
     assert checksum.read_text(encoding="ascii") == expected, (
         "checksum must contain the final installer SHA-256 and exact filename"
     )
+
+
+def _assert_backends_declared(spec_text: str) -> None:
+    """Spec, dependency groups and sync commands must all carry the backends."""
+    for name in ("openpyxl", "PIL.Image", "PIL.WebPImagePlugin"):
+        assert f'"{name}"' in spec_text, f"pagedrop.spec must list hidden import {name}"
+    for name in ("win32com.client", "pythoncom", "pywintypes"):
+        assert f'"{name}"' in spec_text, f"pagedrop.spec must list hidden import {name}"
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    codecs = " ".join(pyproject.get("dependency-groups", {}).get("codecs", [])).lower()
+    for pkg in ("openpyxl", "pillow"):
+        assert pkg in codecs, f"pyproject.toml codecs group must include {pkg}"
+    defaults = pyproject.get("tool", {}).get("uv", {}).get("default-groups", [])
+    assert "codecs" in defaults, "pyproject.toml [tool.uv] default-groups must include codecs"
+
+    workflows = ROOT / ".github" / "workflows"
+    release = (workflows / "release.yml").read_text(encoding="utf-8")
+    windows_job = release.split("build-windows:", 1)[1].split("build-linux:", 1)[0]
+    linux_job = release.split("build-linux:", 1)[1]
+    ps1 = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+    for label, text in (
+        ("ci.yml", (workflows / "ci.yml").read_text(encoding="utf-8")),
+        ("release.yml build-windows", windows_job),
+        ("release.yml build-linux", linux_job),
+        ("build_windows_installer.ps1", ps1),
+    ):
+        assert "--group codecs" in text, f"{label} must sync --group codecs"
+    for label, text in (("release.yml build-windows", windows_job), ("build_windows_installer.ps1", ps1)):
+        assert "--group office" in text, f"{label} must sync --group office"
 
 
 def _assert_linux_release_script() -> None:
@@ -178,6 +235,7 @@ def main() -> None:
     _assert_notices_in_spec(spec_text)
     _assert_icons_in_spec(spec_text)
     _assert_onedir_spec(spec_text)
+    _assert_backends_declared(spec_text)
     _assert_onedir_dist_if_present()
     _assert_installer_if_present(ver)
     _assert_linux_release_script()

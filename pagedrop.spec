@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -61,6 +62,14 @@ from PyInstaller.utils.hooks import copy_metadata
 datas += copy_metadata("pagedrop")
 
 hiddenimports += collect_submodules("pagedrop")
+
+# openpyxl and Pillow are loaded through importlib (capability probes), which
+# PyInstaller cannot see; Pillow also loads codec plugins dynamically. On
+# Windows, pywin32 backs Office COM (Microsoft Office itself stays a separate
+# install).
+hiddenimports += ["openpyxl", "PIL.Image", "PIL.WebPImagePlugin"]
+if sys.platform == "win32":
+    hiddenimports += ["win32com.client", "pythoncom", "pywintypes"]
 hiddenimports = list(dict.fromkeys(hiddenimports))
 
 a = Analysis(

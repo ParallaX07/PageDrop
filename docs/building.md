@@ -6,10 +6,10 @@ use an x86_64 AppImage.
 
 ## Build the executable
 
-Install dev dependencies (includes PyInstaller), then build:
+Install dev dependencies (includes PyInstaller) and the `codecs` group, then build. A Windows build also needs the `office` group (pywin32 for Office COM); the build includes openpyxl, Pillow and, on Windows, the pywin32 modules and DLLs, and `scripts/check_packaging.py` fails if the bundle lacks them.
 
 ```bash
-uv sync --group dev
+uv sync --group dev --group codecs        # Windows: add --group office
 make build-exe
 ```
 
@@ -86,7 +86,7 @@ then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isin
 with `iscc` on PATH or `$env:ISCC`):
 
 ```powershell
-uv run --with pillow python scripts/generate_icons.py   # or: make generate-icons
+uv run python scripts/generate_icons.py   # or: make generate-icons
 .\scripts\build_windows_installer.ps1                   # or: make build-installer
 # reuse existing dist: .\scripts\build_windows_installer.ps1 -SkipBuild
 uv run python scripts/check_packaging.py

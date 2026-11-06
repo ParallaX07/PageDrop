@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -138,6 +139,126 @@ def test_missing_installer_output_and_frozen_metadata_fail_packaging_checks(tmp_
     (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
     with pytest.raises(AssertionError, match="METADATA"):
         check_packaging._assert_onedir_dist_if_present()
+
+
+def _fake_bundle(tmp_path, monkeypatch, modules, *, windows, dlls=True):
+    """Lay out a metadata-valid onedir bundle whose frozen modules are *modules*."""
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+    shutil.rmtree(tmp_path / "dist", ignore_errors=True)
+    bundle = tmp_path / "dist" / "pagedrop"
+    data = bundle / "_internal"
+    (data / "pagedrop" / "assets" / "icons").mkdir(parents=True)
+    (bundle / ("pagedrop.exe" if windows else "pagedrop")).write_bytes(b"exe")
+    (data / "THIRD_PARTY_NOTICES.md").write_text("notices", encoding="utf-8")
+    (data / "pagedrop" / "assets" / "icons" / "icon.svg").write_text("svg", encoding="utf-8")
+    (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
+    dist_info = data / f"pagedrop-{check_packaging.read_version()}.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        f"Name: pagedrop\nVersion: {check_packaging.read_version()}\n", encoding="utf-8"
+    )
+    if dlls:
+        sys32 = data / "pywin32_system32"
+        sys32.mkdir()
+        (sys32 / "pywintypes311.dll").write_bytes(b"dll")
+        (sys32 / "pythoncom311.dll").write_bytes(b"dll")
+    monkeypatch.setattr(check_packaging, "_frozen_modules", lambda exe: set(modules))
+
+
+def test_frozen_bundle_with_every_backend_passes(tmp_path, monkeypatch):
+    _fake_bundle(tmp_path, monkeypatch, {"openpyxl", "PIL.Image"}, windows=False, dlls=False)
+    check_packaging._assert_onedir_dist_if_present()
+    _fake_bundle(
+        tmp_path, monkeypatch, {"openpyxl", "PIL.Image", "win32com.client"}, windows=True
+    )
+    check_packaging._assert_onedir_dist_if_present()
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_frozen_bundle_without_openpyxl_or_pillow_fails(tmp_path, monkeypatch, windows):
+    for missing, kept in (("openpyxl", "PIL.Image"), ("PIL.Image", "openpyxl")):
+        _fake_bundle(tmp_path, monkeypatch, {kept, "win32com.client"}, windows=windows)
+        with pytest.raises(AssertionError, match=f"missing {missing}.*--group codecs"):
+            check_packaging._assert_onedir_dist_if_present()
+
+
+def test_windows_bundle_without_win32com_fails(tmp_path, monkeypatch):
+    _fake_bundle(tmp_path, monkeypatch, {"openpyxl", "PIL.Image"}, windows=True)
+    with pytest.raises(AssertionError, match=r"win32com\.client.*--group office"):
+        check_packaging._assert_onedir_dist_if_present()
+
+
+def test_windows_bundle_without_pywin32_dlls_fails(tmp_path, monkeypatch):
+    modules = {"openpyxl", "PIL.Image", "win32com.client"}
+    _fake_bundle(tmp_path, monkeypatch, modules, windows=True, dlls=False)
+    with pytest.raises(AssertionError, match=r"pywintypes\*\.dll.*--group office"):
+        check_packaging._assert_onedir_dist_if_present()
+    sys32 = tmp_path / "dist" / "pagedrop" / "_internal" / "pywin32_system32"
+    sys32.mkdir()
+    (sys32 / "pywintypes311.dll").write_bytes(b"dll")
+    with pytest.raises(AssertionError, match=r"pythoncom\*\.dll"):
+        check_packaging._assert_onedir_dist_if_present()
+
+
+def _declared_tree(tmp_path, monkeypatch):
+    """Copy the files the declared-backends check reads into *tmp_path*."""
+    for rel in (
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        "scripts/build_windows_installer.ps1",
+    ):
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+    return check_packaging.SPEC.read_text(encoding="utf-8")
+
+
+def test_declared_backends_pass_for_the_checked_in_tree(tmp_path, monkeypatch):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    check_packaging._assert_backends_declared(spec)
+
+
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        (".github/workflows/ci.yml", "--group codecs"),
+        ("scripts/build_windows_installer.ps1", "--group codecs"),
+        ("scripts/build_windows_installer.ps1", "--group office"),
+        ("pyproject.toml", 'default-groups = ["dev", "codecs"]'),
+    ],
+)
+def test_declared_backends_fail_when_a_sync_or_group_is_dropped(
+    tmp_path, monkeypatch, rel, needle
+):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    path = tmp_path / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, ""), encoding="utf-8")
+    with pytest.raises(AssertionError):
+        check_packaging._assert_backends_declared(spec)
+
+
+def test_declared_backends_check_each_release_job_separately(tmp_path, monkeypatch):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    release = tmp_path / ".github" / "workflows" / "release.yml"
+    text = release.read_text(encoding="utf-8")
+    windows, linux = text.split("  build-linux:", 1)
+    # Dropping office from the Windows job must fail even though codecs remains.
+    release.write_text(windows.replace(" --group office", "") + "  build-linux:" + linux, encoding="utf-8")
+    with pytest.raises(AssertionError, match="build-windows.*--group office"):
+        check_packaging._assert_backends_declared(spec)
+    # Dropping codecs from the Linux job must fail even though Windows keeps it.
+    release.write_text(windows + "  build-linux:" + linux.replace(" --group codecs", ""), encoding="utf-8")
+    with pytest.raises(AssertionError, match="build-linux.*--group codecs"):
+        check_packaging._assert_backends_declared(spec)
+
+
+@pytest.mark.parametrize("hidden", ["openpyxl", "PIL.Image", "win32com.client", "pywintypes"])
+def test_declared_backends_fail_when_spec_drops_a_hidden_import(tmp_path, monkeypatch, hidden):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    with pytest.raises(AssertionError, match=hidden.replace(".", r"\.")):
+        check_packaging._assert_backends_declared(spec.replace(f'"{hidden}"', ""))
 
 
 def test_partial_draft_retry_replaces_only_mismatched_asset(tmp_path):
