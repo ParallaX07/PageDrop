@@ -14,7 +14,7 @@ ASSETS = SRC / "pagedrop" / "assets"
 TESSDATA = SRC / "pagedrop" / "data" / "tessdata"
 
 datas: list[tuple[str, str]] = [
-    (str(ASSETS / "logo.png"), "pagedrop/assets"),
+    (str(ASSETS / "logo.svg"), "pagedrop/assets"),
     # Phosphor toolbar SVGs (R4) — must resolve via importlib.resources when frozen.
     (str(ASSETS / "icons"), "pagedrop/assets/icons"),
     # Licence notices must ship beside the onedir exe.
