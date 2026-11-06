@@ -1,4 +1,4 @@
-"""Optional tessdata language pack helpers (Phase 29).
+"""Optional tessdata language pack helpers.
 
 PyMuPDF's built-in OCR needs ``*.traineddata`` files — not a separate
 Tesseract executable as the primary path. An optional small ``eng`` pack may
@@ -12,13 +12,18 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
-# tessdata_fast eng — small enough for an optional download (~4 MB).
+from pagedrop.core.jobs.cancel import CancelToken, check_cancel
+from pagedrop.core.jobs.errors import JobError
+
+# tessdata_fast eng at a pinned commit — small enough for an optional download (~4 MB).
 ENG_FAST_URL = (
-    "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+    "https://github.com/tesseract-ocr/tessdata_fast/raw/"
+    "923915d4ced2a7235221788285785a29c4a42d4a/eng.traineddata"
 )
-# SHA256 of tessdata_fast eng.traineddata at ENG_FAST_URL (pinned for WC3).
+# SHA256 of tessdata_fast eng.traineddata at ENG_FAST_URL.
 ENG_FAST_SHA256 = (
     "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
 )
@@ -67,37 +72,70 @@ def eng_traineddata_path(directory: Path | None = None) -> Path:
     return (directory or user_tessdata_dir()) / f"{ENG_LANG}.traineddata"
 
 
+_CHUNK_BYTES = 64 * 1024
+
+
+class TessdataDownloadError(JobError):
+    """Raised when the optional eng tessdata download fails or fails verification."""
+
+
 def download_eng_fast(
     *,
     dest_dir: Path | None = None,
     url: str = ENG_FAST_URL,
     timeout: float = 120.0,
+    cancel: CancelToken | None = None,
+    on_progress: Callable[[float | None], None] | None = None,
 ) -> Path:
     """Download tessdata_fast ``eng.traineddata`` into *dest_dir*.
 
-    Explicit user action only — never called at first launch. Writes via a
-    temporary sibling then renames. Verifies SHA256 before replace; fails
-    closed on mismatch. Returns the final ``.traineddata`` path.
+    Explicit user action only — never called at first launch. Streams to a
+    temporary sibling, hashing as it goes, then renames. Verifies SHA256 before
+    replace; fails closed on mismatch. A cancel or failure removes the partial
+    file and leaves any existing ``eng.traineddata`` untouched. *on_progress*
+    receives a 0..1 fraction, or ``None`` when the server sends no length.
+    Returns the final ``.traineddata`` path.
     """
     directory = dest_dir or ensure_user_tessdata_dir()
-    directory.mkdir(parents=True, exist_ok=True)
     target = eng_traineddata_path(directory)
     staging = target.with_suffix(".traineddata.partial")
     try:
+        directory.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
-            staging.write_bytes(response.read())
-        digest = hashlib.sha256(staging.read_bytes()).hexdigest()
-        if digest != ENG_FAST_SHA256:
-            staging.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"eng tessdata hash mismatch (got {digest}, "
+            try:
+                total = int(response.headers.get("Content-Length") or 0)
+            except (AttributeError, TypeError, ValueError):
+                total = 0
+            received = 0
+            with staging.open("wb") as handle:
+                while True:
+                    check_cancel(cancel)
+                    chunk = response.read(_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    digest.update(chunk)
+                    received += len(chunk)
+                    if on_progress is not None:
+                        on_progress(min(1.0, received / total) if total else None)
+        check_cancel(cancel)
+        if digest.hexdigest() != ENG_FAST_SHA256:
+            raise TessdataDownloadError(
+                f"eng tessdata hash mismatch (got {digest.hexdigest()}, "
                 f"expected {ENG_FAST_SHA256})"
             )
         staging.replace(target)
+    except TessdataDownloadError:
+        staging.unlink(missing_ok=True)
+        raise
     except urllib.error.URLError as exc:
         staging.unlink(missing_ok=True)
-        raise RuntimeError(f"Could not download eng tessdata: {exc}") from exc
+        raise TessdataDownloadError(f"Could not download eng tessdata: {exc}") from exc
     except OSError as exc:
         staging.unlink(missing_ok=True)
-        raise RuntimeError(f"Could not save eng tessdata: {exc}") from exc
+        raise TessdataDownloadError(f"Could not save eng tessdata: {exc}") from exc
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
     return target
