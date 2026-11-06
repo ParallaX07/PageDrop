@@ -147,8 +147,8 @@ class MainWindow(QMainWindow):
         self._tools_window: ToolsWindow | None = None
         self._tool_pages: dict[str, QWidget] = {}
         self._tool_shells: dict[str, QWidget] = {}
-        self._previous_tab_index: int | None = None
-        self._last_tab_index: int = 0
+        self._previous_tab: QWidget | None = None
+        self._last_tab: QWidget | None = None
         self._pending_move_undo: Callable[[], bool] | None = None
         self._pending_selection: set[int] | None = None
         self._last_selection_toolbar_snap: tuple | None = None
@@ -766,7 +766,7 @@ class MainWindow(QMainWindow):
         self._editor_busy: dict[PdfTab, tuple[BusyOverlay, CancelToken]] = {}
         self._close_discarded: set[PdfTab] = set()
         self._close_waiting = False
-        self._last_tab_index = self._tab_manager.currentIndex()
+        self._last_tab = self._tab_manager.currentWidget()
         set_content_tab_order(
             self._toolbar,
             self._tab_manager,
@@ -1202,60 +1202,33 @@ class MainWindow(QMainWindow):
     def _on_tab_index_changed(self, index: int) -> None:
         if index < 0:
             return
-        count = self._tab_manager.count()
-        if count <= 1:
-            self._previous_tab_index = None
-            self._last_tab_index = index
+        current = self._tab_manager.widget(index)
+        if self._tab_manager.count() <= 1:
+            self._previous_tab = None
+            self._last_tab = current
             return
-        if self._last_tab_index < 0:
-            self._last_tab_index = index
+        if self._last_tab is None:
+            self._last_tab = current
             return
-        if self._last_tab_index != index:
-            self._previous_tab_index = self._last_tab_index
-        self._last_tab_index = index
+        if self._last_tab is not current:
+            self._previous_tab = self._last_tab
+        self._last_tab = current
         self._sync_toolbar_from_active_tab()
 
-    @staticmethod
-    def _remap_tab_index_after_close(
-        closed_index: int,
-        tab_index: int | None,
-    ) -> int | None:
-        if tab_index is None:
-            return None
-        if tab_index == closed_index:
-            return None
-        if tab_index > closed_index:
-            return tab_index - 1
-        return tab_index
-
     def _on_tab_closed(self, closed_index: int) -> None:
-        self._previous_tab_index = self._remap_tab_index_after_close(
-            closed_index,
-            self._previous_tab_index,
-        )
-        if self._last_tab_index == closed_index:
-            self._last_tab_index = -1
-        else:
-            remapped = self._remap_tab_index_after_close(
-                closed_index,
-                self._last_tab_index,
-            )
-            if remapped is not None:
-                self._last_tab_index = remapped
+        # Emitted before the tab leaves the manager (close or move to another window).
+        closed = self._tab_manager.widget(closed_index)
+        if closed is not None and closed is self._previous_tab:
+            self._previous_tab = None
+        if closed is not None and closed is self._last_tab:
+            self._last_tab = None
         self._update_close_tab_action()
 
     def _switch_to_next_tab(self) -> None:
-        count = self._tab_manager.count()
-        if count <= 1:
+        if self._tab_manager.count() <= 1 or self._previous_tab is None:
             return
-        current = self._tab_manager.currentIndex()
-        previous = self._previous_tab_index
-        if (
-            previous is None
-            or previous == current
-            or previous < 0
-            or previous >= count
-        ):
+        previous = self._tab_manager.indexOf(self._previous_tab)
+        if previous < 0 or previous == self._tab_manager.currentIndex():
             return
         self._tab_manager.setCurrentIndex(previous)
 
@@ -3458,8 +3431,10 @@ class MainWindow(QMainWindow):
         if self._should_persist_geometry():
             save_window_geometry(self.saveGeometry())
         super().closeEvent(event)
-        if event.isAccepted() and self._window_manager is not None:
-            self._window_manager.notify_window_closed(self)
+        if event.isAccepted():
+            icons.unregister_refresh(self._refresh_action_icons)
+            if self._window_manager is not None:
+                self._window_manager.notify_window_closed(self)
 
     def _confirm_window_close(self) -> bool:
         """Resolve unsaved edits, then running tool jobs; False aborts or defers the close."""

@@ -76,7 +76,6 @@ def test_open_new_window_spawns_second_main_window(qtbot, qapp):
 def test_last_window_close_quits_app_when_only_one(qtbot, qapp, monkeypatch):
     manager = _reset_window_manager(qapp)
     window = manager.open_new_window()
-    qtbot.addWidget(window)
 
     quit_called: list[bool] = []
 
@@ -144,7 +143,6 @@ def test_secondary_close_does_not_poison_geometry(qtbot, qapp, isolated_settings
     primary = manager.open_new_window()
     secondary = manager.open_new_window()
     qtbot.addWidget(primary)
-    qtbot.addWidget(secondary)
 
     assert manager.is_primary(primary)
     assert not manager.is_primary(secondary)
@@ -176,7 +174,6 @@ def test_primary_close_persists_geometry_while_secondary_remains(
     manager = _reset_window_manager(qapp)
     primary = manager.open_new_window()
     secondary = manager.open_new_window()
-    qtbot.addWidget(primary)
     qtbot.addWidget(secondary)
 
     primary.resize(880, 640)
@@ -216,8 +213,6 @@ def test_closing_last_of_two_windows_quits(qtbot, qapp, monkeypatch):
     manager = _reset_window_manager(qapp)
     first = manager.open_new_window()
     second = manager.open_new_window()
-    qtbot.addWidget(first)
-    qtbot.addWidget(second)
 
     quit_called: list[bool] = []
     monkeypatch.setattr(qapp, "quit", lambda: quit_called.append(True))
@@ -270,3 +265,137 @@ def test_running_merge_or_create_pdf_job_blocks_installation_preparation(
 
     assert window.isEnabled()
     running.end_job()
+
+
+def _flush_deferred_deletes() -> None:
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _icon_refresh_registered(window) -> bool:
+    from weakref import WeakMethod
+
+    from pagedrop.ui import icons
+
+    for registered in icons._refresh_callbacks:
+        callback = registered() if isinstance(registered, WeakMethod) else registered
+        if callback is not None and getattr(callback, "__self__", None) is window:
+            return True
+    return False
+
+
+def test_closed_secondary_window_is_freed(qtbot, qapp):
+    from PyQt6 import sip
+
+    from pagedrop.ui import icons
+
+    manager = _reset_window_manager(qapp)
+    first = manager.open_new_window()
+    second = manager.open_new_window()
+    qtbot.addWidget(first)
+    assert _icon_refresh_registered(second)
+
+    second.close()
+    qapp.processEvents()
+    _flush_deferred_deletes()
+
+    assert sip.isdeleted(second)
+    assert not sip.isdeleted(first)
+    assert second not in manager.windows
+    assert not _icon_refresh_registered(second)
+    icons.refresh_icons()
+    assert first.isVisible()
+    assert first._tab_manager.count() == 1
+
+
+def test_vetoed_close_keeps_window_and_icon_refresh(qtbot, qapp, monkeypatch):
+    from PyQt6 import sip
+
+    manager = _reset_window_manager(qapp)
+    first = manager.open_new_window()
+    second = manager.open_new_window()
+    qtbot.addWidget(first)
+    qtbot.addWidget(second)
+    monkeypatch.setattr(second, "_confirm_window_close", lambda: False)
+
+    second.close()
+    qapp.processEvents()
+    _flush_deferred_deletes()
+
+    assert not sip.isdeleted(second)
+    assert second in manager.windows
+    assert _icon_refresh_registered(second)
+
+
+def test_closing_last_window_quits_then_frees_it(qtbot, qapp, monkeypatch):
+    from PyQt6 import sip
+
+    manager = _reset_window_manager(qapp)
+    window = manager.open_new_window()
+    quit_called: list[bool] = []
+    monkeypatch.setattr(qapp, "quit", lambda: quit_called.append(True))
+
+    window.close()
+    qapp.processEvents()
+    _flush_deferred_deletes()
+    qapp.processEvents()
+
+    assert quit_called
+    assert sip.isdeleted(window)
+    assert manager.primary is None
+
+
+def test_detached_tab_survives_source_window_close(
+    one_page_pdf, qtbot, qapp
+):
+    from PyQt6 import sip
+
+    manager = _reset_window_manager(qapp)
+    keeper = manager.open_new_window()
+    source = manager.open_new_window()
+    qtbot.addWidget(keeper)
+    tab = source._tab_manager.add_blank_tab()
+    source._load_pdf(str(one_page_pdf), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+    source._tab_manager.removeTab(0)
+
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(source._tab_manager.indexOf(tab))
+    detached = next(w for w in manager.windows if w not in windows_before)
+    qtbot.addWidget(detached)
+    assert detached._tab_manager.indexOf(tab) == 0
+
+    source.close()
+    qapp.processEvents()
+    _flush_deferred_deletes()
+
+    assert sip.isdeleted(source)
+    assert not sip.isdeleted(tab)
+    assert tab.loader is not None
+    assert detached._tab_manager.widget(0) is tab
+
+
+def test_update_dialog_outlives_closed_primary_window(qtbot, qapp, monkeypatch):
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    manager = _reset_window_manager(qapp)
+    primary = manager.open_new_window()
+    other = manager.open_new_window()
+    qtbot.addWidget(other)
+    dialog = QDialog(primary)
+    manager.update_presenter._dialog = dialog
+    monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: other))
+
+    primary.close()
+    qapp.processEvents()
+    _flush_deferred_deletes()
+
+    assert sip.isdeleted(primary)
+    assert not sip.isdeleted(dialog)
+    assert dialog.parentWidget() is other
+    assert dialog.isWindow()
+    dialog.deleteLater()
+    manager.update_presenter._dialog = None

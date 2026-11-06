@@ -194,11 +194,12 @@ class WindowManager(QObject):
         if window not in self._windows:
             return
         self._windows.discard(window)
-        self.update_presenter.window_closed(window)
         if window is self._primary:
             self._primary = None
+        self.update_presenter.window_closed(window)
         if not self._windows:
             self._maybe_quit()
+        window.deleteLater()
 
     def _register(self, window: MainWindow) -> None:
         self._windows.add(window)
