@@ -104,8 +104,10 @@ class ToolbarArrowNavFilter(QObject):
 
 def enable_toolbar_keyboard_navigation(toolbar: QToolBar) -> ToolbarArrowNavFilter:
     """StrongFocus on tool buttons + arrow-key focus movement within the toolbar."""
-    nav_filter = ToolbarArrowNavFilter(toolbar)
-    toolbar.installEventFilter(nav_filter)
+    nav_filter = getattr(toolbar, "_pagedrop_arrow_nav", None)
+    if nav_filter is None:
+        nav_filter = ToolbarArrowNavFilter(toolbar)
+        toolbar.installEventFilter(nav_filter)
 
     for action in toolbar.actions():
         widget = toolbar.widgetForAction(action)

@@ -74,7 +74,7 @@ from pagedrop.ui.job_chrome import (
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.pdf_viewer import RENDER_DEBOUNCE_MS
 from pagedrop.ui.tool_shell import run_tool_job
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, scrollable_page_body
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     CLOSE_TAB,
@@ -429,7 +429,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._status = StatusFooter()
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("CompareWindow")
-        self.setMinimumSize(960, 640)
+        self.setMinimumSize(480, 320)
 
         self._report: CompareReport | None = None
         self._path_a = ""
@@ -537,7 +537,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._pane_b.set_content(empty, empty_rect, [])
 
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(scrollable_page_body(self))
         root.setContentsMargins(12, 12, 12, 8)
         root.setSpacing(8)
 

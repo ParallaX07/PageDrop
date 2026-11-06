@@ -558,6 +558,8 @@ def _report_window(qtbot, tmp_path: Path, pages: int = 3, *, show: bool = True):
     _write_pages_pdf(b, pages)
     window = CompareWindow()
     qtbot.addWidget(window)
+    # Large enough for the panes to fit a full page without side scrolling.
+    window.resize(960, 640)
     if show:
         window.show()
     window._path_a = str(a)

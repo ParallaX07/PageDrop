@@ -262,7 +262,7 @@ def test_shell_sequence_collapses_selected_input_and_demotes_rerun(qtbot, tmp_pa
     shell = ToolShellWindow(title="Reverse", description="Reverse every page")
     qtbot.addWidget(shell)
 
-    layout = shell.layout()
+    layout = shell._body_layout
     assert layout.indexOf(shell._workflow_header) < layout.indexOf(shell.drop_zone)
     assert shell._workflow_header.findChild(QLabel, "ToolWorkflowTitle").text() == "Reverse"
 
@@ -674,7 +674,7 @@ def test_r11_empty_options_shell_collapses_options_scroll(qtbot):
     assert shell._options_scroll.isVisible()
     assert shell._header_host.isVisible()
     assert shell._help_btn.isVisible()
-    root = shell.layout()
+    root = shell._body_layout
     assert root.stretch(root.indexOf(shell._options_scroll)) == 0
 
     # Real controls restore the scroll stretch.
@@ -699,7 +699,7 @@ def test_r18_header_lives_in_options_not_root(qtbot):
     form.addRow("Hint", QLabel("x"))
     shell.set_options_widget(opts)
 
-    root = shell.layout()
+    root = shell._body_layout
     assert root.indexOf(shell._header_host) < 0
     assert root.indexOf(shell._title_label) < 0
     assert shell._options_host.isAncestorOf(shell._title_label)
@@ -761,7 +761,7 @@ def test_r11_booklet_shell_hides_empty_options(qtbot, isolated_settings):
     assert shell._options_scroll.isVisible()
     assert shell._header_host.isVisible()
     assert shell._help_btn.isVisible()
-    root = shell.layout()
+    root = shell._body_layout
     assert root.stretch(root.indexOf(shell._options_scroll)) == 0
     assert shell._actions_host.isVisible()
     assert shell._run_btn.parentWidget() is shell._actions_host
