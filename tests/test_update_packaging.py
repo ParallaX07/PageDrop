@@ -455,3 +455,34 @@ def test_linux_assets_and_notes_are_reverified_on_retry(tmp_path):
     operations.calls.clear()
     publish_tested_pair(operations, tag="v1.2.3", installer=installer, checksum=checksum, **files)
     assert not any(call[0] in {"upload", "delete"} for call in operations.calls)
+
+
+def _ci_tree(tmp_path, monkeypatch):
+    for rel in (".github/workflows/ci.yml", "tests/smoke/test_phase16_executable.py"):
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+
+
+def test_ci_package_job_passes_for_the_checked_in_tree(tmp_path, monkeypatch):
+    _ci_tree(tmp_path, monkeypatch)
+    check_packaging._assert_ci_package_job()
+
+
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        (".github/workflows/ci.yml", "package-linux:"),
+        (".github/workflows/ci.yml", "uv run pyinstaller"),
+        (".github/workflows/ci.yml", "smoke_exe.sh"),
+        ("tests/smoke/test_phase16_executable.py", "COMPRESS_WORKER_FLAG"),
+        ("tests/smoke/test_phase16_executable.py", "--pagedrop-office-com-worker"),
+    ],
+)
+def test_ci_package_job_check_fails_when_a_piece_is_dropped(tmp_path, monkeypatch, rel, needle):
+    _ci_tree(tmp_path, monkeypatch)
+    path = tmp_path / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, "gone"), encoding="utf-8")
+    with pytest.raises(AssertionError):
+        check_packaging._assert_ci_package_job()

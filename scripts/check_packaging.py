@@ -195,6 +195,18 @@ def _assert_linux_release_script() -> None:
     )
 
 
+def _assert_ci_package_job() -> None:
+    """CI must build the Linux bundle and probe its frozen helper entry points."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "\n  package-linux:" in ci, "ci.yml must define a package-linux job"
+    job = ci.split("\n  package-linux:", 1)[1]
+    for needle in ("pyinstaller", "check_packaging.py", "smoke_exe.sh", "PAGEDROP_EXE"):
+        assert needle in job, f"ci.yml package-linux job must run {needle}"
+    probes = (ROOT / "tests" / "smoke" / "test_phase16_executable.py").read_text(encoding="utf-8")
+    for needle in ("REDACT_VERIFY_FLAG", "COMPRESS_WORKER_FLAG", "--pagedrop-office-com-worker"):
+        assert needle in probes, f"the frozen smoke tests must probe {needle}"
+
+
 def main() -> None:
     ver = read_version()
     assert re.fullmatch(r"\d+\.\d+\.\d+", ver), f"unexpected semver: {ver!r}"
@@ -239,6 +251,7 @@ def main() -> None:
     _assert_onedir_dist_if_present()
     _assert_installer_if_present(ver)
     _assert_linux_release_script()
+    _assert_ci_package_job()
 
     assert "THIRD_PARTY_NOTICES.md" in iss_text, (
         "windows.iss must install THIRD_PARTY_NOTICES.md beside the exe"
