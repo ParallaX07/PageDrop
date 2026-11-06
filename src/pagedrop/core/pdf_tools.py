@@ -120,7 +120,11 @@ def alternate_pdfs(
     reject_source_overwrite(output_path, pdf_a, pdf_b)
 
     a = open_pdf(pdf_a, password=password_a)
-    b = open_pdf(pdf_b, password=password_b)
+    try:
+        b = open_pdf(pdf_b, password=password_b)
+    except Exception:
+        a.close()
+        raise
     out = fitz.open()
     try:
         i = 0
@@ -1113,10 +1117,14 @@ def compare_pdfs_heatmap(
     out_path = Path(output_heatmap_pdf)
     reject_source_overwrite(out_path, pdf_a, pdf_b)
     a = open_pdf(pdf_a, password=password_a)
-    b = open_pdf(pdf_b, password=password_b)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        b = open_pdf(pdf_b, password=password_b)
+    except Exception:
+        a.close()
+        raise
     out = fitz.open()
     try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         cols, rows = sample_grid
         if cols <= 0 or rows <= 0:
             raise ValueError("sample_grid must be positive")
