@@ -21,6 +21,7 @@ datas: list[tuple[str, str]] = [
     # Licence notices must ship beside the onedir exe.
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),
+    (str(ROOT / "licenses"), "licenses"),
 ]
 # Optional OCR pack directory (may contain only README until eng is shipped).
 if TESSDATA.is_dir():
@@ -60,6 +61,11 @@ for package in ("fitz",):
 from PyInstaller.utils.hooks import copy_metadata
 
 datas += copy_metadata("pagedrop")
+
+# Third-party licence files travel in each package's dist-info. Pillow's LICENSE
+# also covers the libraries bundled in its wheel.
+for dist in ("pillow", "openpyxl", "et_xmlfile") + (("pywin32",) if sys.platform == "win32" else ()):
+    datas += copy_metadata(dist)
 
 hiddenimports += collect_submodules("pagedrop")
 

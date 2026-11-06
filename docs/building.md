@@ -144,7 +144,7 @@ cannot advertise the mutex to the installer.
 Before a tagged binary package:
 
 1. Run `make test-release` (or equivalent full suite + executable smoke)
-2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, `QtPrintSupport`, installer identity, and updater mutex contract
+2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, licence texts, icons, `QtPrintSupport`, installer identity, and updater mutex contract
 3. Run `make build-appimage` on Linux and smoke-test the resulting AppImage
 4. Confirm release notes / About / installer materials match the redistribution policy in [Licensing](licensing.md)
 5. Confirm Qt LGPL obligations (licence texts + source/offer) for that release
