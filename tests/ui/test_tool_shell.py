@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import threading
 import time
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import fitz
 import pytest
-from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QTimer, QUrl
+from PyQt6.QtCore import QEventLoop, QMimeData, QPoint, QPointF, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import QFileDialog, QFormLayout, QLabel, QLineEdit, QWidget
 
@@ -1170,3 +1171,189 @@ def test_fitz_lock_released_after_prompt_cancel_and_load_error(
     assert errors == []
     run(broken)
     assert errors == [False]
+
+
+class _TickThenRelease:
+    """Hold ``FITZ_LOCK`` on a helper thread; free it after *after* event-loop ticks."""
+
+    def __init__(self, after: int = 5) -> None:
+        self.after = after
+        self.ticks = 0
+        self._stack = contextlib.ExitStack()
+        self._held = False
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._tick)
+
+    def hold(self) -> None:
+        self._stack.enter_context(hold_fitz_lock())
+        self._held = True
+        self.ticks = 0
+        self._timer.start(10)
+
+    def _tick(self) -> None:
+        if self._held:
+            self.ticks += 1
+            if self.ticks >= self.after:
+                self.release()
+
+    def release(self) -> None:
+        self._held = False
+        self._stack.close()
+
+    @property
+    def held(self) -> bool:
+        return self._held
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self.release()
+
+
+def test_gui_fitz_call_pumps_events_without_user_input_and_passes_results(
+    qtbot, monkeypatch
+):
+    from pagedrop.ui import job_chrome
+
+    flags: list[object] = []
+    real_process = job_chrome.QApplication.processEvents
+
+    class SpyApp:
+        @staticmethod
+        def processEvents(flag=QEventLoop.ProcessEventsFlag.AllEvents):  # noqa: N802
+            flags.append(flag)
+            real_process(flag)
+
+    monkeypatch.setattr(job_chrome, "QApplication", SpyApp)
+    seen_owned: list[bool] = []
+
+    def probe(a, *, b):
+        seen_owned.append(FITZ_LOCK._is_owned())
+        return a + b
+
+    assert job_chrome.gui_fitz_call(probe, 1, b=2) == 3
+    assert flags == [], "the uncontended path must not pump events"
+
+    def boom():
+        raise ValueError("probe failed")
+
+    with pytest.raises(ValueError, match="probe failed"):
+        job_chrome.gui_fitz_call(boom)
+    assert flags == []
+    assert not FITZ_LOCK._is_owned()
+
+    holder = _TickThenRelease()
+    try:
+        holder.hold()
+        assert job_chrome.gui_fitz_call(probe, 5, b=6) == 11
+        assert holder.ticks >= 5, "timers kept running during the wait"
+        assert flags
+        assert set(flags) == {QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents}
+        assert seen_owned == [True, True]
+        assert not FITZ_LOCK._is_owned()
+
+        holder.hold()
+        with pytest.raises(ValueError, match="probe failed"):
+            job_chrome.gui_fitz_call(boom)
+    finally:
+        holder.stop()
+    assert not FITZ_LOCK._is_owned()
+    assert FITZ_LOCK.acquire(timeout=1.0)
+    FITZ_LOCK.release()
+
+
+def test_split_run_stays_live_while_another_thread_holds_the_lock(
+    qtbot, tmp_path, isolated_settings
+):
+    src = tmp_path / "doc.pdf"
+    out_dir = tmp_path / "parts"
+    _write_pdf(src, pages=3)
+    out_dir.mkdir()
+    source_hash = file_sha256(src)
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    tools.showMinimized()
+    shell = open_organize_shell(tools, "split")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(src)])
+    shell._ranges_edit.setText("1-2")  # type: ignore[attr-defined]
+    shell._folder_edit.setText(str(out_dir))  # type: ignore[attr-defined]
+
+    holder = _TickThenRelease()
+    try:
+        holder.hold()
+        shell._run_btn.click()  # returns only after the pumped wait ended
+        assert holder.ticks >= 5, "the window kept running while the page count waited"
+    finally:
+        holder.stop()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
+
+    assert len(list(out_dir.glob("*.pdf"))) == 1
+    assert file_sha256(src) == source_hash
+    assert not FITZ_LOCK._is_owned()
+    shell.close()
+    tools.close()
+
+
+def test_prompt_reacquire_waits_for_a_job_without_freezing_the_event_loop(
+    qtbot, tmp_path, monkeypatch
+):
+    src = tmp_path / "locked.pdf"
+    out = tmp_path / "locked_reversed.pdf"
+    _write_encrypted_pdf(src)
+    source_hash = file_sha256(src)
+    shell = _new_shell(qtbot)
+    holder = _TickThenRelease()
+    prompts: list[bool] = []
+
+    def prompt(_parent, _name, incorrect=False):
+        prompts.append(FITZ_LOCK._is_owned())
+        holder.hold()  # a job takes the lock while the prompt is open
+        return "pw"
+
+    monkeypatch.setattr("pagedrop.ui.tool_shell.prompt_pdf_password", prompt)
+    try:
+        _reverse(shell, src, out)
+        assert holder.ticks >= 5, "the event loop kept running during the re-acquire"
+        assert not holder.held
+    finally:
+        holder.stop()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
+
+    assert prompts == [False]
+    assert out.is_file()
+    assert out.resolve() != src.resolve()
+    assert file_sha256(src) == source_hash
+    assert not FITZ_LOCK._is_owned()
+
+
+def test_cancel_during_prompt_reacquire_ends_cancelled_without_the_lock(
+    qtbot, tmp_path, monkeypatch
+):
+    src = tmp_path / "locked.pdf"
+    out = tmp_path / "locked_reversed.pdf"
+    _write_encrypted_pdf(src)
+    source_hash = file_sha256(src)
+    shell = _new_shell(qtbot)
+    holder = _TickThenRelease(after=10_000)  # only released explicitly
+
+    def prompt(_parent, _name, incorrect=False):
+        holder.hold()
+        QTimer.singleShot(30, shell.cancel_active_job)
+        return "pw"
+
+    monkeypatch.setattr("pagedrop.ui.tool_shell.prompt_pdf_password", prompt)
+    try:
+        _reverse(shell, src, out)
+        # Ended while the other thread still holds the lock.
+        assert holder.held
+        assert not shell.is_job_running()
+        assert shell.statusBar().currentMessage() == "Cancelled"
+        assert not FITZ_LOCK._is_owned()
+    finally:
+        holder.stop()
+
+    assert FITZ_LOCK.acquire(timeout=1.0), "the GUI left the lock balanced"
+    FITZ_LOCK.release()
+    assert not out.exists()
+    assert file_sha256(src) == source_hash

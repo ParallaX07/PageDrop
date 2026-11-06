@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import re
 import urllib.error
 import urllib.request
@@ -151,6 +152,26 @@ def test_download_network_error_is_typed_and_leaves_no_partial(
     monkeypatch.setattr(urllib.request, "urlopen", boom)
 
     with pytest.raises(TessdataDownloadError, match="offline") as info:
+        download_eng_fast(dest_dir=tmp_path)
+
+    assert isinstance(info.value, JobError)
+    assert not eng_traineddata_path(tmp_path).exists()
+    assert list(tmp_path.glob("*.partial")) == []
+
+
+def test_download_truncated_response_is_typed_and_leaves_no_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def truncated() -> None:
+        raise http.client.IncompleteRead(b"abc", 10)
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *_a, **_k: _FakeResponse(b"x" * 1024, on_read=truncated),
+    )
+
+    with pytest.raises(TessdataDownloadError, match="Could not download") as info:
         download_eng_fast(dest_dir=tmp_path)
 
     assert isinstance(info.value, JobError)

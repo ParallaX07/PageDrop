@@ -8,6 +8,7 @@ live next to the app or in the user data directory; never required at startup.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import os
 import sys
 import urllib.error
@@ -129,7 +130,7 @@ def download_eng_fast(
     except TessdataDownloadError:
         staging.unlink(missing_ok=True)
         raise
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, http.client.HTTPException) as exc:
         staging.unlink(missing_ok=True)
         raise TessdataDownloadError(f"Could not download eng tessdata: {exc}") from exc
     except OSError as exc:

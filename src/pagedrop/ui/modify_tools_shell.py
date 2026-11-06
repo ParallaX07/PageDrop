@@ -43,10 +43,10 @@ from pagedrop.core.modify_ops import (
 )
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
-from pagedrop.core.pdf_service import call as pdf_call
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
+from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
@@ -55,6 +55,7 @@ from pagedrop.ui.tool_shell import (
     _TOOL_JOB_SIGNAL_REFS,
     _tool_job_pool,
     run_tool_job,
+    source_still_loaded,
 )
 from pagedrop.utils.page_jump import parse_page_ranges
 if TYPE_CHECKING:
@@ -711,7 +712,9 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         password: str | None = None
         while True:
             try:
-                count = pdf_page_count(source, password=password)
+                count = gui_fitz_call(pdf_page_count, source, password=password)
+                if not source_still_loaded(shell, source, notify=False):
+                    return
                 break
             except PdfPasswordRequiredError:
                 password = prompt_pdf_password(shell, filename)
@@ -787,9 +790,11 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         page_count = _page_count["n"]
         if page_count <= 0:
             try:
-                page_count = pdf_page_count(source)
+                page_count = gui_fitz_call(pdf_page_count, source)
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
+                return
+            if not source_still_loaded(shell, source):
                 return
 
         raw_range = page_range.text().strip().casefold()
@@ -1068,9 +1073,11 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
             status.setText("Drop a PDF to inspect existing bookmarks.")
             return
         try:
-            marks = pdf_call(get_bookmarks, paths[0])
+            marks = gui_fitz_call(get_bookmarks, paths[0])
         except Exception as exc:
             status.setText(f"Could not read bookmarks: {exc}")
+            return
+        if not source_still_loaded(shell, paths[0], notify=False):
             return
         if not marks:
             status.setText("No bookmarks in this PDF.")
@@ -1099,7 +1106,10 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
             opts["bookmarks"] = rows
         elif act == "toc_page":
             try:
-                if not pdf_call(get_bookmarks, source):
+                no_bookmarks = not gui_fitz_call(get_bookmarks, source)
+                if not source_still_loaded(shell, source):
+                    return
+                if no_bookmarks:
                     QMessageBox.warning(
                         shell,
                         shell.WINDOW_TITLE,

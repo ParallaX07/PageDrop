@@ -76,3 +76,32 @@ sys.exit(main())
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert "Starting PageDrop version=" in result.stderr
+
+
+def test_compress_worker_flag_dispatches_without_creating_a_qapplication(monkeypatch):
+    """The compress child runs headless: flag stripped, no Qt application built."""
+    from PyQt6 import QtWidgets
+
+    from pagedrop import main as main_module
+    from pagedrop.core import optimize_secure
+    from pagedrop.utils import diagnostics
+
+    flag = optimize_secure.COMPRESS_WORKER_FLAG
+    received: list[list[str]] = []
+
+    class Forbidden:
+        instance = staticmethod(QtWidgets.QApplication.instance)  # pytest-qt calls it
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise AssertionError("QApplication must not be created for the compress worker")
+
+    monkeypatch.setattr(diagnostics, "configure_terminal_logging", lambda: None)
+    monkeypatch.setattr(diagnostics, "log_startup", lambda **_kw: None)
+    monkeypatch.setattr(QtWidgets, "QApplication", Forbidden)
+    monkeypatch.setattr(
+        optimize_secure, "main", lambda argv: received.append(list(argv)) or 7
+    )
+    monkeypatch.setattr(sys, "argv", ["pagedrop", flag, "--compress-json"])
+
+    assert main_module.main() == 7
+    assert received == [["--compress-json"]]

@@ -729,7 +729,8 @@ class CompareWindow(JobChromeMixin, QWidget):
                 prompt=fitz_lock_released(
                     lambda name, incorrect: prompt_pdf_password(
                         self, name, incorrect=incorrect
-                    )
+                    ),
+                    token,
                 ),
                 credentials=self._credentials,
                 cancel=token,

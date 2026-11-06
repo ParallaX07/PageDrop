@@ -86,6 +86,8 @@ PyMuPDF is not safe for concurrent multithreaded use — even separate `Document
 
 Password preflight stays on the UI thread (its prompts are modal and credentials stay UI-side). When a running job holds the lock, the tool shows "Waiting for running job…" and retries from a timer with short timed acquires, so the event loop keeps running and Cancel works; the lock is held only through the probes and is released before any dialog.
 
+Tool-page probes that run directly on the UI thread (page counts, metadata and bookmark reads) wait for the lock with short timed acquires while pumping events other than user input, so the window keeps painting instead of freezing behind a running job; the same pumped wait re-takes the lock after a password prompt, where Cancel also works. Editor open, viewer layout and drag-out still wait on the lock directly and can pause the window while a job holds it.
+
 Long page-by-page jobs (OCR, colour effects) take the lock per page, with a short pause after each release so a waiting UI thread gets a turn, and never across the whole run. Lossy compress cannot be split per page, so it runs in an owned child process (`--pagedrop-compress-worker` when frozen) with the password sent over stdin; cancel or timeout kills its process tree.
 
 UI render pools stay at max thread count 1 and still share the same lock across windows. Raising pool size does not make MuPDF safer.
