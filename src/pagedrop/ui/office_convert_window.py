@@ -26,7 +26,6 @@ from pagedrop.core.backends.office import (
 )
 from pagedrop.core.capabilities import LIBREOFFICE, OFFICE_COM, clear_cache
 from pagedrop.core.jobs import (
-    JobCancelledError,
     JobError,
     JobSpec,
     OutputExistsError,
@@ -46,7 +45,7 @@ from pagedrop.ui.settings import (
     remember_directory,
 )
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
-from pagedrop.ui.tool_shell import EMPTY_PROMPT_OFFICE, ToolShellWindow
+from pagedrop.ui.tool_shell import EMPTY_PROMPT_OFFICE, ToolShellWindow, start_tool_worker
 
 if TYPE_CHECKING:
     from pagedrop.ui.tools_window import ToolsWindow
@@ -229,106 +228,99 @@ def _run_office_conversion(
     backend_label: str,
     refresh_status,
 ) -> None:
-    """Job runner with explicit LibreOffice retry after COM failure."""
+    """Job flow with an explicit LibreOffice retry after a COM failure.
+
+    Each attempt runs on the tool-job pool; dialogs and ``end_job`` stay on the UI thread.
+    """
     out = Path(output)
     existing = [out] if out.exists() else []
     token = shell.begin_job(f"Converting with {backend_label}…")
     runner = shell.job_runner()
 
-    def attempt(engine: str, label: str) -> Path:
+    if existing and not confirm_overwrite(
+        shell, existing, window_title=shell.WINDOW_TITLE
+    ):
+        shell.end_job(status="Cancelled", toast="Cancelled", toast_kind="info")
+        return
+
+    def live() -> bool:
+        """This conversion is still the shell's active, un-cancelled job."""
+        return (
+            shell.is_job_running()
+            and getattr(shell, "_cancel_token", None) is token
+            and not token.is_cancelled()
+        )
+
+    def attempt(engine: str, label: str, *, is_retry: bool) -> None:
         shell.set_job_progress(0.1, f"Converting with {label}…")
-        return runner.run(
-            JobSpec.create(
-                "office_to_pdf",
-                inputs=[source],
-                output=output,
-                options={"backend": engine},
-                overwrite=bool(existing),
-            ),
-            progress=shell.set_job_progress,
-            cancel=token,
+        spec = JobSpec.create(
+            "office_to_pdf",
+            inputs=[source],
+            output=output,
+            options={"backend": engine},
+            overwrite=bool(existing),
         )
 
-    try:
-        if existing and not confirm_overwrite(
-            shell, existing, window_title=shell.WINDOW_TITLE
-        ):
-            shell.end_job(status="Cancelled", toast="Cancelled", toast_kind="info")
-            return
-        result = attempt(backend, backend_label)
-        used_label = backend_label
-    except OfficeComFailedNeedsRetry as exc:
-        if not _ask_retry_with_libreoffice(shell, str(exc)):
+        def on_succeeded(result_path: str) -> None:
+            name = Path(result_path).name
             shell.end_job(
-                error=str(exc),
-                toast="Conversion failed",
-                toast_kind="error",
+                status=f"Saved {name} via {label}",
+                toast=f"Saved {name} via {label}",
+                toast_kind="success",
+                result_path=result_path,
             )
             refresh_status()
-            return
-        lo_label = BACKEND_LABELS["libreoffice"]
-        try:
-            result = attempt("libreoffice", lo_label)
-            used_label = lo_label
-        except JobCancelledError:
+
+        def on_cancelled() -> None:
             shell.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
-            return
-        except (JobError, OSError, ValueError) as retry_exc:
-            shell.end_job(
-                error=str(retry_exc),
-                toast="Job failed",
-                toast_kind="error",
-            )
-            refresh_status()
-            return
-    except JobCancelledError:
-        shell.end_job(status="Cancelled", toast="Job cancelled", toast_kind="info")
-        return
-    except BackendUnavailableError as exc:
-        cap = LIBREOFFICE if exc.capability_id == LIBREOFFICE else OFFICE_COM
-        from pagedrop.core.capabilities import probe
 
-        shell.end_job(status="Backend missing", toast="Backend missing", toast_kind="error")
-        prompt_missing_capability(
-            shell, probe(cap), tool_title=shell.WINDOW_TITLE
-        )
-        refresh_status()
-        return
-    except SourceOverwriteError as exc:
-        shell.end_job(
-            error=f"Output must not overwrite a source file:\n{exc}",
-            toast="Cannot overwrite source",
-            toast_kind="error",
-        )
-        return
-    except OutputExistsError as exc:
-        shell.end_job(
-            error=f"Output already exists:\n{exc}",
-            toast="Output exists",
-            toast_kind="error",
-        )
-        return
-    except (JobError, OSError, ValueError, FileNotFoundError) as exc:
-        shell.end_job(error=str(exc), toast="Job failed", toast_kind="error")
-        refresh_status()
-        return
-    except Exception as exc:
-        shell.end_job(
-            error=f"Unexpected error:\n{exc}",
-            toast="Job failed",
-            toast_kind="error",
-        )
-        refresh_status()
-        return
+        def on_failed(error: str, toast: str, exc: BaseException | None) -> None:
+            if is_retry:
+                shell.end_job(error=error, toast="Job failed", toast_kind="error")
+                refresh_status()
+            elif isinstance(exc, OfficeComFailedNeedsRetry):
+                retry = _ask_retry_with_libreoffice(shell, str(exc))
+                if not live():
+                    if shell.is_job_running() and getattr(shell, "_cancel_token", None) is token:
+                        on_cancelled()
+                    return
+                if not retry:
+                    shell.end_job(
+                        error=str(exc),
+                        toast="Conversion failed",
+                        toast_kind="error",
+                    )
+                    refresh_status()
+                    return
+                attempt("libreoffice", BACKEND_LABELS["libreoffice"], is_retry=True)
+            elif isinstance(exc, BackendUnavailableError):
+                from pagedrop.core.capabilities import probe
 
-    name = Path(result).name
-    shell.end_job(
-        status=f"Saved {name} via {used_label}",
-        toast=f"Saved {name} via {used_label}",
-        toast_kind="success",
-        result_path=str(result),
-    )
-    refresh_status()
+                cap = LIBREOFFICE if exc.capability_id == LIBREOFFICE else OFFICE_COM
+                shell.end_job(
+                    status="Backend missing", toast="Backend missing", toast_kind="error"
+                )
+                prompt_missing_capability(
+                    shell, probe(cap), tool_title=shell.WINDOW_TITLE
+                )
+                refresh_status()
+            else:
+                shell.end_job(error=error, toast=toast, toast_kind="error")
+                if not isinstance(exc, (SourceOverwriteError, OutputExistsError)):
+                    refresh_status()
+
+        start_tool_worker(
+            shell,
+            runner,
+            spec,
+            credentials=None,
+            cancel=token,
+            on_succeeded=on_succeeded,
+            on_cancelled=on_cancelled,
+            on_failed=on_failed,
+        )
+
+    attempt(backend, backend_label, is_retry=False)
 
 
 def open_office_convert_shell(tools: ToolsWindow) -> ToolShellWindow | None:

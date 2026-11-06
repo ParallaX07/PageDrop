@@ -81,6 +81,7 @@ class _ToolJobWorker(QRunnable):
         succeeded = pyqtSignal(str)
         cancelled = pyqtSignal()
         failed = pyqtSignal(str, str)  # error dialog text, toast
+        raised = pyqtSignal(object)  # the typed exception, emitted just before ``failed``
 
     def __init__(
         self,
@@ -112,18 +113,22 @@ class _ToolJobWorker(QRunnable):
         except JobCancelledError:
             self.signals.cancelled.emit()
         except SourceOverwriteError as exc:
+            self.signals.raised.emit(exc)
             self.signals.failed.emit(
                 f"Output must not overwrite a source file:\n{exc}",
                 "Cannot overwrite source",
             )
         except OutputExistsError as exc:
+            self.signals.raised.emit(exc)
             self.signals.failed.emit(
                 f"Output already exists:\n{exc}",
                 "Output exists",
             )
         except (JobError, PdfLoadError, OSError, ValueError, FileNotFoundError, FileExistsError) as exc:
+            self.signals.raised.emit(exc)
             self.signals.failed.emit(str(exc), "Job failed")
         except Exception as exc:
+            self.signals.raised.emit(exc)
             self.signals.failed.emit(f"Unexpected error:\n{exc}", "Job failed")
         else:
             self.signals.succeeded.emit(str(result))
@@ -359,6 +364,78 @@ class FileDropZone(QFrame):
         super().keyPressEvent(event)
 
 
+def start_tool_worker(
+    host: QWidget,
+    runner: SerializedJobRunner,
+    spec: JobSpec,
+    *,
+    credentials: object,
+    cancel: object,
+    secrets: dict[str, str] | None = None,
+    on_succeeded: Callable[[str], None],
+    on_cancelled: Callable[[], None],
+    on_failed: Callable[[str, str, BaseException | None], None],
+) -> None:
+    """Run *spec* on the tool-job pool; callbacks run on the UI thread.
+
+    Callbacks are skipped when the host's job already ended (cancel or close).
+    ``on_failed`` also receives the typed exception, or ``None`` if unavailable.
+    """
+    worker = _ToolJobWorker(
+        runner,
+        spec,
+        credentials=credentials,
+        cancel=cancel,
+        secrets=secrets,
+    )
+    signals = worker.signals
+    _TOOL_JOB_SIGNAL_REFS.append(signals)
+    worker_started = getattr(host, "_worker_started", None)
+    if callable(worker_started):
+        worker_started()
+
+    def _still_running() -> bool:
+        check = getattr(host, "is_job_running", None)
+        return True if not callable(check) else bool(check())
+
+    def _release_signals() -> None:
+        try:
+            _TOOL_JOB_SIGNAL_REFS.remove(signals)
+        except ValueError:
+            pass
+        worker_finished = getattr(host, "_worker_finished", None)
+        if callable(worker_finished):
+            worker_finished()
+
+    raised: list[BaseException] = []
+
+    def on_progress(fraction: float, message: str) -> None:
+        if _still_running():
+            host.set_job_progress(fraction, message)
+
+    def succeeded(result_path: str) -> None:
+        _release_signals()
+        if _still_running():
+            on_succeeded(result_path)
+
+    def cancelled() -> None:
+        _release_signals()
+        if _still_running():
+            on_cancelled()
+
+    def failed(error: str, toast: str) -> None:
+        _release_signals()
+        if _still_running():
+            on_failed(error, toast, raised[0] if raised else None)
+
+    signals.progress.connect(on_progress)
+    signals.succeeded.connect(succeeded)
+    signals.cancelled.connect(cancelled)
+    signals.raised.connect(raised.append)
+    signals.failed.connect(failed)
+    _tool_job_pool().start(worker)
+
+
 def run_tool_job(
     host: QWidget,
     *,
@@ -389,7 +466,6 @@ def run_tool_job(
     begin = host.begin_job
     end = host.end_job
     runner: SerializedJobRunner = host.job_runner()
-    set_progress = host.set_job_progress
     title = getattr(host, "WINDOW_TITLE", "Tools")
 
     out = Path(output)
@@ -466,40 +542,8 @@ def run_tool_job(
             options=options or {},
             overwrite=bool(existing),
         )
-        worker = _ToolJobWorker(
-            runner,
-            spec,
-            credentials=credentials,
-            cancel=token,
-            secrets=secrets,
-        )
-        signals = worker.signals
-        _TOOL_JOB_SIGNAL_REFS.append(signals)
-        worker_started = getattr(host, "_worker_started", None)
-        if callable(worker_started):
-            worker_started()
-
-        def _still_running() -> bool:
-            check = getattr(host, "is_job_running", None)
-            return True if not callable(check) else bool(check())
-
-        def _release_signals() -> None:
-            try:
-                _TOOL_JOB_SIGNAL_REFS.remove(signals)
-            except ValueError:
-                pass
-            worker_finished = getattr(host, "_worker_finished", None)
-            if callable(worker_finished):
-                worker_finished()
-
-        def on_progress(fraction: float, message: str) -> None:
-            if _still_running():
-                set_progress(fraction, message)
 
         def on_succeeded(result_path: str) -> None:
-            _release_signals()
-            if not _still_running():
-                return
             name = Path(result_path).name
             message = (
                 success_toast(result_path)
@@ -514,22 +558,22 @@ def run_tool_job(
             )
 
         def on_cancelled() -> None:
-            _release_signals()
-            if not _still_running():
-                return
             end(status="Cancelled", toast="Job cancelled", toast_kind="info")
 
-        def on_failed(error: str, toast: str) -> None:
-            _release_signals()
-            if not _still_running():
-                return
+        def on_failed(error: str, toast: str, _exc: BaseException | None) -> None:
             end(error=error, toast=toast, toast_kind="error")
 
-        signals.progress.connect(on_progress)
-        signals.succeeded.connect(on_succeeded)
-        signals.cancelled.connect(on_cancelled)
-        signals.failed.connect(on_failed)
-        _tool_job_pool().start(worker)
+        start_tool_worker(
+            host,
+            runner,
+            spec,
+            credentials=credentials,
+            cancel=token,
+            secrets=secrets,
+            on_succeeded=on_succeeded,
+            on_cancelled=on_cancelled,
+            on_failed=on_failed,
+        )
 
     run_with_fitz_lock(
         host, token, message=progress_message, probe=probe, done=preflighted

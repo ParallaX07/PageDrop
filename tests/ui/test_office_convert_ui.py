@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import threading
+
 import fitz
+import pytest
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QLabel, QPushButton
 
-from pagedrop.core.backends.office import OfficeCapabilityReport
+from pagedrop.core.backends.office import (
+    OfficeCapabilityReport,
+    OfficeComFailedNeedsRetry,
+    OfficeConvertResult,
+)
 from pagedrop.core.capabilities import (
     LIBREOFFICE,
     OFFICE_COM,
@@ -15,6 +23,8 @@ from pagedrop.core.capabilities import (
     CapabilityStatus,
     clear_cache,
 )
+from pagedrop.core.jobs import JobError, JobSpec
+from pagedrop.core.jobs.errors import BackendUnavailableError
 from pagedrop.ui.dialogs import build_missing_libreoffice_dialog
 from pagedrop.ui.office_convert_window import (
     SHELL_OFFICE_ID,
@@ -23,6 +33,7 @@ from pagedrop.ui.office_convert_window import (
 )
 from pagedrop.ui.tool_shell import ToolShellWindow
 from pagedrop.ui.tools_window import ToolsWindow
+from tests.conftest import file_sha256
 
 
 def _report(*, com: bool = False, lo: bool = False) -> OfficeCapabilityReport:
@@ -181,6 +192,7 @@ def test_status_names_backend_used(qtbot, tmp_path, monkeypatch, isolated_settin
         backend_label="LibreOffice",
         refresh_status=lambda: None,
     )
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
 
     assert ended, "expected end_job after conversion"
     status = ended[-1].get("status") or ""
@@ -232,7 +244,300 @@ def test_office_job_overwrites_only_when_destination_exists(
         )
 
     convert()
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
     convert()  # the first run created the destination, so this one replaces it
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
 
     assert overwrite_flags == [False, True]
     clear_cache()
+
+
+# --- conversion runs off the GUI thread ---------------------------------------
+
+_JOBS_BACKEND = "pagedrop.core.office_conversion_jobs.convert_office_to_pdf"
+_WINDOW = "pagedrop.ui.office_convert_window"
+
+
+@pytest.fixture
+def office_job(qtbot, tmp_path, monkeypatch, isolated_settings):
+    """Shell + source/output paths; the real runner and handler, a mocked backend."""
+    monkeypatch.setattr(
+        f"{_WINDOW}.capability_report", lambda **_k: _report(com=True, lo=True)
+    )
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_office_convert_shell(tools)
+    assert shell is not None
+    qtbot.addWidget(shell)
+    src = tmp_path / "note.docx"
+    src.write_bytes(b"docx")
+
+    class Job:
+        pass
+
+    job = Job()
+    job.shell = shell
+    job.src = src
+    job.out = tmp_path / "note.pdf"
+    job.source_hash = file_sha256(src)
+    job.calls = []
+
+    def convert() -> None:
+        _run_office_conversion(
+            shell,
+            source=str(src),
+            output=str(job.out),
+            backend="com",
+            backend_label="Microsoft Office",
+            refresh_status=lambda: None,
+        )
+
+    job.convert = convert
+    yield job
+    clear_cache()
+
+
+def _ok_backend(job, behaviour=None):
+    """Fake ``convert_office_to_pdf``: records (backend, thread) and writes a PDF."""
+
+    def fake(source, staged, *, backend, cancel=None, **_kw):
+        job.calls.append((backend, threading.get_ident()))
+        if behaviour is not None:
+            behaviour(backend, cancel)
+        staged.write_bytes(_pdf_bytes())
+        return OfficeConvertResult(path=staged, backend=backend, page_count=1)
+
+    return fake
+
+
+def _wait_idle(qtbot, shell):
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10000)
+
+
+def test_office_conversion_runs_off_gui_thread(qtbot, office_job, monkeypatch):
+    shell = office_job.shell
+    release = threading.Event()
+    started = threading.Event()
+
+    def block(_backend, _cancel):
+        started.set()
+        release.wait(10)
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, block))
+    ticks: list[int] = []
+    timer = QTimer()
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start(10)
+
+    try:
+        office_job.convert()  # returns while the backend is still blocked
+        assert shell.is_job_running()
+        qtbot.waitUntil(started.is_set, timeout=5000)
+        seen = len(ticks)
+        qtbot.waitUntil(lambda: len(ticks) >= seen + 3, timeout=5000)
+        assert shell.is_job_running()
+    finally:
+        release.set()
+        timer.stop()
+    _wait_idle(qtbot, shell)
+
+    assert office_job.calls[0][1] != threading.get_ident()
+    assert office_job.out.is_file()
+    assert file_sha256(office_job.src) == office_job.source_hash
+
+
+def test_office_cancel_via_overlay_reaches_backend(qtbot, office_job, monkeypatch):
+    shell = office_job.shell
+    in_backend = threading.Event()
+
+    def wait_for_cancel(_backend, cancel):
+        in_backend.set()
+        pause = threading.Event()
+        for _ in range(1000):
+            if cancel.is_cancelled():
+                break
+            pause.wait(0.01)
+        cancel.check()
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, wait_for_cancel))
+    office_job.convert()
+    qtbot.waitUntil(
+        lambda: in_backend.is_set() and shell._busy_overlay._cancel_btn.isVisible(),
+        timeout=5000,
+    )
+    shell._busy_overlay._cancel_btn.click()
+    _wait_idle(qtbot, shell)
+
+    assert shell.statusBar().currentMessage() == "Cancelled"
+    assert not office_job.out.exists()
+    assert file_sha256(office_job.src) == office_job.source_hash
+
+
+def _com_fails(backend, _cancel):
+    if backend == "com":
+        raise OfficeComFailedNeedsRetry("COM crashed")
+
+
+def test_com_failure_retry_confirmed_runs_libreoffice_once(
+    qtbot, office_job, monkeypatch
+):
+    shell = office_job.shell
+    asked: list[str] = []
+    confirmed: list[list] = []
+    overwrite_flags: list[bool] = []
+    office_job.out.write_bytes(b"old")  # destination exists -> overwrite confirm
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, _com_fails))
+    monkeypatch.setattr(
+        f"{_WINDOW}._ask_retry_with_libreoffice",
+        lambda _parent, message: asked.append(message) or True,
+    )
+    monkeypatch.setattr(
+        f"{_WINDOW}.confirm_overwrite",
+        lambda _parent, paths, **_k: confirmed.append(list(paths)) or True,
+    )
+    real_create = JobSpec.create
+
+    def spy_create(*a, **k):
+        spec = real_create(*a, **k)
+        overwrite_flags.append(spec.overwrite)
+        return spec
+
+    monkeypatch.setattr(f"{_WINDOW}.JobSpec.create", spy_create)
+
+    office_job.convert()
+    _wait_idle(qtbot, shell)
+
+    assert [c[0] for c in office_job.calls] == ["com", "libreoffice"]
+    assert all(c[1] != threading.get_ident() for c in office_job.calls)
+    assert len(asked) == 1
+    assert len(confirmed) == 1
+    assert overwrite_flags == [True, True]
+    assert office_job.out.read_bytes() != b"old"
+    assert office_job.out != office_job.src
+    assert file_sha256(office_job.src) == office_job.source_hash
+    assert "LibreOffice" in shell.statusBar().currentMessage()
+
+
+def test_com_failure_retry_declined_surfaces_error(qtbot, office_job, monkeypatch):
+    shell = office_job.shell
+    asked: list[str] = []
+    errors: list[str] = []
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, _com_fails))
+    monkeypatch.setattr(
+        f"{_WINDOW}._ask_retry_with_libreoffice",
+        lambda _parent, message: asked.append(message) or False,
+    )
+    monkeypatch.setattr(
+        "pagedrop.ui.job_chrome.QMessageBox.critical",
+        lambda _p, _t, text: errors.append(text),
+    )
+
+    office_job.convert()
+    _wait_idle(qtbot, shell)
+
+    assert [c[0] for c in office_job.calls] == ["com"]
+    assert len(asked) == 1
+    assert errors and "COM crashed" in errors[0]
+    assert not office_job.out.exists()
+    assert file_sha256(office_job.src) == office_job.source_hash
+
+
+def test_cancel_during_retry_dialog_skips_second_attempt(
+    qtbot, office_job, monkeypatch
+):
+    shell = office_job.shell
+
+    def cancel_while_open(_parent, _message):
+        shell.cancel_active_job()  # user cancels while the dialog is up
+        return True
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, _com_fails))
+    monkeypatch.setattr(f"{_WINDOW}._ask_retry_with_libreoffice", cancel_while_open)
+    runner = shell.job_runner()
+    real_run = runner.run
+    runs: list[str] = []
+    monkeypatch.setattr(
+        runner, "run", lambda spec, **k: runs.append(spec.options["backend"]) or real_run(spec, **k)
+    )
+
+    office_job.convert()
+    _wait_idle(qtbot, shell)
+
+    assert runs == ["com"]  # no second worker was even started
+    assert [c[0] for c in office_job.calls] == ["com"]
+    assert shell.statusBar().currentMessage() == "Cancelled"
+    assert not office_job.out.exists()
+    assert not shell.worker_pending()
+
+
+def test_backend_unavailable_shows_missing_capability_prompt(
+    qtbot, office_job, monkeypatch
+):
+    shell = office_job.shell
+    prompts: list[object] = []
+
+    def unavailable(_backend, _cancel):
+        raise BackendUnavailableError(OFFICE_COM, "engine_missing")
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, unavailable))
+    monkeypatch.setattr(
+        f"{_WINDOW}.prompt_missing_capability",
+        lambda _parent, status, **_k: prompts.append(status) or "cancel",
+    )
+
+    office_job.convert()
+    _wait_idle(qtbot, shell)
+
+    assert len(prompts) == 1
+    assert prompts[0].id == OFFICE_COM
+    assert not office_job.out.exists()
+
+
+def test_generic_job_error_shows_failure(qtbot, office_job, monkeypatch):
+    shell = office_job.shell
+    errors: list[str] = []
+
+    def boom(_backend, _cancel):
+        raise JobError("converter exploded")
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, boom))
+    monkeypatch.setattr(
+        "pagedrop.ui.job_chrome.QMessageBox.critical",
+        lambda _p, _t, text: errors.append(text),
+    )
+
+    office_job.convert()
+    _wait_idle(qtbot, shell)
+
+    assert errors == ["converter exploded"]
+    assert shell.statusBar().currentMessage() == "Job failed"
+    assert not office_job.out.exists()
+
+
+def test_close_during_conversion_cancels_and_waits_for_worker(
+    qtbot, office_job, monkeypatch
+):
+    shell = office_job.shell
+    in_backend = threading.Event()
+    release = threading.Event()
+
+    def block(_backend, _cancel):
+        in_backend.set()
+        release.wait(10)
+
+    monkeypatch.setattr(_JOBS_BACKEND, _ok_backend(office_job, block))
+    monkeypatch.setattr(
+        "pagedrop.ui.job_chrome.prompt_cancel_running_job", lambda *_a, **_k: True
+    )
+    office_job.convert()
+    qtbot.waitUntil(in_backend.is_set, timeout=5000)
+
+    assert shell.request_close()
+    assert not shell.is_job_running()
+    assert shell.worker_pending()  # the backend is still unwinding
+
+    release.set()
+    qtbot.waitUntil(lambda: not shell.worker_pending(), timeout=10000)
+    assert not office_job.out.exists()
+    assert file_sha256(office_job.src) == office_job.source_hash
