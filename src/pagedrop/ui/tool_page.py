@@ -4,13 +4,88 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtCore import QEvent, QSize, Qt
+from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from pagedrop.ui.theme import SPACE_2, SPACE_4
 
 if TYPE_CHECKING:
     pass
+
+
+class _PageScrollArea(QScrollArea):
+    """Frameless scroll area whose body is exactly as big as the page lets it be.
+
+    The body fills the viewport, and grows past it only to its own minimum size.
+    ``setWidgetResizable`` would ask the body for its height-for-width instead,
+    which is its preferred height and would scroll pages that already fit.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+
+    def setWidget(self, widget: QWidget | None) -> None:  # noqa: N802
+        super().setWidget(widget)
+        if widget is not None:
+            widget.installEventFilter(self)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        widget = self.widget()
+        return widget.sizeHint() if widget is not None else super().sizeHint()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.widget() and event.type() == QEvent.Type.LayoutRequest:
+            self._fit_body()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_body()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._fit_body()
+
+    def _fit_body(self) -> None:
+        body = self.widget()
+        if body is None:
+            return
+        need = body.minimumSizeHint()
+        room = self.maximumViewportSize()
+        bar_w = self.verticalScrollBar().sizeHint().width()
+        bar_h = self.horizontalScrollBar().sizeHint().height()
+        vertical = need.height() > room.height()
+        horizontal = need.width() > room.width() - (bar_w if vertical else 0)
+        if horizontal and not vertical:
+            vertical = need.height() > room.height() - bar_h
+        width = room.width() - (bar_w if vertical else 0)
+        height = room.height() - (bar_h if horizontal else 0)
+        body.resize(max(width, need.width()), max(height, need.height()))
+
+
+def scrollable_page_body(page: QWidget) -> QWidget:
+    """Make *page* a frameless scroll area around a new body widget and return it.
+
+    A page built this way no longer sets its parent's minimum size: when the
+    window is smaller than the content, the page scrolls (keyboard focus
+    scrolls the focused control into view) instead of clipping. Above the
+    content's minimum nothing differs: no scroll bars, and the page's own
+    background shows through. Build the page's layout on the returned body.
+    """
+    outer = QVBoxLayout(page)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.setSpacing(0)
+    scroll = _PageScrollArea(page)
+    scroll.setObjectName("ToolPageScroll")
+    body = QWidget()
+    body.setObjectName("ToolPageBody")
+    scroll.setWidget(body)
+    # QScrollArea paints both opaquely; let the page's background show.
+    scroll.viewport().setAutoFillBackground(False)
+    body.setAutoFillBackground(False)
+    outer.addWidget(scroll)
+    return body
 
 
 class StatusFooter(QLabel):

@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QToolBar,
     QToolButton,
     QWIDGETSIZE_MAX,
@@ -132,6 +133,9 @@ from pagedrop.utils.diagnostics import log_failure
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
 RESIZE_MARGIN = 6
+MIN_WINDOW_WIDTH = 480
+MIN_WINDOW_HEIGHT = 320
+COMPACT_STATUS_WIDTH = 640
 
 
 def resize_edges_at(pos, size, margin: int = RESIZE_MARGIN) -> Qt.Edge:
@@ -211,7 +215,7 @@ class MainWindow(QMainWindow):
             QApplication.instance().aboutToQuit.connect(self.deleteLater)
         else:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.setMinimumSize(720, 480)
+        self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.resize(960, 680)
 
         self._tab_order_applied = False
@@ -719,14 +723,14 @@ class MainWindow(QMainWindow):
         # toolbar safely. It is intentionally zero-width, not document chrome.
         self._toolbar_layout_anchor = QWidget(toolbar)
         self._toolbar_layout_anchor.setFixedWidth(0)
-        toolbar.addWidget(self._toolbar_layout_anchor)
+        self._toolbar_anchor_action = toolbar.addWidget(self._toolbar_layout_anchor)
         toolbar.addAction(a["save_as"])
-        toolbar.addSeparator()
+        separators = [toolbar.addSeparator()]
         self._selection_toolbar_label = QLabel()
         self._selection_toolbar_label.setObjectName("ToolbarSelectionCount")
         self._selection_toolbar_label.setFixedWidth(130)
         self._selection_toolbar_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        toolbar.addWidget(self._selection_toolbar_label)
+        self._selection_toolbar_action = toolbar.addWidget(self._selection_toolbar_label)
         toolbar.addAction(a["select_all"])
         toolbar.addAction(a["deselect_all"])
         toolbar.addAction(a["duplicate_pages"])
@@ -735,13 +739,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(a["move_up"])
         toolbar.addAction(a["move_down"])
         toolbar.addAction(a["extract_selected"])
-        toolbar.addSeparator()
+        separators.append(toolbar.addSeparator())
         toolbar.addAction(a["delete_pages"])
-        for action in (a["rotate_cw"], a["rotate_ccw"]):
-            button = toolbar.widgetForAction(action)
-            if button is not None:
-                button.setAccessibleName(action.text())
-        toolbar.addSeparator()
+        separators.append(toolbar.addSeparator())
 
         self._zoom_controls = ZoomControls(
             min_width=MIN_THUMBNAIL_WIDTH,
@@ -765,8 +765,38 @@ class MainWindow(QMainWindow):
         self._toolbar_overflow_menu = QMenu(self._toolbar_overflow)
         self._install_menu_focus_restore(self._toolbar_overflow_menu)
         self._toolbar_overflow.setMenu(self._toolbar_overflow_menu)
-        toolbar.addWidget(self._toolbar_overflow)
+        self._toolbar_overflow_action = toolbar.addWidget(self._toolbar_overflow)
 
+        # Toolbar order, the separators this toolbar alone owns, and the page
+        # commands that give way to More (last to go first) when the bar is narrow.
+        self._toolbar_order = tuple(toolbar.actions())
+        self._toolbar_separators = tuple(separators)
+        self._toolbar_displaceable = tuple(
+            a[key]
+            for key in (
+                "select_all",
+                "deselect_all",
+                "duplicate_pages",
+                "rotate_cw",
+                "rotate_ccw",
+                "move_up",
+                "move_down",
+                "extract_selected",
+                "delete_pages",
+            )
+        )
+        self._toolbar_hint_widths: dict[QAction, int] = {}
+        self._fitting_toolbar = False
+        self._style_toolbar_buttons()
+
+    def _style_toolbar_buttons(self) -> None:
+        """Apply per-button presentation; run again for any re-created button."""
+        toolbar = self._toolbar
+        a = self._actions
+        for action in (a["rotate_cw"], a["rotate_ccw"]):
+            button = toolbar.widgetForAction(action)
+            if button is not None:
+                button.setAccessibleName(action.text())
         for action in (a["open"], a["save_as"], a["extract_selected"]):
             button = toolbar.widgetForAction(action)
             if isinstance(button, QToolButton):
@@ -774,7 +804,6 @@ class MainWindow(QMainWindow):
         preview_button = toolbar.widgetForAction(a["preview"])
         if isinstance(preview_button, QToolButton):
             preview_button.setText("Pages / Preview")
-
         enable_toolbar_keyboard_navigation(toolbar)
 
     def _build_central_widget(self) -> None:
@@ -1395,7 +1424,7 @@ class MainWindow(QMainWindow):
         self._selection_toolbar_label.setText(visible)
         self._selection_toolbar_label.setToolTip(accessible if has_selection else "")
         self._selection_toolbar_label.setAccessibleName(accessible)
-        self._selection_toolbar_label.setVisible(True)
+        self._selection_toolbar_label.setVisible(self._selection_toolbar_action.isVisible())
         for action in (
             self._duplicate_pages_action,
             self._rotate_cw_action,
@@ -1413,14 +1442,148 @@ class MainWindow(QMainWindow):
         self._set_toolbar_primary()
 
     def _sync_toolbar_overflow(self, has_selection: bool) -> None:
-        """Project only page commands without a direct toolbar presentation."""
+        """Project page commands that have no room on the toolbar into More."""
         menu = self._toolbar_overflow_menu
         menu.clear()
+        static: list[QAction] = []
         if self._export_all_action.isEnabled():
-            menu.addAction(self._export_all_action)
+            static.append(self._export_all_action)
         if has_selection and self._move_to_action.isEnabled():
-            menu.addAction(self._move_to_action)
-        self._toolbar_overflow.setVisible(bool(menu.actions()))
+            static.append(self._move_to_action)
+        displaced = self._fit_toolbar(bool(static))
+        menu.addActions(displaced)
+        if displaced and static:
+            menu.addSeparator()
+        menu.addActions(static)
+        shown = bool(menu.actions())
+        self._toolbar_overflow_action.setVisible(shown)
+        self._toolbar_overflow.setVisible(shown)
+
+    def _fit_toolbar(self, static_overflow: bool) -> list[QAction]:
+        """Trim the toolbar to its width; return the page actions that left it.
+
+        The selection label goes first, then page actions from the right. Qt's
+        own extension button is only reachable by mouse, so the bar must never
+        overflow. Displaced actions stay visible (menus and shortcuts share
+        them); they just stop being toolbar buttons until there is room again.
+        """
+        toolbar = self._toolbar
+        tab = self._active_tab()
+        order = self._toolbar_order
+        if self._fitting_toolbar:
+            return []
+        if not toolbar.isVisible() or tab is None or tab.is_blank:
+            self._apply_toolbar_members(set(order))
+            return []
+        measured = self._toolbar_hint_widths
+        for action in order:
+            widget = toolbar.widgetForAction(action)
+            if widget is not None:
+                measured[action] = max(0, widget.sizeHint().width())
+        if any(a not in measured and a not in self._toolbar_separators for a in order):
+            # Not measured while present (e.g. after a font change): measure all.
+            self._apply_toolbar_members(set(order))
+            return self._fit_toolbar(static_overflow)
+
+        removed: set[QAction] = set()
+        displaced: list[QAction] = []
+        candidates = [self._selection_toolbar_action, *reversed(self._toolbar_displaceable)]
+        while True:
+            members = self._toolbar_members(removed, bool(displaced) or static_overflow)
+            if self._toolbar_width_for(members) <= toolbar.width() or not candidates:
+                break
+            action = candidates.pop(0)
+            removed.add(action)
+            if action is not self._selection_toolbar_action:
+                displaced.insert(0, action)
+        self._apply_toolbar_members(members)
+        return displaced
+
+    def _toolbar_members(self, removed: set[QAction], more_needed: bool) -> set[QAction]:
+        """Toolbar actions left after *removed*, with no stranded separators."""
+        separators = set(self._toolbar_separators)
+        more = self._toolbar_overflow_action
+        items = [
+            a
+            for a in self._toolbar_order
+            if a not in removed and (a is not more or more_needed)
+        ]
+        members: set[QAction] = set()
+        have_item = False
+        for index, action in enumerate(items):
+            if action not in separators:
+                members.add(action)
+                have_item = True
+            elif have_item and any(a not in separators for a in items[index + 1 :]):
+                members.add(action)
+                have_item = False
+        return members
+
+    def _toolbar_width_for(self, members: set[QAction]) -> int:
+        style = self._toolbar.style()
+        metric = QStyle.PixelMetric
+        gap = style.pixelMetric(metric.PM_ToolBarItemSpacing, None, self._toolbar)
+        margin = 2 * (
+            style.pixelMetric(metric.PM_ToolBarFrameWidth, None, self._toolbar)
+            + style.pixelMetric(metric.PM_ToolBarItemMargin, None, self._toolbar)
+        )
+        separator = style.pixelMetric(
+            metric.PM_ToolBarSeparatorExtent, None, self._toolbar
+        )
+        widths = [
+            separator if a in self._toolbar_separators else self._toolbar_hint_widths[a]
+            for a in self._toolbar_order
+            if a in members
+        ]
+        return margin + sum(widths) + gap * max(0, len(widths) - 1)
+
+    def _apply_toolbar_members(self, members: set[QAction]) -> None:
+        """Make the toolbar hold exactly *members*, in toolbar order."""
+        toolbar = self._toolbar
+        own = {
+            *self._toolbar_separators,
+            self._selection_toolbar_action,
+            self._toolbar_overflow_action,
+            self._toolbar_anchor_action,
+        }
+        order = self._toolbar_order
+        focus = QApplication.focusWidget()
+        focus_lost = False
+        rebuilt = False
+        self._fitting_toolbar = True
+        try:
+            for index, action in enumerate(order):
+                want = action in members
+                if action in own:
+                    action.setVisible(want)
+                elif want and action not in toolbar.actions():
+                    present = toolbar.actions()
+                    toolbar.insertAction(
+                        next((b for b in order[index + 1 :] if b in present), None),
+                        action,
+                    )
+                    rebuilt = True
+                elif not want and action in toolbar.actions():
+                    widget = toolbar.widgetForAction(action)
+                    focus_lost = focus_lost or (
+                        widget is not None and widget is focus
+                    )
+                    toolbar.removeAction(action)
+                    rebuilt = True
+            if rebuilt:
+                self._style_toolbar_buttons()
+                if self._tab_order_applied:
+                    self._apply_tab_order()
+                if focus_lost:
+                    self._toolbar_overflow.setFocus(Qt.FocusReason.OtherFocusReason)
+        finally:
+            self._fitting_toolbar = False
+
+    def _refit_toolbar(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.is_blank or self._fitting_toolbar:
+            return
+        self._sync_toolbar_overflow(bool(tab.thumbnail_grid.selection_manager.selection))
 
     def _install_menu_focus_restore(self, menu: QMenu) -> None:
         """Return keyboard focus to the control that opened a transient menu."""
@@ -2340,6 +2503,12 @@ class MainWindow(QMainWindow):
         return False
 
     def eventFilter(self, obj, event) -> bool:
+        if obj is getattr(self, "_toolbar", None):
+            if event.type() == QEvent.Type.Resize:
+                # Filters run before the layout, so the bar lays out already fitted.
+                self._refit_toolbar()
+            elif event.type() == QEvent.Type.Show:
+                QTimer.singleShot(0, self._refit_toolbar)
         handle = self.windowHandle()
         if handle is not None and obj is handle:
             if self._handle_edge_resize_event(event):
@@ -2536,6 +2705,9 @@ class MainWindow(QMainWindow):
         visible = tab is not None and tab.loader is not None and not tab.is_preview_visible()
         self._thumbnail_zoom_host.setVisible(visible)
         self._zoom_controls.set_slider_visible(self.width() > 800)
+        # The buttons and px readout say what the cluster is; the caption goes
+        # first so the status message keeps its room in a narrow window.
+        self._thumbnail_zoom_label.setVisible(self.width() > COMPACT_STATUS_WIDTH)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -2552,7 +2724,10 @@ class MainWindow(QMainWindow):
                 button.setToolTip("Restore window" if maximized else "Maximize window")
                 button.setAccessibleName(button.toolTip())
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            # Button widths are remeasured the next time the toolbar is fitted.
+            getattr(self, "_toolbar_hint_widths", {}).clear()
             QTimer.singleShot(0, self._update_responsive_shell)
+            QTimer.singleShot(0, self._refit_toolbar)
         super().changeEvent(event)
 
     def _extract_selected_to_folder(self) -> None:
@@ -2720,6 +2895,9 @@ class MainWindow(QMainWindow):
             page, "WINDOW_TITLE", "Tool"
         )
         self._tool_pages[page_id] = page
+        # The explicit floor is for a top-level window; hosted, it would set the
+        # tab stack's (and so this window's) minimum size.
+        page.setMinimumSize(0, 0)
         # PAGE_ID string literals match MergeWindow / ConvertWindow / ToolsWindow.
         if page_id == "tools":
             self._tools_window = page  # type: ignore[assignment]

@@ -90,7 +90,7 @@ def test_watermark_shell_has_diagonal_and_position_controls(qtbot, isolated_sett
     assert options_col.isAncestorOf(shell._header_host)
     assert shell._title_label.text() == "Watermark"
     assert shell._help_btn.isVisible()
-    assert shell.layout().indexOf(shell._header_host) < 0
+    assert shell._body_layout.indexOf(shell._header_host) < 0
     assert shell.findChild(QLabel, "ToolShellDescription") is None
     spins = host.findChildren(QDoubleSpinBox)
     assert any(s.suffix().strip() == "%" for s in spins)

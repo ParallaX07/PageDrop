@@ -1562,7 +1562,23 @@ class PdfViewerWidget(QWidget):
         root.setSpacing(0)
 
         self._toolbar = self._build_toolbar()
-        root.addWidget(self._toolbar)
+        # The bar scrolls sideways instead of setting the viewer's minimum width.
+        self._toolbar_scroll = QScrollArea()
+        self._toolbar_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._toolbar_scroll.setWidgetResizable(True)
+        self._toolbar_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._toolbar_scroll.setWidget(self._toolbar)
+        hbar = self._toolbar_scroll.horizontalScrollBar()
+
+        def fit_toolbar_height(*_args: int) -> None:
+            extra = hbar.sizeHint().height() if hbar.maximum() > 0 else 0
+            self._toolbar_scroll.setFixedHeight(self._toolbar.sizeHint().height() + extra)
+
+        hbar.rangeChanged.connect(fit_toolbar_height)
+        fit_toolbar_height()
+        root.addWidget(self._toolbar_scroll)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._side = self._build_side_panel()
@@ -1597,6 +1613,7 @@ class PdfViewerWidget(QWidget):
         self._hint = QLabel()
         self._hint.setObjectName("PdfViewerHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setWordWrap(True)
         center_layout.addWidget(self._hint)
         self._update_markup_hint()
 
@@ -2387,7 +2404,17 @@ class PdfViewerWidget(QWidget):
         flatten_btn.clicked.connect(self._on_flatten_forms)
         tools_layout.addWidget(flatten_btn)
         tools_layout.addStretch(1)
-        outer.addWidget(self._annot_tools_host, stretch=1)
+        # The tool list scrolls when the rail is shorter than it.
+        self._annot_tools_scroll = QScrollArea()
+        self._annot_tools_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._annot_tools_scroll.setWidgetResizable(True)
+        self._annot_tools_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._annot_tools_scroll.setWidget(self._annot_tools_host)
+        self._annot_tools_scroll.viewport().setAutoFillBackground(False)
+        self._annot_tools_host.setAutoFillBackground(False)
+        outer.addWidget(self._annot_tools_scroll, stretch=1)
 
         self._annot_expand_btn = QToolButton()
         self._annot_expand_btn.setObjectName("PdfViewerAnnotExpand")
@@ -2407,7 +2434,7 @@ class PdfViewerWidget(QWidget):
         )
         self._annot_rail_collapsed = collapsed
         collapsed = self._annot_rail_collapsed
-        self._annot_tools_host.setVisible(not collapsed)
+        self._annot_tools_scroll.setVisible(not collapsed)
         self._annot_rail_title.setVisible(not collapsed)
         self._annot_collapse_btn.setVisible(not collapsed)
         self._annot_expand_btn.setVisible(collapsed)

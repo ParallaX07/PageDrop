@@ -4,19 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer
 from PyQt6.QtGui import QFont, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QLabel,
     QPushButton,
+    QScrollArea,
     QToolBar,
     QToolButton,
     QWidget,
 )
 
-from pagedrop.ui.main_window import MainWindow
+from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
+from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, MainWindow
+from tests.conftest import wait_for_compare_render, wait_for_pdf_loaded
 
 
 def _file_menu_actions(window: MainWindow):
@@ -863,3 +866,258 @@ def test_title_drag_continues_across_a_menu_action(main_window, qtbot, monkeypat
 
     # Without a press in flight, the same spot is a normal menu hover.
     assert not main_window.eventFilter(menu_bar, far)
+
+
+def _toolbar_fits(window: MainWindow) -> bool:
+    """True when every shown toolbar widget is inside the bar and Qt's own
+    extension button, which keyboard users cannot reach, stays unused."""
+    toolbar = window._toolbar
+    rect = toolbar.rect()
+    for action in toolbar.actions():
+        widget = toolbar.widgetForAction(action)
+        if widget is not None and widget.isVisible() and not rect.contains(widget.geometry()):
+            return False
+    extension = toolbar.findChild(QToolButton, "qt_toolbar_ext_button")
+    return extension is None or not extension.isVisible()
+
+
+def _open_loaded_window(main_window, five_page_pdf, qtbot, *, width: int, height: int = 680):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window.resize(width, height)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    return main_window._active_tab()
+
+
+@pytest.mark.parametrize("loaded", [False, True], ids=["blank tab", "loaded pdf"])
+def test_window_content_fits_the_compact_floor(main_window, five_page_pdf, qtbot, loaded):
+    if loaded:
+        main_window._load_pdf(str(five_page_pdf))
+        wait_for_pdf_loaded(qtbot, main_window)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(
+        lambda: main_window.size().width() == MIN_WINDOW_WIDTH
+        and main_window.size().height() == MIN_WINDOW_HEIGHT
+    )
+
+    hint = main_window.centralWidget().minimumSizeHint()
+    assert hint.width() <= MIN_WINDOW_WIDTH
+    assert hint.height() <= MIN_WINDOW_HEIGHT - main_window.menuWidget().height()
+    # The status bar sits under the central widget, so the whole window must fit too.
+    window_hint = main_window.minimumSizeHint()
+    assert window_hint.width() <= MIN_WINDOW_WIDTH
+    assert window_hint.height() <= MIN_WINDOW_HEIGHT
+
+
+def test_viewer_content_fits_the_compact_floor(main_window, five_page_pdf, qtbot):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    main_window._open_preview_at(0)
+    qtbot.waitUntil(tab.is_preview_visible)
+    # Expanded side panels are the widest the viewer gets.
+    tab.preview_widget._set_navigation_panel_collapsed(False, persist=False)
+    tab.preview_widget._set_annot_rail_collapsed(False, persist=False)
+
+    assert main_window.centralWidget().minimumSizeHint().width() <= MIN_WINDOW_WIDTH
+    assert main_window.minimumSizeHint().width() <= MIN_WINDOW_WIDTH
+    toolbar_scroll = tab.preview_widget._toolbar_scroll
+    assert tab.preview_widget.minimumSizeHint().width() <= MIN_WINDOW_WIDTH
+    # The viewer's own toolbar scrolls sideways instead of clipping.
+    assert toolbar_scroll.widget() is tab.preview_widget._toolbar
+    qtbot.waitUntil(lambda: toolbar_scroll.horizontalScrollBar().maximum() > 0)
+    assert toolbar_scroll.height() >= tab.preview_widget._toolbar.sizeHint().height()
+    # The expanded markup rail scrolls its tools rather than squashing them.
+    rail_scroll = tab.preview_widget._annot_tools_scroll
+    qtbot.waitUntil(lambda: rail_scroll.verticalScrollBar().maximum() > 0)
+    assert not rail_scroll.horizontalScrollBar().isVisible()
+    host = tab.preview_widget._annot_tools_host
+    assert host.height() >= host.minimumSizeHint().height()
+    tab.preview_widget._set_annot_rail_collapsed(True, persist=False)
+    assert rail_scroll.isHidden()
+
+
+def test_toolbar_moves_trailing_actions_to_more_when_narrow(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    actions = main_window._actions
+    toolbar = main_window._toolbar
+    overflow_menu = main_window._toolbar_overflow_menu
+    tab.thumbnail_grid.selection_manager.select_single(2)
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 3 selected")
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(
+        lambda: toolbar.width() <= MIN_WINDOW_WIDTH
+        and actions["delete_pages"] in overflow_menu.actions()
+        and main_window._toolbar_overflow.isVisible()
+        and not main_window._selection_toolbar_label.isVisible()
+        and _toolbar_fits(main_window)
+    )
+
+    # Last to go first: the label, then the trailing page actions; Open,
+    # Pages / Preview, Save as and More stay on the bar.
+    assert not main_window._selection_toolbar_label.isVisible()
+    for key in ("open", "preview", "save_as"):
+        assert toolbar.widgetForAction(actions[key]).isVisible()
+    assert main_window._toolbar_overflow.isVisible()
+    assert main_window._toolbar_overflow in focusable_toolbar_widgets(toolbar)
+    assert toolbar.widgetForAction(actions["delete_pages"]) is None
+    displaced = [a for a in overflow_menu.actions() if a in main_window._toolbar_displaceable]
+    assert actions["delete_pages"] in displaced and actions["extract_selected"] in displaced
+    assert actions["select_all"] not in displaced
+    assert actions["export_all"] in overflow_menu.actions()
+    assert actions["move_to"] in overflow_menu.actions()
+    # Shared commands stay visible; only their toolbar button is gone.
+    assert all(action.isVisible() for action in actions.values() if action in displaced)
+    # The status bar still carries the selection count once the label is gone.
+    assert main_window._selection_status.text() == "Page 3 selected"
+
+    # Wide enough for every button whatever font an earlier test left behind.
+    main_window.resize(1600, 680)
+    qtbot.waitUntil(
+        lambda: overflow_menu.actions() == [actions["export_all"], actions["move_to"]]
+        and toolbar.widgetForAction(actions["delete_pages"]) is not None
+        and main_window._selection_toolbar_label.isVisible()
+        and _toolbar_fits(main_window)
+    )
+    for key in ("select_all", "rotate_cw", "extract_selected", "delete_pages"):
+        assert toolbar.widgetForAction(actions[key]).isVisible()
+    assert toolbar.widgetForAction(actions["rotate_cw"]).accessibleName() == actions[
+        "rotate_cw"
+    ].text()
+    assert toolbar.widgetForAction(actions["extract_selected"]).toolButtonStyle() == (
+        Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    )
+
+
+def test_toolbar_never_needs_the_qt_extension_button_at_any_width(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
+    toolbar = main_window._toolbar
+    for selected in (False, True):
+        if selected:
+            tab.thumbnail_grid.selection_manager.select_single(1)
+        else:
+            tab.thumbnail_grid.selection_manager.clear()
+        for width in (1600, 960, 700, 560, MIN_WINDOW_WIDTH, 640, 1600):
+            main_window.resize(width, 680)
+            qtbot.waitUntil(
+                lambda width=width: abs(toolbar.width() - width) < 10
+                and _toolbar_fits(main_window)
+            )
+            assert toolbar.widgetForAction(main_window._actions["open"]).isVisible()
+            assert main_window._toolbar_overflow.isVisible()
+            assert focusable_toolbar_widgets(toolbar)[0] is toolbar.widgetForAction(
+                main_window._actions["open"]
+            )
+
+
+def test_displaced_toolbar_actions_stay_disabled_in_more_and_keep_their_shortcut(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    actions = main_window._actions
+    toolbar = main_window._toolbar
+    overflow_menu = main_window._toolbar_overflow_menu
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(lambda: actions["delete_pages"] in overflow_menu.actions())
+
+    # Nothing is selected: displaced commands appear in More, disabled.
+    for key in ("extract_selected", "delete_pages"):
+        assert actions[key] in overflow_menu.actions()
+        assert not actions[key].isEnabled()
+        assert actions[key].isVisible()
+
+    # A larger font widens the buttons and pushes more commands into More.
+    font = main_window.font()
+    font.setPointSize(font.pointSize() + 10)
+    main_window.setFont(font)
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    duplicate = actions["duplicate_pages"]
+    qtbot.waitUntil(
+        lambda: duplicate in overflow_menu.actions()
+        and duplicate.isEnabled()
+        and _toolbar_fits(main_window)
+    )
+    assert toolbar.widgetForAction(duplicate) is None
+    assert duplicate.isVisible()
+
+    assert tab.edit_model.logical_count() == 5
+    main_window.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is main_window)
+    qtbot.keyClick(main_window, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: tab.edit_model.logical_count() == 6)
+
+
+def _assert_hosted_page_scrolls(main_window, page, reach, qtbot):
+    """A hosted tool page keeps the window small, scrolls at the floor, and is
+    scroll-bar free when there is room."""
+    scroll = page.findChild(QScrollArea, "ToolPageScroll")
+    assert scroll is not None
+    assert page.minimumSize() == QSize(0, 0)
+    hint = main_window.minimumSizeHint()
+    assert hint.width() <= MIN_WINDOW_WIDTH
+    assert hint.height() <= MIN_WINDOW_HEIGHT
+
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(
+        lambda: main_window.size() == QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        and scroll.verticalScrollBar().maximum() > 0
+    )
+    scroll.ensureWidgetVisible(reach)
+    top_left = reach.mapTo(scroll.viewport(), QPoint(0, 0))
+    assert scroll.viewport().rect().contains(QRect(top_left, reach.size()))
+
+    main_window.resize(960, 680)
+    qtbot.waitUntil(
+        lambda: not scroll.verticalScrollBar().isVisible()
+        and not scroll.horizontalScrollBar().isVisible()
+    )
+
+
+def test_hosted_tool_shell_scrolls_instead_of_raising_the_window_minimum(
+    main_window, qtbot
+):
+    from PyQt6.QtWidgets import QFormLayout, QLineEdit
+
+    from pagedrop.ui.tool_shell import ToolShellWindow
+
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    shell = ToolShellWindow(title="Test tool", description="Reverse every page.")
+    options = QWidget()
+    form = QFormLayout(options)
+    for row in range(6):
+        form.addRow(f"Option {row}", QLineEdit())
+    shell.set_options_widget(options)
+    assert shell.minimumSize() == QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    main_window.open_tool_page(shell, page_id="tool:test")
+
+    _assert_hosted_page_scrolls(main_window, shell, shell._run_btn, qtbot)
+    # The body is the page's layout; overlays stay on the page itself.
+    assert shell._body_layout.indexOf(shell._drop_zone) >= 0
+    assert shell._busy_overlay.parentWidget() is shell
+    assert shell._toast.parentWidget() is shell
+
+
+def test_hosted_compare_page_scrolls_instead_of_raising_the_window_minimum(
+    main_window, pdf_fixtures_dir, qtbot
+):
+    from pagedrop.core.pdf_tools import compare_pdf_text_diff
+    from pagedrop.ui.compare_window import CompareWindow
+
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    page = CompareWindow(editor=main_window)
+    assert page.minimumSize() == QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    main_window.open_tool_page(page, page_id=CompareWindow.PAGE_ID)
+    original = str(pdf_fixtures_dir / "compare_original.pdf")
+    revised = str(pdf_fixtures_dir / "compare_revised.pdf")
+    page._apply_compare_report(original, revised, compare_pdf_text_diff(original, revised))
+
+    _assert_hosted_page_scrolls(main_window, page, page._compare_btn, qtbot)
+    wait_for_compare_render(qtbot, page)
