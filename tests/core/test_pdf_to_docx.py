@@ -222,6 +222,28 @@ def test_job_converts_decrypted_copy_of_encrypted_input(
     assert job.leftovers() == []
 
 
+def test_job_decrypts_while_holding_the_fitz_lock(
+    tmp_path: Path, job: _JobHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pagedrop.core import optimize_secure
+    from pagedrop.core.thread_policy import FITZ_LOCK
+
+    src = _encrypted_pdf(tmp_path / "locked.pdf")
+    held: list[bool] = []
+
+    def tracking_decrypt(*args, **kwargs):
+        held.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return optimize_secure.decrypt_pdf(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "pagedrop.core.pdf_to_docx_jobs.decrypt_pdf", tracking_decrypt
+    )
+
+    job.run(src, tmp_path / "locked.docx", "secret")
+
+    assert held == [True]
+
+
 def test_job_removes_decrypted_copy_when_converter_fails(
     tmp_path: Path, job: _JobHarness
 ) -> None:
