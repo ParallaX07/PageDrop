@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -103,6 +104,10 @@ class TempManager:
         # Shared so drag_* / job_* eviction order is creation order, not mtime ties.
         self._subdir_counter = 0
         self._max_bytes = max_bytes
+        # Guards the counter, dir creation, pins and eviction: the GUI drag path
+        # and the job runner worker share one manager.
+        self._lock = threading.Lock()
+        self._pinned: set[Path] = set()
         _write_owner_pid(self._dir)
         _live_dirs.add(self._dir.resolve())
         self._scrub_orphan_pagedrop_dirs()
@@ -112,29 +117,51 @@ class TempManager:
         return self._dir
 
     def create_drag_dir(self) -> Path:
-        self._enforce_max_size()
-        self._subdir_counter += 1
-        drag_dir = self._dir / f"drag_{self._subdir_counter}"
-        drag_dir.mkdir(parents=True, exist_ok=True)
-        return drag_dir
+        with self._lock:
+            self._enforce_max_size()
+            self._subdir_counter += 1
+            drag_dir = self._dir / f"drag_{self._subdir_counter}"
+            drag_dir.mkdir(parents=True, exist_ok=True)
+            return drag_dir
 
     def create_job_dir(self) -> Path:
-        """Directory for a Tools job's staged output (promote or cleanup)."""
-        self._enforce_max_size()
-        self._subdir_counter += 1
-        job_dir = self._dir / f"job_{self._subdir_counter}"
-        job_dir.mkdir(parents=True, exist_ok=True)
-        return job_dir
+        """Directory for a Tools job's staged output (promote or cleanup).
+
+        The dir is pinned (never evicted) until :meth:`unpin_dir`.
+        """
+        with self._lock:
+            self._enforce_max_size()
+            self._subdir_counter += 1
+            job_dir = self._dir / f"job_{self._subdir_counter}"
+            job_dir.mkdir(parents=True, exist_ok=True)
+            self._pinned.add(job_dir)
+            return job_dir
+
+    def unpin_dir(self, path: Path) -> None:
+        """Make a pinned job dir evictable again (its job has finished)."""
+        with self._lock:
+            self._pinned.discard(path)
+
+    def remove_dir(self, path: Path) -> None:
+        """Best-effort removal of *path* (a drag/job dir); never raises."""
+        with self._lock:
+            self._pinned.discard(path)
+        shutil.rmtree(path, ignore_errors=True)
 
     def cleanup_paths(self, paths: list[Path]) -> None:
         drag_dirs: set[Path] = set()
         for path in paths:
-            if path.exists():
-                path.unlink()
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
             drag_dirs.add(path.parent)
         for drag_dir in drag_dirs:
-            if drag_dir.exists() and drag_dir.is_dir() and not any(drag_dir.iterdir()):
-                drag_dir.rmdir()
+            try:
+                if drag_dir.is_dir() and not any(drag_dir.iterdir()):
+                    drag_dir.rmdir()
+            except OSError:
+                pass
 
     def cleanup(self) -> None:
         resolved = self._dir.resolve() if self._dir.exists() else self._dir
@@ -168,23 +195,26 @@ class TempManager:
         return (counter, name)
 
     def _enforce_max_size(self) -> None:
-        # ponytail: one concurrent create_* per manager under the usual
-        # SerializedJobRunner / one-active-job path. Eviction deletes the oldest
-        # drag_*/job_* with no pin — a second create while an older dir is still
-        # in use could remove it. Pin/unpin only if that race is measured.
-        while self._dir_size() > self._max_bytes:
-            candidates = sorted(
-                (
-                    d
-                    for d in self._dir.iterdir()
-                    if d.is_dir()
-                    and (d.name.startswith("drag_") or d.name.startswith("job_"))
-                ),
-                key=self._evict_dir_sort_key,
-            )
-            if not candidates:
-                break
-            shutil.rmtree(candidates[0], ignore_errors=True)
+        """Evict oldest unpinned drag_*/job_* dirs until under quota (caller holds the lock).
+
+        One pass: a dir that cannot be removed is skipped, never retried.
+        """
+        if self._dir_size() <= self._max_bytes:
+            return
+        candidates = sorted(
+            (
+                d
+                for d in self._dir.iterdir()
+                if d.is_dir()
+                and d not in self._pinned
+                and (d.name.startswith("drag_") or d.name.startswith("job_"))
+            ),
+            key=self._evict_dir_sort_key,
+        )
+        for candidate in candidates:
+            shutil.rmtree(candidate, ignore_errors=True)
+            if self._dir_size() <= self._max_bytes:
+                return
 
     @staticmethod
     def _scrub_orphan_pagedrop_dirs() -> None:

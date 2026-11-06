@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
+import pytest
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
-from PyQt6.QtWidgets import QInputDialog
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
 from pagedrop.core.pdf_editor import PdfEditModel
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_loader import PdfLoader, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 from pagedrop.utils.temp_manager import TempManager
@@ -187,7 +188,6 @@ def test_page_card_drag_encrypted(main_window, tmp_path, monkeypatch, qtbot):
         assert len(urls) == 1
         path = Path(urls[0].toLocalFile())
         assert path.exists()
-        # Verify before _start_drag finally cleans drag temps.
         out = fitz.open(str(path))
         try:
             assert out.page_count == 1
@@ -203,3 +203,64 @@ def test_page_card_drag_encrypted(main_window, tmp_path, monkeypatch, qtbot):
 
     assert extracted_ok["value"]
     assert file_sha256(enc) == source_hash
+
+
+def test_drag_temp_files_survive_after_drag_returns(qtbot, five_page_pdf, monkeypatch):
+    """A drop target may read the file:// URLs after exec() returns."""
+    source_hash = file_sha256(five_page_pdf)
+    card, loader, selection_manager, temp_manager = _make_card(
+        qtbot, five_page_pdf, page_index=0
+    )
+    selection_manager.select_single(0)
+    selection_manager.toggle(1)
+    dropped: list[Path] = []
+
+    def capture(drag: QDrag) -> None:
+        dropped.extend(Path(url.toLocalFile()) for url in drag.mimeData().urls())
+
+    _patch_drag_exec(monkeypatch, capture)
+    try:
+        qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+        qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+        assert len(dropped) == 2
+        assert all(path.is_file() for path in dropped)
+        assert all(path != five_page_pdf for path in dropped)
+        assert file_sha256(five_page_pdf) == source_hash
+    finally:
+        loader.close()
+        temp_manager.cleanup()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("disk full"), RuntimeError("boom"), PdfPasswordRequiredError("locked")],
+)
+def test_failed_drag_extract_removes_partial_output(
+    qtbot, five_page_pdf, monkeypatch, error
+):
+    source_hash = file_sha256(five_page_pdf)
+    card, loader, _, temp_manager = _make_card(qtbot, five_page_pdf, page_index=0)
+    shown: list[str] = []
+
+    def partial_then_fail(refs, output_dir, base_name, **kwargs):
+        (output_dir / f"{base_name}_page_0001.pdf").write_bytes(b"partial")
+        raise error
+
+    monkeypatch.setattr("pagedrop.ui.page_card.extract_page_refs_to_files", partial_then_fail)
+    monkeypatch.setattr(
+        QMessageBox, "critical", lambda _parent, _title, text: shown.append(text)
+    )
+    dragged: list[bool] = []
+    _patch_drag_exec(monkeypatch, lambda _drag: dragged.append(True))
+    try:
+        qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+        qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+        assert dragged == []
+        assert len(shown) == 1 and str(error) in shown[0]
+        assert list(temp_manager.get_dir().glob("drag_*")) == []
+        assert file_sha256(five_page_pdf) == source_hash
+    finally:
+        loader.close()
+        temp_manager.cleanup()

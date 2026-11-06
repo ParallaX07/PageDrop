@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -150,6 +151,7 @@ def test_enforce_max_size_evicts_oldest_job_dirs():
     try:
         old_job = tm.create_job_dir()
         (old_job / "old.pdf").write_bytes(b"x" * 80)
+        tm.unpin_dir(old_job)  # finished job: evictable
 
         new_job = tm.create_job_dir()
         (new_job / "new.pdf").write_bytes(b"y" * 80)
@@ -166,6 +168,7 @@ def test_enforce_max_size_evicts_oldest_across_drag_and_job():
     try:
         old_job = tm.create_job_dir()
         (old_job / "old.pdf").write_bytes(b"x" * 80)
+        tm.unpin_dir(old_job)  # finished job: evictable
 
         drag = tm.create_drag_dir()
         (drag / "drag.pdf").write_bytes(b"y" * 80)
@@ -303,3 +306,100 @@ def test_init_preserves_claimed_backend_temps():
         release_backend_temp(lo)
         for path in (office, lo):
             shutil.rmtree(path, ignore_errors=True)
+
+
+def _run_with_timeout(fn, timeout: float = 5.0) -> bool:
+    """Run *fn* in a daemon thread; True if it returned within *timeout*."""
+    worker = threading.Thread(target=fn, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return not worker.is_alive()
+
+
+def test_enforce_max_size_returns_when_candidate_cannot_be_removed(monkeypatch):
+    tm = TempManager(max_bytes=100)
+    try:
+        for _ in range(2):
+            stuck = tm.create_drag_dir()
+            (stuck / "big.pdf").write_bytes(b"x" * 80)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(shutil, "rmtree", lambda *args, **kwargs: None)
+            assert _run_with_timeout(tm._enforce_max_size)
+            assert _run_with_timeout(tm.create_drag_dir)
+    finally:
+        tm.cleanup()
+
+
+def test_pinned_job_dir_survives_eviction_until_unpinned():
+    tm = TempManager(max_bytes=100)
+    try:
+        live = tm.create_job_dir()
+        (live / "output.pdf").write_bytes(b"x" * 200)
+
+        newest = tm.create_job_dir()
+        assert newest.exists()  # a dir is never evicted by its own creation
+        assert live.exists()
+
+        tm.unpin_dir(live)
+        tm.create_drag_dir()
+        assert not live.exists()
+        assert newest.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_remove_dir_is_best_effort_and_unpins():
+    tm = TempManager()
+    try:
+        job = tm.create_job_dir()
+        (job / "partial.pdf").write_bytes(b"x")
+        tm.remove_dir(job)
+        assert not job.exists()
+        tm.remove_dir(job)  # already gone: no error
+    finally:
+        tm.cleanup()
+
+
+def test_cleanup_paths_tolerates_missing_files_and_unlink_errors(monkeypatch):
+    tm = TempManager()
+    try:
+        drag_dir = tm.create_drag_dir()
+        missing = drag_dir / "missing.pdf"
+        tm.cleanup_paths([missing])
+        assert not drag_dir.exists()
+
+        drag_dir = tm.create_drag_dir()
+        stuck = drag_dir / "stuck.pdf"
+        stuck.write_bytes(b"x")
+
+        def deny(self, *args, **kwargs):
+            raise PermissionError("in use")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "unlink", deny)
+            tm.cleanup_paths([stuck])
+        assert stuck.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_concurrent_creates_get_distinct_dirs():
+    tm = TempManager()
+    created: list[Path] = []
+
+    def make_many() -> None:
+        for _ in range(25):
+            created.append(tm.create_drag_dir())
+            created.append(tm.create_job_dir())
+
+    try:
+        threads = [threading.Thread(target=make_many) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert len(created) == 200
+        assert len(set(created)) == 200
+    finally:
+        tm.cleanup()
