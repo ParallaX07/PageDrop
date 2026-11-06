@@ -53,7 +53,7 @@ Optional backends (Office COM, LibreOffice, tessdata, openpyxl, and related code
 
 PDF to Word converts a temporary decrypted copy of a password-protected PDF, because LibreOffice cannot open one. The copy is deleted when the job ends, whether it succeeds, fails, or is cancelled; your original is never changed.
 
-Word and Excel documents that have a password fail with a clear message. PageDrop does not retry them in LibreOffice, and does not show an Office password dialog.
+When Word or Excel documents are converted through Microsoft Office, a document that has a password fails with a clear message. PageDrop does not retry it in LibreOffice, and does not show an Office password dialog.
 
 ### Modify
 
