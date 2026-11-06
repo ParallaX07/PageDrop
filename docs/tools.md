@@ -75,4 +75,4 @@ Office conversions name the engine in status. If a COM run fails, fallback to an
 
 ## Cancel and cleanup
 
-Cancel immediately changes the progress state to **Cancelling…** until the worker finishes. It stops the owned job and, for helper processes (Office / LibreOffice), kills only the owned process trees. Partial outputs under temp staging are removed; promoted results stay where you saved them. Recoverable errors remain beside **Run** as well as appearing in a dialog and notification.
+Cancel immediately changes the progress state to **Cancelling…** until the worker finishes. It stops the owned job and, for helper processes (Office / LibreOffice), kills only the owned process trees. For Office COM that includes the Office app the helper launched, also on timeout or a helper crash; Office windows you opened yourself are never touched. Partial outputs under temp staging are removed; promoted results stay where you saved them. Recoverable errors remain beside **Run** as well as appearing in a dialog and notification.

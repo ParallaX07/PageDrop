@@ -82,7 +82,7 @@ Full walkthrough: [docs/user-guide.md](docs/user-guide.md).
 ### Multi-window workflows
 
 - New windows, tear-off tabs, or File → New Window
-- Drag pages between windows to copy; Shift+drop to move
+- Drag pages between windows to copy; Shift+drop to move (pages dragged in from another PageDrop process are always copied, and PageDrop says so)
 
 ### Merge PDFs and Create PDF
 
@@ -123,7 +123,7 @@ Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platfo
 | Keyboard shortcuts | Ctrl+/ |
 | Back to grid / list (in preview) | Escape |
 
-Ctrl+Tab toggles the most recently used previous tab. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab). Cross-window: drop copies; Shift+drop moves.
+Ctrl+Tab toggles the most recently used previous tab. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab). Cross-window: drop copies; Shift+drop moves (from another PageDrop process it always copies, and says so).
 
 More detail: [docs/user-guide.md](docs/user-guide.md).
 
