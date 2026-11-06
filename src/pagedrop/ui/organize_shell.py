@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.core import pdf_tools
 from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
+from pagedrop.core.pdf_service import call as pdf_call
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.ui.dialogs import prompt_pdf_password
 from pagedrop.ui.organize_tools import editor_pdf_context
@@ -567,7 +568,7 @@ def _configure_metadata(shell: ToolShellWindow) -> None:
         if not paths or not Path(paths[0]).is_file():
             return
         try:
-            meta = pdf_tools.metadata_get(paths[0])
+            meta = pdf_call(pdf_tools.metadata_get, paths[0])
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not read metadata:\n{exc}"

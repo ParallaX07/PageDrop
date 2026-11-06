@@ -659,3 +659,197 @@ def test_extract_page_refs_releases_lock_between_pages(
         f"viewer blocked {waits[0]:.3f}s behind extract "
         "(expected per-page interleave)"
     )
+
+
+def test_pdf_loader_methods_hold_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every PdfLoader entry point touches MuPDF only while owning FITZ_LOCK."""
+    from pagedrop.core import pdf_loader as loader_module
+    from pagedrop.core.pdf_loader import PdfLoader
+
+    pdf = tmp_path / "doc.pdf"
+    _write_pdf(pdf, pages=2)
+
+    owned: dict[str, list[bool]] = {}
+
+    def spy(name: str, real):
+        def wrapper(*args: object, **kwargs: object):
+            owned.setdefault(name, []).append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+            return real(*args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(fitz, "open", spy("open", fitz.open))
+    monkeypatch.setattr(fitz.Document, "__len__", spy("len", fitz.Document.__len__))
+    monkeypatch.setattr(fitz.Document, "close", spy("close", fitz.Document.close))
+    for attr in ("unrotated_page_geom", "page_size_mm", "render_page_png"):
+        monkeypatch.setattr(loader_module, attr, spy(attr, getattr(loader_module, attr)))
+
+    before = file_sha256(pdf)
+    loader = PdfLoader(str(pdf))
+    assert loader.page_count == 2
+    assert loader.page_size_pt(0) == (200.0, 200.0)
+    assert loader.page_rotation(1) == 0
+    assert loader.page_size_mm(0) == (71, 71)
+    assert loader.render_page(0, 40)
+    loader.close()
+
+    assert set(owned) == {
+        "open",
+        "len",
+        "close",
+        "unrotated_page_geom",
+        "page_size_mm",
+        "render_page_png",
+    }
+    for name, flags in owned.items():
+        assert all(flags), f"{name} ran without FITZ_LOCK (owned flags={flags})"
+    assert file_sha256(pdf) == before
+
+
+def test_editor_save_verification_open_holds_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The handler is registered holds_fitz=False; its own verify open must lock."""
+    from pagedrop.core.editor_jobs import register_editor_handlers
+    from pagedrop.core.jobs import JobSpec, SerializedJobRunner
+    from pagedrop.core.pdf_editor import PdfEditModel
+    from pagedrop.utils.temp_manager import TempManager
+
+    pdf = tmp_path / "src.pdf"
+    out = tmp_path / "saved.pdf"
+    _write_pdf(pdf, pages=2)
+    before = file_sha256(pdf)
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        register_editor_handlers(runner)
+        assert runner._handlers["editor_save"].holds_fitz is False
+        runner.run(
+            JobSpec.create(
+                "editor_save",
+                inputs=[pdf],
+                output=out,
+                options={"model": PdfEditModel(str(pdf), 2).snapshot_for_write()},
+            )
+        )
+    finally:
+        temp.cleanup()
+
+    # Writer opens the source, then the handler opens the staged output.
+    assert len(held_at_open) >= 2
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
+    assert out.is_file() and out.resolve() != pdf.resolve()
+    assert file_sha256(pdf) == before
+
+
+def test_metadata_and_bookmark_probes_hold_fitz_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot, isolated_settings
+) -> None:
+    """GUI-thread metadata / bookmark reads in the tool shells must own FITZ_LOCK."""
+    from PyQt6.QtWidgets import QComboBox, QMessageBox
+
+    from pagedrop.ui.modify_tools_shell import open_modify_shell
+    from pagedrop.ui.organize_shell import open_organize_shell
+    from pagedrop.ui.tools_window import ToolsWindow
+
+    pdf = tmp_path / "doc.pdf"
+    _write_pdf(pdf)
+    before = file_sha256(pdf)
+
+    held_at_open: list[bool] = []
+    real_open = fitz.open
+
+    def tracking_open(*args: object, **kwargs: object) -> fitz.Document:
+        held_at_open.append(FITZ_LOCK._is_owned())  # type: ignore[attr-defined]
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(fitz, "open", tracking_open)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+
+    meta_shell = open_organize_shell(tools, "metadata")
+    assert meta_shell is not None
+    qtbot.addWidget(meta_shell)
+    meta_shell.drop_zone.set_paths([str(pdf)])  # load_meta
+    assert len(held_at_open) == 1
+
+    marks_shell = open_modify_shell(tools, "bookmarks")
+    assert marks_shell is not None
+    qtbot.addWidget(marks_shell)
+    marks_shell.drop_zone.set_paths([str(pdf)])  # refresh_status
+    assert len(held_at_open) == 2
+
+    action = marks_shell._options_host.findChildren(QComboBox)[0]
+    action.setCurrentIndex(action.findData("toc_page"))
+    marks_shell._run_btn.click()  # on_run: bookmark probe before the TOC job
+    assert len(held_at_open) == 3
+
+    assert all(held_at_open), (
+        f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"
+    )
+    assert file_sha256(pdf) == before
+    meta_shell.close()
+    marks_shell.close()
+    tools.close()
+
+
+def test_pdf_loader_cached_geometry_does_not_wait_for_fitz_lock(
+    tmp_path: Path,
+) -> None:
+    """A warmed geometry read is a plain dict hit and must not stall behind a job."""
+    import threading
+
+    from pagedrop.core.pdf_loader import PdfLoader
+
+    pdf = tmp_path / "doc.pdf"
+    _write_pdf(pdf)
+    loader = PdfLoader(str(pdf))
+    expected = (
+        loader.page_size_pt(0),
+        loader.page_rotation(0),
+        loader.page_size_mm(0),
+    )
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_lock() -> None:
+        with FITZ_LOCK:
+            held.set()
+            release.wait(timeout=30)
+
+    holder = threading.Thread(target=hold_lock, daemon=True)
+    holder.start()
+    results: list[tuple] = []
+    try:
+        assert held.wait(timeout=10)
+
+        def read_cached() -> None:
+            results.append(
+                (loader.page_size_pt(0), loader.page_rotation(0), loader.page_size_mm(0))
+            )
+
+        reader = threading.Thread(target=read_cached, daemon=True)
+        reader.start()
+        reader.join(timeout=5)
+        assert not reader.is_alive(), "cached geometry read blocked on FITZ_LOCK"
+        assert results == [expected]
+    finally:
+        release.set()
+        holder.join(timeout=10)
+        loader.close()
