@@ -4,7 +4,11 @@ IPC: one JSON object on stdin, one JSON object on stdout.
 
 Request::
 
-    {"input": "/abs/in.docx", "output": "/abs/out.pdf"}
+    {"input": "/abs/in.docx", "output": "/abs/out.pdf", "pid_file": "/abs/office.pid"}
+
+``pid_file`` is optional. When given, the worker writes the PID of the Office
+app it launched there (atomically, best effort) so the parent can end that app
+if it has to give up on the conversion.
 
 Response::
 
@@ -18,7 +22,9 @@ Uses ``DispatchEx`` so we never attach to the user's live Office session.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -91,6 +97,49 @@ def _import_com() -> tuple[Any, Any]:
     return pythoncom, win32com.client
 
 
+# Where to report the owned Office app's PID; set per request by ``convert_file``.
+_pid_file: str | None = None
+
+
+def _office_pid(app: Any, progid: str) -> int:
+    """PID of the Office app behind *app* (Windows; pywin32 imported lazily)."""
+    import win32process
+
+    if progid == "Excel.Application":
+        hwnd = app.Hwnd
+    elif progid == "PowerPoint.Application":
+        hwnd = app.HWND
+    else:
+        # Word has no reliable Application hwnd; find its window by a unique caption.
+        import win32gui
+
+        caption = f"pagedrop-{uuid.uuid4().hex}"
+        previous = app.Caption
+        app.Caption = caption
+        try:
+            hwnd = win32gui.FindWindow("OpusApp", caption)
+        finally:
+            app.Caption = previous
+    if not hwnd:
+        raise OfficeComError("no window handle", code="pid_lookup")
+    return int(win32process.GetWindowThreadProcessId(hwnd)[1])
+
+
+def _report_owned_pid(app: Any, progid: str) -> None:
+    """Best effort: record the owned app's PID in ``_pid_file``; never raises."""
+    if not _pid_file:
+        return
+    try:
+        pid = _office_pid(app, progid)
+        if pid <= 0:
+            raise OfficeComError("invalid process id", code="pid_lookup")
+        tmp = f"{_pid_file}.tmp"
+        Path(tmp).write_text(str(pid), encoding="utf-8")
+        os.replace(tmp, _pid_file)
+    except Exception as exc:  # noqa: BLE001 — conversion must still run
+        print(f"could not report the {progid} process id: {exc}", file=sys.stderr)
+
+
 def _dispatch_owned(client: Any, progid: str) -> tuple[Any, bool]:
     """``DispatchEx`` a ProgID; return ``(app, owned)``.
 
@@ -98,6 +147,7 @@ def _dispatch_owned(client: Any, progid: str) -> tuple[Any, bool]:
     ``Quit`` an app they did not start (never use plain ``Dispatch`` here).
     """
     app = client.DispatchEx(progid)
+    _report_owned_pid(app, progid)
     return app, True
 
 
@@ -229,8 +279,13 @@ def _is_password_failure(exc: BaseException) -> bool:
     return isinstance(scode, int) and (scode & 0xFFFF) == _WORD_PASSWORD_SCODE
 
 
-def convert_file(input_path: str | Path, output_path: str | Path) -> Path:
+def convert_file(
+    input_path: str | Path,
+    output_path: str | Path,
+    pid_file: str | Path | None = None,
+) -> Path:
     """Convert one Office file to PDF via COM. Raises ``OfficeComError``."""
+    global _pid_file
     _require_windows()
     src = Path(input_path).resolve()
     dst = Path(output_path).resolve()
@@ -248,6 +303,7 @@ def convert_file(input_path: str | Path, output_path: str | Path) -> Path:
     app_kind = office_app_for_path(src)
     pythoncom, client = _import_com()
     pythoncom.CoInitialize()
+    _pid_file = str(pid_file) if pid_file else None
     try:
         _CONVERTERS[app_kind](client, str(src), str(dst))
     except OfficeComError:
@@ -288,7 +344,10 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
                 "error": "Request requires string 'input' and 'output' paths",
                 "code": "bad_request",
             }
-        out = convert_file(str(input_path), str(output_path))
+        pid_file = request.get("pid_file")
+        out = convert_file(
+            str(input_path), str(output_path), str(pid_file) if pid_file else None
+        )
         return {"ok": True, "output": str(out)}
     except OfficeComError as exc:
         return {"ok": False, "error": str(exc), "code": exc.code}

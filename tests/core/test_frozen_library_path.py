@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from pagedrop.core.backends import process_tree
 from pagedrop.core.backends.process_tree import frozen_child_env, popen_owned
 from pagedrop.main import restore_inherited_library_path
 
@@ -82,17 +83,13 @@ def test_compress_and_verify_helpers_start_with_the_frozen_child_env(monkeypatch
     sentinel = {"LD_LIBRARY_PATH": BUNDLE}
     seen: dict[str, object] = {}
 
-    def fake(name):
-        def _spawn(_argv, **kwargs):
-            seen[name] = kwargs.get("env")
-            raise OSError("stop here")
-
-        return _spawn
+    def _spawn(argv, **kwargs):
+        seen["compress" if "--compress-json" in argv else "verify"] = kwargs.get("env")
+        raise OSError("stop here")
 
     monkeypatch.setattr(optimize_secure, "frozen_child_env", lambda: sentinel)
     monkeypatch.setattr(redact, "frozen_child_env", lambda: sentinel)
-    monkeypatch.setattr(optimize_secure, "popen_owned", fake("compress"))
-    monkeypatch.setattr(redact, "popen_owned", fake("verify"))
+    monkeypatch.setattr(process_tree, "popen_owned", _spawn)
 
     with pytest.raises(optimize_secure.CompressWorkerError):
         optimize_secure.compress_pdf_lossy_in_child(

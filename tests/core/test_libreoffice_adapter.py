@@ -7,8 +7,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
 from pagedrop.core.backends import libreoffice, process_tree
@@ -29,6 +27,14 @@ from pagedrop.core.capabilities import (
 )
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import BackendUnavailableError, JobCancelledError
+
+_REAL_POPEN = process_tree.popen_owned
+
+_FLOOD_STDERR = [
+    sys.executable,
+    "-c",
+    "import sys; sys.stderr.write('x' * 200_000); sys.exit(1)",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -165,12 +171,12 @@ def test_convert_timeout_kills_owned_and_cleans_profile(
     )
 
     def fake_popen(argv, **kwargs):
-        return process_tree.popen_owned(
+        return _REAL_POPEN(
             [sys.executable, "-c", "import time; time.sleep(60)"],
             stdin=subprocess.DEVNULL,
         )
 
-    monkeypatch.setattr(libreoffice, "popen_owned", fake_popen)
+    monkeypatch.setattr(process_tree, "popen_owned", fake_popen)
     monkeypatch.setattr(libreoffice, "build_convert_argv", lambda *a, **k: ["fake"])
 
     t0 = time.monotonic()
@@ -180,6 +186,26 @@ def test_convert_timeout_kills_owned_and_cleans_profile(
     assert time.monotonic() - t0 < 10.0
     for path in created:
         assert not path.exists(), f"temp dir left behind: {path}"
+
+
+def test_convert_reports_real_failure_when_stderr_exceeds_the_pipe_buffer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "doc.docx"
+    src.write_bytes(b"PK")
+    fake_bin = tmp_path / "soffice"
+    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+    monkeypatch.setattr(libreoffice, "build_convert_argv", lambda *a, **k: _FLOOD_STDERR)
+
+    t0 = time.monotonic()
+    with pytest.raises(LibreOfficeConversionError) as exc:
+        convert_via_libreoffice(
+            src, tmp_path / "out.pdf", timeout_sec=5, soffice_path=str(fake_bin)
+        )
+    assert exc.value.code == "soffice_failed"
+    assert "xxxx" in str(exc.value)
+    assert time.monotonic() - t0 < 4.0
 
 
 def test_convert_cancel_kills_owned_and_cleans_profile(
@@ -203,9 +229,9 @@ def test_convert_cancel_kills_owned_and_cleans_profile(
 
     monkeypatch.setattr("pagedrop.core.backends.libreoffice.tempfile.mkdtemp", tracking_mkdtemp)
     monkeypatch.setattr(
-        libreoffice,
+        process_tree,
         "popen_owned",
-        lambda argv, **kwargs: process_tree.popen_owned(
+        lambda argv, **kwargs: _REAL_POPEN(
             [sys.executable, "-c", "import time; time.sleep(60)"],
             stdin=subprocess.DEVNULL,
         ),
@@ -257,17 +283,9 @@ def test_convert_promotes_pdf_and_leaves_source(
         # Mimic soffice: write PDF into --outdir from argv.
         outdir = Path(argv[argv.index("--outdir") + 1])
         (outdir / "report.pdf").write_bytes(b"%PDF-1.4 fake")
-        proc = MagicMock()
-        proc.pid = 1
-        proc.poll.return_value = 0
-        proc.returncode = 0
-        proc.stdout = MagicMock(read=lambda: "")
-        proc.stderr = MagicMock(read=lambda: "")
-        return proc
+        return _REAL_POPEN([sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL)
 
-    monkeypatch.setattr(libreoffice, "popen_owned", fake_popen)
-    # Real argv builder so outdir is correct; skip kill on fake pid.
-    monkeypatch.setattr(libreoffice, "kill_process_tree", lambda _pid: None)
+    monkeypatch.setattr(process_tree, "popen_owned", fake_popen)
 
     result = convert_via_libreoffice(src, dst, soffice_path=str(fake_bin))
     assert result == dst

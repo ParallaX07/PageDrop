@@ -301,10 +301,11 @@ def test_cancel_kills_owned_process_tree(
 
     owned: list[subprocess.Popen] = []
     killed: list[int] = []
-    real_kill = office.libreoffice.kill_process_tree
+    real_kill = process_tree.kill_process_tree
+    real_popen = process_tree.popen_owned
 
     def fake_popen(argv, **kwargs):
-        child = process_tree.popen_owned(
+        child = real_popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
             stdin=subprocess.DEVNULL,
         )
@@ -315,8 +316,8 @@ def test_cancel_kills_owned_process_tree(
         killed.append(pid)
         real_kill(pid)
 
-    monkeypatch.setattr(office.libreoffice, "popen_owned", fake_popen)
-    monkeypatch.setattr(office.libreoffice, "kill_process_tree", tracking_kill)
+    monkeypatch.setattr(process_tree, "popen_owned", fake_popen)
+    monkeypatch.setattr(process_tree, "kill_process_tree", tracking_kill)
     token = CancelToken()
 
     def cancel_soon() -> None:

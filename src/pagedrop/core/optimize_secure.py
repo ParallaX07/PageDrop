@@ -54,9 +54,7 @@ annotations.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,11 +62,7 @@ from typing import Literal
 
 import fitz
 
-from pagedrop.core.backends.process_tree import (
-    frozen_child_env,
-    kill_process_tree,
-    popen_owned,
-)
+from pagedrop.core.backends.process_tree import frozen_child_env, run_owned
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
 from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
@@ -305,15 +299,6 @@ def compress_worker_argv() -> list[str]:
     return [sys.executable, "-m", "pagedrop.core.optimize_secure", "--compress-json"]
 
 
-def _reap_worker(proc: subprocess.Popen[str]) -> None:
-    kill_process_tree(proc.pid)
-    try:
-        proc.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-
-
 def compress_pdf_lossy_in_child(
     source_pdf: str,
     output_path: str,
@@ -343,34 +328,23 @@ def compress_pdf_lossy_in_child(
     )
     _check_cancel(cancel)
     try:
-        proc = popen_owned(compress_worker_argv(), env=frozen_child_env())
+        result = run_owned(
+            compress_worker_argv(),
+            input=payload,
+            timeout=timeout,
+            cancel=cancel,
+            env=frozen_child_env(),
+        )
     except OSError as exc:
         raise CompressWorkerError(f"Could not start the compression process: {exc}") from exc
-    deadline = time.monotonic() + timeout
-    pending_input: str | None = payload
-    try:
-        while True:
-            _check_cancel(cancel)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(proc.args, timeout)
-            try:
-                _stdout, stderr = proc.communicate(pending_input, timeout=min(0.1, remaining))
-                break
-            except subprocess.TimeoutExpired:
-                pending_input = None
-    except (JobCancelledError, subprocess.TimeoutExpired) as exc:
-        _reap_worker(proc)
-        if isinstance(exc, JobCancelledError):
-            raise
+    if result.cancelled:
+        raise JobCancelledError("Job cancelled")
+    if result.timed_out:
         raise CompressWorkerError(
             f"Compression timed out after {timeout:.0f}s and was stopped"
-        ) from None
-    except BaseException:
-        kill_process_tree(proc.pid)
-        raise
-    if proc.returncode != 0:
-        detail = (stderr or "").strip()[-1000:] or f"exit code {proc.returncode}"
+        )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()[-1000:] or f"exit code {result.returncode}"
         if password:
             detail = detail.replace(password, "…")
         raise CompressWorkerError(f"Compression process failed: {detail}")

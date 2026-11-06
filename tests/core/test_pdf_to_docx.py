@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import fitz
 import pytest
 
-from pagedrop.core.backends import libreoffice
+from pagedrop.core.backends import libreoffice, process_tree
 from pagedrop.core.capabilities import (
     LIBREOFFICE,
     AbsenceReason,
@@ -29,6 +30,8 @@ from pagedrop.core.pdf_to_docx import PdfToDocxError, convert_pdf_to_docx
 from pagedrop.core.pdf_to_docx_jobs import register_pdf_to_docx_handlers
 from pagedrop.utils.temp_manager import TempManager
 from tests.conftest import file_sha256
+
+_REAL_POPEN = process_tree.popen_owned
 
 
 def _make_pdf(path: Path, text: str = "PageDrop word export") -> Path:
@@ -66,16 +69,9 @@ def test_pdf_to_docx_promotes_and_leaves_source(
         assert argv[argv.index("--convert-to") + 1] == "docx"
         assert "--infilter=writer_pdf_import" in argv
         (outdir / "report.docx").write_bytes(b"PK\x03\x04fake-docx")
-        proc = MagicMock()
-        proc.pid = 1
-        proc.poll.return_value = 0
-        proc.returncode = 0
-        proc.stdout = MagicMock(read=lambda: "")
-        proc.stderr = MagicMock(read=lambda: "")
-        return proc
+        return _REAL_POPEN([sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL)
 
-    monkeypatch.setattr(libreoffice, "popen_owned", fake_popen)
-    monkeypatch.setattr(libreoffice, "kill_process_tree", lambda _pid: None)
+    monkeypatch.setattr(process_tree, "popen_owned", fake_popen)
     monkeypatch.setattr(libreoffice, "find_soffice", lambda configured_path=None: str(fake_bin))
 
     result = convert_pdf_to_docx(src, dst, soffice_path=str(fake_bin))
@@ -123,16 +119,9 @@ def test_pdf_to_docx_rejects_invalid_package(
     def fake_popen(argv, **kwargs):
         outdir = Path(argv[argv.index("--outdir") + 1])
         (outdir / "bad.docx").write_bytes(b"not-a-zip")
-        proc = MagicMock()
-        proc.pid = 1
-        proc.poll.return_value = 0
-        proc.returncode = 0
-        proc.stdout = MagicMock(read=lambda: "")
-        proc.stderr = MagicMock(read=lambda: "")
-        return proc
+        return _REAL_POPEN([sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL)
 
-    monkeypatch.setattr(libreoffice, "popen_owned", fake_popen)
-    monkeypatch.setattr(libreoffice, "kill_process_tree", lambda _pid: None)
+    monkeypatch.setattr(process_tree, "popen_owned", fake_popen)
     monkeypatch.setattr(libreoffice, "find_soffice", lambda configured_path=None: str(fake_bin))
 
     with pytest.raises(PdfToDocxError) as exc:

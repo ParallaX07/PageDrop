@@ -11,6 +11,7 @@ import fitz
 import pytest
 
 from pagedrop.core import optimize_secure as ops
+from pagedrop.core.backends import process_tree
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.jobs.errors import JobCancelledError, JobError, SourceOverwriteError
 from pagedrop.core.jobs import CancelToken, JobSpec, SerializedJobRunner
@@ -326,7 +327,7 @@ class _ChildSpy:
         self.kwargs: list[dict[str, object]] = []
         self.lock_owned: list[bool] = []
         self.on_spawn = lambda: None
-        real = ops.popen_owned
+        real = process_tree.popen_owned
 
         def spawn(spawn_argv: list[str], **kwargs: object) -> subprocess.Popen[str]:
             self.argvs.append(list(spawn_argv))
@@ -337,7 +338,7 @@ class _ChildSpy:
             self.on_spawn()
             return proc
 
-        monkeypatch.setattr(ops, "popen_owned", spawn)
+        monkeypatch.setattr(process_tree, "popen_owned", spawn)
 
 
 def _compress_runner(temp: TempManager) -> SerializedJobRunner:
