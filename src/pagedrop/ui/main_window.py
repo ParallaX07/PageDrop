@@ -1139,6 +1139,10 @@ class MainWindow(QMainWindow):
         self._window_manager.open_new_window()
 
     def _adopt_tab(self, tab: PdfTab) -> None:
+        # The source window deletes its temp root on close; this tab's drags
+        # and exports must live under ours.
+        if tab._temp_manager is not self._temp_manager:
+            tab.set_temp_manager(self._temp_manager)
         preserve_preview = tab.is_preview_visible()
         preview_page = tab.preview_widget.current_page if preserve_preview else None
         source_window = None

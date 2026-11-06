@@ -2107,6 +2107,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_subtle};
         border-radius: 2px;
     }}
+    QLabel#PageCardThumbnail[failed="true"] {{
+        color: {text_muted};
+    }}
     QFrame#PageCard:hover QLabel#PageCardThumbnail {{
         border-color: {border_hover};
         background-color: {bg_card_hover};

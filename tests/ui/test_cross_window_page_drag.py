@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import fitz
 import pytest
-from PyQt6.QtCore import QMimeData, QPointF, Qt
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QEvent, QMimeData, QPointF, Qt
 from PyQt6.QtGui import QDrag, QDropEvent
 
 from pagedrop.core.drag_mime import (
@@ -16,7 +17,7 @@ from pagedrop.core.drag_mime import (
     encode_page_refs,
 )
 from pagedrop.core.pdf_editor import PageRef
-from pagedrop.core.pdf_loader import PdfLoader
+from pagedrop.core.pdf_loader import PdfLoader, PdfNotFoundError
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
@@ -622,3 +623,92 @@ def test_rejected_encrypted_drop_on_blank_tab_keeps_nothing_open(qtbot, tmp_path
     assert target_tab.is_blank
     assert target_tab._loader_cache == {}
     assert target_tab.credentials.get(path) is None
+
+
+def _free_deleted_widgets() -> None:
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _two_windows_with_pending_move(qtbot, qapp, pdf_path):
+    """Window A holds the source; a Shift+drop moved page 0 into a blank tab of B."""
+    from pagedrop.ui.window_manager import WindowManager
+
+    manager = WindowManager(qapp)
+    window_a = manager.open_new_window()
+    window_b = manager.open_new_window()
+    qtbot.addWidget(window_a)
+    tab_a = window_a._tab_manager.widget(0)
+    tab_a.load_pdf(str(pdf_path))
+    wait_for_grid_loaded(qtbot, tab_a.thumbnail_grid)
+    blank_b = window_b._tab_manager.add_blank_tab()
+
+    assert _cross_window_drop(
+        blank_b.thumbnail_grid, tab_a.thumbnail_grid, [0], shift=True
+    )
+    assert window_a._pending_move_undo is not None
+    assert tab_a.edit_model.logical_count() == 4
+    return window_a, window_b, tab_a, blank_b
+
+
+def test_move_undo_after_target_window_closed(qtbot, qapp, five_page_pdf):
+    window_a, window_b, tab_a, blank_b = _two_windows_with_pending_move(
+        qtbot, qapp, five_page_pdf
+    )
+    target_grid = blank_b.thumbnail_grid
+    window_b.close()
+    _free_deleted_widgets()
+    assert sip.isdeleted(target_grid)
+
+    window_a._on_transient_move_undo()
+
+    assert window_a.statusBar().currentMessage() == "Move undo is no longer available"
+    assert tab_a.edit_model.logical_count() == 4
+
+
+def test_move_undo_after_target_tab_closed(qtbot, qapp, five_page_pdf):
+    window_a, window_b, tab_a, blank_b = _two_windows_with_pending_move(
+        qtbot, qapp, five_page_pdf
+    )
+    qtbot.addWidget(window_b)
+    target_grid = blank_b.thumbnail_grid
+    window_b._tab_manager.removeTab(window_b._tab_manager.indexOf(blank_b))
+    sip.delete(blank_b)
+    assert sip.isdeleted(target_grid)
+
+    window_a._on_transient_move_undo()
+
+    assert window_a.statusBar().currentMessage() == "Move undo is no longer available"
+    assert tab_a.edit_model.logical_count() == 4
+
+
+def test_move_undo_still_works_while_target_is_open(qtbot, qapp, five_page_pdf):
+    window_a, window_b, tab_a, blank_b = _two_windows_with_pending_move(
+        qtbot, qapp, five_page_pdf
+    )
+    qtbot.addWidget(window_b)
+
+    window_a._on_transient_move_undo()
+
+    assert tab_a.edit_model.logical_count() == 5
+    assert blank_b.is_blank
+
+
+def test_rejected_second_source_closes_blank_tab_loaders(
+    qtbot, tmp_path, five_page_pdf, monkeypatch
+):
+    source = _load_grid(qtbot, five_page_pdf)
+    tab = _blank_tab(qtbot)
+    missing = tmp_path / "gone.pdf"
+    refs = [PageRef(str(five_page_pdf), 0), PageRef(str(missing), 0)]
+
+    with pytest.raises(PdfNotFoundError):
+        tab.thumbnail_grid._handle_page_transfer(
+            refs,
+            0,
+            move=False,
+            source_grid=source,
+            mime=_transfer_mime(refs, [0, 1]),
+        )
+
+    assert tab.is_blank
+    assert tab._loader_cache == {}

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QCoreApplication,
     QEvent,
@@ -181,6 +182,9 @@ class _CrossWindowMoveUndo:
     target_undo_depth: int
 
     def still_valid(self) -> bool:
+        # A closed window or tab frees its grid; the offer can outlive it.
+        if sip.isdeleted(self.source_grid) or sip.isdeleted(self.target_grid):
+            return False
         source_model = self.source_grid._model
         if source_model is None or source_model.undo_depth() != self.source_undo_depth:
             return False
@@ -1434,7 +1438,13 @@ class ThumbnailGrid(QScrollArea):
                 tab.credentials.adopt(
                     source_tab.credentials, {ref.source_path for ref in refs}
                 )
-        if not self._page_refs_in_range(refs, tab):
+        try:
+            in_range = self._page_refs_in_range(refs, tab)
+        except PdfLoadError:
+            if self._model is None and tab is not None:
+                tab._close_loader_cache()  # drop sources opened before the failure
+            raise
+        if not in_range:
             self.page_transfer_failed.emit(
                 "Could not transfer pages: the dropped pages do not match "
                 "their source document."
@@ -1915,6 +1925,15 @@ class ThumbnailGrid(QScrollArea):
             return False
         self._apply_zoom(fitted)
         return True
+
+    def set_temp_manager(self, temp_manager: TempManager) -> None:
+        """Rebind drag/export temp files (and every card) to *temp_manager*."""
+        self._temp_manager = temp_manager
+        if self._model is not None:
+            for card in self._cards:
+                card.set_drag_context(
+                    self._model, self.selection_manager, temp_manager
+                )
 
     def set_thumbnail_zoom(
         self, thumbnail_width_px: int, *, manual: bool = True
