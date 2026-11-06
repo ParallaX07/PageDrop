@@ -35,6 +35,7 @@ from pagedrop.core.jobs import (
     reject_source_overwrite,
 )
 from pagedrop.core.pdf_loader import PdfLoadError
+from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path, local_paths_from_mime
 from pagedrop.ui.dialogs import (
     confirm_overwrite,
@@ -43,6 +44,7 @@ from pagedrop.ui.dialogs import (
 from pagedrop.ui.job_chrome import (
     JobChromeMixin,
     fitz_lock_released,
+    gui_fitz_call,
     run_with_fitz_lock,
 )
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -448,6 +450,7 @@ def run_tool_job(
     success_toast: str | Callable[[str], str] | None = None,
     credentials: RuntimeCredentials | None = None,
     secrets: dict[str, str] | None = None,
+    check_passwords: bool = True,
 ) -> None:
     """Password preflight → overwrite confirm → job runner (shared with Tools hub).
 
@@ -457,8 +460,12 @@ def run_tool_job(
     *host* must provide ``begin_job``, ``end_job``, ``job_runner``, ``set_job_progress``,
     and ``WINDOW_TITLE`` (same shape as ``ToolsWindow`` / ``ToolShellWindow``).
 
-    *credentials* reuses a tab's in-memory PDF passwords so a completed compare
-    does not prompt again for the same sources.
+    *credentials* reuses in-memory PDF passwords so a source already unlocked
+    does not prompt again. When omitted, the host's ``tool_credentials`` is used
+    if it has one (every ``ToolShellWindow`` does).
+
+    *check_passwords* False skips the PDF probe for jobs that never open the
+    input as a PDF (e.g. a ZIP that copies the raw bytes).
 
     *secrets* are runtime-only (e.g. encrypt passwords) — never written to
     ``JobSpec``, settings, or logs.
@@ -467,6 +474,8 @@ def run_tool_job(
     end = host.end_job
     runner: SerializedJobRunner = host.job_runner()
     title = getattr(host, "WINDOW_TITLE", "Tools")
+    if credentials is None:
+        credentials = getattr(host, "tool_credentials", None)
 
     out = Path(output)
     existing = existing_paths if existing_paths is not None else (
@@ -509,6 +518,8 @@ def run_tool_job(
         return
 
     def probe() -> RuntimeCredentials:
+        if not check_passwords:
+            return credentials if credentials is not None else RuntimeCredentials()
         return preflight_pdf_inputs(
             inputs,
             prompt=fitz_lock_released(
@@ -634,6 +645,29 @@ def source_still_loaded(shell, source: str, *, notify: bool = True) -> bool:
     return False
 
 
+def probe_pdf_input(shell, path: str) -> tuple[int, RuntimeCredentials] | None:
+    """Unlock *path* (prompting once, retrying a wrong password) and count pages.
+
+    Returns ``(count, credentials)`` or ``None`` when the user cancels the
+    prompt. Other errors propagate so callers keep their own wording. The
+    password is remembered on ``shell.tool_credentials`` for the job that follows.
+    """
+    try:
+        creds = preflight_pdf_inputs(
+            [path],
+            prompt=lambda name, incorrect: prompt_pdf_password(
+                shell, name, incorrect=incorrect
+            ),
+            credentials=shell.tool_credentials,
+            page_count=lambda p, password=None: gui_fitz_call(
+                pdf_page_count, p, password=password
+            ),
+        )
+    except JobCancelledError:
+        return None
+    return gui_fitz_call(pdf_page_count, path, password=creds.get(path)), creds
+
+
 def clear_field_error(field: QWidget) -> None:
     error = field.property("toolFieldError")
     if isinstance(error, QLabel):
@@ -682,6 +716,8 @@ class ToolShellWindow(JobChromeMixin, QWidget):
         self._editor = editor
         self._window_manager = window_manager
         self._init_job_chrome_state()
+        # In-memory only; never persisted. Shared by every probe and job.
+        self.tool_credentials = RuntimeCredentials()
         self._run_handler: Callable[[], None] | None = None
         self._run_enabled_check: Callable[[], bool] | None = None
         self._help_text = (help_text or description).strip() or description

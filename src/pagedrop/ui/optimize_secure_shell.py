@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core import optimize_secure as ops
-from pagedrop.core.pdf_loader import PdfPasswordRequiredError
-from pagedrop.core.pdf_service import page_count as pdf_page_count
+from pagedrop.core.pdf_loader import PdfLoadError
+from pagedrop.core.pdf_service import encryption_state
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import editor_pdf_context
@@ -100,15 +100,6 @@ def _pick_save_path(parent: QWidget, title: str, suggested: str) -> str | None:
 def _suggested_output(source: str, tool_id: str) -> str:
     path = Path(source)
     return str(path.with_name(f"{path.stem}{_OUTPUT_SUFFIX[tool_id]}{path.suffix}"))
-
-
-def _pdf_needs_password(path: str) -> bool:
-    try:
-        gui_fitz_call(pdf_page_count, path)
-    except PdfPasswordRequiredError:
-        return True
-    else:
-        return False
 
 
 def _configure_compress(shell: ToolShellWindow) -> None:
@@ -344,14 +335,28 @@ def _configure_decrypt(shell: ToolShellWindow) -> None:
         if not paths:
             return
         source = paths[0]
-        needs_password = _pdf_needs_password(source)
+        try:
+            state = gui_fitz_call(encryption_state, source)
+        except PdfLoadError as exc:
+            QMessageBox.warning(
+                shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
+            )
+            return
         if not source_still_loaded(shell, source):
             return
-        if not needs_password:
+        if state == "none":
             QMessageBox.information(
                 shell,
                 shell.WINDOW_TITLE,
                 "This PDF is not encrypted.",
+            )
+            return
+        if state == "restricted":
+            QMessageBox.information(
+                shell,
+                shell.WINDOW_TITLE,
+                "This PDF opens without a password, but an owner password "
+                "restricts it. Decrypt only removes an open password.",
             )
             return
         output = _pick_save_path(
