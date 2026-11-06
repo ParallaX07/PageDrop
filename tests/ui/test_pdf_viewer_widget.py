@@ -515,7 +515,7 @@ def test_https_link_opens_after_confirm(
     )
     monkeypatch.setattr(
         "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
-        lambda url: opened.append(url.toString()),
+        lambda url: opened.append(url.toString()) or True,
     )
     try:
         links = page_links(model.page_at(0))
@@ -524,6 +524,24 @@ def test_https_link_opens_after_confirm(
         viewer._on_link(0, uris[0])
         assert warned == []
         assert any(u.startswith("https://example.com/") for u in opened)
+    finally:
+        loader.close()
+
+
+def test_link_that_cannot_be_opened_warns(qtbot, linked_pdf: Path, monkeypatch) -> None:
+    viewer, model, loader = _bind_viewer(qtbot, linked_pdf)
+    warned: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Open
+    )
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda _parent, title, text: warned.append((title, text))
+    )
+    monkeypatch.setattr("pagedrop.ui.pdf_viewer.QDesktopServices.openUrl", lambda _url: False)
+    try:
+        link = next(lk for lk in page_links(model.page_at(0)) if lk.kind == "uri")
+        viewer._on_link(0, link)
+        assert warned == [("Open link", f"PageDrop could not open this link:\n\n{link.uri}")]
     finally:
         loader.close()
 
