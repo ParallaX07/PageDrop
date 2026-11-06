@@ -1,6 +1,6 @@
 # PageDrop CI — packaging gate + full pytest suite on Ubuntu and Windows.
-# Optional backends (Office COM, LibreOffice, tessdata) and PyInstaller are
-# intentionally unset; those tests skip without PAGEDROP_* env vars.
+# Python codecs (openpyxl, Pillow) are installed; Office COM, LibreOffice and
+# tessdata are intentionally unset, and those tests skip without PAGEDROP_* env vars.
 name: CI
 
 on:
@@ -57,7 +57,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --locked --group dev
+        run: uv sync --locked --group dev --group codecs
 
       - name: Lint
         run: uv run ruff check src tests

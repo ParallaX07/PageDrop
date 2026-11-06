@@ -36,7 +36,7 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-> Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
+> Optional features: The Windows build includes Office COM support, but Office conversion still needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
 
 **Windows (GitHub Releases)**, no Python required:
 
