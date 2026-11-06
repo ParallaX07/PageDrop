@@ -96,6 +96,16 @@ UI render pools stay at max thread count 1 and still share the same lock across 
 
 Tool pages use the same order: title and purpose, input, options, one valid execution action, then progress or result. A selected shell input contracts to a filename summary with **Change file** access. Status, toast, and result surface serve different jobs: the persistent result summary exposes a selectable filename and destination, while Preview / Open / Show in folder remain explicit choices (`result_actions`), never an automatic tab open. Recoverable tool errors also remain beside Run after transient feedback ends.
 
+## Logs and crash reports
+
+`utils/diagnostics.py` logs to stderr and to a rotating file, `logs/pagedrop.log` inside the per-user app data folder (the same folder Qt calls the app local data location, worked out without Qt because logging starts before the application exists). The file keeps 1 MiB per file and three older copies. Packaged builds have no console, so the file is the only record. If a second copy of PageDrop holds the file open and a rollover cannot rename it, the log keeps appending instead of dropping records. If the file cannot be opened, PageDrop starts anyway and says so on stderr.
+
+Helper processes (Office conversion, redaction verification, secure compression) are started with a `--pagedrop-` flag and stay out of the log: they create no folder or file, and their stdout stays clean for the JSON the parent reads. On a build without a console, native crash tracebacks go to `logs/native-crash.log`, a separate file so it never blocks rotation of the main log.
+
+Both log outputs mask the value after password-like keys (`password`, `token`, `secret`, `pfx`, `certificate` and similar) as `***`. Errors whose message can contain document text, such as a failed redaction check, are marked `log_detail_sensitive`; the log records only the error type and that details were withheld, even when such an error is the cause of another. The interface still shows the full message.
+
+An unhandled error on the main thread also opens one plain dialog that names the log file and never shows the error text. It appears once per crash site, so a paint handler that fails on every repaint cannot trap the user in dialogs. The limit: errors on worker threads, or before the `QApplication` exists, are only logged.
+
 ## Windows updates
 
 The Windows updater is deliberately separate from PDF work. `WindowManager`

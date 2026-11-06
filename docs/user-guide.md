@@ -97,6 +97,16 @@ from the result bar. PageDrop does not open the report automatically.
 - High-contrast preferences are respected where the platform exposes them
 - Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions
 
+## Log file for bug reports
+
+PageDrop keeps a log of problems and start-ups. If something goes wrong, attach `pagedrop.log` to your bug report (check it for anything private first; passwords are hidden, but file names are not). When PageDrop shows "PageDrop hit an unexpected problem", the message gives the exact path, and you can select and copy it.
+
+- Windows: `%LOCALAPPDATA%\PageDrop\PageDrop\logs\pagedrop.log` (paste that into the File Explorer address bar)
+- macOS: `~/Library/Application Support/PageDrop/PageDrop/logs/pagedrop.log`
+- Linux: `~/.local/share/PageDrop/PageDrop/logs/pagedrop.log`, or under `$XDG_DATA_HOME` if you have set it
+
+Older copies are named `pagedrop.log.1` to `pagedrop.log.3`. If PageDrop closes without any message, also look for `native-crash.log` in the same folder.
+
 ## Windows updates
 
 Updates are available only in the packaged Windows version. PageDrop checks for a
