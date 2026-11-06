@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
+from PyQt6 import sip
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -86,6 +88,9 @@ class TipsOverlay(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("TipsOverlay")
+        # Without this the QSS dim background on a plain QWidget is not painted.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._prev_focus: QWidget | None = None
         self.hide()
 
         layout = QVBoxLayout(self)
@@ -116,11 +121,10 @@ class TipsOverlay(QWidget):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        got_it = QPushButton("Got it")
-        got_it.setObjectName("TipsOverlayDismiss")
-        got_it.setDefault(True)
-        got_it.clicked.connect(self._dismiss)
-        buttons.addWidget(got_it)
+        self._got_it = QPushButton("Got it")
+        self._got_it.setObjectName("TipsOverlayDismiss")
+        self._got_it.clicked.connect(self._dismiss)
+        buttons.addWidget(self._got_it)
         card_layout.addLayout(buttons)
 
         layout.addWidget(card)
@@ -129,14 +133,24 @@ class TipsOverlay(QWidget):
             parent.installEventFilter(self)
 
     def show_tips(self) -> None:
+        if not self.isVisible():
+            self._prev_focus = QApplication.focusWidget()
         self._sync_geometry()
         self.show()
         self.raise_()
+        self._got_it.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _dismiss(self) -> None:
         set_has_seen_tips(True)
         self.hide()
+        prev, self._prev_focus = self._prev_focus, None
+        if prev is not None and not sip.isdeleted(prev) and prev.isVisible():
+            prev.setFocus(Qt.FocusReason.OtherFocusReason)
         self.dismissed.emit()
+
+    def focusNextPrevChild(self, next: bool) -> bool:  # noqa: A002, N802
+        # Got it is the only control; keep Tab from reaching widgets behind.
+        return True
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:

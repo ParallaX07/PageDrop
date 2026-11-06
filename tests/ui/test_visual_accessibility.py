@@ -1218,3 +1218,259 @@ def test_r8_light_hc_parity_freeze(isolated_settings):
     assert status_success_hex() == STATUS_SUCCESS
     assert status_warning_hex() == STATUS_WARNING
     assert close_tab_hex() == CLOSE_TAB
+
+
+# --- Toast: mouse only on the card, pause while hovered or focused ---------
+
+
+class _PressRecorder:
+    """Event filter that notes which widgets received a real mouse press."""
+
+    def __init__(self, *widgets):
+        from PyQt6.QtCore import QEvent, QObject
+
+        outer = self
+
+        class _Filter(QObject):
+            def eventFilter(self, watched, event):  # noqa: N802
+                if event.type() == QEvent.Type.MouseButtonPress:
+                    outer.pressed.append(watched)
+                return False
+
+        self.pressed: list = []
+        self._filter = _Filter()
+        for widget in widgets:
+            widget.installEventFilter(self._filter)
+
+
+def _window_click(window, widget, pos):
+    from PyQt6.QtTest import QTest
+
+    point = widget.mapTo(window, pos)
+    QTest.mouseClick(window.windowHandle(), Qt.MouseButton.LeftButton, pos=point)
+
+
+def _window_move(window, widget, pos):
+    from PyQt6.QtTest import QTest
+
+    QTest.mouseMove(window.windowHandle(), widget.mapTo(window, pos))
+
+
+def _within(widget, candidate) -> bool:
+    return candidate is widget or (
+        candidate is not None and widget.isAncestorOf(candidate)
+    )
+
+
+def _loaded_main_window(qtbot, main_window, pdf):
+    from tests.conftest import load_pdf_in_active_tab, wait_for_pdf_loaded
+
+    main_window.resize(900, 700)
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    load_pdf_in_active_tab(main_window, str(pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    return main_window._thumbnail_grid, main_window._tab_manager, main_window._toast
+
+
+def _grid_point(grid):
+    return grid.viewport().rect().topLeft() + QPointF(12, 12).toPoint()
+
+
+def _assert_mask_follows_card(tabs, toast, grid):
+    """Over the card the card answers; a few pixels above it the grid does."""
+    card = toast._card
+    top = card.geometry().top()
+    inside = card.mapTo(tabs, card.rect().center())
+    just_above = card.mapTo(tabs, card.rect().topLeft()) - type(inside)(0, 4)
+    assert top >= 0
+    assert _within(card, tabs.childAt(inside))
+    assert _within(grid, tabs.childAt(just_above))
+    assert _within(grid, tabs.childAt(card.mapTo(tabs, card.rect().center()) - type(inside)(0, 200)))
+    assert toast.mask().boundingRect() == card.geometry()
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("reduce", [False, True])
+def test_undo_toast_takes_mouse_on_its_card_only(
+    qtbot, main_window, five_page_pdf, isolated_settings, reduce
+):
+    set_reduce_motion(reduce)
+    grid, tabs, toast = _loaded_main_window(qtbot, main_window, five_page_pdf)
+    undone: list[str] = []
+    main_window._show_toast("Deleted 1 page", kind="undo", on_undo=lambda: undone.append("u"))
+
+    # Right after show the slide may still be running; the mask must already match.
+    _assert_mask_follows_card(tabs, toast, grid)
+    if not reduce:
+        from PyQt6.QtCore import QAbstractAnimation
+
+        qtbot.waitUntil(
+            lambda: toast._motion_anim.state() == QAbstractAnimation.State.Stopped,
+            timeout=1000,
+        )
+        _assert_mask_follows_card(tabs, toast, grid)
+
+    # A real click outside the card reaches the grid underneath.
+    recorder = _PressRecorder(grid.viewport())
+    _window_click(main_window, grid.viewport(), _grid_point(grid))
+    assert recorder.pressed == [grid.viewport()]
+
+    # The undo button on the card still works.
+    assert toast._undo_button.isVisible()
+    _window_click(main_window, toast._undo_button, toast._undo_button.rect().center())
+    assert undone == ["u"]
+    assert not toast.isVisible()
+
+
+def test_toast_mask_tracks_the_slide(qtbot, main_window, five_page_pdf, isolated_settings):
+    set_reduce_motion(False)
+    grid, tabs, toast = _loaded_main_window(qtbot, main_window, five_page_pdf)
+    main_window._show_toast("Deleted 1 page", kind="undo", on_undo=lambda: None)
+    toast._motion_anim.stop()
+    for t in (0.0, 0.5, 1.0):
+        toast.motion_t = t
+        _assert_mask_follows_card(tabs, toast, grid)
+    # A point that is on the card at rest but below it when slid down.
+    toast.motion_t = 0.0
+    rest_top = toast._card.geometry().top()
+    toast.motion_t = 1.0
+    assert toast._card.geometry().top() > rest_top
+    probe = toast._card.mapTo(tabs, toast._card.rect().topLeft())
+    probe.setY(probe.y() - 2)
+    assert _within(grid, tabs.childAt(probe))
+
+
+@pytest.mark.parametrize("kind", ["info", "success", "error"])
+def test_plain_toast_clicks_outside_card_reach_the_grid(
+    qtbot, main_window, five_page_pdf, isolated_settings, kind
+):
+    set_reduce_motion(True)
+    grid, tabs, toast = _loaded_main_window(qtbot, main_window, five_page_pdf)
+    main_window._show_toast("Saved", kind=kind)
+    assert not toast.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    _assert_mask_follows_card(tabs, toast, grid)
+
+    recorder = _PressRecorder(grid.viewport())
+    _window_click(main_window, grid.viewport(), _grid_point(grid))
+    assert recorder.pressed == [grid.viewport()]
+
+
+@pytest.fixture
+def toast_host(qtbot, isolated_settings):
+    from PyQt6.QtWidgets import QWidget
+
+    from pagedrop.ui.busy_overlay import ToastOverlay
+
+    set_reduce_motion(True)
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.setStyleSheet(app_stylesheet())
+    host.resize(500, 300)
+    host.show()
+    qtbot.waitExposed(host)
+    host.activateWindow()
+    return host, ToastOverlay(host)
+
+
+def test_toast_pauses_while_hovered_and_resumes_with_remaining_time(qtbot, toast_host):
+    host, toast = toast_host
+    toast.show_toast("Saved", timeout_ms=1500)
+    away = host.rect().topLeft() + QPointF(5, 5).toPoint()
+    _window_move(host, host, away)
+    _window_move(host, toast._card, toast._card.rect().center())
+    qtbot.waitUntil(lambda: not toast._timer.isActive(), timeout=1000)
+    assert toast.isVisible()
+    assert toast._paused
+
+    # Held longer than the original timeout: still up.
+    qtbot.wait(50)
+    assert toast.isVisible()
+
+    _window_move(host, host, away)
+    qtbot.waitUntil(lambda: toast._timer.isActive(), timeout=1000)
+    assert 500 <= toast._timer.remainingTime() <= 1600
+    qtbot.waitUntil(lambda: not toast.isVisible(), timeout=3000)
+
+
+def test_toast_resume_keeps_a_floor_when_little_time_was_left(qtbot, toast_host):
+    host, toast = toast_host
+    toast.show_toast("Saved", timeout_ms=60)
+    _window_move(host, host, QPointF(5, 5).toPoint())
+    _window_move(host, toast._card, toast._card.rect().center())
+    qtbot.waitUntil(lambda: toast._paused, timeout=1000)
+    assert toast._remaining_ms >= 500
+    _window_move(host, host, QPointF(5, 5).toPoint())
+    qtbot.waitUntil(lambda: toast._timer.isActive(), timeout=1000)
+    assert toast._timer.remainingTime() > 400
+
+
+def test_toast_pauses_while_undo_button_has_focus(qtbot, toast_host):
+    host, toast = toast_host
+    toast.show_toast("Deleted", kind="undo", timeout_ms=1500, on_undo=lambda: None)
+    qtbot.waitUntil(host.isActiveWindow, timeout=2000)
+    toast._undo_button.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.waitUntil(lambda: not toast._timer.isActive(), timeout=1000)
+    assert toast._paused
+    assert toast.isVisible()
+
+    host.setFocus(Qt.FocusReason.OtherFocusReason)
+    toast._undo_button.clearFocus()
+    qtbot.waitUntil(lambda: toast._timer.isActive(), timeout=1000)
+    assert not toast._paused
+    qtbot.waitUntil(lambda: not toast.isVisible(), timeout=3000)
+
+
+def test_new_toast_clears_a_stale_pause(qtbot, toast_host):
+    host, toast = toast_host
+    toast.show_toast("First", timeout_ms=1500)
+    _window_move(host, host, QPointF(5, 5).toPoint())
+    _window_move(host, toast._card, toast._card.rect().center())
+    qtbot.waitUntil(lambda: toast._paused, timeout=1000)
+
+    # Pointer leaves while the toast is hidden, so no Leave reaches the card.
+    toast.hide()
+    assert not toast._paused
+    _window_move(host, host, QPointF(5, 5).toPoint())
+    toast.show_toast("Second", timeout_ms=1500)
+    assert not toast._paused
+    assert toast._timer.isActive()
+
+
+def test_toast_shown_under_the_pointer_waits(qtbot, toast_host):
+    host, toast = toast_host
+    toast.show_toast("First", timeout_ms=1500)
+    centre = toast._card.mapTo(host, toast._card.rect().center())
+    toast.hide()
+    from PyQt6.QtGui import QCursor
+
+    original = QCursor.pos()
+    try:
+        QCursor.setPos(host.mapToGlobal(centre))
+        toast.show_toast("Second", timeout_ms=1500)
+        qtbot.waitUntil(lambda: toast._paused, timeout=1000)
+        assert not toast._timer.isActive()
+        assert toast.isVisible()
+    finally:
+        QCursor.setPos(original)
+
+
+def test_hover_during_exit_is_ignored(qtbot, isolated_settings):
+    from PyQt6.QtWidgets import QWidget
+
+    from pagedrop.ui.busy_overlay import ToastOverlay
+
+    set_reduce_motion(False)
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(500, 300)
+    host.show()
+    qtbot.waitExposed(host)
+    toast = ToastOverlay(host)
+    toast.show_toast("Saved", timeout_ms=30)
+    qtbot.waitUntil(lambda: toast._exiting, timeout=2000)
+    _window_move(host, toast._card, toast._card.rect().center())
+    assert not toast._paused
+    qtbot.waitUntil(lambda: not toast.isVisible(), timeout=2000)
