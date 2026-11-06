@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import io
+import json
 import subprocess
 import sys
 
@@ -575,3 +577,34 @@ def test_compress_worker_argv_forms(monkeypatch: pytest.MonkeyPatch) -> None:
         ops.COMPRESS_WORKER_FLAG,
         "--compress-json",
     ]
+
+
+@pytest.mark.parametrize("stdin_text", [None, "", "not json", "{}"], ids=["no-stdin", "empty", "bad-json", "no-fields"])
+def test_cli_compress_bad_request_reports_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, stdin_text: str | None
+) -> None:
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", None if stdin_text is None else io.StringIO(stdin_text))
+    monkeypatch.setattr(sys, "stderr", err)
+    assert ops._cli_compress() == 1
+    assert err.getvalue().strip()
+
+
+def test_cli_compress_writes_output_and_leaves_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src = _make_pdf(tmp_path / "src.pdf", text="compress me " * 40)
+    out = tmp_path / "out.pdf"
+    source_hash = file_sha256(src)
+    payload = {
+        "source": str(src),
+        "output": str(out),
+        "name": "test",
+        "dpi": 72,
+        "jpeg_quality": 50,
+        "dpi_threshold": 100,
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert ops._cli_compress() == 0
+    assert out.is_file() and out.resolve() != src.resolve()
+    assert file_sha256(src) == source_hash

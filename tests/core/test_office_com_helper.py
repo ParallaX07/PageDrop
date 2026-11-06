@@ -206,6 +206,30 @@ def test_worker_main_json_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert payload["code"] == "not_windows"
 
 
+@pytest.mark.parametrize(
+    "stdin_text", ["", "not json", "[]", "{}"], ids=["empty", "bad-json", "not-object", "no-paths"]
+)
+def test_worker_main_bad_stdin_replies_bad_request(
+    monkeypatch: pytest.MonkeyPatch, stdin_text: str
+) -> None:
+    from io import StringIO
+
+    buf = StringIO()
+    monkeypatch.setattr(worker.sys, "stdin", StringIO(stdin_text))
+    monkeypatch.setattr(worker.sys, "stdout", buf)
+    assert worker.main([]) == 1
+    payload = json.loads(buf.getvalue())
+    assert payload["ok"] is False and payload["code"] == "bad_request"
+
+
+def test_worker_main_without_stdout_returns_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    from io import StringIO
+
+    monkeypatch.setattr(worker.sys, "stdin", StringIO("{}"))
+    monkeypatch.setattr(worker.sys, "stdout", None)
+    assert worker.main([]) == 1
+
+
 def test_pywin32_not_in_base_dependencies() -> None:
     """Base install must not require pywin32 (Linux/macOS wheels stay clean)."""
     text = Path("pyproject.toml").read_text(encoding="utf-8")
