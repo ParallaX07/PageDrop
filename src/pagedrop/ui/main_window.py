@@ -2160,11 +2160,21 @@ class MainWindow(QMainWindow):
         KeyboardShortcutsDialog(self).exec()
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About PageDrop",
-            f"PageDrop version {QApplication.instance().applicationVersion()}",
+        version = QApplication.instance().applicationVersion()
+        box = QMessageBox(self)
+        box.setWindowTitle("About PageDrop")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(
+            f"<p>PageDrop version {version}</p>"
+            "<p>PageDrop is free software under AGPL-3.0-or-later.</p>"
+            '<p>Source: <a href="https://github.com/ParallaX07/PageDrop/tree/v'
+            f'{version}">https://github.com/ParallaX07/PageDrop/tree/v{version}</a></p>'
         )
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        icon = self.windowIcon()
+        if not icon.isNull():
+            box.setIconPixmap(icon.pixmap(64, 64))
+        box.exec()
 
     def _open_preferences(self) -> None:
         from pagedrop.ui.preferences_dialog import open_preferences
