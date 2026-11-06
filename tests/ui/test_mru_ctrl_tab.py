@@ -156,3 +156,70 @@ def test_ctrl_tab_noop_with_one_tab(main_window, one_page_pdf, monkeypatch, qtbo
     _trigger_shortcut(main_window, "Ctrl+Tab")
     qtbot.wait(100)
     assert main_window._tab_manager.currentIndex() == 0
+
+
+def _three_blank_tabs(window: MainWindow):
+    manager = window._tab_manager
+    first = manager.widget(0)
+    second = manager.add_blank_tab()
+    third = manager.add_blank_tab()
+    return first, second, third
+
+
+def test_ctrl_tab_follows_tab_after_drag_reorder(main_window):
+    manager = main_window._tab_manager
+    first, second, third = _three_blank_tabs(main_window)
+    manager.setCurrentWidget(first)
+    manager.setCurrentWidget(third)
+
+    manager.tabBar().moveTab(0, 2)
+    assert manager.indexOf(first) == 2
+
+    _trigger_shortcut(main_window, "Ctrl+Tab")
+    assert manager.currentWidget() is first
+    _trigger_shortcut(main_window, "Ctrl+Tab")
+    assert manager.currentWidget() is third
+
+
+def test_ctrl_tab_after_closing_previous_tab_is_a_noop(main_window):
+    manager = main_window._tab_manager
+    first, second, third = _three_blank_tabs(main_window)
+    manager.setCurrentWidget(first)
+    manager.setCurrentWidget(third)
+
+    manager.close_tab(manager.indexOf(first))
+    _trigger_shortcut(main_window, "Ctrl+Tab")
+
+    assert manager.currentWidget() is third
+    assert main_window._previous_tab is None
+
+
+def test_ctrl_tab_after_closing_current_tab_uses_new_history(main_window):
+    manager = main_window._tab_manager
+    first, second, third = _three_blank_tabs(main_window)
+    manager.setCurrentWidget(second)
+    manager.setCurrentWidget(third)
+
+    manager.close_tab(manager.indexOf(third))
+    landed = manager.currentWidget()
+    other = first if landed is second else second
+    manager.setCurrentWidget(other)
+    _trigger_shortcut(main_window, "Ctrl+Tab")
+
+    assert manager.currentWidget() is landed
+
+
+def test_ctrl_tab_after_detaching_previous_tab_is_a_noop(main_window, qtbot):
+    manager = main_window._tab_manager
+    first, second, third = _three_blank_tabs(main_window)
+    manager.setCurrentWidget(first)
+    manager.setCurrentWidget(third)
+    other = MainWindow()
+    qtbot.addWidget(other)
+
+    other._adopt_tab(first)
+    assert manager.indexOf(first) == -1
+    assert main_window._previous_tab is None
+    _trigger_shortcut(main_window, "Ctrl+Tab")
+
+    assert manager.currentWidget() is third
