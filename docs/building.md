@@ -60,6 +60,8 @@ $env:PAGEDROP_EXE = ".\dist\pagedrop\pagedrop.exe"
 uv run pytest tests/smoke/ -v -k executable
 ```
 
+Besides the launch check, these tests run the binary with its helper re-entry flags (redaction verifier, lossy compressor, Office COM worker) and check each reply. Run them with `-k frozen` to select only the probes. The Linux CI job runs the same steps. One probe is Windows only: it confirms the Office COM worker finds the bundled pywin32. It sends a junk `.docx`, so it may start Word briefly on a machine with Office.
+
 ## Release test gate
 
 Full pytest suite plus executable smoke (set `PAGEDROP_EXE` if the binary is not at the default path):
