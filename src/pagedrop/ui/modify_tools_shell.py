@@ -43,6 +43,7 @@ from pagedrop.core.modify_ops import (
 )
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
+from pagedrop.core.pdf_service import call as pdf_call
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
@@ -1067,7 +1068,7 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
             status.setText("Drop a PDF to inspect existing bookmarks.")
             return
         try:
-            marks = get_bookmarks(paths[0])
+            marks = pdf_call(get_bookmarks, paths[0])
         except Exception as exc:
             status.setText(f"Could not read bookmarks: {exc}")
             return
@@ -1098,7 +1099,7 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
             opts["bookmarks"] = rows
         elif act == "toc_page":
             try:
-                if not get_bookmarks(source):
+                if not pdf_call(get_bookmarks, source):
                     QMessageBox.warning(
                         shell,
                         shell.WINDOW_TITLE,

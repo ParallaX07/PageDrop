@@ -9,6 +9,7 @@ from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoadError, open_pdf
 from pagedrop.core.pdf_writer import write_pdf
 from pagedrop.core.redact import redact_edit_model
+from pagedrop.core.thread_policy import FITZ_LOCK
 
 
 def handle_editor_save(ctx: JobContext) -> Path:
@@ -34,7 +35,7 @@ def handle_editor_save(ctx: JobContext) -> Path:
         write_pdf(
             model, str(ctx.staged_output), markup=markup, passwords=ctx.credentials.snapshot()
         )
-        with open_pdf(str(ctx.staged_output)) as output:
+        with FITZ_LOCK, open_pdf(str(ctx.staged_output)) as output:
             if output.page_count != model.logical_count():
                 raise PdfLoadError("Saved PDF has an unexpected page count")
     ctx.cancel.check()
@@ -42,6 +43,7 @@ def handle_editor_save(ctx: JobContext) -> Path:
 
 
 def register_editor_handlers(runner: SerializedJobRunner) -> None:
-    # The writer/redactor already acquire FITZ_LOCK around their actual MuPDF work.
-    # Keeping verification outside that lock preserves the I4 thread policy.
+    # holds_fitz=False so the redactor's fresh-process verification runs without
+    # FITZ_LOCK. The writer and redactor take the lock around their own MuPDF
+    # work, and the page-count verification open takes it in the handler.
     runner.register("editor_save", handle_editor_save, holds_fitz=False)

@@ -17,7 +17,6 @@ measured (same O10 upgrade).
 
 from __future__ import annotations
 
-import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
@@ -29,7 +28,7 @@ import fitz
 
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import open_pdf, render_page_png, unrotated_page_geom
-from pagedrop.core.thread_policy import ensure_no_fitz_document
+from pagedrop.core.thread_policy import FITZ_LOCK, ensure_no_fitz_document
 
 if TYPE_CHECKING:
     from pagedrop.core.annotations import AnnotationOp
@@ -50,8 +49,6 @@ def _password_for(
     except OSError:
         key = str(Path(path))
     return passwords.get(key)
-
-FITZ_LOCK = threading.RLock()
 
 T = TypeVar("T")
 

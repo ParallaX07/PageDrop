@@ -8,11 +8,14 @@ MuPDF global caches. Concurrent fitz from Qt threads can crash or corrupt.
 
 Rules:
 
-1. Never pass a live ``fitz.Document`` (or ``PdfLoader.doc``) into a worker.
+1. Every in-process PyMuPDF call holds ``FITZ_LOCK``.
+2. Never pass a live ``fitz.Document`` (or ``PdfLoader.doc``) into a worker.
    Workers open by path inside ``run()`` and close before returning.
-2. ``PdfTab._loader_cache`` is **main-thread only**. UI code may use it for
-   page counts / sizes; render and write workers must not.
-3. Do not add new concurrent fitz paths on ``QThreadPool`` without a process
+3. ``PdfTab._loader_cache`` is **main-thread only**; render and write workers
+   must not touch it. ``PdfLoader`` methods take ``FITZ_LOCK`` themselves, and
+   UI code reading other fitz data (metadata, bookmarks) goes through
+   ``pdf_service.call``. No rule permits unlocked PyMuPDF.
+4. Do not add new concurrent fitz paths on ``QThreadPool`` without a process
    boundary. Prefer ``multiprocessing`` (per-process opens) or a single
    serialized PDF service process.
 
@@ -40,7 +43,13 @@ Current state
 
 from __future__ import annotations
 
+import threading
 from typing import Any
+
+# Process-wide gate for in-process PyMuPDF. Lives here (imports nothing from
+# pdf_service / pdf_loader) so every core module can take it without a cycle;
+# ``pdf_service.FITZ_LOCK`` is this same object. Must stay re-entrant.
+FITZ_LOCK = threading.RLock()
 
 # Current QRunnable / pool sites that call fitz (audit).
 # Each pool is maxThreadCount=1 and serializes via pdf_service.FITZ_LOCK
