@@ -788,18 +788,20 @@ def test_metadata_and_bookmark_probes_hold_fitz_lock(
     assert meta_shell is not None
     qtbot.addWidget(meta_shell)
     meta_shell.drop_zone.set_paths([str(pdf)])  # load_meta
-    assert len(held_at_open) == 1
+    assert len(held_at_open) >= 1
+    seen = len(held_at_open)
 
     marks_shell = open_modify_shell(tools, "bookmarks")
     assert marks_shell is not None
     qtbot.addWidget(marks_shell)
     marks_shell.drop_zone.set_paths([str(pdf)])  # refresh_status
-    assert len(held_at_open) == 2
+    assert len(held_at_open) > seen
+    seen = len(held_at_open)
 
     action = marks_shell._options_host.findChildren(QComboBox)[0]
     action.setCurrentIndex(action.findData("toc_page"))
     marks_shell._run_btn.click()  # on_run: bookmark probe before the TOC job
-    assert len(held_at_open) == 3
+    assert len(held_at_open) > seen
 
     assert all(held_at_open), (
         f"fitz.open without FITZ_LOCK (owned flags={held_at_open})"

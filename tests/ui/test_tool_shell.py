@@ -26,11 +26,13 @@ from pagedrop.ui.organize_tools import (
 from pagedrop.ui.tool_shell import (
     FileDropZone,
     ToolShellWindow,
+    probe_pdf_input,
     show_field_error,
     run_tool_job,
 )
 from pagedrop.ui.tools_window import ToolsWindow
 from tests.conftest import file_sha256, hold_fitz_lock
+from tests.core.test_jobs import _encrypted_pdf
 
 
 def _write_pdf(path: Path, pages: int = 3) -> None:
@@ -1357,3 +1359,95 @@ def test_cancel_during_prompt_reacquire_ends_cancelled_without_the_lock(
     FITZ_LOCK.release()
     assert not out.exists()
     assert file_sha256(src) == source_hash
+
+
+def _count_password_prompts(monkeypatch, replies: list[tuple[str, bool]]) -> list[bool]:
+    """Patch the password dialog; returns the incorrect-flag seen on each prompt."""
+    seen: list[bool] = []
+    queue = iter(replies)
+
+    def fake_get_text(*args, **kwargs):
+        label = args[2] if len(args) > 2 else kwargs.get("label", "")
+        seen.append("Incorrect password" in label)
+        return next(queue)
+
+    monkeypatch.setattr("pagedrop.ui.dialogs.QInputDialog.getText", fake_get_text)
+    return seen
+
+
+def test_probe_pdf_input_returns_count_and_credentials(qtbot, tmp_path, monkeypatch):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    shell = ToolShellWindow(title="Probe tool", description="Probe.")
+    qtbot.addWidget(shell)
+    prompts = _count_password_prompts(monkeypatch, [("wrong", True), ("secret", True)])
+
+    probed = probe_pdf_input(shell, str(enc))
+
+    assert probed is not None
+    count, creds = probed
+    assert count == 1
+    assert creds is shell.tool_credentials
+    assert creds.get(str(enc)) == "secret"
+    assert prompts == [False, True]
+
+    # The unlocked password is remembered: no further prompt.
+    assert probe_pdf_input(shell, str(enc)) is not None
+    assert prompts == [False, True]
+
+
+def test_probe_pdf_input_returns_none_when_prompt_cancelled(
+    qtbot, tmp_path, monkeypatch
+):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    shell = ToolShellWindow(title="Probe tool", description="Probe.")
+    qtbot.addWidget(shell)
+    prompts = _count_password_prompts(monkeypatch, [("", False)])
+
+    assert probe_pdf_input(shell, str(enc)) is None
+    assert prompts == [False]
+    assert shell.tool_credentials.get(str(enc)) is None
+
+
+def test_run_tool_job_defaults_to_shell_credentials(qtbot, tmp_path, monkeypatch):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = file_sha256(enc)
+    shell = ToolShellWindow(title="Reverse tool", description="Reverse.")
+    qtbot.addWidget(shell)
+    prompts = _count_password_prompts(monkeypatch, [("secret", True)])
+
+    for name in ("first.pdf", "second.pdf"):
+        out = tmp_path / name
+        run_tool_job(shell, job_type="reverse", inputs=[str(enc)], output=str(out))
+        qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10_000)
+        assert out.is_file()
+        assert out != enc
+
+    assert prompts == [False]
+    assert shell.tool_credentials.get(str(enc)) == "secret"
+    assert file_sha256(enc) == source_hash
+
+
+def test_zip_of_encrypted_pdf_does_not_prompt(qtbot, tmp_path, monkeypatch):
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    source_hash = file_sha256(enc)
+    out = tmp_path / "locked.zip"
+    shell = ToolShellWindow(title="Zip tool", description="Zip.")
+    qtbot.addWidget(shell)
+    prompts = _count_password_prompts(monkeypatch, [])
+
+    run_tool_job(
+        shell,
+        job_type="zip",
+        inputs=[str(enc)],
+        output=str(out),
+        check_passwords=False,
+    )
+    qtbot.waitUntil(lambda: not shell.is_job_running(), timeout=10_000)
+
+    assert prompts == []
+    assert out.is_file()
+    assert file_sha256(enc) == source_hash

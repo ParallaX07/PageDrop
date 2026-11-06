@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
+import pytest
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from pagedrop.ui.optimize_secure_shell import (
@@ -206,6 +207,85 @@ def test_decrypt_rejects_unencrypted(qtbot, tmp_path, monkeypatch, isolated_sett
     monkeypatch.setattr(QMessageBox, "information", fake_info)
     shell._run_btn.click()
     assert any("not encrypted" in t for t in infos)
+    shell.close()
+    tools.close()
+
+
+def _owner_only_pdf(path: Path) -> None:
+    doc = fitz.open()
+    try:
+        doc.new_page(width=200, height=200)
+        doc.save(
+            str(path),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="",
+            owner_pw="owner",
+            permissions=fitz.PDF_PERM_PRINT,
+        )
+    finally:
+        doc.close()
+
+
+def test_decrypt_owner_only_pdf_explains_and_runs_no_job(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    pdf = tmp_path / "restricted.pdf"
+    _owner_only_pdf(pdf)
+    source_hash = file_sha256(pdf)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_optimize_secure_shell(tools, "decrypt")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(pdf)])
+
+    infos: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda parent, title, text: infos.append(text) or QMessageBox.StandardButton.Ok,
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *a, **k: pytest.fail("Save dialog must not open"),
+    )
+    shell._run_btn.click()
+
+    assert len(infos) == 1
+    assert "owner password" in infos[0]
+    assert "not encrypted" not in infos[0]
+    assert not shell.is_job_running()
+    assert file_sha256(pdf) == source_hash
+    shell.close()
+    tools.close()
+
+
+def test_decrypt_corrupt_pdf_shows_warning(
+    qtbot, tmp_path, monkeypatch, isolated_settings
+):
+    bad = tmp_path / "bad.pdf"
+    bad.write_bytes(b"not a pdf at all")
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    shell = open_optimize_secure_shell(tools, "decrypt")
+    assert shell is not None
+    qtbot.addWidget(shell)
+    shell.drop_zone.set_paths([str(bad)])
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda parent, title, text: warnings.append(text) or QMessageBox.StandardButton.Ok,
+    )
+    shell._run_btn.click()
+
+    assert len(warnings) == 1
+    assert warnings[0].startswith("Could not open PDF:")
+    assert not shell.is_job_running()
     shell.close()
     tools.close()
 

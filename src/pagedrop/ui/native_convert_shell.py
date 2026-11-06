@@ -21,14 +21,12 @@ from pagedrop.core.native_conversions import (
     batch_output_paths,
     predicted_export_paths,
 )
-from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import (
     export_formats,
     import_to_pdf_dialog_filter,
     is_native_import_path,
     is_pdf_path,
 )
-from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
@@ -36,6 +34,7 @@ from pagedrop.ui.tool_shell import (
     EMPTY_PROMPT_DOCUMENTS,
     ToolShellWindow,
     clear_field_error,
+    probe_pdf_input,
     run_tool_job,
     show_field_error,
     source_still_loaded,
@@ -215,12 +214,15 @@ def _configure_export_from_pdf(
             return
 
         try:
-            page_count = gui_fitz_call(pdf_page_count, source)
+            probed = probe_pdf_input(shell, source)
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
             )
             return
+        if probed is None:
+            return
+        page_count = probed[0]
         if not source_still_loaded(shell, source):
             return
 

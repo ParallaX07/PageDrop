@@ -20,9 +20,6 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core import pdf_tools
-from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
-from pagedrop.core.pdf_service import page_count as pdf_page_count
-from pagedrop.ui.dialogs import prompt_pdf_password
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -30,6 +27,7 @@ from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
     clear_field_error,
+    probe_pdf_input,
     run_tool_job,
     show_field_error,
     source_still_loaded,
@@ -188,12 +186,15 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
             show_field_error(folder, "Choose an output folder.")
             return
         try:
-            page_count = gui_fitz_call(pdf_page_count, source)
+            probed = probe_pdf_input(shell, source)
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
             )
             return
+        if probed is None:
+            return
+        page_count = probed[0]
         if not source_still_loaded(shell, source):
             return
         parsed = parse_page_ranges(ranges_text, page_count)
@@ -545,6 +546,7 @@ def _configure_zip(shell: ToolShellWindow) -> None:
             inputs=paths,
             output=output,
             progress_message="Creating ZIP…",
+            check_passwords=False,
         )
 
     shell.set_run_handler(on_run)
@@ -571,7 +573,12 @@ def _configure_metadata(shell: ToolShellWindow) -> None:
         if not paths or not Path(paths[0]).is_file():
             return
         try:
-            meta = gui_fitz_call(pdf_tools.metadata_get, paths[0])
+            probed = probe_pdf_input(shell, paths[0])
+            if probed is None:
+                return
+            meta = gui_fitz_call(
+                pdf_tools.metadata_get, paths[0], password=probed[1].get(paths[0])
+            )
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not read metadata:\n{exc}"
@@ -685,20 +692,13 @@ def _configure_attachments(shell: ToolShellWindow) -> None:
 
         if current == "extract":
             try:
-                creds = preflight_pdf_inputs(
-                    [source],
-                    prompt=lambda name, incorrect: prompt_pdf_password(
-                        shell, name, incorrect=incorrect
-                    ),
-                    page_count=lambda path, password=None: gui_fitz_call(
-                        pdf_page_count, path, password=password
-                    ),
-                )
-            except JobCancelledError:
-                return
+                probed = probe_pdf_input(shell, source)
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
                 return
+            if probed is None:
+                return
+            creds = probed[1]
             try:
                 attachments = gui_fitz_call(
                     pdf_tools.attachments_list, source, password=creds.get(source)
