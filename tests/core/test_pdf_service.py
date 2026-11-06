@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 
 import fitz
@@ -428,3 +429,81 @@ def test_encryption_state_classifies_inputs(tmp_path: Path) -> None:
     # Still "password" once an unlocked entry is cached.
     page_count(str(locked), password="secret")
     assert encryption_state(str(locked)) == "password"
+
+
+def _replace_file(target: Path, source: Path) -> None:
+    """Swap *source* over *target* and make sure the file signature differs."""
+    before = target.stat()
+    source.replace(target)
+    stat = target.stat()
+    if (stat.st_mtime_ns, stat.st_size) == (before.st_mtime_ns, before.st_size):
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns + 10**9))
+    after = target.stat()
+    assert (after.st_mtime_ns, after.st_size) != (before.st_mtime_ns, before.st_size)
+
+
+def test_replaced_encrypted_file_asks_for_the_new_password(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_loader import PdfPasswordError
+    from tests.core.test_jobs import _encrypted_pdf
+
+    target = tmp_path / "x.pdf"
+    _encrypted_pdf(target, password="one")
+    assert page_count(str(target), password="one") == 1
+
+    other = tmp_path / "other.pdf"
+    _encrypted_pdf(other, password="two")
+    _replace_file(target, other)
+
+    with pytest.raises(PdfPasswordError):
+        page_count(str(target), password="one")
+    assert page_count(str(target), password="two") == 1
+
+
+def test_locked_file_replaced_by_plain_file_is_not_a_password_probe(
+    tmp_path: Path,
+) -> None:
+    from tests.core.test_jobs import _encrypted_pdf
+
+    target = tmp_path / "x.pdf"
+    _encrypted_pdf(target, password="secret")
+    page_count(str(target), password="secret")
+
+    plain = tmp_path / "plain.pdf"
+    _text_pdf(plain, ["a", "b"])
+    _replace_file(target, plain)
+
+    assert page_count(str(target)) == 2
+    assert encryption_state(str(target)) == "none"
+
+
+def test_plain_file_replaced_by_locked_file_needs_a_password(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_loader import PdfPasswordRequiredError
+    from tests.core.test_jobs import _encrypted_pdf
+
+    target = tmp_path / "x.pdf"
+    _text_pdf(target, ["a"])
+    assert page_count(str(target)) == 1
+    assert encryption_state(str(target)) == "none"
+
+    locked = tmp_path / "locked.pdf"
+    _encrypted_pdf(locked, password="secret")
+    _replace_file(target, locked)
+
+    with pytest.raises(PdfPasswordRequiredError):
+        page_count(str(target))
+    assert encryption_state(str(target)) == "password"
+
+
+def test_deleted_file_evicts_cache_entry_and_raises_typed_error(
+    tmp_path: Path,
+) -> None:
+    from pagedrop.core.pdf_loader import PdfLoadError
+
+    target = tmp_path / "gone.pdf"
+    _text_pdf(target, ["a"])
+    assert page_count(str(target)) == 1
+    target.unlink()
+
+    with pytest.raises(PdfLoadError):
+        page_count(str(target))
+    assert doc_cache_size() == 0

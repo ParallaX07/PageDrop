@@ -17,6 +17,7 @@ measured (same O10 upgrade).
 
 from __future__ import annotations
 
+import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
@@ -76,6 +77,7 @@ class _DocCacheEntry:
     doc: fitz.Document
     password: str | None
     last_used: float
+    signature: tuple[int, int] | None = None  # (st_mtime_ns, st_size) at open
 
 
 _doc_cache: OrderedDict[str, _DocCacheEntry] = OrderedDict()
@@ -210,6 +212,29 @@ def _open(path: str, password: str | None = None) -> fitz.Document:
     return open_pdf(path, password)
 
 
+def _file_signature(path: str) -> tuple[int, int] | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _live_entry_locked(path: str, key: str) -> _DocCacheEntry | None:
+    """Cached entry for *key*, evicted first if the file changed since it opened.
+
+    A failed stat counts as a change, so the next open raises the typed error.
+    """
+    entry = _doc_cache.get(key)
+    if entry is None:
+        return None
+    signature = _file_signature(path)
+    if signature is None or signature != entry.signature:
+        _evict_doc_locked(key)
+        return None
+    return entry
+
+
 def _cache_get(path: str, password: str | None = None) -> fitz.Document:
     """Get-or-open under ``FITZ_LOCK``. Document must not leave the lock.
 
@@ -220,7 +245,7 @@ def _cache_get(path: str, password: str | None = None) -> fitz.Document:
     now = time.monotonic()
     _purge_idle_locked(now)
 
-    entry = _doc_cache.get(key)
+    entry = _live_entry_locked(path, key)
     if entry is not None:
         # No password reuses an entry that was unlocked earlier.
         if password is not None and entry.password != password:
@@ -234,8 +259,9 @@ def _cache_get(path: str, password: str | None = None) -> fitz.Document:
         old_path, old_entry = _doc_cache.popitem(last=False)
         old_entry.doc.close()
 
+    signature = _file_signature(path)
     doc = _open(path, password)
-    _doc_cache[key] = _DocCacheEntry(doc, password, now)
+    _doc_cache[key] = _DocCacheEntry(doc, password, now, signature)
     return doc
 
 
@@ -246,7 +272,7 @@ def page_count(path: str, *, password: str | None = None) -> int:
         # This is the credential probe: jobs reopen the file with the supplied
         # password, so a password-less probe must not pass via an unlocked entry.
         ensure_no_fitz_document(path, what="pdf_service path")
-        entry = _doc_cache.get(_cache_key(path))
+        entry = _live_entry_locked(path, _cache_key(path))
         if password is None and entry is not None and entry.password is not None:
             raise PdfPasswordRequiredError(f"PDF is password-protected: {path}")
         return len(_cache_get(path, password))
