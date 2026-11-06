@@ -43,7 +43,7 @@ for name in (
     )
 
 
-def test_cli_entry_point():
+def test_cli_entry_point(tmp_path):
     """Entry point starts Qt and exits cleanly when the window is closed."""
     code = """
 import os
@@ -67,18 +67,32 @@ def _auto_close_show(self):
 MainWindow.show = _auto_close_show
 sys.exit(main())
 """
+    data = tmp_path / "data"
+    data.mkdir()
+    # Keep the real profile untouched: logs and settings go under tmp_path.
+    env = {
+        **os.environ,
+        "XDG_DATA_HOME": str(data),
+        "LOCALAPPDATA": str(data),
+        "HOME": str(data),
+        "USERPROFILE": str(data),
+    }
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=30,
         check=False,
+        env=env,
     )
     assert result.returncode == 0, (
         f"CLI entry point failed (code {result.returncode})\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert "Starting PageDrop version=" in result.stderr
+    if sys.platform.startswith("linux"):
+        log = data / "PageDrop" / "PageDrop" / "logs" / "pagedrop.log"
+        assert "Starting PageDrop version=" in log.read_text(encoding="utf-8")
 
 
 def test_compress_worker_flag_dispatches_without_creating_a_qapplication(monkeypatch):

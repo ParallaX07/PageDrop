@@ -41,12 +41,14 @@ def main() -> int:
         os.environ, frozen=getattr(sys, "frozen", False), platform=sys.platform
     )
     from pagedrop.utils.diagnostics import (
+        configure_app_logging,
         configure_terminal_logging,
         install_qt_message_handler,
         log_startup,
     )
 
     configure_terminal_logging()
+    configure_app_logging(sys.argv)
     log_startup(app_version=_app_version())
     if _OFFICE_COM_WORKER_FLAG in sys.argv:
         from pagedrop.helpers.office_com_worker import main as worker_main
