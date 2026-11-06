@@ -76,6 +76,26 @@ def open_pdf(path: str, password: str | None = None) -> fitz.Document:
         raise
 
 
+def validate_pdf_output(path: str | Path, label: str | None = None) -> None:
+    """Reopen a PDF this app just wrote; raise a ``PdfLoadError`` if unusable.
+
+    A password-protected output (the encrypt tool) is accepted: it opened as a
+    PDF, and without the password its pages cannot be counted. Takes
+    ``FITZ_LOCK`` only for the open and close. With *label* (the destination
+    file name) the error names that instead of the path being checked, and the
+    original error is chained.
+    """
+    with FITZ_LOCK:
+        try:
+            open_pdf(str(path)).close()
+        except PdfPasswordRequiredError:
+            return
+        except PdfLoadError as exc:
+            if label is None:
+                raise
+            raise type(exc)(f"The tool produced an unreadable PDF: {label}") from exc
+
+
 class PdfLoader:
     # ponytail: tab-owned long-lived Document for editor geometry / sync UI.
     # Distinct from pdf_service's short TTL path→doc cache (interactive render).
