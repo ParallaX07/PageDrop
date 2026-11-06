@@ -25,6 +25,7 @@ from pagedrop.core.jobs.errors import JobError, OutputExistsError
 from pagedrop.core.jobs.paths import ensure_output_destination, reject_source_overwrite
 from pagedrop.core.jobs.spec import JobSpec, ProgressCallback, _noop_progress
 from pagedrop.core.jobs.staging import JobStaging
+from pagedrop.core.pdf_loader import validate_pdf_output
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.utils.diagnostics import log_failure
@@ -211,10 +212,12 @@ class SerializedJobRunner:
                 result_staged = Path(entry.handler(ctx))
                 token.check()
             _validate_destinations(spec, ctx.extra_outputs)
+            pairs = [(result_staged, Path(spec.output)), *ctx.extra_outputs]
+            for staged_path, destination in pairs:
+                if destination.suffix.lower() == ".pdf":
+                    validate_pdf_output(staged_path, destination.name)
             report(0.95, "Promoting output…")
-            promoted = _promote_all(
-                staging, [(result_staged, Path(spec.output)), *ctx.extra_outputs]
-            )
+            promoted = _promote_all(staging, pairs)
             report(1.0, "Done")
             return promoted
         except Exception as exc:
