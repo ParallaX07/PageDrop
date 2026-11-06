@@ -292,7 +292,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#WindowMinimize:hover,
-    QToolButton#WindowMaximize:hover {{
+    QToolButton#WindowMaximize:hover,
+    QToolButton#WindowMaximize[nativeHover="true"] {{
         background-color: {bg_card_hover};
     }}
 
