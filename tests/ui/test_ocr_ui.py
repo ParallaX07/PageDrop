@@ -189,7 +189,12 @@ def test_tessdata_download_runs_off_gui_thread_and_saves(qtbot, download, entry)
 
     assert download.thread != threading.get_ident()
     assert download.timeout == 30.0
-    assert tessdata_path() == str(download.dest)
+    if entry is _prefs:
+        # Preferences keep the download unsaved until OK.
+        assert not tessdata_path()
+        assert parent._tessdata.text() == str(download.dest)
+    else:
+        assert tessdata_path() == str(download.dest)
     assert (download.dest / "eng.traineddata").exists()
     assert download.warnings == []
 
@@ -283,5 +288,36 @@ def test_minimising_preferences_during_download_keeps_it_running(qtbot, download
     _drive(qtbot, call, download, minimise_then_finish)
 
     assert not download.token.is_cancelled()
-    assert tessdata_path() == str(download.dest)
+    assert not tessdata_path()
+    assert dialog._tessdata.text() == str(download.dest)
     assert download.warnings == []
+
+
+def _finish_download(qtbot, download):
+    dialog, call = _prefs(qtbot)
+    _drive(qtbot, call, download, download.release.set)
+    assert dialog._tessdata.text() == str(download.dest)
+    return dialog
+
+
+def test_download_then_cancel_saves_nothing_and_restores_registry(
+    qtbot, download, capability_registry
+):
+    dialog = _finish_download(qtbot, download)
+    assert capability_registry.configured_tessdata_path() == str(download.dest)
+
+    dialog.reject()
+
+    assert not tessdata_path()
+    assert capability_registry.configured_tessdata_path() is None
+    assert (download.dest / "eng.traineddata").exists()
+
+
+def test_download_then_ok_saves_the_folder(qtbot, download, capability_registry):
+    dialog = _finish_download(qtbot, download)
+    assert not tessdata_path()
+
+    dialog._on_accept()
+
+    assert tessdata_path() == str(download.dest)
+    assert capability_registry.configured_tessdata_path() == str(download.dest)

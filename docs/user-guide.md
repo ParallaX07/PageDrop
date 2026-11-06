@@ -94,6 +94,7 @@ from the result bar. PageDrop does not open the report automatically.
 
 - View → Toggle Light Theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
 - Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, **Automatically check for updates**, and **Reduce motion** (platform reduce-motion is still honored when available)
+- Recheck and Download English language data try your changes but do not save them; nothing is saved until you click OK, and Cancel puts everything back as it was
 - High-contrast preferences are respected where the platform exposes them
 - Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions
 
@@ -113,7 +114,7 @@ Updates are available only in the packaged Windows version. PageDrop checks for 
 new stable release five seconds after opening when a check is due, then at most
 once a day after a successful check. Turn off **Automatically check for updates**
 in Preferences to stop background checks. Preferences also show the last
-successful check and any current background error; background failures do not
+successful check (in your local time) and any current background error; background failures do not
 interrupt your work.
 
 Use Help → **Check for updates…** at any time for visible feedback. It can show
