@@ -45,7 +45,8 @@ class UpdateDialog(QDialog):
         self.notes.setObjectName("UpdateReleaseNotes")
         self.notes.setReadOnly(True)
         self.notes.setAccessibleName("Release notes")
-        self.notes.setOpenExternalLinks(True)
+        self.notes.setOpenLinks(False)
+        self.notes.setOpenExternalLinks(False)
         layout.addWidget(self.notes, 1)
         self.progress = QProgressBar()
         self.progress.setObjectName("UpdateDownloadProgress")
@@ -59,7 +60,7 @@ class UpdateDialog(QDialog):
     def show_message(self, message: str, *, notes: str = "") -> None:
         self._cancelling_download = False
         self.message.setText(message)
-        self.notes.setMarkdown(notes)
+        self.notes.setPlainText(notes)
         self.notes.setVisible(bool(notes))
         self.progress.hide()
         self._clear_buttons()
@@ -213,7 +214,8 @@ class UpdatePresenter(QObject):
         self._present_pending_offer()
 
     def eventFilter(self, obj, event) -> bool:
-        if event.type() in {QEvent.Type.FocusIn, QEvent.Type.FocusOut, QEvent.Type.WindowActivate, QEvent.Type.Hide, QEvent.Type.Show}:
+        # Late events at interpreter exit can reach a presenter whose attributes are already gone.
+        if getattr(self, "_pending_offer", False) and event.type() in {QEvent.Type.FocusIn, QEvent.Type.FocusOut, QEvent.Type.WindowActivate, QEvent.Type.Hide, QEvent.Type.Show}:
             QTimer.singleShot(0, self._present_pending_offer)
         return super().eventFilter(obj, event)
 

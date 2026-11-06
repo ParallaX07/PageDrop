@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import os
 import threading
+from pathlib import Path
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from pagedrop.ui import settings
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
@@ -213,3 +216,193 @@ def test_throttle_without_deadline_survives_restart(qapp, isolated_settings):
     assert not restarted.request_check(manual=True)
     coordinator.stop()
     restarted.stop()
+
+
+def test_support_requires_a_frozen_windows_build(qapp, isolated_settings, monkeypatch):
+    import pagedrop.ui.update_checker as module
+
+    def build(platform: str, frozen: bool) -> bool:
+        with monkeypatch.context() as patch:  # Fake the platform only while constructing.
+            patch.setattr(module.sys, "platform", platform)
+            patch.setattr(module.sys, "frozen", frozen, raising=False)
+            coordinator = UpdateCoordinator(qapp)
+        coordinator.stop()
+        return coordinator.supported
+
+    assert not build("win32", False)
+    assert build("win32", True)
+    assert not build("linux", True)
+
+
+def test_far_future_server_deadline_is_clamped_when_recorded(qapp, isolated_settings):
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    coordinator = UpdateCoordinator(qapp, clock=lambda: now, supported=True)
+    coordinator._check_finished(None, RateLimitedError(datetime(2099, 1, 1, tzinfo=UTC)))
+    limit = now + timedelta(hours=48)
+
+    assert settings.server_retry_after_utc() == limit
+    assert not coordinator.request_check(manual=True)
+    assert limit.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z") in coordinator.check_block_reason
+    coordinator.stop()
+
+
+def test_stored_far_future_server_deadline_is_pinned_and_expires(qtbot, qapp, isolated_settings):
+    now = [datetime(2026, 9, 8, tzinfo=UTC)]
+    settings.set_server_retry_after_utc(datetime(2099, 1, 1, tzinfo=UTC))
+    calls: list[str] = []
+
+    def check(version, cancel):
+        calls.append(version)
+        return None
+
+    coordinator = UpdateCoordinator(qapp, clock=lambda: now[0], check=check, supported=True)
+    pinned = datetime(2026, 9, 8, tzinfo=UTC) + timedelta(hours=48)
+    assert settings.server_retry_after_utc() == pinned
+    assert not coordinator.request_check(manual=True)
+
+    now[0] = pinned - timedelta(hours=1)  # A sliding limit would still block here.
+    assert not coordinator.request_check(manual=True)
+    assert settings.server_retry_after_utc() == pinned
+    now[0] = pinned + timedelta(seconds=1)
+    with qtbot.waitSignal(coordinator.check_succeeded):
+        assert coordinator.request_check(manual=True)
+    assert calls == [qapp.applicationVersion()]
+    coordinator.stop()
+
+
+def test_plausible_server_deadline_is_unchanged(qapp, isolated_settings):
+    now = datetime(2026, 9, 8, tzinfo=UTC)
+    deadline = now + timedelta(hours=47)
+    coordinator = UpdateCoordinator(qapp, clock=lambda: now, supported=True)
+    coordinator._check_finished(None, RateLimitedError(deadline))
+
+    assert settings.server_retry_after_utc() == deadline
+    assert coordinator._retry_deadline(now) == deadline
+    coordinator.stop()
+
+
+def _closed_session(root, name: str = "closed") -> Path:
+    session = root / name
+    session.mkdir(parents=True)
+    return session
+
+
+def test_new_session_adopts_a_closed_sessions_verified_installer(tmp_path):
+    root = tmp_path / "updates"
+    release = _release()
+    closed = _closed_session(root)
+    (closed / release.installer_name).write_bytes(b"installer")
+    storage = UpdateStorage(root)
+
+    adopted = storage.reusable_installer(release)
+
+    assert adopted == storage.destination(release)
+    assert adopted.read_bytes() == b"installer"
+    assert not closed.exists()
+    assert storage.reusable_installer(release) == adopted
+    storage.close()
+
+
+def test_tampered_installer_in_a_closed_session_is_deleted(tmp_path):
+    root = tmp_path / "updates"
+    release = _release()
+    closed = _closed_session(root)
+    (closed / release.installer_name).write_bytes(b"tampered!")
+    storage = UpdateStorage(root)
+
+    assert storage.reusable_installer(release) is None
+    assert not storage.destination(release).exists()
+    assert not closed.exists()
+    storage.close()
+
+
+def test_active_sessions_installer_is_not_taken(tmp_path):
+    root = tmp_path / "updates"
+    release = _release()
+    owner = UpdateStorage(root)
+    owner.destination(release).write_bytes(b"installer")
+    other = UpdateStorage(root)
+
+    assert other.reusable_installer(release) is None
+    assert owner.destination(release).read_bytes() == b"installer"
+    assert owner.session_dir.exists()
+    owner.close()
+    other.close()
+
+
+def test_empty_inactive_session_folder_is_removed_but_unknown_files_keep_theirs(tmp_path):
+    root = tmp_path / "updates"
+    empty = _closed_session(root, "empty")
+    keeper = _closed_session(root, "keeper")
+    (keeper / "notes.txt").write_text("mine")
+    storage = UpdateStorage(root)
+
+    assert not empty.exists()
+    assert (keeper / "notes.txt").read_text() == "mine"
+    storage.reusable_installer(_release())
+    assert (keeper / "notes.txt").exists()
+    storage.close()
+
+
+def test_symlinked_installer_in_a_closed_session_is_ignored(tmp_path):
+    root = tmp_path / "updates"
+    release = _release()
+    closed = _closed_session(root)
+    target = tmp_path / "elsewhere.exe"
+    target.write_bytes(b"installer")
+    try:
+        (closed / release.installer_name).symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    storage = UpdateStorage(root)
+
+    assert storage.reusable_installer(release) is None
+    assert target.read_bytes() == b"installer"
+    assert (closed / release.installer_name).is_symlink()
+    storage.close()
+
+
+def test_start_download_reuses_a_closed_sessions_installer(qtbot, qapp, isolated_settings, tmp_path):
+    root = tmp_path / "updates"
+    release = _release()
+    closed = _closed_session(root)
+    (closed / release.installer_name).write_bytes(b"installer")
+    calls: list[str] = []
+    coordinator = UpdateCoordinator(
+        qapp, supported=True, storage=UpdateStorage(root),
+        download=lambda *args: calls.append("download"),
+    )
+    coordinator._release = release
+    coordinator._set_state(UpdateState.AVAILABLE)
+
+    with qtbot.waitSignal(coordinator.download_completed) as done:
+        assert coordinator.start_download()
+
+    assert done.args == [coordinator.storage.destination(release)]
+    assert coordinator.state is UpdateState.READY
+    assert calls == []
+    coordinator.stop()
+
+
+def test_session_lock_is_released_when_verification_raises(tmp_path, monkeypatch):
+    from PyQt6.QtCore import QLockFile
+
+    root = tmp_path / "updates"
+    release = _release()
+    closed = _closed_session(root)
+    (closed / release.installer_name).write_bytes(b"installer")
+    storage = UpdateStorage(root)
+
+    def boom(*_args):
+        raise OSError("disk error")
+
+    monkeypatch.setattr(UpdateStorage, "_verified", staticmethod(boom))
+    with pytest.raises(OSError) as caught:  # The traceback keeps the frame alive here.
+        storage.reusable_installer(release)
+
+    lock = QLockFile(str(closed / ".active.lock"))
+    lock.setStaleLockTime(0)
+    assert lock.tryLock(0)
+    lock.unlock()
+    assert caught.value is not None
+    storage.close()
