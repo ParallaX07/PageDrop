@@ -26,7 +26,7 @@ from pagedrop.core.capabilities import (
 )
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.dialogs import prompt_missing_capability
-from pagedrop.ui.organize_tools import editor_pdf_context
+from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.preferences_dialog import open_preferences
 from pagedrop.ui.settings import (
     apply_tessdata_settings_to_capabilities,
@@ -437,6 +437,7 @@ def open_ocr_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | None:
                     break
 
     if ctx is not None and Path(ctx.path).is_file():
+        adopt_context_credentials(shell, ctx)
         shell.drop_zone.set_paths([ctx.path])
 
     present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")
