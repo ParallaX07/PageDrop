@@ -57,6 +57,7 @@ def _assert_icons_in_spec(spec_text: str) -> None:
     assert "PyQt6.QtSvg" in spec_text, (
         "pagedrop.spec must collect PyQt6.QtSvg for SVG toolbar icons"
     )
+    assert 'ASSETS / "logo.svg"' in spec_text, "pagedrop.spec must bundle logo.svg"
 
 
 def _assert_onedir_spec(spec_text: str) -> None:
@@ -92,6 +93,10 @@ def _assert_onedir_dist_if_present() -> None:
     icons = data_root / "pagedrop" / "assets" / "icons"
     assert icons.is_dir() and any(icons.iterdir()), (
         f"onedir bundle must include Phosphor icons under {icons}"
+    )
+    logo = data_root / "pagedrop" / "assets" / "logo.svg"
+    assert logo.is_file() and logo.stat().st_size > 0, (
+        f"onedir bundle must include non-empty {logo}"
     )
     metadata = list(data_root.glob("pagedrop-*.dist-info/METADATA"))
     assert len(metadata) == 1, "onedir bundle must include exactly one PageDrop METADATA file"

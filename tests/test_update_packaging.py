@@ -135,6 +135,7 @@ def test_missing_installer_output_and_frozen_metadata_fail_packaging_checks(tmp_
     (bundle / "pagedrop.exe").write_bytes(b"exe")
     (data / "THIRD_PARTY_NOTICES.md").write_text("notices", encoding="utf-8")
     (data / "pagedrop" / "assets" / "icons" / "icon.svg").write_text("svg", encoding="utf-8")
+    (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
     with pytest.raises(AssertionError, match="METADATA"):
         check_packaging._assert_onedir_dist_if_present()
 

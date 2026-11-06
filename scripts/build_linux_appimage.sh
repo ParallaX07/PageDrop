@@ -31,9 +31,9 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
   "$APPDIR/usr/share/applications"
 cp -a "$ROOT/dist/pagedrop/." "$APPDIR/usr/bin/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$APPDIR/usr/share/licenses/pagedrop/"
-cp "$ROOT/src/pagedrop/assets/logo.png" "$APPDIR/pagedrop.png"
-cp "$ROOT/src/pagedrop/assets/logo.png" "$APPDIR/.DirIcon"
-cp "$ROOT/src/pagedrop/assets/logo.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/pagedrop.png"
+(cd "$ROOT" && uv run --locked python scripts/generate_icons.py --png "$APPDIR/pagedrop.png")
+cp "$APPDIR/pagedrop.png" "$APPDIR/.DirIcon"
+cp "$APPDIR/pagedrop.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/pagedrop.png"
 cp "$ROOT/src/pagedrop/assets/io.github.ParallaX07.PageDrop.appdata.xml" "$APPDIR/usr/share/metainfo/"
 cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/bin/sh

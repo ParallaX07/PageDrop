@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/pagedrop/assets/logo.png" alt="PageDrop logo — documents dropping into a folder" width="128">
+  <img src="src/pagedrop/assets/logo.svg" alt="PageDrop logo — documents dropping into a folder" width="128">
 </p>
 
 # PageDrop
