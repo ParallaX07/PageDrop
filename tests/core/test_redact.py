@@ -12,6 +12,7 @@ import fitz
 import pytest
 
 from pagedrop.core import redact as redact_module
+from pagedrop.core.backends import process_tree
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import JobCancelledError, SourceOverwriteError
 from pagedrop.core.markup import MarkupSession
@@ -505,7 +506,8 @@ def test_verify_empty_stdout_is_failure(
             return "", ""
 
     monkeypatch.setattr(
-        "pagedrop.core.redact.popen_owned",
+        process_tree,
+        "popen_owned",
         lambda *_a, **_k: _Proc(),
     )
     report = verify_redacted_pdf_fresh_process(src, absent_text=[SECRET])
@@ -686,7 +688,7 @@ def test_cancel_during_verification_kills_child_and_deletes_output(
     out = tmp_path / "out.pdf"
     token = CancelToken()
     spawned: list[subprocess.Popen[str]] = []
-    real_popen = redact_module.popen_owned
+    real_popen = process_tree.popen_owned
 
     def _spawn(argv: list[str], **kwargs: object) -> subprocess.Popen[str]:
         proc = real_popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
@@ -694,7 +696,7 @@ def test_cancel_during_verification_kills_child_and_deletes_output(
         token.cancel()  # cancel right after the child exists
         return proc
 
-    monkeypatch.setattr(redact_module, "popen_owned", _spawn)
+    monkeypatch.setattr(process_tree, "popen_owned", _spawn)
     with pytest.raises(JobCancelledError):
         redact_pdf(src, out, [RedactionRegion(0, _secret_rect(src))], verify=True, cancel=token)
     assert len(spawned) == 1 and spawned[0].poll() is not None
@@ -799,7 +801,7 @@ def test_verifier_launch_failure_deletes_output(
     def _boom(*_a: object, **_k: object) -> None:
         raise failure
 
-    monkeypatch.setattr(redact_module, "popen_owned", _boom)
+    monkeypatch.setattr(process_tree, "popen_owned", _boom)
     expected = RedactionVerifyError if isinstance(failure, OSError) else RuntimeError
     with pytest.raises(expected):
         redact_pdf(src, out, [RedactionRegion(0, _secret_rect(src))], verify=True)

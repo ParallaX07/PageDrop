@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import json
 import math
-import subprocess
 import sys
-import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,11 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import fitz
 
-from pagedrop.core.backends.process_tree import (
-    frozen_child_env,
-    kill_process_tree,
-    popen_owned,
-)
+from pagedrop.core.backends.process_tree import frozen_child_env, run_owned
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel
 from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
@@ -528,41 +522,26 @@ def verify_redacted_pdf_fresh_process(
     }
     check_cancel(cancel)
     try:
-        proc = popen_owned(verify_argv(), env=frozen_child_env())
+        result = run_owned(
+            verify_argv(),
+            input=json.dumps(payload),
+            timeout=timeout,
+            cancel=cancel,
+            env=frozen_child_env(),
+        )
     except OSError as exc:
         return RedactionVerifyReport(
             failures=[f"could not start fresh-process verifier: {exc}"]
         )
-    deadline = time.monotonic() + timeout
-    pending_input: str | None = json.dumps(payload)
-    try:
-        while True:
-            check_cancel(cancel)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(proc.args, timeout)
-            try:
-                stdout, stderr = proc.communicate(pending_input, timeout=min(0.1, remaining))
-                break
-            except subprocess.TimeoutExpired:
-                pending_input = None
-    except (JobCancelledError, subprocess.TimeoutExpired) as exc:
-        kill_process_tree(proc.pid)
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        if isinstance(exc, JobCancelledError):
-            raise
+    if result.cancelled:
+        raise JobCancelledError("Job cancelled")
+    if result.timed_out:
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier timed out after {timeout:.0f}s"]
         )
-    except BaseException:
-        kill_process_tree(proc.pid)
-        raise
-    if proc.returncode not in (0, 2):
-        detail = (stderr or stdout or "").strip() or f"exit {proc.returncode}"
+    stdout, stderr = result.stdout, result.stderr
+    if result.returncode not in (0, 2):
+        detail = (stderr or stdout or "").strip() or f"exit {result.returncode}"
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier crashed: {detail}"]
         )

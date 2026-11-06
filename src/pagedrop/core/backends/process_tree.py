@@ -10,7 +10,11 @@ import os
 import signal
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from typing import Any
+
+from pagedrop.core.jobs.cancel import CancelToken
 
 
 def kill_process_tree(pid: int) -> None:
@@ -74,8 +78,89 @@ def popen_owned(argv: list[str], **kwargs: Any) -> subprocess.Popen[str]:
     kwargs.setdefault("stdout", subprocess.PIPE)
     kwargs.setdefault("stderr", subprocess.PIPE)
     kwargs.setdefault("text", True)
+    # A child's stray non-UTF-8 bytes must not blow up the reader.
+    kwargs.setdefault("errors", "replace")
     if sys.platform == "win32":
         flags = kwargs.pop("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
         return subprocess.Popen(argv, creationflags=flags, **kwargs)
     kwargs.setdefault("start_new_session", True)
     return subprocess.Popen(argv, **kwargs)
+
+
+def reap_owned(proc: subprocess.Popen[str], timeout: float = 5.0) -> None:
+    """Kill *proc*'s tree and wait for it, never longer than about *timeout*.
+
+    A grandchild that keeps a pipe open cannot stall this: after the bounded
+    drain the child itself is killed and the pipe ends are closed.
+    """
+    kill_process_tree(proc.pid)
+    try:
+        proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+    except (OSError, ValueError):
+        pass
+    finally:
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except (OSError, ValueError):
+                pass
+
+
+@dataclass(frozen=True)
+class OwnedResult:
+    """Outcome of :func:`run_owned`; callers map it to their own typed errors."""
+
+    returncode: int | None
+    pid: int = 0
+    stdout: str = ""
+    stderr: str = ""
+    cancelled: bool = False
+    timed_out: bool = False
+
+
+def run_owned(
+    argv: list[str],
+    *,
+    timeout: float,
+    input: str | None = None,
+    cancel: CancelToken | None = None,
+    poll: float = 0.1,
+    **popen_kwargs: Any,
+) -> OwnedResult:
+    """Run an owned child to completion, draining its pipes while it runs.
+
+    Cancel and timeout kill and reap the whole tree and are reported on the
+    result. Any other exception also kills and reaps before it propagates.
+    *input* is written once, on the first exchange. A failure to start the
+    child raises ``OSError`` from :func:`popen_owned`.
+    """
+    if cancel is not None and cancel.is_cancelled():
+        return OwnedResult(None, cancelled=True)
+    proc = popen_owned(argv, **popen_kwargs)
+    deadline = time.monotonic() + timeout
+    pending_input = input
+    try:
+        while True:
+            if cancel is not None and cancel.is_cancelled():
+                reap_owned(proc)
+                return OwnedResult(proc.returncode, proc.pid, cancelled=True)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                reap_owned(proc)
+                return OwnedResult(proc.returncode, proc.pid, timed_out=True)
+            try:
+                stdout, stderr = proc.communicate(pending_input, timeout=min(poll, remaining))
+            except subprocess.TimeoutExpired:
+                pending_input = None
+                continue
+            return OwnedResult(proc.returncode, proc.pid, stdout or "", stderr or "")
+    except BaseException:
+        reap_owned(proc)
+        raise
