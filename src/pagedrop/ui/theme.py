@@ -243,10 +243,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_1}px {SPACE_2}px;
     }}
 
+    QWidget#WindowTitleBar {{
+        background-color: {bg_surface};
+        border-bottom: 1px solid {border_subtle};
+    }}
+
     QMenuBar {{
         background-color: {bg_surface};
         color: {text_primary};
-        border-bottom: 1px solid {border_subtle};
         padding: 2px 0;
     }}
 
