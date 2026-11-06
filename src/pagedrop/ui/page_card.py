@@ -453,6 +453,7 @@ class PageCard(BaseFileCard):
                 passwords=self._source_passwords(),
             )
         except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            self._temp_manager.remove_dir(output_dir)
             QMessageBox.critical(
                 self.window(),
                 "Extract pages",
@@ -460,6 +461,7 @@ class PageCard(BaseFileCard):
             )
             return
         except OSError as exc:
+            self._temp_manager.remove_dir(output_dir)
             QMessageBox.critical(
                 self.window(),
                 "Extract pages",
@@ -467,6 +469,7 @@ class PageCard(BaseFileCard):
             )
             return
         except Exception as exc:
+            self._temp_manager.remove_dir(output_dir)
             QMessageBox.critical(
                 self.window(),
                 "Extract pages",
@@ -508,7 +511,8 @@ class PageCard(BaseFileCard):
                 drag.exec(Qt.DropAction.CopyAction)
         finally:
             QApplication.restoreOverrideCursor()
-            self._temp_manager.cleanup_paths(temp_paths)
+            # Temp files stay: a drop target may read the file:// URLs after exec()
+            # returns. Window-close cleanup and the quota evict them.
             restore = getattr(window, "_restore_document_status", None)
             if callable(restore):
                 restore()

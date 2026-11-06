@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,12 +88,11 @@ app.exec()
     assert not created_dir.exists()
 
 
-def test_subprocess_force_kill_may_leave_orphan():
-    """Document baseline: SIGKILL/taskkill skips atexit cleanup.
+def test_subprocess_force_kill_orphan_is_scrubbed_by_next_manager():
+    """SIGKILL/taskkill skips atexit cleanup; the next TempManager scrubs the orphan.
 
-    The orphan may remain until another TempManager scrubs dead-pid dirs.
-    Under pytest-xdist that scrub often happens before this test asserts, so we
-    only require that force-kill itself does not crash and we can clean up.
+    The killed process wrote ``.pagedrop_owner`` with its pid, so once it is dead
+    the orphan is removed at once (no grace wait).
     """
     code = """
 import os
@@ -109,7 +109,7 @@ app = QApplication([])
 window = MainWindow()
 print(window._temp_manager.get_dir(), flush=True)
 sys.stdout.flush()
-time.sleep(5)
+time.sleep(30)
 """
     proc = subprocess.Popen(
         [sys.executable, "-c", code],
@@ -117,6 +117,7 @@ time.sleep(5)
         stderr=subprocess.PIPE,
         text=True,
     )
+    orphan_dir = None
     try:
         assert proc.stdout is not None
         line = proc.stdout.readline().strip()
@@ -126,14 +127,16 @@ time.sleep(5)
 
         proc.kill()
         proc.wait(timeout=10)
-        assert proc.returncode is not None  # force-kill completed
-
-        # Best-effort cleanup if no other worker scrubbed it yet.
-        import shutil
-
-        if orphan_dir.exists():
-            shutil.rmtree(orphan_dir, ignore_errors=True)
+        # atexit never ran; a parallel worker may already have scrubbed the tree,
+        # so only the post-scrub state is asserted.
+        tm = TempManager()
+        try:
+            assert not orphan_dir.exists()
+        finally:
+            tm.cleanup()
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+        if orphan_dir is not None:
+            shutil.rmtree(orphan_dir, ignore_errors=True)
