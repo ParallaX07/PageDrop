@@ -115,9 +115,7 @@ def test_help_about_shows_current_application_version(main_window, monkeypatch):
     previous = app.applicationVersion()
     app.setApplicationVersion("1.2.3")
     shown = []
-    monkeypatch.setattr(
-        QMessageBox, "about", lambda parent, title, text: shown.append((parent, title, text))
-    )
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: shown.append(box) or 0)
     try:
         help_menu = next(
             action.menu()
@@ -129,7 +127,29 @@ def test_help_about_shows_current_application_version(main_window, monkeypatch):
             if action.text().replace("&", "") == "About PageDrop"
         )
         about.trigger()
-        assert shown == [(main_window, "About PageDrop", "PageDrop version 1.2.3")]
+        assert len(shown) == 1
+        box = shown[0]
+        assert box.parent() is main_window
+        assert box.windowTitle() == "About PageDrop"
+        assert "PageDrop version 1.2.3" in box.text()
+        assert "AGPL-3.0-or-later" in box.text()
+        assert "https://github.com/ParallaX07/PageDrop/tree/v1.2.3" in box.text()
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        assert label.openExternalLinks()
+        flags = label.textInteractionFlags()
+        assert flags & Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+        assert flags & Qt.TextInteractionFlag.LinksAccessibleByMouse
+        # Tab must be able to land on the link label.
+        box.show()
+        box.activateWindow()
+        reached = False
+        for _ in range(6):
+            if box.focusWidget() is label:
+                reached = True
+                break
+            box.focusNextChild()
+        box.close()
+        assert reached
     finally:
         app.setApplicationVersion(previous)
 
