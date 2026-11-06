@@ -196,4 +196,4 @@ def test_frozen_com_worker_bundles_pywin32(tmp_path: Path):
     request = {"input": str(src), "output": str(tmp_path / "probe.pdf")}
     reply = _reply(_run_frozen([_COM_WORKER_FLAG], json.dumps(request)))
     assert reply["ok"] is False
-    assert reply["code"] != "pywin32_missing", reply
+    assert reply["code"] not in {"pywin32_missing", "worker_crash"}, reply

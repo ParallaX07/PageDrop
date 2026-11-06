@@ -202,4 +202,5 @@ corresponding source of the GPL, LGPL and AGPL components in it (PageDrop, PyQt6
 Qt, PyMuPDF and MuPDF) at no charge beyond the reasonable cost of the transfer.
 Request it through [github.com/ParallaX07/PageDrop/issues](https://github.com/ParallaX07/PageDrop/issues),
 naming the release version. PageDrop’s own source for each release is at its matching
-tag, `https://github.com/ParallaX07/PageDrop/tree/v<version>`.
+tag, `https://github.com/ParallaX07/PageDrop/tree/v<version>`. Each release page also
+links the source of those components.
