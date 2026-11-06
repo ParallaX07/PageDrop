@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtGui import QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QFileDialog, QTabBar, QWidget
 
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from tests.conftest import RENDER_TIMEOUT_MS
 from tests.fixtures.generate_fixtures import generate_n_page
 
@@ -543,6 +544,45 @@ def test_detach_blank_tab_to_new_window(qtbot, qapp):
         lambda: source._tab_manager.count() == 1 and _tab_at(source, 0).is_blank,
         timeout=5000,
     )
+
+
+def test_rebinding_open_action_drops_the_previous_one(qtbot) -> None:
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    first, second = QAction("Open", grid), QAction("Open file", grid)
+    hits: list[str] = []
+    first.triggered.connect(lambda: hits.append("first"))
+    second.triggered.connect(lambda: hits.append("second"))
+
+    grid.bind_open_action(first)
+    grid.bind_open_action(second)
+    grid.bind_open_action(second)  # same action twice must not double-connect
+    grid._empty_open_button.click()
+    assert hits == ["second"]
+
+    first.setText("Changed")  # no longer projected onto the button
+    assert grid._empty_open_button.text() == "Open file"
+
+
+def test_detached_blank_tab_opens_files_in_its_new_window(qtbot, qapp, monkeypatch):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(lambda: len(manager.windows) > len(windows_before), timeout=5000)
+    detached = _windows_added(manager, windows_before)[0]
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileNames",
+        lambda *args, **kwargs: ([], ""),
+    )
+    source._actions["open"].triggered.connect(lambda: opened.append("source"))
+    detached._actions["open"].triggered.connect(lambda: opened.append("detached"))
+    _tab_at(detached, 0).thumbnail_grid._empty_open_button.click()
+    assert opened == ["detached"]
 
 
 def test_detach_dirty_tab_keeps_dirty_flag(

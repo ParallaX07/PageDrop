@@ -535,3 +535,26 @@ def test_zoom_defers_offscreen_layout(qtbot, large_pdf: Path, monkeypatch) -> No
     assert off._card_width == grid._card_width
     assert off.width() == old_width
     loader.close()
+
+
+def test_finished_batches_release_worker_signals(qtbot, tmp_path: Path) -> None:
+    """Completed render batches must not accumulate Signals objects."""
+    pdf = tmp_path / "small.pdf"
+    _blank_pdf(pdf, 3)
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+    loader = PdfLoader(str(pdf))
+    grid.load_pdf(loader)
+    wait_for_grid_loaded(qtbot, grid)
+
+    for _ in range(12):
+        grid._page_render_width = [0] * len(grid._page_render_width)
+        grid._start_rendering(silent=True)
+        wait_for_grid_loaded(qtbot, grid)
+        assert all(w > 0 for w in grid._page_render_width)
+
+    qtbot.waitUntil(lambda: len(grid._worker_signals) <= 2, timeout=5000)
+    loader.close()

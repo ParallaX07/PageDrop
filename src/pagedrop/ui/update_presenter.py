@@ -208,7 +208,7 @@ class UpdatePresenter(QObject):
 
     def window_closed(self, window) -> None:
         if self._dialog is not None and self._dialog.parentWidget() is window:
-            self._dialog.setParent(self._presenter_window())
+            self._dialog.setParent(self._presenter_window(), self._dialog.windowFlags())
             self._dialog.show()
         self._present_pending_offer()
 
@@ -283,12 +283,17 @@ class UpdatePresenter(QObject):
         active = QApplication.activeWindow()
         return active if active in self._manager.windows else self._manager.primary
 
+    def _on_dialog_finished(self, _result: int) -> None:
+        dialog, self._dialog = self._dialog, None
+        if dialog is not None:
+            dialog.deleteLater()
+
     def _ensure_dialog(self, parent) -> UpdateDialog:
         if self._dialog is None:
             self._dialog = UpdateDialog(parent, self._coordinator, self._manager)
-            self._dialog.finished.connect(lambda _: setattr(self, "_dialog", None))
+            self._dialog.finished.connect(self._on_dialog_finished)
         elif self._dialog.parentWidget() is not parent and parent is not None:
-            self._dialog.setParent(parent)
+            self._dialog.setParent(parent, self._dialog.windowFlags())
         self._dialog.show()
         self._dialog.raise_()
         self._dialog.activateWindow()

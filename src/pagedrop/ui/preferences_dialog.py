@@ -262,6 +262,17 @@ class PreferencesDialog(QDialog):
             self._update_coordinator.check_failed.connect(self._refresh_update_status)
             self._update_coordinator.check_succeeded.connect(self._refresh_update_status)
 
+    def release_coordinator(self) -> None:
+        """Drop the coordinator connections; deleting the dialog does not."""
+        coordinator = self._update_coordinator
+        if coordinator is None:
+            return
+        for signal in (coordinator.check_failed, coordinator.check_succeeded):
+            try:
+                signal.disconnect(self._refresh_update_status)
+            except (TypeError, RuntimeError):
+                pass
+
     def _refresh_update_status(self) -> None:
         from pagedrop.ui.settings import last_successful_check_utc
 
@@ -387,7 +398,14 @@ class PreferencesDialog(QDialog):
 
 
 def open_preferences(parent: QWidget | None = None, *, coordinator=None) -> PreferencesDialog:
-    """Show the Preferences dialog (modal). Returns the dialog instance."""
+    """Show the Preferences dialog (modal). Returns the dialog instance.
+
+    The dialog is released once control returns; callers may still read it.
+    """
     dialog = PreferencesDialog(parent, coordinator=coordinator)
-    dialog.exec()
+    try:
+        dialog.exec()
+    finally:
+        dialog.release_coordinator()
+        dialog.deleteLater()
     return dialog
