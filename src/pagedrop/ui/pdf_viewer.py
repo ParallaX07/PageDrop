@@ -3876,8 +3876,12 @@ class PdfViewerWidget(QWidget):
                 QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
-            if reply == QMessageBox.StandardButton.Open:
-                QDesktopServices.openUrl(url)
+            if reply == QMessageBox.StandardButton.Open and not QDesktopServices.openUrl(url):
+                QMessageBox.warning(
+                    self,
+                    "Open link",
+                    f"PageDrop could not open this link:\n\n{link.uri}",
+                )
 
     def _extract_selected_attachment(self) -> None:
         if self._model is None:

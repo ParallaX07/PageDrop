@@ -143,6 +143,44 @@ def test_run_disabled_without_backend(qtbot, tmp_path, monkeypatch, isolated_set
     assert any(b.text() == "Configure…" for b in configure)
 
 
+@pytest.mark.parametrize("opened", [True, False])
+def test_download_button_warns_only_when_the_browser_cannot_open(
+    qtbot, monkeypatch, opened
+):
+    from pagedrop.core.backends.libreoffice import DOWNLOAD_URL
+    from pagedrop.ui import dialogs
+
+    class Stub:
+        def __init__(self) -> None:
+            self.button = QPushButton()
+            self.button.setObjectName("lo_download")
+
+        def exec(self) -> int:
+            return 0
+
+        def clickedButton(self) -> QPushButton:  # noqa: N802
+            return self.button
+
+    warned: list[tuple[str, str]] = []
+    monkeypatch.delenv("PAGEDROP_TESTING")
+    monkeypatch.setattr(dialogs, "build_missing_libreoffice_dialog", lambda *_a, **_k: Stub())
+    monkeypatch.setattr(dialogs.QDesktopServices, "openUrl", lambda _url: opened)
+    monkeypatch.setattr(
+        dialogs.QMessageBox, "warning", lambda _parent, title, text: warned.append((title, text))
+    )
+
+    assert dialogs.prompt_missing_libreoffice(None) == "download"
+    if opened:
+        assert warned == []
+    else:
+        assert warned == [
+            (
+                "LibreOffice",
+                f"PageDrop could not open your browser. Open {DOWNLOAD_URL} in your browser.",
+            )
+        ]
+
+
 def test_missing_lo_dialog_has_download_and_recheck(qtbot):
     host = ToolsWindow()
     qtbot.addWidget(host)
