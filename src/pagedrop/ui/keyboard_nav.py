@@ -7,12 +7,18 @@ Space/Enter activation is already handled by QAbstractButton / QSlider.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QAbstractSpinBox,
     QApplication,
+    QLineEdit,
+    QPlainTextEdit,
     QSlider,
+    QTextEdit,
     QToolBar,
     QToolButton,
     QWidget,
@@ -26,6 +32,14 @@ _ARROW_KEYS = {
     Qt.Key.Key_Up,
     Qt.Key.Key_Down,
 }
+
+
+def text_input_has_focus() -> bool:
+    """True when a text field or spin box has focus and should own plain keys."""
+    return isinstance(
+        QApplication.focusWidget(),
+        (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox),
+    )
 
 
 def focusable_toolbar_widgets(toolbar: QToolBar) -> list[QWidget]:
@@ -113,8 +127,12 @@ def set_content_tab_order(
     content: QWidget,
     *,
     status_bar: QWidget | None = None,
+    status_controls: Sequence[QWidget] = (),
 ) -> None:
-    """Tab order: toolbar controls → content. Status bar stays out of the chain."""
+    """Tab order: toolbar controls → content → ``status_controls``.
+
+    The status bar and its other children stay out of the chain.
+    """
     widgets = focusable_toolbar_widgets(toolbar)
     if widgets:
         for left, right in zip(widgets, widgets[1:], strict=False):
@@ -125,3 +143,15 @@ def set_content_tab_order(
         status_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         for child in status_bar.findChildren(QWidget):
             child.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    # Qt ignores a tab-order anchor that is a focus proxy (tab widgets), so
+    # anchor on the last widget of the content subtree in the focus chain.
+    previous = content
+    nxt = content.nextInFocusChain()
+    while nxt is not content and content.isAncestorOf(nxt):
+        previous = nxt
+        nxt = nxt.nextInFocusChain()
+    for control in status_controls:
+        control.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        QWidget.setTabOrder(previous, control)
+        previous = control
