@@ -432,6 +432,14 @@ class ThumbnailGrid(QScrollArea):
 
     def bind_open_action(self, action: QAction) -> None:
         """Make the empty-state control a projection of the window Open action."""
+        previous = self._open_action
+        if previous is not None:
+            # The old action may belong to a window that is already gone.
+            try:
+                self._empty_open_button.clicked.disconnect(previous.trigger)
+                previous.changed.disconnect(self._sync_empty_open_action)
+            except (TypeError, RuntimeError):
+                pass
         self._open_action = action
         self._empty_open_button.clicked.connect(action.trigger)
         action.changed.connect(self._sync_empty_open_action)
@@ -2203,6 +2211,10 @@ class ThumbnailGrid(QScrollArea):
             self._busy_render_generation = -1
             self._leave_busy("rendering")
         self._maybe_continue_or_dismiss_progress()
+        # Release finished Signals once the pool is idle (polled, so the flush
+        # never runs inside this queued slot).
+        if not self._pool_drain_timer.isActive():
+            self._pool_drain_timer.start()
 
     def _on_page_failed(
         self, generation: int, page_index: int, message: str

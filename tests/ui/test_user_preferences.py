@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, pyqtSignal
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea
+from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea, QWidget
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -11,7 +12,7 @@ from pagedrop.ui.command_palette import (
     collect_actions,
     fuzzy_match,
 )
-from pagedrop.ui.preferences_dialog import PreferencesDialog
+from pagedrop.ui.preferences_dialog import PreferencesDialog, open_preferences
 from pagedrop.ui import settings as settings_mod
 from pagedrop.ui.settings import (
     KEY_CONFIRM_CLOSE_DIRTY,
@@ -290,3 +291,33 @@ def test_command_palette_shortcut_registered(main_window):
     assert main_window._command_palette_action.shortcut() == QKeySequence(
         "Ctrl+Shift+P"
     )
+
+
+def test_open_preferences_releases_dialog_and_coordinator_connections(
+    qtbot, isolated_settings, monkeypatch
+):
+    class Coordinator(QObject):
+        check_failed = pyqtSignal()
+        check_succeeded = pyqtSignal()
+        last_error = ""
+
+    coordinator = Coordinator()
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    connected_during_exec: list[int] = []
+
+    def fake_exec(self) -> int:
+        connected_during_exec.append(coordinator.receivers(coordinator.check_failed))
+        return 0
+
+    monkeypatch.setattr(PreferencesDialog, "exec", fake_exec)
+
+    for _ in range(3):
+        dialog = open_preferences(parent, coordinator=coordinator)
+        assert connected_during_exec[-1] > 0
+        assert dialog.windowTitle() == "Preferences"  # still readable after exec
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert parent.findChildren(PreferencesDialog) == []
+    assert coordinator.receivers(coordinator.check_failed) == 0
+    assert coordinator.receivers(coordinator.check_succeeded) == 0

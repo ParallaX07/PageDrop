@@ -3,11 +3,11 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject
 from PyQt6.QtWidgets import QTextBrowser, QWidget
 
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
-from pagedrop.ui.update_presenter import UpdatePresenter
+from pagedrop.ui.update_presenter import UpdateDialog, UpdatePresenter
 from pagedrop.ui.update_messages import update_error_message
 from pagedrop.utils.update_checker import (
     RateLimitedError, ReleaseInfo, ReleaseDataError, ReleaseNotFoundError,
@@ -209,3 +209,33 @@ def test_storage_failure_is_visible_and_leaves_offer(presenter, monkeypatch):
     assert "Try again" in labels(presenter)
     presenter.show_installation_error(update_error_message(UpdateLaunchCancelledError()))
     assert {"Try again", "Open releases page", "Close"} <= set(labels(presenter))
+
+
+def test_closed_update_dialog_is_deleted_and_recreated(presenter):
+    parent = presenter._manager.primary
+    for _ in range(3):
+        presenter.check_manually(parent)
+        assert presenter.dialog is not None
+        presenter.dialog.reject()
+        assert presenter.dialog is None
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert parent.findChildren(UpdateDialog) == []
+
+
+def test_window_closed_reparents_live_dialog_and_ignores_closed_one(presenter):
+    primary = presenter._manager.primary
+    other = QWidget()
+    presenter._manager.windows.append(other)
+    presenter.check_manually(other)
+    dialog = presenter.dialog
+    assert dialog.parentWidget() is other
+    assert dialog.isWindow()
+
+    presenter.window_closed(other)
+    assert dialog.parentWidget() is primary
+    assert dialog.isWindow()
+
+    dialog.reject()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    presenter.window_closed(primary)  # must not touch the deleted dialog
+    assert presenter.dialog is None
