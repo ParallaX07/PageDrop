@@ -193,6 +193,33 @@ def test_com_failure_offers_explicit_lo_retry_flag(
     lo_mock.assert_called_once()
 
 
+def test_password_protected_com_failure_skips_libreoffice_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "locked.docx"
+    src.write_bytes(b"docx")
+    report = _mock_report(com=True, lo=True, apps=["word"])
+    message = "This document is password-protected. Remove the password in Office."
+
+    monkeypatch.setattr(office, "capability_report", lambda **_k: report)
+    monkeypatch.setattr(
+        office.office_com,
+        "convert_via_com",
+        MagicMock(
+            side_effect=OfficeComConversionError(message, code="password_protected")
+        ),
+    )
+    lo_mock = MagicMock()
+    monkeypatch.setattr(office.libreoffice, "convert_via_libreoffice", lo_mock)
+
+    with pytest.raises(OfficeComConversionError) as exc:
+        convert_office_to_pdf(src, tmp_path / "locked.pdf", backend="auto")
+    assert not isinstance(exc.value, OfficeComFailedNeedsRetry)
+    assert exc.value.code == "password_protected"
+    assert str(exc.value) == message
+    lo_mock.assert_not_called()
+
+
 def test_missing_backend_actionable_error() -> None:
     report = _mock_report(com=False, lo=False)
     with pytest.raises(BackendUnavailableError):

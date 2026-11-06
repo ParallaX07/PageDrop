@@ -28,6 +28,13 @@ XL_TYPE_PDF = 0
 PP_FIXED_FORMAT_PDF = 2
 # msoAutomationSecurityForceDisable — block macros without prompting.
 MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
+# Office ignores this for unprotected files; for protected ones it raises
+# instead of showing a password dialog nobody can answer.
+_NO_PROMPT_PASSWORD = "pagedrop-no-password-prompt"
+# Low word of Word's "wrong password" COM error (locale-independent).
+_WORD_PASSWORD_SCODE = 5408
+# Office wrong-password phrases; the bare word also appears in file paths.
+_PASSWORD_PHRASES = ("password is incorrect", "password you supplied")
 
 WORD_EXTENSIONS = frozenset(
     {".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm", ".rtf", ".odt"}
@@ -106,8 +113,13 @@ def _convert_word(client: Any, input_path: str, output_path: str) -> None:
             app.AutomationSecurity = MSO_AUTOMATION_SECURITY_FORCE_DISABLE
         except Exception:  # noqa: BLE001 — older Word builds
             pass
-        # ConfirmConversions=False, ReadOnly=True, AddToRecentFiles=False
-        doc = app.Documents.Open(input_path, False, True, False)
+        doc = app.Documents.Open(
+            FileName=input_path,
+            ConfirmConversions=False,
+            ReadOnly=True,
+            AddToRecentFiles=False,
+            PasswordDocument=_NO_PROMPT_PASSWORD,
+        )
         # Prefer ExportAsFixedFormat; fall back to SaveAs with wdFormatPDF.
         try:
             doc.ExportAsFixedFormat(output_path, WD_FORMAT_PDF)
@@ -138,8 +150,12 @@ def _convert_excel(client: Any, input_path: str, output_path: str) -> None:
             app.AutomationSecurity = MSO_AUTOMATION_SECURITY_FORCE_DISABLE
         except Exception:  # noqa: BLE001
             pass
-        # UpdateLinks=0, ReadOnly=True
-        workbook = app.Workbooks.Open(input_path, 0, True)
+        workbook = app.Workbooks.Open(
+            Filename=input_path,
+            UpdateLinks=0,
+            ReadOnly=True,
+            Password=_NO_PROMPT_PASSWORD,
+        )
         workbook.ExportAsFixedFormat(Type=XL_TYPE_PDF, Filename=output_path)
     finally:
         if workbook is not None:
@@ -200,6 +216,19 @@ _CONVERTERS: dict[str, Callable[[Any, str, str], None]] = {
 }
 
 
+def _is_password_failure(exc: BaseException) -> bool:
+    """True when Office refused a protected document (text or COM scode)."""
+    text = str(exc).lower()
+    if any(phrase in text for phrase in _PASSWORD_PHRASES):
+        return True
+    info = getattr(exc, "excepinfo", None)
+    try:
+        scode = info[5]
+    except (TypeError, IndexError, KeyError):
+        return False
+    return isinstance(scode, int) and (scode & 0xFFFF) == _WORD_PASSWORD_SCODE
+
+
 def convert_file(input_path: str | Path, output_path: str | Path) -> Path:
     """Convert one Office file to PDF via COM. Raises ``OfficeComError``."""
     _require_windows()
@@ -224,6 +253,12 @@ def convert_file(input_path: str | Path, output_path: str | Path) -> Path:
     except OfficeComError:
         raise
     except Exception as exc:  # noqa: BLE001 — COM failures are opaque
+        if _is_password_failure(exc):
+            raise OfficeComError(
+                "This document is password-protected. "
+                "Remove the password in Office, then try again.",
+                code="password_protected",
+            ) from exc
         raise OfficeComError(
             f"{app_kind} COM conversion failed: {exc}",
             code="com_failed",
