@@ -95,7 +95,7 @@ def convert_via_com(
     try:
         result = run_owned(
             worker_argv(),
-            input=json.dumps(request, ensure_ascii=False),
+            input=json.dumps(request),
             timeout=max(0.1, float(timeout_sec)),
             cancel=cancel,
         )
@@ -109,6 +109,11 @@ def convert_via_com(
                 f"Office COM conversion timed out after {timeout_sec:.0f}s",
                 code="timeout",
             )
+        response = _parse_response(result.stdout, result.stderr, result.returncode)
+        if response.get("code") == "worker_crash" and not response.get("ok"):
+            # The worker died (or broke) without a clean answer; the Office app
+            # it launched may still be running.
+            _kill_reported_office(pid_file, worker_pid)
     except (JobCancelledError, OfficeComConversionError):
         raise
     except BaseException:
@@ -118,7 +123,6 @@ def convert_via_com(
         release_backend_temp(pid_dir)
         shutil.rmtree(pid_dir, ignore_errors=True)
 
-    response = _parse_response(result.stdout, result.stderr, result.returncode)
     if not response.get("ok"):
         raise OfficeComConversionError(
             str(response.get("error") or "Office COM conversion failed"),

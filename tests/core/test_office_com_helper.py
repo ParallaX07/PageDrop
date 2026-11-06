@@ -453,8 +453,12 @@ def test_convert_via_com_removes_its_pid_file_directory(
         f"open({str(tmp_path / 'where')!r}, 'w').write(req['pid_file'])\n"
     )
     monkeypatch.setattr(office_com, "worker_argv", lambda: [sys.executable, "-c", script])
-    with pytest.raises(OfficeComConversionError):
+    killed: list[int] = []
+    monkeypatch.setattr(office_com, "kill_process_tree", killed.append)
+    with pytest.raises(OfficeComConversionError) as exc:
         convert_via_com(src, tmp_path / "out.pdf", timeout_sec=20)
+    assert exc.value.code == "com_failed"
+    assert killed == [], "a clean error answer means the worker already quit its app"
     assert not Path((tmp_path / "where").read_text()).parent.exists()
 
 
@@ -583,3 +587,83 @@ def test_office_pid_lookup_per_application(monkeypatch: pytest.MonkeyPatch) -> N
     with pytest.raises(worker.OfficeComError):
         worker._office_pid(word, "Word.Application")
     assert word.Caption == "Microsoft Word"
+
+
+# Fake worker that reports an Office PID, then dies without answering.
+_CRASHING_WORKER = _FAKE_WORKER.replace("time.sleep(60)\n", "sys.exit(3)\n")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX /proc liveness check")
+def test_convert_via_com_kills_the_reported_office_app_when_the_worker_crashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "doc.docx"
+    src.write_bytes(b"PK")
+    dst = tmp_path / "out.pdf"
+    _available(monkeypatch)
+    monkeypatch.setattr(
+        office_com, "worker_argv", lambda: [sys.executable, "-c", _CRASHING_WORKER]
+    )
+    killed: list[int] = []
+    real_kill = process_tree.kill_process_tree
+
+    def tracking_kill(pid: int) -> None:
+        killed.append(pid)
+        real_kill(pid)
+
+    monkeypatch.setattr(office_com, "kill_process_tree", tracking_kill)
+    office_pid = 0
+    try:
+        with pytest.raises(OfficeComConversionError) as exc:
+            convert_via_com(src, dst, timeout_sec=30)
+        assert exc.value.code == "worker_crash"
+        office_pid = int((tmp_path / "out.pdf.office").read_text())
+        assert killed == [office_pid]
+        deadline = time.monotonic() + 10
+        while _alive(office_pid):
+            assert time.monotonic() < deadline, "reported Office app still running"
+            time.sleep(0.02)
+    finally:
+        if office_pid:
+            real_kill(office_pid)
+
+
+def test_convert_via_com_request_is_ascii_for_non_ascii_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legacy-codepage stdin would turn raw non-ASCII into '?'."""
+    src = tmp_path / "d\u00f6k\u20ac \u4e2d.docx"
+    src.write_bytes(b"PK")
+    _available(monkeypatch)
+    captured = tmp_path / "request.bin"
+    script = (
+        "import json, sys\n"
+        "data = sys.stdin.buffer.read()\n"
+        f"open({str(captured)!r}, 'wb').write(data)\n"
+        "print(json.dumps({'ok': False, 'error': 'stop', 'code': 'com_failed'}))\n"
+    )
+    monkeypatch.setattr(office_com, "worker_argv", lambda: [sys.executable, "-c", script])
+    with pytest.raises(OfficeComConversionError):
+        convert_via_com(src, tmp_path / "out.pdf", timeout_sec=20)
+    raw = captured.read_bytes()
+    assert raw.isascii()
+    assert json.loads(raw)["input"] == str(src.resolve())
+
+
+def test_worker_response_line_is_ascii_and_parent_decodes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from io import StringIO
+
+    out_path = tmp_path / "dök€ 中.pdf"
+    monkeypatch.setattr(
+        worker, "handle_request", lambda _req: {"ok": True, "output": str(out_path)}
+    )
+    request = tmp_path / "req.json"
+    request.write_text(json.dumps({"input": "x", "output": str(out_path)}), encoding="utf-8")
+    buf = StringIO()
+    monkeypatch.setattr(worker.sys, "stdout", buf)
+    assert worker.main([str(request)]) == 0
+    line = buf.getvalue()
+    assert line.isascii()
+    assert office_com._parse_response(line, "", 0) == {"ok": True, "output": str(out_path)}

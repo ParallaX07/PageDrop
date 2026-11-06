@@ -135,3 +135,18 @@ def test_reap_owned_stays_bounded_when_a_grandchild_holds_the_pipe(tmp_path: Pat
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def test_ascii_json_input_survives_a_legacy_codepage_stdin() -> None:
+    """Passwords and paths go over stdin as ASCII-escaped JSON, never raw text."""
+    import json
+
+    payload = {"password": "p\u00e4ss\u20ac\u4e2d"}
+    echo = _py("import json, sys; print(json.dumps(json.load(sys.stdin)))")
+    ok = run_owned(echo, input=json.dumps(payload), timeout=20, encoding="cp1252")
+    assert json.loads(ok.stdout) == payload
+    raw = run_owned(
+        echo, input=json.dumps(payload, ensure_ascii=False), timeout=20, encoding="cp1252"
+    )
+    # Why the requests stay ASCII: raw non-ASCII text is mangled or rejected.
+    assert raw.returncode != 0 or json.loads(raw.stdout) != payload
