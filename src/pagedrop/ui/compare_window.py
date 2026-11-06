@@ -52,7 +52,12 @@ from pagedrop.core.pdf_tools import (
     CompareReport,
 )
 from pagedrop.ui.dialogs import prompt_pdf_password
-from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
+from pagedrop.ui.job_chrome import (
+    JobChromeMixin,
+    explain_busy_running,
+    fitz_lock_released,
+    run_with_fitz_lock,
+)
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.tool_shell import run_tool_job
 from pagedrop.ui.tool_page import StatusFooter
@@ -625,70 +630,86 @@ class CompareWindow(JobChromeMixin, QWidget):
         revision = self._input_revision
         self._comparing = True
         token = self.begin_job("Comparing…")
-        try:
-            self._credentials = preflight_pdf_inputs(
+
+        def probe() -> RuntimeCredentials:
+            return preflight_pdf_inputs(
                 [path_a, path_b],
-                prompt=lambda name, incorrect: prompt_pdf_password(
-                    self, name, incorrect=incorrect
+                prompt=fitz_lock_released(
+                    lambda name, incorrect: prompt_pdf_password(
+                        self, name, incorrect=incorrect
+                    )
                 ),
                 credentials=self._credentials,
                 cancel=token,
             )
-        except JobCancelledError:
-            self._comparing = False
-            self.end_job(status="Cancelled", toast="Compare cancelled", toast_kind="info")
-            return
-        except PdfLoadError as exc:
-            self._comparing = False
-            self.end_job(error=str(exc), toast="Compare failed", toast_kind="error")
-            return
 
-        worker = _CompareTextWorker(
-            path_a, path_b, token, self._credentials.snapshot()
-        )
-        signals = worker.signals
-        _COMPARE_TEXT_SIGNAL_REFS.append(signals)
-
-        def _drop_ref() -> None:
-            try:
-                _COMPARE_TEXT_SIGNAL_REFS.remove(signals)
-            except ValueError:
-                pass
-
-        def _on_ok(report: object) -> None:
-            _drop_ref()
-            self._comparing = False
-            if not isinstance(report, CompareReport):
-                self.end_job(error="Compare failed", toast="Compare failed", toast_kind="error")
-                return
-            if (
-                revision != self._input_revision
-                or path_a != self._row_a.text()
-                or path_b != self._row_b.text()
-            ):
+        def preflighted(credentials: object, error: Exception | None) -> None:
+            if isinstance(error, JobCancelledError):
+                self._comparing = False
                 self.end_job(
-                    status="Files changed; compare again",
-                    toast="Compare result discarded",
-                    toast_kind="info",
+                    status="Cancelled", toast="Compare cancelled", toast_kind="info"
                 )
                 return
-            self.end_job()
-            self._apply_compare_report(path_a, path_b, report)
+            if isinstance(error, PdfLoadError):
+                self._comparing = False
+                self.end_job(error=str(error), toast="Compare failed", toast_kind="error")
+                return
+            if error is not None:
+                raise error
+            self._credentials = credentials
+            start_worker()
 
-        def _on_cancelled() -> None:
-            _drop_ref()
-            self._comparing = False
-            self.end_job(status="Cancelled", toast="Compare cancelled", toast_kind="info")
+        def start_worker() -> None:
+            worker = _CompareTextWorker(
+                path_a, path_b, token, self._credentials.snapshot()
+            )
+            signals = worker.signals
+            _COMPARE_TEXT_SIGNAL_REFS.append(signals)
 
-        def _on_failed(message: str) -> None:
-            _drop_ref()
-            self._comparing = False
-            self.end_job(error=message, toast="Compare failed", toast_kind="error")
+            def _drop_ref() -> None:
+                try:
+                    _COMPARE_TEXT_SIGNAL_REFS.remove(signals)
+                except ValueError:
+                    pass
 
-        signals.succeeded.connect(_on_ok)
-        signals.cancelled.connect(_on_cancelled)
-        signals.failed.connect(_on_failed)
-        _compare_text_pool().start(worker)
+            def _on_ok(report: object) -> None:
+                _drop_ref()
+                self._comparing = False
+                if not isinstance(report, CompareReport):
+                    self.end_job(error="Compare failed", toast="Compare failed", toast_kind="error")
+                    return
+                if (
+                    revision != self._input_revision
+                    or path_a != self._row_a.text()
+                    or path_b != self._row_b.text()
+                ):
+                    self.end_job(
+                        status="Files changed; compare again",
+                        toast="Compare result discarded",
+                        toast_kind="info",
+                    )
+                    return
+                self.end_job()
+                self._apply_compare_report(path_a, path_b, report)
+
+            def _on_cancelled() -> None:
+                _drop_ref()
+                self._comparing = False
+                self.end_job(status="Cancelled", toast="Compare cancelled", toast_kind="info")
+
+            def _on_failed(message: str) -> None:
+                _drop_ref()
+                self._comparing = False
+                self.end_job(error=message, toast="Compare failed", toast_kind="error")
+
+            signals.succeeded.connect(_on_ok)
+            signals.cancelled.connect(_on_cancelled)
+            signals.failed.connect(_on_failed)
+            _compare_text_pool().start(worker)
+
+        run_with_fitz_lock(
+            self, token, message="Comparing…", probe=probe, done=preflighted
+        )
 
     def _apply_compare_report(
         self, path_a: str, path_b: str, report: CompareReport

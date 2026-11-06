@@ -82,7 +82,9 @@ classified.
 
 ## PyMuPDF concurrency
 
-PyMuPDF is not safe for concurrent multithreaded use — even separate `Document` instances share MuPDF caches. PageDrop serializes in-process fitz work through a process-wide lock in `core/pdf_service.py` (`FITZ_LOCK`). Viewer thumbnails, previews, and fitz-backed job handlers take that lock (or call helpers that do). Workers open documents by path inside `run()`, close before returning, and never receive a live loader document from the UI thread.
+PyMuPDF is not safe for concurrent multithreaded use — even separate `Document` instances share MuPDF caches. PageDrop serializes in-process fitz work through a process-wide lock defined in `core/thread_policy.py` (`FITZ_LOCK`, re-exported by `core/pdf_service.py`). Viewer thumbnails, previews, and fitz-backed job handlers take that lock (or call helpers that do). Workers open documents by path inside `run()`, close before returning, and never receive a live loader document from the UI thread.
+
+Password preflight stays on the UI thread (its prompts are modal and credentials stay UI-side). When a running job holds the lock, the tool shows "Waiting for running job…" and retries from a timer with short timed acquires, so the event loop keeps running and Cancel works; the lock is held only through the probes and is released before any dialog.
 
 Long page-by-page jobs (OCR, colour effects) take the lock per page, with a short pause after each release so a waiting UI thread gets a turn, and never across the whole run. Lossy compress cannot be split per page, so it runs in an owned child process (`--pagedrop-compress-worker` when frozen) with the password sent over stdin; cancel or timeout kills its process tree.
 

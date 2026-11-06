@@ -8,9 +8,11 @@ from pathlib import Path
 import fitz
 from PyQt6.QtWidgets import QToolBar
 
+from pagedrop.core.thread_policy import FITZ_LOCK
 from pagedrop.ui.compare_window import CompareWindow
 from pagedrop.ui.organize_tools import launch_organize_tool
 from pagedrop.ui.tools_window import ToolsWindow
+from tests.conftest import file_sha256, hold_fitz_lock
 
 
 def _write_line_pdf(path: Path, text: str) -> None:
@@ -476,4 +478,53 @@ def test_compare_highlights_follow_rotated_pages(qtbot, tmp_path: Path):
         painted = canvas.grab().toImage().pixelColor(x, y)
         assert painted != plain, f"no highlight over {word!r} at {(x, y)}"
 
+    window.close()
+
+
+def test_compare_waits_for_fitz_lock_then_proceeds(qtbot, tmp_path: Path):
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    _write_line_pdf(a, "alpha")
+    _write_line_pdf(b, "beta")
+    hashes = (file_sha256(a), file_sha256(b))
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._row_a.set_text(str(a))
+    window._row_b.set_text(str(b))
+
+    with hold_fitz_lock():
+        window._run_compare()
+        assert window._comparing
+        assert window.statusBar().currentMessage() == "Waiting for running job…"
+        qtbot.wait(200)
+        assert window._report is None
+        assert window._comparing
+
+    qtbot.waitUntil(lambda: window._report is not None, timeout=5000)
+    qtbot.waitUntil(lambda: not window._comparing, timeout=5000)
+    assert (file_sha256(a), file_sha256(b)) == hashes
+    assert not FITZ_LOCK._is_owned()
+    window.close()
+
+
+def test_compare_cancel_during_fitz_lock_wait(qtbot, tmp_path: Path):
+    a = tmp_path / "a.pdf"
+    b = tmp_path / "b.pdf"
+    _write_line_pdf(a, "alpha")
+    _write_line_pdf(b, "beta")
+    window = CompareWindow()
+    qtbot.addWidget(window)
+    window._row_a.set_text(str(a))
+    window._row_b.set_text(str(b))
+
+    with hold_fitz_lock():
+        window._run_compare()
+        assert window.statusBar().currentMessage() == "Waiting for running job…"
+        window.cancel_active_job()
+        qtbot.waitUntil(lambda: not window._comparing, timeout=3000)
+        assert not window.is_job_running()
+        assert window.statusBar().currentMessage() == "Cancelled"
+
+    assert window._report is None
+    assert not FITZ_LOCK._is_owned()
     window.close()
