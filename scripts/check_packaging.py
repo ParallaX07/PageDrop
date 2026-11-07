@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from hashlib import sha256
 from pathlib import Path
 
@@ -23,7 +24,7 @@ APP_MUTEX = r"Global\PageDropInstallerMutex"
 
 
 def _assert_notices_content(text: str) -> None:
-    """PyQt6 is GPLv3/commercial — not LGPL. Qt remains LGPL; PyMuPDF is AGPL."""
+    """PyQt6 is GPLv3 — not LGPL. Qt remains LGPL; PyMuPDF is AGPL (Artifex)."""
     lower = text.lower()
     assert "pyqt6" in lower, "notices must mention PyQt6"
     assert "gplv3" in lower or "gpl v3" in lower or "gpl-3" in lower, (
@@ -41,7 +42,92 @@ def _assert_notices_content(text: str) -> None:
     )
     assert "gpl" in license_lines[0].lower(), "PyQt6 License line must state GPL"
     assert "agpl" in lower, "notices must mention PyMuPDF AGPL"
-    assert "artifex" in lower, "notices must mention Artifex commercial option"
+    assert "artifex" in lower, "notices must name Artifex as the PyMuPDF licensor"
+
+
+LICENSE_TEXTS = {
+    "GPL-3.0.txt": "GNU GENERAL PUBLIC LICENSE",
+    "LGPL-3.0.txt": "GNU LESSER GENERAL PUBLIC LICENSE",
+}
+NOTICE_SECTIONS = ("## pywin32", "## openpyxl", "## et-xmlfile", "## Pillow", "## Written offer")
+LICENCE_GATE = re.compile(r"commercial|\bMIT\b", re.IGNORECASE)
+
+
+def _assert_license_texts() -> None:
+    """Verbatim GPL/LGPL texts exist and every packaging path ships them."""
+    for name, title in LICENSE_TEXTS.items():
+        path = ROOT / "licenses" / name
+        assert path.is_file() and path.stat().st_size > 0, f"missing non-empty {path}"
+        head = path.read_text(encoding="utf-8")[:200]
+        assert title in head, f"{path} must be the {title.title()} text"
+    shippers = {
+        "pagedrop.spec": ('ROOT / "licenses"',),
+        "installer/windows.iss": ("licenses\\*", "{app}\\licenses"),
+        "scripts/build_linux_appimage.sh": tuple(f"licenses/{name}" for name in LICENSE_TEXTS),
+    }
+    for rel, needles in shippers.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for needle in needles:
+            assert needle in text, f"{rel} must ship the licenses/ texts ({needle})"
+
+
+def _assert_notices_sections(text: str) -> None:
+    """Every bundled codec has a notice, and the written offer is present."""
+    for heading in NOTICE_SECTIONS:
+        assert heading in text, f"notices must have a '{heading}' section"
+    offer = text.split("## Written offer", 1)[1]
+    assert "github.com/ParallaX07/PageDrop/issues" in offer, (
+        "written offer must say how to request corresponding source"
+    )
+
+
+def _assert_license_wording() -> None:
+    """Docs, README and the release-notes template state the free licence."""
+    for rel in ("docs/licensing.md", "README.md", "release-notes/TEMPLATE.md"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "AGPL-3.0-or-later" in text, f"{rel} must state AGPL-3.0-or-later"
+    template = (ROOT / "release-notes" / "TEMPLATE.md").read_text(encoding="utf-8")
+    assert "tree/v{{version}}" in template, "release-notes/TEMPLATE.md must link the source tag"
+    about = (ROOT / "src" / "pagedrop" / "ui" / "main_window.py").read_text(encoding="utf-8")
+    about = about.split("def _show_about", 1)[1].split("\n    def ", 1)[0]
+    for needle in ("AGPL-3.0-or-later", "/tree/v", "/blob/v", "NO WARRANTY"):
+        assert needle in about, f"About dialog must contain {needle}"
+    for link in (
+        "pypi.org/project/PyQt6",
+        "download.qt.io/official_releases/qt",
+        "pypi.org/project/PyMuPDF",
+        "mupdf.com/releases",
+    ):
+        assert link in template, f"release-notes/TEMPLATE.md must link source: {link}"
+
+
+def _assert_no_paid_licence_wording() -> None:
+    """README and docs describe free software only (same gate as the release check)."""
+    files = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+    for path in files:
+        match = LICENCE_GATE.search(path.read_text(encoding="utf-8"))
+        assert match is None, f"{path.relative_to(ROOT).as_posix()} must not contain {match.group(0)!r}"
+
+
+def _assert_dist_licences(data_root: Path, *, windows: bool) -> None:
+    """A built bundle carries the project, GPL/LGPL and bundled-codec licence files."""
+    fix = "rebuild with current pagedrop.spec"
+    files = [data_root / "LICENSE", *(data_root / "licenses" / name for name in LICENSE_TEXTS)]
+    for path in files:
+        assert path.is_file() and path.stat().st_size > 0, (
+            f"onedir bundle must include non-empty {path} ({fix})"
+        )
+    for name in ("openpyxl", "et_xmlfile", "pillow") + (("pywin32",) if windows else ()):
+        infos = [
+            d for d in data_root.iterdir()
+            if d.is_dir() and d.name.lower().startswith(f"{name}-") and d.name.endswith(".dist-info")
+        ]
+        assert infos, f"onedir bundle must include the {name} dist-info ({fix})"
+        assert any(
+            f.is_file() and f.stat().st_size > 0 and f.name.lower().startswith("licen")
+            for info in infos
+            for f in info.rglob("*")
+        ), f"{name} dist-info must include its non-empty licence file ({fix})"
 
 
 def _assert_notices_in_spec(spec_text: str) -> None:
@@ -82,7 +168,8 @@ def _assert_onedir_dist_if_present() -> None:
     if not bundle.is_dir():
         return
     exe_candidates = [bundle / "pagedrop.exe", bundle / "pagedrop"]
-    if not any(p.is_file() for p in exe_candidates):
+    exe = next((p for p in exe_candidates if p.is_file()), None)
+    if exe is None:
         return
     data_root = _onedir_data_root(bundle)
     notices = data_root / "THIRD_PARTY_NOTICES.md"
@@ -105,6 +192,32 @@ def _assert_onedir_dist_if_present() -> None:
     assert f"Version: {read_version()}\n" in metadata_text, (
         "frozen metadata version must match scripts/read_version.py"
     )
+    _assert_dist_licences(data_root, windows=exe.name == "pagedrop.exe")
+    _assert_frozen_backends(bundle, exe, data_root)
+
+
+def _frozen_modules(exe: Path) -> set[str]:
+    """Module names in the frozen executable's embedded PYZ archive."""
+    from PyInstaller.archive.readers import CArchiveReader
+
+    return set(CArchiveReader(str(exe)).open_embedded_archive("PYZ.pyz").toc)
+
+
+def _assert_frozen_backends(bundle: Path, exe: Path, data_root: Path) -> None:
+    """The release bundle must carry every backend the docs advertise."""
+    fix = "sync with `--group codecs` (and `--group office` on Windows) and rebuild"
+    modules = _frozen_modules(exe)
+    required = ["openpyxl", "PIL.Image"]
+    is_windows = (bundle / "pagedrop.exe").is_file()
+    if is_windows:
+        required.append("win32com.client")
+    missing = [name for name in required if name not in modules]
+    assert not missing, f"frozen bundle is missing {', '.join(missing)}: {fix}"
+    if is_windows:
+        for pattern in ("pywintypes*.dll", "pythoncom*.dll"):
+            assert any(data_root.rglob(pattern)), (
+                f"Windows bundle is missing {pattern} under {data_root}: {fix}"
+            )
 
 
 def _assert_installer_if_present(version: str) -> None:
@@ -124,6 +237,36 @@ def _assert_installer_if_present(version: str) -> None:
     )
 
 
+def _assert_backends_declared(spec_text: str) -> None:
+    """Spec, dependency groups and sync commands must all carry the backends."""
+    for name in ("openpyxl", "PIL.Image", "PIL.WebPImagePlugin"):
+        assert f'"{name}"' in spec_text, f"pagedrop.spec must list hidden import {name}"
+    for name in ("win32com.client", "pythoncom", "pywintypes"):
+        assert f'"{name}"' in spec_text, f"pagedrop.spec must list hidden import {name}"
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    codecs = " ".join(pyproject.get("dependency-groups", {}).get("codecs", [])).lower()
+    for pkg in ("openpyxl", "pillow"):
+        assert pkg in codecs, f"pyproject.toml codecs group must include {pkg}"
+    defaults = pyproject.get("tool", {}).get("uv", {}).get("default-groups", [])
+    assert "codecs" in defaults, "pyproject.toml [tool.uv] default-groups must include codecs"
+
+    workflows = ROOT / ".github" / "workflows"
+    release = (workflows / "release.yml").read_text(encoding="utf-8")
+    windows_job = release.split("build-windows:", 1)[1].split("build-linux:", 1)[0]
+    linux_job = release.split("build-linux:", 1)[1]
+    ps1 = (ROOT / "scripts" / "build_windows_installer.ps1").read_text(encoding="utf-8")
+    for label, text in (
+        ("ci.yml", (workflows / "ci.yml").read_text(encoding="utf-8")),
+        ("release.yml build-windows", windows_job),
+        ("release.yml build-linux", linux_job),
+        ("build_windows_installer.ps1", ps1),
+    ):
+        assert "--group codecs" in text, f"{label} must sync --group codecs"
+    for label, text in (("release.yml build-windows", windows_job), ("build_windows_installer.ps1", ps1)):
+        assert "--group office" in text, f"{label} must sync --group office"
+
+
 def _assert_linux_release_script() -> None:
     script = ROOT / "scripts" / "build_linux_appimage.sh"
     text = script.read_text(encoding="utf-8")
@@ -136,6 +279,18 @@ def _assert_linux_release_script() -> None:
     assert "X-AppImage-Version=${VERSION}" in text and "<<DESKTOP" in text, (
         "Linux AppImage desktop file must carry the app version for AppImage managers"
     )
+
+
+def _assert_ci_package_job() -> None:
+    """CI must build the Linux bundle and probe its frozen helper entry points."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "\n  package-linux:" in ci, "ci.yml must define a package-linux job"
+    job = ci.split("\n  package-linux:", 1)[1]
+    for needle in ("pyinstaller", "check_packaging.py", "smoke_exe.sh", "PAGEDROP_EXE"):
+        assert needle in job, f"ci.yml package-linux job must run {needle}"
+    probes = (ROOT / "tests" / "smoke" / "test_phase16_executable.py").read_text(encoding="utf-8")
+    for needle in ("REDACT_VERIFY_FLAG", "COMPRESS_WORKER_FLAG", "--pagedrop-office-com-worker"):
+        assert needle in probes, f"the frozen smoke tests must probe {needle}"
 
 
 def main() -> None:
@@ -172,15 +327,21 @@ def main() -> None:
     )
     notices_text = NOTICES.read_text(encoding="utf-8")
     _assert_notices_content(notices_text)
+    _assert_notices_sections(notices_text)
+    _assert_license_texts()
+    _assert_license_wording()
+    _assert_no_paid_licence_wording()
 
     assert SPEC.is_file(), f"missing {SPEC}"
     spec_text = SPEC.read_text(encoding="utf-8")
     _assert_notices_in_spec(spec_text)
     _assert_icons_in_spec(spec_text)
     _assert_onedir_spec(spec_text)
+    _assert_backends_declared(spec_text)
     _assert_onedir_dist_if_present()
     _assert_installer_if_present(ver)
     _assert_linux_release_script()
+    _assert_ci_package_job()
 
     assert "THIRD_PARTY_NOTICES.md" in iss_text, (
         "windows.iss must install THIRD_PARTY_NOTICES.md beside the exe"

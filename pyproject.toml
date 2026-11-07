@@ -41,10 +41,18 @@ dev = [
     "pyinstaller>=6.0",
     "ruff>=0.17.2",
 ]
-# Optional local install: `uv sync --group office` (no-op deps on non-Windows).
+# PDF to Excel (openpyxl) and image codecs (Pillow); a plain `uv sync` installs them.
+codecs = [
+    "openpyxl>=3.1",
+    "pillow>=10",
+]
+# Windows Office COM: `uv sync --group office` (no-op deps on non-Windows).
 office = [
     "pywin32>=306; sys_platform == 'win32'",
 ]
+
+[tool.uv]
+default-groups = ["dev", "codecs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "B"]

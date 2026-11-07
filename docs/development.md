@@ -13,6 +13,8 @@ uv run pagedrop
 
 You don't need to activate a virtualenv manually. `uv` handles the environment for you.
 
+A plain `uv sync` installs the `dev` and `codecs` dependency groups. `codecs` adds openpyxl (PDF to Excel) and Pillow (image codecs). Without it the app still starts: capability probes report the missing package and the tool that needs it names it. On Windows, add `--group office` for pywin32 (Office COM support; Microsoft Office itself is a separate install).
+
 ## Project layout
 
 ```
@@ -75,16 +77,18 @@ For packaging and executable smoke checks, see [Building](building.md).
 GitHub Actions runs on every `pull_request` and `push` to `master` via [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). The `test` job runs on Ubuntu and Windows with Python 3.11 and 3.12 (four combinations), each running:
 
 ```bash
-uv sync --locked --group dev
+uv sync --locked --group dev --group codecs
 uv run ruff check src tests
 uv run python scripts/check_packaging.py
 uv build --wheel
 uv run python all_tests.py
 ```
 
+The `package-linux` job builds the Linux onedir bundle with `uv run pyinstaller --noconfirm pagedrop.spec`, then runs `scripts/check_packaging.py`, `bash scripts/smoke_exe.sh --skip-build`, and the executable smoke tests with `PAGEDROP_EXE=dist/pagedrop/pagedrop`. Those tests run the frozen binary through its helper re-entry flags (redaction verifier, lossy compressor, Office COM worker) and check each reply.
+
 `all_tests.py` runs the suite sequentially, and CI does the same. `pytest-xdist` stays in the dev group, so `-n auto` opts into a parallel run locally, but CI does not use it.
 
-Optional backends (Office COM, LibreOffice, tessdata) and a frozen exe are unset on CI; those tests skip without `PAGEDROP_*` env vars.
+CI installs the `codecs` group, so the openpyxl and Pillow tests always run. Office COM, LibreOffice and tessdata are unset on CI, and the `test` job has no frozen exe; those tests skip without `PAGEDROP_*` env vars.
 
 To require the checks before merge: GitHub → **Settings → Branches** → branch protection for `master` → enable **Require status checks to pass**, and select each `test (<os>, py<version>)` check. That setting is manual; the workflow does not configure it.
 

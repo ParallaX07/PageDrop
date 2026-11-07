@@ -36,7 +36,7 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-> Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
+> Optional features: The Windows build includes Office COM support, but Office conversion still needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
 
 **Windows (GitHub Releases)**, no Python required:
 
@@ -167,4 +167,6 @@ Windows installer and packaging checklist: [docs/building.md](docs/building.md).
 
 ## License
 
-PageDrop is licensed under the GNU Affero General Public License v3.0 or later — see [`LICENSE`](LICENSE). Source and build instructions for every published binary are available in the corresponding source release. See [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+PageDrop is free software under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [`LICENSE`](LICENSE). Anyone may use, study, modify, fork, self-host and redistribute it at no cost. A permissive licence is not possible, because the free PyQt6 (GPLv3) and PyMuPDF (AGPL) wheels make every build an AGPL combined work. The only obligations fall on people who distribute PageDrop, or host a modified build: they must pass the same licence on, with the corresponding source, licence texts and notices.
+
+Source and build instructions for every published binary are in the matching source release tag. Licence texts are in [`licenses/`](licenses/). See [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), which includes a written offer for corresponding source.
