@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
         self._native_frame_checked = False
         self._native_frame_failed = False
         self._native_event_error_logged = False
+        self._key_filter_widget: QWidget | None = None
 
         self.setWindowTitle(self.APP_TITLE)
         # Offscreen Qt has no window manager and does not support custom chrome.
@@ -233,7 +234,7 @@ class MainWindow(QMainWindow):
         self._set_chrome_visible(chrome_visible(), persist=False)
         refresh_cb = self._refresh_action_icons
         icons.register_refresh(refresh_cb)
-        QApplication.instance().installEventFilter(self)
+        self._install_scoped_event_filters()
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
         self._tips_overlay = TipsOverlay(self)
@@ -882,6 +883,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # noqa: ANN001, N802
         super().showEvent(event)
+        self._attach_window_handle_filter()
         # Toolbar widgets only report visible once shown, so build the chain then.
         if not self._tab_order_applied:
             self._tab_order_applied = True
@@ -2646,6 +2648,43 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    def _install_scoped_event_filters(self) -> None:
+        """Watch only the widgets and the window handle this window cares about."""
+        self._chrome_filter_targets = (
+            self,
+            self._toolbar,
+            self._menu_bar,
+            *self._title_drag_widgets,
+        )
+        for target in self._chrome_filter_targets:
+            target.installEventFilter(self)
+        self._attach_window_handle_filter()
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
+
+    def _attach_window_handle_filter(self) -> None:
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.installEventFilter(self)
+
+    def _on_focus_changed(self, _old, new) -> None:
+        """Page shortcuts are filtered on the focused widget of this window only."""
+        self._remove_key_filter()
+        if (
+            isinstance(new, QWidget)
+            and new.window() is self
+            and new not in self._chrome_filter_targets
+        ):
+            new.installEventFilter(self)
+            self._key_filter_widget = new
+
+    def _remove_key_filter(self) -> None:
+        widget, self._key_filter_widget = self._key_filter_widget, None
+        if widget is not None:
+            try:
+                widget.removeEventFilter(self)
+            except RuntimeError:  # the widget was already destroyed
+                pass
+
     def eventFilter(self, obj, event) -> bool:
         if obj is getattr(self, "_toolbar", None):
             if event.type() == QEvent.Type.Resize:
@@ -2654,11 +2693,13 @@ class MainWindow(QMainWindow):
             elif event.type() == QEvent.Type.Show:
                 QTimer.singleShot(0, self._refit_toolbar)
         if isinstance(obj, QWindow):
-            # Only a window handle can be ours; skip the lookup for every widget event.
-            if obj is self.windowHandle() and self._handle_edge_resize_event(event):
+            if self._handle_edge_resize_event(event):
                 return True
-        elif obj is self and event.type() == QEvent.Type.WindowDeactivate:
-            self._clear_edge_state()
+        elif obj is self:
+            if event.type() == QEvent.Type.WindowDeactivate:
+                self._clear_edge_state()
+            elif event.type() == QEvent.Type.WinIdChange:
+                self._attach_window_handle_filter()
         is_title_area = obj in getattr(self, "_title_drag_widgets", ())
         if obj is getattr(self, "_menu_bar", None) and isinstance(event, QMouseEvent):
             dragging = (
@@ -3948,7 +3989,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
-        QApplication.instance().removeEventFilter(self)
+        self._remove_key_filter()
+        try:
+            QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
+        except TypeError:  # already disconnected by an earlier close attempt
+            pass
         for index in range(self._tab_manager.count()):
             widget = self._tab_manager.widget(index)
             if isinstance(widget, PdfTab):

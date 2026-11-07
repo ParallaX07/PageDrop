@@ -6,6 +6,7 @@ import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QUrl
 from PyQt6.QtWidgets import QTextBrowser, QWidget
 
+from pagedrop.ui import settings
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
 from pagedrop.ui.update_presenter import UpdateDialog, UpdatePresenter
 from pagedrop.ui.update_messages import update_error_message
@@ -30,7 +31,6 @@ def presenter(qapp, qtbot, isolated_settings):
     result = UpdatePresenter(manager)
     yield result
     manager.update_coordinator.stop()
-    qapp.removeEventFilter(result)
     if result.dialog:
         result.dialog.close()
     result.deleteLater()
@@ -120,17 +120,66 @@ def test_release_notes_never_become_links(presenter, monkeypatch):
     assert browser.toPlainText() == notes
 
 
-def test_focus_events_only_schedule_a_presentation_when_an_offer_is_pending(presenter, monkeypatch):
+def test_focus_changes_only_schedule_a_presentation_when_an_offer_is_pending(presenter, monkeypatch):
     import pagedrop.ui.update_presenter as module
     scheduled = []
     monkeypatch.setattr(module.QTimer, "singleShot", lambda *args: scheduled.append(args))
-    event = QEvent(QEvent.Type.FocusIn)
 
-    presenter.eventFilter(presenter._manager.primary, event)
+    presenter._schedule_pending_offer(None, presenter._manager.primary)
     assert scheduled == []
     presenter._pending_offer = True
-    presenter.eventFilter(presenter._manager.primary, event)
+    presenter._schedule_pending_offer(None, presenter._manager.primary)
     assert len(scheduled) == 1
+
+
+def test_pending_offer_is_presented_once_the_app_signals_focus_changed(presenter, qapp, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._pending_offer = True
+    blocked = [True]
+    presenter._can_interrupt = lambda: not blocked[0]
+    presenter._present_pending_offer()
+    assert presenter.dialog is None
+
+    blocked[0] = False
+    qapp.focusChanged.emit(None, presenter._manager.primary)
+    qtbot.waitUntil(lambda: presenter.dialog is not None)
+    assert not presenter._pending_offer
+    assert not presenter._retry_timer.isActive()
+
+
+def test_pending_offer_is_retried_by_timer_when_no_signal_fires(presenter, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._retry_timer.setInterval(10)
+    blocked = [True]
+    presenter._can_interrupt = lambda: not blocked[0]
+    c.release_available.emit(c._release)
+    assert presenter._pending_offer
+    assert presenter._retry_timer.isActive()
+
+    blocked[0] = False
+    qtbot.waitUntil(lambda: presenter.dialog is not None)
+    assert not presenter._retry_timer.isActive()
+
+
+def test_suppressed_pending_offer_stops_polling_and_resumes_on_focus_signal(presenter, qapp, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    settings.set_update_remind_after_utc(datetime.now(UTC) + timedelta(days=1))
+    c.release_available.emit(c._release)
+    assert presenter._pending_offer
+    assert not presenter._retry_timer.isActive()
+    assert presenter.dialog is None
+
+    settings.set_update_remind_after_utc(datetime.now(UTC) - timedelta(seconds=1))
+    presenter._can_interrupt = lambda: False
+    qapp.focusChanged.emit(None, presenter._manager.primary)
+    qtbot.waitUntil(lambda: presenter._retry_timer.isActive())
+    assert presenter._pending_offer
 
 
 def test_offer_actions_are_centered_and_fit(presenter, qtbot):
