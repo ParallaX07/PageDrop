@@ -138,6 +138,34 @@ def test_storage_cleanup_preserves_active_and_outside_files(tmp_path):
     cleaner.close()
 
 
+def test_storage_cleanup_skips_files_that_cannot_be_removed(tmp_path, monkeypatch, caplog):
+    root = tmp_path / "updates"
+    active = UpdateStorage(root)
+    release = _release()
+    inactive = root / "abandoned"
+    inactive.mkdir()
+    locked = inactive / f"{release.installer_name}.part"
+    other = inactive / "PageDrop-1.2.4-Setup.exe.part"
+    locked.write_bytes(b"partial")
+    other.write_bytes(b"partial")
+    real_unlink = Path.unlink
+
+    def fake_unlink(self, *args, **kwargs):
+        if self == locked:
+            raise PermissionError("held open")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fake_unlink)
+    with caplog.at_level("WARNING", logger="pagedrop"):
+        cleaner = UpdateStorage(root)
+
+    assert locked.exists()
+    assert not other.exists()
+    assert str(locked) in caplog.text
+    active.close()
+    cleaner.close()
+
+
 def test_automatic_scheduling_respects_disabled_daily_and_clock_rollback(qapp, isolated_settings):
     now = datetime(2026, 9, 8, tzinfo=UTC)
     ticks = [10.0]
