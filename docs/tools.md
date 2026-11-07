@@ -51,6 +51,8 @@ Create PDF, Convert to PDF, Export from PDF, Office to PDF, PDF to Word, OCR, ex
 
 Optional backends (Office COM, LibreOffice, tessdata, openpyxl, and related codecs) show clearly when missing. Core thumbnail editing, Merge, and Create PDF still work without them.
 
+The `codecs` dependency group adds openpyxl (PDF to Excel, Excel to PDF) and Pillow (image codecs). A plain `uv sync` installs it. An install without the group still starts, and a tool that needs a missing package names it (for example openpyxl) instead of failing silently. The Windows installer includes openpyxl, Pillow and the pywin32 support for Office COM; Microsoft Office itself is still a separate install.
+
 PDF to Word converts a temporary decrypted copy of a password-protected PDF, because LibreOffice cannot open one. The copy is deleted when the job ends, whether it succeeds, fails, or is cancelled; your original is never changed.
 
 When Word or Excel documents are converted through Microsoft Office, a document that has a password fails with a clear message. PageDrop does not retry it in LibreOffice, and does not show an Office password dialog.

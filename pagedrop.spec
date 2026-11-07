@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -20,6 +21,7 @@ datas: list[tuple[str, str]] = [
     # Licence notices must ship beside the onedir exe.
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),
+    (str(ROOT / "licenses"), "licenses"),
 ]
 # Optional OCR pack directory (may contain only README until eng is shipped).
 if TESSDATA.is_dir():
@@ -60,7 +62,20 @@ from PyInstaller.utils.hooks import copy_metadata
 
 datas += copy_metadata("pagedrop")
 
+# Third-party licence files travel in each package's dist-info. Pillow's LICENSE
+# also covers the libraries bundled in its wheel.
+for dist in ("pillow", "openpyxl", "et_xmlfile") + (("pywin32",) if sys.platform == "win32" else ()):
+    datas += copy_metadata(dist)
+
 hiddenimports += collect_submodules("pagedrop")
+
+# openpyxl and Pillow are loaded through importlib (capability probes), which
+# PyInstaller cannot see; Pillow also loads codec plugins dynamically. On
+# Windows, pywin32 backs Office COM (Microsoft Office itself stays a separate
+# install).
+hiddenimports += ["openpyxl", "PIL.Image", "PIL.WebPImagePlugin"]
+if sys.platform == "win32":
+    hiddenimports += ["win32com.client", "pythoncom", "pywintypes"]
 hiddenimports = list(dict.fromkeys(hiddenimports))
 
 a = Analysis(

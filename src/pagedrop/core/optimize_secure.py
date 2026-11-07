@@ -484,8 +484,8 @@ def sanitize_pdf(
 
 def _cli_compress() -> int:
     """Read the compress payload from stdin and write the lossy output."""
-    payload = json.loads(sys.stdin.read() or "{}")
     try:
+        payload = json.loads(sys.stdin.read() or "{}")
         compress_pdf(
             payload["source"],
             payload["output"],

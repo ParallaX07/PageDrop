@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import json
 import struct
 import subprocess
 import sys
@@ -513,6 +515,50 @@ def test_verify_empty_stdout_is_failure(
     report = verify_redacted_pdf_fresh_process(src, absent_text=[SECRET])
     assert not report.ok
     assert any("empty stdout" in f for f in report.failures)
+
+
+def _run_cli_verify(
+    monkeypatch: pytest.MonkeyPatch, stdin: io.StringIO | None
+) -> tuple[int, dict[str, object]]:
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stdout", out)
+    code = redact_module._cli_verify()
+    return code, json.loads(out.getvalue())
+
+
+@pytest.mark.parametrize(
+    "stdin_text",
+    [None, "", "not json", "[]", "{}", '{"absent_text": ["x"]}'],
+    ids=["no-stdin", "empty", "bad-json", "not-object", "no-path", "missing-path"],
+)
+def test_cli_verify_bad_request_reports_failure_json(
+    monkeypatch: pytest.MonkeyPatch, stdin_text: str | None
+) -> None:
+    stdin = None if stdin_text is None else io.StringIO(stdin_text)
+    code, report = _run_cli_verify(monkeypatch, stdin)
+    assert code == 2
+    assert isinstance(report["failures"], list) and report["failures"]
+
+
+def test_cli_verify_inspect_error_is_a_failure_without_the_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_a: object, **kwargs: object) -> None:
+        raise RuntimeError(f"cannot open with {kwargs['password']}")
+
+    monkeypatch.setattr(redact_module, "inspect_redaction_result", _boom)
+    payload = json.dumps({"path": "x.pdf", "password": "hunter2-secret"})
+    code, report = _run_cli_verify(monkeypatch, io.StringIO(payload))
+    assert code == 2
+    text = json.dumps(report)
+    assert "RuntimeError" in text and "hunter2-secret" not in text
+
+
+def test_fresh_process_verify_of_an_unreadable_file_fails(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.pdf"
+    report = verify_redacted_pdf_fresh_process(missing, absent_text=[SECRET])
+    assert not report.ok and report.failures
 
 
 def _page_pdf(path: Path, lines: list[tuple[tuple[float, float], str]]) -> Path:

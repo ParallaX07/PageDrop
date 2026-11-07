@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -138,6 +139,142 @@ def test_missing_installer_output_and_frozen_metadata_fail_packaging_checks(tmp_
     (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
     with pytest.raises(AssertionError, match="METADATA"):
         check_packaging._assert_onedir_dist_if_present()
+
+
+def _fake_bundle(tmp_path, monkeypatch, modules, *, windows, dlls=True):
+    """Lay out a metadata-valid onedir bundle whose frozen modules are *modules*."""
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+    shutil.rmtree(tmp_path / "dist", ignore_errors=True)
+    bundle = tmp_path / "dist" / "pagedrop"
+    data = bundle / "_internal"
+    (data / "pagedrop" / "assets" / "icons").mkdir(parents=True)
+    (bundle / ("pagedrop.exe" if windows else "pagedrop")).write_bytes(b"exe")
+    (data / "THIRD_PARTY_NOTICES.md").write_text("notices", encoding="utf-8")
+    (data / "LICENSE").write_text("licence", encoding="utf-8")
+    (data / "licenses").mkdir()
+    for name in check_packaging.LICENSE_TEXTS:
+        (data / "licenses" / name).write_text("licence text", encoding="utf-8")
+    for info, rel in (
+        ("openpyxl-3.1.5", "LICENCE.rst"),
+        ("et_xmlfile-2.0.0", "LICENCE.rst"),
+        ("pillow-13.0.0", "licenses/LICENSE"),
+    ):
+        licence = data / f"{info}.dist-info" / rel
+        licence.parent.mkdir(parents=True)
+        licence.write_text("licence", encoding="utf-8")
+    if windows:
+        licence = data / "pywin32-311.dist-info" / "licenses" / "win32" / "License.txt"
+        licence.parent.mkdir(parents=True)
+        licence.write_text("licence", encoding="utf-8")
+    (data / "pagedrop" / "assets" / "icons" / "icon.svg").write_text("svg", encoding="utf-8")
+    (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
+    dist_info = data / f"pagedrop-{check_packaging.read_version()}.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        f"Name: pagedrop\nVersion: {check_packaging.read_version()}\n", encoding="utf-8"
+    )
+    if dlls:
+        sys32 = data / "pywin32_system32"
+        sys32.mkdir()
+        (sys32 / "pywintypes311.dll").write_bytes(b"dll")
+        (sys32 / "pythoncom311.dll").write_bytes(b"dll")
+    monkeypatch.setattr(check_packaging, "_frozen_modules", lambda exe: set(modules))
+
+
+def test_frozen_bundle_with_every_backend_passes(tmp_path, monkeypatch):
+    _fake_bundle(tmp_path, monkeypatch, {"openpyxl", "PIL.Image"}, windows=False, dlls=False)
+    check_packaging._assert_onedir_dist_if_present()
+    _fake_bundle(
+        tmp_path, monkeypatch, {"openpyxl", "PIL.Image", "win32com.client"}, windows=True
+    )
+    check_packaging._assert_onedir_dist_if_present()
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_frozen_bundle_without_openpyxl_or_pillow_fails(tmp_path, monkeypatch, windows):
+    for missing, kept in (("openpyxl", "PIL.Image"), ("PIL.Image", "openpyxl")):
+        _fake_bundle(tmp_path, monkeypatch, {kept, "win32com.client"}, windows=windows)
+        with pytest.raises(AssertionError, match=f"missing {missing}.*--group codecs"):
+            check_packaging._assert_onedir_dist_if_present()
+
+
+def test_windows_bundle_without_win32com_fails(tmp_path, monkeypatch):
+    _fake_bundle(tmp_path, monkeypatch, {"openpyxl", "PIL.Image"}, windows=True)
+    with pytest.raises(AssertionError, match=r"win32com\.client.*--group office"):
+        check_packaging._assert_onedir_dist_if_present()
+
+
+def test_windows_bundle_without_pywin32_dlls_fails(tmp_path, monkeypatch):
+    modules = {"openpyxl", "PIL.Image", "win32com.client"}
+    _fake_bundle(tmp_path, monkeypatch, modules, windows=True, dlls=False)
+    with pytest.raises(AssertionError, match=r"pywintypes\*\.dll.*--group office"):
+        check_packaging._assert_onedir_dist_if_present()
+    sys32 = tmp_path / "dist" / "pagedrop" / "_internal" / "pywin32_system32"
+    sys32.mkdir()
+    (sys32 / "pywintypes311.dll").write_bytes(b"dll")
+    with pytest.raises(AssertionError, match=r"pythoncom\*\.dll"):
+        check_packaging._assert_onedir_dist_if_present()
+
+
+def _declared_tree(tmp_path, monkeypatch):
+    """Copy the files the declared-backends check reads into *tmp_path*."""
+    for rel in (
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        "scripts/build_windows_installer.ps1",
+    ):
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+    return check_packaging.SPEC.read_text(encoding="utf-8")
+
+
+def test_declared_backends_pass_for_the_checked_in_tree(tmp_path, monkeypatch):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    check_packaging._assert_backends_declared(spec)
+
+
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        (".github/workflows/ci.yml", "--group codecs"),
+        ("scripts/build_windows_installer.ps1", "--group codecs"),
+        ("scripts/build_windows_installer.ps1", "--group office"),
+        ("pyproject.toml", 'default-groups = ["dev", "codecs"]'),
+    ],
+)
+def test_declared_backends_fail_when_a_sync_or_group_is_dropped(
+    tmp_path, monkeypatch, rel, needle
+):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    path = tmp_path / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, ""), encoding="utf-8")
+    with pytest.raises(AssertionError):
+        check_packaging._assert_backends_declared(spec)
+
+
+def test_declared_backends_check_each_release_job_separately(tmp_path, monkeypatch):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    release = tmp_path / ".github" / "workflows" / "release.yml"
+    text = release.read_text(encoding="utf-8")
+    windows, linux = text.split("  build-linux:", 1)
+    # Dropping office from the Windows job must fail even though codecs remains.
+    release.write_text(windows.replace(" --group office", "") + "  build-linux:" + linux, encoding="utf-8")
+    with pytest.raises(AssertionError, match="build-windows.*--group office"):
+        check_packaging._assert_backends_declared(spec)
+    # Dropping codecs from the Linux job must fail even though Windows keeps it.
+    release.write_text(windows + "  build-linux:" + linux.replace(" --group codecs", ""), encoding="utf-8")
+    with pytest.raises(AssertionError, match="build-linux.*--group codecs"):
+        check_packaging._assert_backends_declared(spec)
+
+
+@pytest.mark.parametrize("hidden", ["openpyxl", "PIL.Image", "win32com.client", "pywintypes"])
+def test_declared_backends_fail_when_spec_drops_a_hidden_import(tmp_path, monkeypatch, hidden):
+    spec = _declared_tree(tmp_path, monkeypatch)
+    with pytest.raises(AssertionError, match=hidden.replace(".", r"\.")):
+        check_packaging._assert_backends_declared(spec.replace(f'"{hidden}"', ""))
 
 
 def test_partial_draft_retry_replaces_only_mismatched_asset(tmp_path):
@@ -334,3 +471,198 @@ def test_linux_assets_and_notes_are_reverified_on_retry(tmp_path):
     operations.calls.clear()
     publish_tested_pair(operations, tag="v1.2.3", installer=installer, checksum=checksum, **files)
     assert not any(call[0] in {"upload", "delete"} for call in operations.calls)
+
+
+def _ci_tree(tmp_path, monkeypatch):
+    for rel in (".github/workflows/ci.yml", "tests/smoke/test_phase16_executable.py"):
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+
+
+def test_ci_package_job_passes_for_the_checked_in_tree(tmp_path, monkeypatch):
+    _ci_tree(tmp_path, monkeypatch)
+    check_packaging._assert_ci_package_job()
+
+
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        (".github/workflows/ci.yml", "package-linux:"),
+        (".github/workflows/ci.yml", "uv run pyinstaller"),
+        (".github/workflows/ci.yml", "smoke_exe.sh"),
+        ("tests/smoke/test_phase16_executable.py", "COMPRESS_WORKER_FLAG"),
+        ("tests/smoke/test_phase16_executable.py", "--pagedrop-office-com-worker"),
+    ],
+)
+def test_ci_package_job_check_fails_when_a_piece_is_dropped(tmp_path, monkeypatch, rel, needle):
+    _ci_tree(tmp_path, monkeypatch)
+    path = tmp_path / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, "gone"), encoding="utf-8")
+    with pytest.raises(AssertionError):
+        check_packaging._assert_ci_package_job()
+
+
+@pytest.mark.parametrize("windows", [False, True])
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "LICENSE",
+        "licenses/GPL-3.0.txt",
+        "licenses/LGPL-3.0.txt",
+        "openpyxl-3.1.5.dist-info/LICENCE.rst",
+        "et_xmlfile-2.0.0.dist-info/LICENCE.rst",
+        "pillow-13.0.0.dist-info/licenses/LICENSE",
+    ],
+)
+def test_frozen_bundle_without_a_licence_file_fails(tmp_path, monkeypatch, windows, missing):
+    _fake_bundle(
+        tmp_path, monkeypatch, {"openpyxl", "PIL.Image", "win32com.client"}, windows=windows
+    )
+    data = tmp_path / "dist" / "pagedrop" / "_internal"
+    (data / missing).write_text("", encoding="utf-8")  # empty counts as missing
+    with pytest.raises(AssertionError, match=r"(?i)licen[cs]e"):
+        check_packaging._assert_onedir_dist_if_present()
+    (data / missing).unlink()
+    with pytest.raises(AssertionError, match=r"(?i)licen[cs]e"):
+        check_packaging._assert_onedir_dist_if_present()
+
+
+def test_windows_bundle_without_pywin32_dist_info_fails(tmp_path, monkeypatch):
+    modules = {"openpyxl", "PIL.Image", "win32com.client"}
+    _fake_bundle(tmp_path, monkeypatch, modules, windows=True)
+    info = tmp_path / "dist" / "pagedrop" / "_internal" / "pywin32-311.dist-info"
+    licence = info / "licenses" / "win32" / "License.txt"
+    licence.unlink()  # dist-info without its licence file must fail
+    with pytest.raises(AssertionError, match="pywin32 dist-info must include its non-empty licence"):
+        check_packaging._assert_onedir_dist_if_present()
+    shutil.rmtree(info)
+    with pytest.raises(AssertionError, match="pywin32 dist-info"):
+        check_packaging._assert_onedir_dist_if_present()
+    # A Linux bundle never needs it.
+    _fake_bundle(tmp_path, monkeypatch, {"openpyxl", "PIL.Image"}, windows=False, dlls=False)
+    check_packaging._assert_onedir_dist_if_present()
+
+
+def _licence_tree(tmp_path, monkeypatch):
+    """Copy every file the licence checks read into *tmp_path*."""
+    rels = [
+        "licenses/GPL-3.0.txt",
+        "licenses/LGPL-3.0.txt",
+        "pagedrop.spec",
+        "installer/windows.iss",
+        "scripts/build_linux_appimage.sh",
+        "README.md",
+        "release-notes/TEMPLATE.md",
+        "src/pagedrop/ui/main_window.py",
+        *(str(p.relative_to(ROOT)) for p in (ROOT / "docs").rglob("*.md")),
+    ]
+    for rel in rels:
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(check_packaging, "ROOT", tmp_path)
+
+
+def _edit(tmp_path, rel, old, new=""):
+    path = tmp_path / rel
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def test_licence_checks_pass_for_the_checked_in_tree(tmp_path, monkeypatch):
+    _licence_tree(tmp_path, monkeypatch)
+    check_packaging._assert_license_texts()
+    check_packaging._assert_license_wording()
+    check_packaging._assert_no_paid_licence_wording()
+    check_packaging._assert_notices_sections(
+        (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    ("rel", "old", "new"),
+    [
+        ("licenses/GPL-3.0.txt", "GNU GENERAL PUBLIC LICENSE", "something else"),
+        ("licenses/LGPL-3.0.txt", "GNU LESSER GENERAL PUBLIC LICENSE", "GNU GENERAL PUBLIC LICENSE"),
+        ("pagedrop.spec", 'ROOT / "licenses"', 'ROOT / "elsewhere"'),
+        ("installer/windows.iss", "licenses\\*", "nothing"),
+        ("scripts/build_linux_appimage.sh", "licenses/LGPL-3.0.txt", "LGPL-3.0.txt"),
+    ],
+)
+def test_license_texts_check_fails_when_a_text_or_shipper_breaks(
+    tmp_path, monkeypatch, rel, old, new
+):
+    _licence_tree(tmp_path, monkeypatch)
+    _edit(tmp_path, rel, old, new)
+    with pytest.raises(AssertionError):
+        check_packaging._assert_license_texts()
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "pypi.org/project/PyQt6",
+        "download.qt.io/official_releases/qt",
+        "pypi.org/project/PyMuPDF",
+        "mupdf.com/releases",
+    ],
+)
+def test_license_wording_check_fails_when_the_template_drops_a_component_source(
+    tmp_path, monkeypatch, link
+):
+    _licence_tree(tmp_path, monkeypatch)
+    _edit(tmp_path, "release-notes/TEMPLATE.md", link, "example.invalid")
+    with pytest.raises(AssertionError, match="link source"):
+        check_packaging._assert_license_wording()
+
+
+def test_license_texts_check_fails_when_a_text_is_missing(tmp_path, monkeypatch):
+    _licence_tree(tmp_path, monkeypatch)
+    (tmp_path / "licenses" / "GPL-3.0.txt").unlink()
+    with pytest.raises(AssertionError, match="GPL-3.0.txt"):
+        check_packaging._assert_license_texts()
+
+
+@pytest.mark.parametrize(
+    "heading", ["## pywin32", "## openpyxl", "## et-xmlfile", "## Pillow", "## Written offer"]
+)
+def test_notices_check_fails_without_a_required_section(heading):
+    text = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    with pytest.raises(AssertionError, match=heading):
+        check_packaging._assert_notices_sections(text.replace(heading, "## Renamed"))
+
+
+@pytest.mark.parametrize(
+    ("rel", "old"),
+    [
+        ("docs/licensing.md", "AGPL-3.0-or-later"),
+        ("README.md", "AGPL-3.0-or-later"),
+        ("release-notes/TEMPLATE.md", "AGPL-3.0-or-later"),
+        ("release-notes/TEMPLATE.md", "tree/v{{version}}"),
+        ("src/pagedrop/ui/main_window.py", "free software under AGPL-3.0-or-later"),
+        ("src/pagedrop/ui/main_window.py", "/tree/v"),
+        ("src/pagedrop/ui/main_window.py", "/blob/v"),
+        ("src/pagedrop/ui/main_window.py", "NO WARRANTY"),
+    ],
+)
+def test_license_wording_check_fails_when_a_statement_is_dropped(tmp_path, monkeypatch, rel, old):
+    _licence_tree(tmp_path, monkeypatch)
+    _edit(tmp_path, rel, old, "gone")
+    with pytest.raises(AssertionError):
+        check_packaging._assert_license_wording()
+
+
+@pytest.mark.parametrize("rel", ["README.md", "docs/licensing.md", "docs/user-guide.md"])
+@pytest.mark.parametrize("word", ["Commercial", "MIT"])
+def test_paid_licence_wording_is_rejected_in_readme_and_docs(tmp_path, monkeypatch, rel, word):
+    _licence_tree(tmp_path, monkeypatch)
+    path = tmp_path / rel
+    path.write_text(path.read_text(encoding="utf-8") + f"\nA {word} option.\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=rel):
+        check_packaging._assert_no_paid_licence_wording()
+    # "submit" and similar words must not trip the whole-word MIT gate.
+    path.write_text(path.read_text(encoding="utf-8").replace(f"A {word} option.", "Submit it."), encoding="utf-8")
+    check_packaging._assert_no_paid_licence_wording()

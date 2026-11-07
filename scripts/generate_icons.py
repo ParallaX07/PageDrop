@@ -1,7 +1,7 @@
 """Generate Windows .ico (or a single PNG) from logo.svg.
 
 Usage:
-  uv run --with pillow python scripts/generate_icons.py
+  uv run python scripts/generate_icons.py
   uv run python scripts/generate_icons.py --png PATH   # one 256 px PNG, no Pillow
 """
 
