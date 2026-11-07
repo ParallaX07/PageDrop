@@ -6,8 +6,12 @@ import zipfile
 from pathlib import Path
 
 import fitz
-import openpyxl
 import pytest
+
+try:
+    import openpyxl
+except ImportError:  # The optional codecs group is not installed.
+    openpyxl = None
 
 from pagedrop.core import native_conversions as nc
 from pagedrop.core.capabilities import OPENPYXL, PILLOW, clear_cache, probe_all
@@ -22,6 +26,8 @@ from pagedrop.core.supported_formats import (
     is_supported_image,
 )
 from tests.conftest import file_sha256
+
+needs_openpyxl = pytest.mark.skipif(openpyxl is None, reason="openpyxl (codecs group) not installed")
 
 
 def _make_text_pdf(path: Path, texts: list[str]) -> Path:
@@ -239,6 +245,7 @@ def test_xlsx_to_pdf_requires_openpyxl_when_absent(tmp_path, monkeypatch):
     assert "openpyxl" in str(exc.value)
 
 
+@needs_openpyxl
 def test_xlsx_to_pdf_contains_known_cells(tmp_path):
     clear_cache()
     xlsx = tmp_path / "book.xlsx"
@@ -259,6 +266,7 @@ def test_xlsx_to_pdf_contains_known_cells(tmp_path):
     assert file_sha256(xlsx) == before
 
 
+@needs_openpyxl
 def test_pdf_to_xlsx_writes_known_cells_and_leaves_source_alone(tmp_path):
     clear_cache()
     source = _make_table_pdf(tmp_path / "table.pdf")
