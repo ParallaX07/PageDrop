@@ -4,13 +4,21 @@ PageDrop is built around a thumbnail grid and drag-and-drop. You open PDFs in ta
 
 ## Open and select
 
-1. **Open a PDF**: File → Open PDF (`Ctrl+O`). A blank tab also has an **Open PDF** button; when a document is open, related page actions appear in its toolbar. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab. File → Open Recent reopens recent paths.
-2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or use **Select pages** to enter a page or range like `1-5`.
+1. **Open a PDF**: File → Open PDF (`Ctrl+O`). A blank tab also has an **Open PDF** button; when a document is open, related page actions appear in its toolbar. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab. File → Open Recent reopens recent paths. You can also name PDFs when starting PageDrop (`pagedrop report.pdf notes.pdf`): the first opens in the blank tab, the rest in new tabs, and any file that is missing or not a PDF is reported in a message.
+2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump to a page with **Ctrl+G**, or use **Select pages** (Edit menu, grid context menu, or command palette) to enter a page or range like `1-5`.
 3. **Zoom and preview**: Ctrl+scroll zooms thumbnails; Ctrl+0 resets. Double-click or press Enter for a full-page preview; arrow keys plus Space handle keyboard navigation. Escape returns to the grid from preview.
 
 In preview, the markup hint states the gesture for the active tool. Redaction marks remain pending until confirmed and are only permanently removed in a newly saved, fresh-process-verified copy. Flattening forms likewise makes their fields part of the page content and no longer editable. Empty Bookmarks, Layers, and Attachments panels explain what is absent; when all three are empty, navigation yields its space to the document until you reopen it.
 
-The first launch gives a brief orientation. PageDrop then gives dismissible one-time hints when you first select pages, transfer pages, or open Preview. Press **Ctrl+/** for the full shortcut list, or **Ctrl+Shift+P** for the command palette. It groups the existing commands, ranks precise matches first, and explains matching unavailable commands.
+The first launch gives a brief orientation. PageDrop then gives dismissible one-time hints when you first select pages, transfer pages, or open Preview. Press **Ctrl+/** for the shortcut list, which is built from the shortcuts the app actually has (so it follows any change) plus the mouse and keyboard gestures. **Ctrl+Shift+P** opens the command palette. It groups the existing commands, ranks precise matches first, and explains matching unavailable commands; arrow keys skip the unavailable rows.
+
+## Window layout
+
+- The window shrinks to 480 × 320. When the toolbar runs out of room, page commands move into a **More** menu, and tool pages scroll instead of clipping.
+- The title bar holds the window controls and the menus. **Ctrl+Shift+H** (View → Show menu and toolbar, or the arrow button at the right of the tab strip) hides the menus and toolbar; the title bar and its window controls stay.
+- Drag the title bar to move the window and double-click it to maximize or restore. Drag any window edge or corner to resize.
+- On Windows the window keeps the native frame behaviour, so Windows snap is intended to work. Elsewhere PageDrop asks the window system to move and resize the window, and falls back to its own drag handling when the window manager declines.
+- The tab strip's right-hand corner holds the **+** (new tab) and hide-menu buttons.
 
 ## Drag pages out
 
@@ -92,11 +100,13 @@ from the result bar. PageDrop does not open the report automatically.
 
 ## Preferences and accessibility
 
-- View → Toggle Light Theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
+- View → Toggle light theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
 - Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, **Automatically check for updates**, and **Reduce motion** (platform reduce-motion is still honored when available)
 - Recheck and Download English language data try your changes but do not save them; nothing is saved until you click OK, and Cancel puts everything back as it was
-- High-contrast preferences are respected where the platform exposes them
-- Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions
+- The first run follows the operating system's light or dark scheme; once you choose a theme, that choice is kept
+- High-contrast preferences are respected where the platform exposes them (Qt 6.10 or later). Focus rings keep enough contrast against light and dark chrome, and icons stay sharp on HiDPI displays
+- Shortcuts act only in the window that has focus, and not while you type in a text field. The undo and zoom controls in the status bar can be reached with Tab
+- Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions. A toast stays while the pointer or keyboard focus is on it, and the Undo toast takes clicks only on its own card
 
 ## Log file for bug reports
 
@@ -174,6 +184,7 @@ close every old PageDrop process manually before upgrading.
 | Close tab | Ctrl+W |
 | Previous tab (MRU) / cycle backward | Ctrl+Tab / Ctrl+Shift+Tab |
 | Select all pages | Ctrl+A |
+| Hide / show menu and toolbar | Ctrl+Shift+H |
 | Clear selection | Escape |
 | Delete selected pages | Delete |
 | Duplicate selected pages | Ctrl+D |
@@ -187,6 +198,7 @@ close every old PageDrop process manually before upgrading.
 | Command palette | Ctrl+Shift+P |
 | Tools | Ctrl+Shift+O |
 | Keyboard shortcuts | Ctrl+/ |
+| Preferences | Ctrl+, |
 | Back to grid / list (in preview) | Escape |
 
 Ctrl+Tab toggles the most recently used previous tab rather than moving sequentially. Ctrl+Shift+Tab cycles backward through all tabs. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab).

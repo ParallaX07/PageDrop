@@ -7,14 +7,15 @@ swap so cached pixmaps and registered toolbar rebuilds stay in sync.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 from weakref import WeakMethod
 
 from PyQt6 import sip
-from PyQt6.QtCore import QByteArray, QSize, Qt
-from PyQt6.QtGui import QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QByteArray, QRectF, Qt
+from PyQt6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
 from pagedrop.ui.theme import ACCENT, TEXT_PRIMARY, TEXT_PRIMARY_LIGHT
@@ -22,7 +23,7 @@ from pagedrop.ui.theme import ACCENT, TEXT_PRIMARY, TEXT_PRIMARY_LIGHT
 # Module TEXT_PRIMARY is dark-only; light chrome uses TEXT_PRIMARY_LIGHT.
 _ICON_SIZES = (16, 20, 24, 32)
 
-_cache: dict[tuple[str, str], QIcon] = {}
+_cache: dict[tuple[str, str, tuple[float, ...]], QIcon] = {}
 _refresh_callbacks: list[Callable[[], None] | WeakMethod] = []
 
 
@@ -41,7 +42,8 @@ def icon(name: str, *, accent: bool = False, color: str | None = None) -> QIcon:
     for ``ACCENT``, or ``color`` for an explicit ``#RRGGBB`` override.
     """
     tint = color or (ACCENT if accent else _chrome_text_hex())
-    key = (name, tint.lower())
+    ratios = _device_pixel_ratios()
+    key = (name, tint.lower(), ratios)
     cached = _cache.get(key)
     if cached is not None:
         return cached
@@ -50,9 +52,17 @@ def icon(name: str, *, accent: bool = False, color: str | None = None) -> QIcon:
     tinted = svg.replace("currentColor", tint).encode("utf-8")
     result = QIcon()
     for size in _ICON_SIZES:
-        result.addPixmap(_render_pixmap(tinted, size))
+        for ratio in ratios:
+            result.addPixmap(_render_pixmap(tinted, size, ratio))
     _cache[key] = result
     return result
+
+
+def _device_pixel_ratios() -> tuple[float, ...]:
+    """Device pixel ratios of the connected screens, always including 1.0."""
+    ratios = {1.0}
+    ratios.update(float(screen.devicePixelRatio()) for screen in QGuiApplication.screens())
+    return tuple(sorted(ratios))
 
 
 def _owner_deleted(callback: Callable[[], None]) -> bool:
@@ -116,12 +126,15 @@ def _load_svg(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _render_pixmap(svg_utf8: bytes, size: int) -> QPixmap:
+def _render_pixmap(svg_utf8: bytes, size: int, ratio: float = 1.0) -> QPixmap:
     renderer = QSvgRenderer(QByteArray(svg_utf8))
-    pixmap = QPixmap(QSize(size, size))
+    pixels = math.ceil(size * ratio)
+    pixmap = QPixmap(pixels, pixels)
+    pixmap.setDevicePixelRatio(ratio)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    renderer.render(painter)
+    logical = pixels / ratio
+    renderer.render(painter, QRectF(0, 0, logical, logical))
     painter.end()
     return pixmap

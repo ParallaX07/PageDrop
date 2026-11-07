@@ -831,7 +831,6 @@ def test_print_document_honors_page_ceiling(
         return QPrintDialog.DialogCode.Accepted
 
     monkeypatch.setattr(QPrintDialog, "exec", boom_exec)
-    monkeypatch.setattr(model, "logical_count", lambda: MAX_PRINT_PAGES + 1)
     warned: list[str] = []
 
     def fake_warning(parent, title, text, *args, **kwargs):
@@ -840,7 +839,11 @@ def test_print_document_honors_page_ceiling(
 
     monkeypatch.setattr(QMessageBox, "warning", fake_warning)
     try:
-        assert viewer.print_document() is False
+        # The fake count must be gone before anything processes queued events.
+        with monkeypatch.context() as stub:
+            stub.setattr(model, "logical_count", lambda: MAX_PRINT_PAGES + 1)
+            printed = viewer.print_document()
+        assert printed is False
         assert dialog_calls["n"] == 0
         assert warned and "Print limit" in warned[0]
         assert str(MAX_PRINT_PAGES) in warned[0]

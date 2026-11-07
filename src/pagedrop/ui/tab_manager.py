@@ -12,7 +12,14 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
 )
-from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QToolButton, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QMenu,
+    QTabBar,
+    QTabWidget,
+    QToolButton,
+    QWidget,
+)
 
 from pagedrop.core.drag_mime import (
     PAGE_TRANSFER_MIME,
@@ -307,7 +314,12 @@ class TabManager(QTabWidget):
         self._detachable_tab_bar.tab_rename_requested.connect(
             self.tab_rename_requested.emit
         )
-        self._open_tabs_button = QToolButton(self)
+        self._tab_corner = QWidget(self)
+        self._tab_corner.setObjectName("TabCorner")
+        corner_layout = QHBoxLayout(self._tab_corner)
+        corner_layout.setContentsMargins(0, 0, 0, 0)
+        corner_layout.setSpacing(4)
+        self._open_tabs_button = QToolButton(self._tab_corner)
         self._open_tabs_button.setObjectName("OpenTabsButton")
         self._open_tabs_button.setText("Open tabs")
         self._open_tabs_button.setToolTip("Show open tabs")
@@ -318,7 +330,8 @@ class TabManager(QTabWidget):
         self._open_tabs_menu = QMenu(self._open_tabs_button)
         self._open_tabs_menu.aboutToShow.connect(self._populate_open_tabs_menu)
         self._open_tabs_button.setMenu(self._open_tabs_menu)
-        self.setCornerWidget(self._open_tabs_button, Qt.Corner.TopRightCorner)
+        corner_layout.addWidget(self._open_tabs_button)
+        self.setCornerWidget(self._tab_corner, Qt.Corner.TopRightCorner)
         self._open_tabs_button.hide()
 
         self.tabCloseRequested.connect(self.close_tab)
@@ -326,6 +339,10 @@ class TabManager(QTabWidget):
 
         refresh_cb = self._refresh_close_icons
         icons.register_refresh(refresh_cb)
+
+    def add_corner_widget(self, widget: QWidget) -> None:
+        """Place a control in the tab strip's right-hand corner."""
+        self._tab_corner.layout().addWidget(widget)
 
     @property
     def detachable_tab_bar(self) -> DetachableTabBar:

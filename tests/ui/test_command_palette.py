@@ -54,3 +54,67 @@ def test_palette_triggers_original_action(qtbot) -> None:
     qtbot.addWidget(palette)
     palette._activate_current()
     assert calls == [True]
+
+
+def _selectable_palette(qtbot):
+    from PyQt6.QtCore import Qt
+
+    first = _action("Alpha", "Tools")
+    second = _action("Bravo", "Tools")
+    blocked = _action("Charlie", "Pages", enabled=False)
+    blocked.setProperty("unavailableReason", "Select a page first")
+    third = _action("Delta", "View")
+    palette = CommandPalette([first, second, blocked, third])
+    qtbot.addWidget(palette)
+    palette.show()
+    # Query that matches everything so the unavailable row is listed.
+    palette._refilter("a")
+    return palette, Qt
+
+
+def _selectable_rows(palette) -> list[int]:
+    return [i for i, action in enumerate(palette._item_actions) if action is not None]
+
+
+def test_palette_arrows_hop_over_headers_and_unavailable_rows(qtbot) -> None:
+    palette, Qt = _selectable_palette(qtbot)
+    rows = _selectable_rows(palette)
+    assert len(rows) >= 3
+    assert any(a is None for a in palette._item_actions[rows[0] : rows[-1]])
+
+    palette._list.setCurrentRow(rows[0])
+    visited = [palette._list.currentRow()]
+    for _ in rows[1:]:
+        qtbot.keyClick(palette, Qt.Key.Key_Down)
+        visited.append(palette._list.currentRow())
+    assert visited == rows
+
+    qtbot.keyClick(palette, Qt.Key.Key_Down)
+    assert palette._list.currentRow() == rows[-1]
+
+    for expected in reversed(rows[:-1]):
+        qtbot.keyClick(palette, Qt.Key.Key_Up)
+        assert palette._list.currentRow() == expected
+    qtbot.keyClick(palette, Qt.Key.Key_Up)
+    assert palette._list.currentRow() == rows[0]
+
+
+def test_palette_arrows_do_nothing_without_selectable_rows(qtbot) -> None:
+    from PyQt6.QtCore import Qt
+
+    blocked = _action("Charlie", "Pages", enabled=False)
+    blocked.setProperty("unavailableReason", "Select a page first")
+    palette = CommandPalette([blocked])
+    qtbot.addWidget(palette)
+    palette.show()
+    palette._refilter("charlie")
+    assert _selectable_rows(palette) == []
+    before = palette._list.currentRow()
+
+    qtbot.keyClick(palette, Qt.Key.Key_Down)
+    qtbot.keyClick(palette, Qt.Key.Key_Up)
+
+    assert palette._list.currentRow() == before
+    palette._refilter("zzz")
+    qtbot.keyClick(palette, Qt.Key.Key_Down)
+    qtbot.keyClick(palette, Qt.Key.Key_Up)

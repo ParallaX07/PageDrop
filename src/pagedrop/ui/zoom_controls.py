@@ -108,6 +108,10 @@ class ZoomControls(QWidget):
         self._update_button_states(clamped)
         self._syncing = False
 
+    def focus_widgets(self) -> tuple[QWidget, ...]:
+        """Keyboard-reachable controls in tab order."""
+        return (self._zoom_out, self._slider, self._zoom_in)
+
     def set_slider_visible(self, visible: bool) -> None:
         """Keep essential zoom controls reachable when the status bar is narrow."""
         self._slider.setVisible(visible)

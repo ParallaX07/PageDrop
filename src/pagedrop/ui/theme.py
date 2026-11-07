@@ -30,6 +30,7 @@ BORDER_DEFAULT = "#45454F"
 BORDER_HOVER = "#5C5C68"
 # Light chrome border — shared by app_stylesheet locals + paint helpers
 BORDER_HOVER_LIGHT = "#9CA3AF"
+FOCUS_RING_LIGHT = "#13558E"
 
 # ponytail: darkened from #2F9BE6 so TEXT_ON_ACCENT meets WCAG AA ≥ 4.5 on
 # fill / hover / pressed; brighten only if labels move off the fill.
@@ -50,7 +51,9 @@ FOREGROUND = TEXT_PRIMARY
 MUTED_FOREGROUND = TEXT_MUTED
 BORDER = BORDER_DEFAULT
 INPUT = BG_CARD
-FOCUS_RING = ACCENT
+# Keyboard focus ring. ACCENT is darkened for text on the accent fill, so it
+# falls below 3:1 on dark surfaces; these stay >= 3:1 on every chrome surface.
+FOCUS_RING = "#5AB0F5"
 PRIMARY = ACCENT
 ON_PRIMARY = TEXT_ON_ACCENT
 DOCUMENT_CANVAS = SURFACE_DOCUMENT_CANVAS
@@ -218,6 +221,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         page_chip_bg = "rgba(19, 19, 22, 160)"
         bg_pressed = "#0E0E11"
 
+    focus_ring = FOCUS_RING_LIGHT if light else FOCUS_RING
+    # Ring for a focused item on an ACCENT fill: white is invisible against the
+    # light surface edge, so light uses black (3.6:1 on ACCENT); dark uses white.
+    selected_focus_ring = "#000000" if light else TEXT_ON_ACCENT
     text_muted = text_secondary if high_contrast else text_muted_tok
     border_default = border_hover if high_contrast else border_default_tok
     border_subtle = border_default_tok if high_contrast else border_subtle_tok
@@ -243,10 +250,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_1}px {SPACE_2}px;
     }}
 
+    QWidget#WindowTitleBar {{
+        background-color: {bg_surface};
+        border-bottom: 1px solid {border_subtle};
+    }}
+
     QMenuBar {{
         background-color: {bg_surface};
         color: {text_primary};
-        border-bottom: 1px solid {border_subtle};
         padding: 2px 0;
     }}
 
@@ -260,7 +271,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     /* no ::item:focus — Qt marks every menubar item focused at once */
     QMenuBar::item:selected {{
         background-color: {bg_card_hover};
-        border-color: {ACCENT};
+        border-color: {focus_ring};
     }}
 
     QWidget#WindowControls {{
@@ -281,14 +292,21 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-height: 26px;
         max-height: 26px;
         padding: 0;
-        border: 0;
+        border: {focus_width}px solid transparent;
         border-radius: 5px;
         background: transparent;
         color: {text_primary};
     }}
 
+    QToolButton#WindowMinimize:focus,
+    QToolButton#WindowMaximize:focus,
+    QToolButton#WindowClose:focus {{
+        border-color: {focus_ring};
+    }}
+
     QToolButton#WindowMinimize:hover,
-    QToolButton#WindowMaximize:hover {{
+    QToolButton#WindowMaximize:hover,
+    QToolButton#WindowMaximize[nativeHover="true"] {{
         background-color: {bg_card_hover};
     }}
 
@@ -313,7 +331,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QMenu::item:selected {{
         background-color: {bg_card_hover};
-        border-color: {ACCENT};
+        border-color: {focus_ring};
     }}
 
     QMenu::separator {{
@@ -339,7 +357,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLineEdit:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QListWidget,
@@ -352,9 +370,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 4px;
     }}
 
+    /* The transparent border is paid for out of the padding, so the focus
+       ring never changes an item's size. */
     QListWidget::item,
     QTreeWidget::item {{
-        padding: 8px 10px;
+        padding: {8 - focus_width}px {10 - focus_width}px;
+        border: {focus_width}px solid transparent;
         border-radius: 6px;
         color: {text_primary};
     }}
@@ -363,6 +384,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QTreeWidget::item:selected {{
         background-color: {ACCENT};
         color: {TEXT_ON_ACCENT};
+    }}
+
+    QListWidget::item:focus,
+    QTreeWidget::item:focus {{
+        border-color: {focus_ring};
+    }}
+
+    /* Selected items fill with ACCENT, which the ring cannot contrast with. */
+    QListWidget::item:selected:focus,
+    QTreeWidget::item:selected:focus {{
+        border-color: {selected_focus_ring};
     }}
 
     QListWidget::item:hover:!selected,
@@ -395,7 +427,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QPushButton:disabled {{
@@ -444,7 +476,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
        accent frame for the latter (Flatten watermark blue box). */
     QCheckBox::indicator:focus,
     QRadioButton::indicator:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QComboBox {{
@@ -461,7 +493,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QComboBox:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QComboBox::drop-down {{
@@ -490,7 +522,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QSpinBox:focus,
     QDoubleSpinBox:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QTextEdit {{
@@ -517,7 +549,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPlainTextEdit:focus,
     QTextEdit:focus,
     QTextBrowser:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QGroupBox {{
@@ -580,7 +612,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton:focus,
     QToolBar QToolButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     /* Checked layout modes are a quiet state, not a second primary action. */
@@ -679,7 +711,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ToolbarSecondary:focus,
     QToolBar QToolButton#ToolbarSecondary:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QPushButton#ToolbarSecondary:disabled,
@@ -727,7 +759,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#NewTabButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
         color: {text_primary};
     }}
 
@@ -756,7 +788,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#ChromeToggleButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
         color: {text_primary};
     }}
 
@@ -789,7 +821,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton#ZoomButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QPushButton#ZoomButton:disabled {{
@@ -842,7 +874,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider:focus::groove:horizontal {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QSlider#ZoomSlider:focus::handle:horizontal {{
@@ -913,6 +945,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#MoveUndoButton:pressed {{
         background-color: {bg_pressed};
         border-color: {border_default};
+    }}
+
+    QPushButton#MoveUndoButton:focus,
+    QPushButton#BusyOverlayCancel:focus,
+    QPushButton#ToastOverlayUndo:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
+    QToolButton#ToolsCategoryHeading:focus,
+    QToolButton#ToolsDensityToggle:focus,
+    QToolButton#ToolsUpcomingToggle:focus {{
+        border: {focus_width}px solid {focus_ring};
+        border-radius: {RADIUS_CONTROL}px;
     }}
 
     QProgressBar {{
@@ -1054,7 +1099,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QScrollBar:vertical {{
@@ -1148,7 +1193,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QMessageBox QPushButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QMessageBox QPushButton:default {{
@@ -1260,7 +1305,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#PdfViewerAnnotTools QToolButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QToolButton#PdfViewerAnnotCollapse,
@@ -1295,7 +1340,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton#PdfViewerAnnotExpand:focus,
     QToolButton#PdfViewerSideCollapse:focus,
     QToolButton#PdfViewerSideExpand:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QFrame#PdfViewerRedactConfirm {{
@@ -1325,7 +1370,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton#PdfViewerRedactConfirmBtn:focus,
     QToolButton#PdfViewerRedactCancelBtn:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QFrame#FreeTextFormatBar {{
@@ -1344,7 +1389,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont,
@@ -1359,7 +1404,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont:focus,
     QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QToolButton#FreeTextFormatBold,
@@ -1408,7 +1453,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton#FreeTextFormatItalic:focus,
     QToolButton#FreeTextFormatColor:focus,
     QToolButton#FreeTextFormatDelete:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QTabWidget#PdfViewerSide {{
@@ -1593,6 +1638,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ContextHintText {{
         color: {text_primary};
         font-size: 13px;
+    }}
+
+    QScrollArea#ShortcutsScroll,
+    QScrollArea#ShortcutsScroll > QWidget > QWidget {{
+        background-color: transparent;
+        border: none;
     }}
 
     QLabel#ShortcutCategory {{
@@ -1846,7 +1897,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#ToolShellHelp:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QFrame#ToolShellHelpPopup {{
@@ -1889,7 +1940,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QFrame#ToolShellDropZone:focus {{
-        border: {focus_width}px dashed {ACCENT};
+        border: {focus_width}px dashed {focus_ring};
     }}
 
     QLabel#ToolShellDropPrompt {{
@@ -1949,7 +2000,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ResultActionsPreview:focus,
     QPushButton#ResultActionsOpen:focus,
     QPushButton#ResultActionsFolder:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QPushButton#ResultActionsPreview:disabled,
@@ -2010,7 +2061,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton#WatermarkZoomButton:focus {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QWidget#WatermarkKindToggle QToolButton {{
@@ -2092,7 +2143,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#MergeFileCard[focused="true"],
     QFrame#ConvertFileCard[focused="true"] {{
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
     QFrame#MergeFileCard[selected="true"],
     QFrame#ConvertFileCard[selected="true"] {{
@@ -2141,7 +2192,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PageCardFocusRing {{
         background-color: transparent;
-        border: {focus_width}px dashed {ACCENT};
+        border: {focus_width}px dashed {focus_ring};
         border-radius: 3px;
     }}
     QLabel#PageCardPageOverlay {{
@@ -2226,12 +2277,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#ToolTile:focus {{
         background-color: {bg_card};
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
     QFrame#ToolTile[blocked="true"]:focus,
     QFrame#ToolTile[comingSoon="true"]:focus {{
         background-color: transparent;
-        border: {focus_width}px solid {ACCENT};
+        border: {focus_width}px solid {focus_ring};
     }}
     QFrame#ToolTile[compact="true"] {{
         border-radius: {max(6, RADIUS_CARD - 2)}px;
@@ -2278,6 +2329,13 @@ def token_qcolor(hex_color: str, alpha: int = 255) -> "QColor":
 def accent_qcolor(*, alpha: int = 255) -> "QColor":
     """Accent color for programmatic painting (drag badge, etc.)."""
     return token_qcolor(ACCENT, alpha)
+
+
+def focus_ring_hex() -> str:
+    """Keyboard focus ring colour for the active chrome theme (inline styles, painters)."""
+    from pagedrop.ui.settings import light_theme
+
+    return FOCUS_RING_LIGHT if light_theme() else FOCUS_RING
 
 
 def on_accent_qcolor() -> "QColor":

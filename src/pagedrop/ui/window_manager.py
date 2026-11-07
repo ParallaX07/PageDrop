@@ -47,11 +47,18 @@ class WindowManager(QObject):
     def is_primary(self, window: MainWindow) -> bool:
         return window is self._primary
 
-    def open_new_window(self, initial_tab: PdfTab | None = None) -> MainWindow | None:
+    def open_new_window(
+        self,
+        initial_tab: PdfTab | None = None,
+        *,
+        restore_geometry: bool = False,
+    ) -> MainWindow | None:
         """Create, register, and show a new editor window."""
         if self._preparing_installation:
             return None
-        return self.create_window(initial_tab, show=True)
+        return self.create_window(
+            initial_tab, show=True, restore_geometry=restore_geometry
+        )
 
     @property
     def preparing_installation(self) -> bool:
@@ -171,11 +178,14 @@ class WindowManager(QObject):
         initial_tab: PdfTab | None = None,
         *,
         show: bool = False,
+        restore_geometry: bool = False,
     ) -> MainWindow:
         from pagedrop.ui.main_window import MainWindow
 
         window = MainWindow(window_manager=self, initial_tab=initial_tab)
         self._register(window)
+        if restore_geometry:
+            window.restore_saved_geometry()
         if show:
             window.show()
         return window

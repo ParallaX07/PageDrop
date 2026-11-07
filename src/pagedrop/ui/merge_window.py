@@ -76,7 +76,7 @@ class MergeWindow(JobChromeMixin, QWidget):
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("MergeWindow")
-        self.setMinimumSize(640, 480)
+        self.setMinimumSize(480, 320)
 
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(0, 0, 0, 0)

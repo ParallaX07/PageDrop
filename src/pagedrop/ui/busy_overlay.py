@@ -11,8 +11,9 @@ from PyQt6.QtCore import (
     pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QKeyEvent, QRegion
 from PyQt6.QtWidgets import (
+    QApplication,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
@@ -32,6 +33,8 @@ _MOTION_MS = 180
 _EASE_OUT = QEasingCurve.Type.OutCubic
 _TOAST_SLIDE_PX = 12
 _TOAST_MARGINS = (24, 24, 24, 48)
+# After a hover/focus hold, leave at least this long before dismissing.
+_TOAST_MIN_RESUME_MS = 500
 
 # Accessible description so AT hears kind, not only the message text.
 _TOAST_KIND_A11Y: dict[str, str] = {
@@ -264,7 +267,6 @@ class ToastOverlay(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ToastOverlay")
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         # 0 = resting; 1 = slid below + faded out (enter/exit share this axis).
         # Init motion fields before hide() — hideEvent clears effects.
@@ -275,6 +277,9 @@ class ToastOverlay(QWidget):
         self._motion_anim.setEasingCurve(_EASE_OUT)
         self._motion_anim.finished.connect(self._on_motion_finished)
         self._exiting = False
+        # Dismiss timer is held while the pointer or focus is on the card.
+        self._paused = False
+        self._remaining_ms = 0
         self.hide()
 
         layout = QVBoxLayout(self)
@@ -304,6 +309,8 @@ class ToastOverlay(QWidget):
         card_layout.addWidget(self._undo_button)
 
         layout.addWidget(self._card)
+        self._card.installEventFilter(self)
+        self._undo_button.installEventFilter(self)
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -344,6 +351,7 @@ class ToastOverlay(QWidget):
             right,
             int(bottom - _TOAST_SLIDE_PX * self._motion_t),
         )
+        self._update_mask()
 
     motion_t = pyqtProperty(float, _get_motion_t, _set_motion_t)
 
@@ -357,7 +365,7 @@ class ToastOverlay(QWidget):
     ) -> None:
         self._message.setText(message)
         self._message.setProperty("kind", kind)
-        # Announce to assistive tech when the toast appears (O1).
+        # Describe the card to anyone inspecting it with assistive tech.
         self._message.setAccessibleName(message)
         self._message.setAccessibleDescription(
             _TOAST_KIND_A11Y.get(kind, "Notification")
@@ -369,16 +377,10 @@ class ToastOverlay(QWidget):
 
         self._on_undo = on_undo
         if on_undo is not None:
-            self.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
-            )
             self._undo_button.show()
             if timeout_ms is None:
                 timeout_ms = self.UNDO_TIMEOUT_MS
         else:
-            self.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-            )
             self._undo_button.hide()
             if timeout_ms is None:
                 # Errors stay longer so they aren't missed after dialogs close.
@@ -389,6 +391,7 @@ class ToastOverlay(QWidget):
                 )
 
         self._exiting = False
+        self._paused = False
         self._motion_anim.stop()
         self._sync_geometry()
         self.show()
@@ -403,11 +406,41 @@ class ToastOverlay(QWidget):
             self._motion_anim.setEndValue(0.0)
             self._motion_anim.start()
         self._timer.start(timeout_ms)
+        self._update_mask()
+        self._sync_pause()
+
+    def _sync_pause(self) -> None:
+        """Hold the dismiss timer while the pointer or focus is on the card.
+
+        The timer is stopped during the exit animation, so a hover then does nothing.
+        """
+        if not self.isVisible():
+            return
+        focus = QApplication.focusWidget()
+        hold = self._card.underMouse() or (
+            focus is not None and self._card.isAncestorOf(focus)
+        )
+        if hold and self._timer.isActive():
+            self._remaining_ms = max(
+                self._timer.remainingTime(), _TOAST_MIN_RESUME_MS
+            )
+            self._timer.stop()
+            self._paused = True
+        elif not hold and self._paused:
+            self._paused = False
+            self._timer.start(self._remaining_ms)
+
+    def _update_mask(self, *, activate: bool = True) -> None:
+        """Take the mouse on the card only; the rest of the area is click-through."""
+        if activate:
+            self.layout().activate()
+        self.setMask(QRegion(self._card.geometry()))
 
     def _dismiss(self) -> None:
         if not self.isVisible():
             return
         self._timer.stop()
+        self._paused = False
         if prefers_reduce_motion() or self._opacity_effect is None:
             self.hide()
             return
@@ -436,6 +469,7 @@ class ToastOverlay(QWidget):
 
     def hideEvent(self, event) -> None:  # noqa: N802
         self._exiting = False
+        self._paused = False
         if getattr(self, "_motion_anim", None) is not None and hasattr(
             self, "_card"
         ):
@@ -445,6 +479,18 @@ class ToastOverlay(QWidget):
     def eventFilter(self, watched, event) -> bool:
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:
             self._sync_geometry()
+        elif watched is self._card and event.type() in (
+            QEvent.Type.Move,
+            QEvent.Type.Resize,
+        ):
+            self._update_mask(activate=False)
+        elif watched in (self._card, self._undo_button) and event.type() in (
+            QEvent.Type.Enter,
+            QEvent.Type.Leave,
+            QEvent.Type.FocusIn,
+            QEvent.Type.FocusOut,
+        ):
+            self._sync_pause()
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event) -> None:
@@ -455,3 +501,4 @@ class ToastOverlay(QWidget):
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
+            self._update_mask()
