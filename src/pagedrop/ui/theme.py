@@ -1640,6 +1640,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-size: 13px;
     }}
 
+    QScrollArea#ShortcutsScroll,
+    QScrollArea#ShortcutsScroll > QWidget > QWidget {{
+        background-color: transparent;
+        border: none;
+    }}
+
     QLabel#ShortcutCategory {{
         color: {text_primary};
         font-size: 14px;

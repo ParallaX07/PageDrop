@@ -32,7 +32,7 @@ tests/                   # unit, UI, and smoke tests (fixtures under tests/fixtu
 
 | Role | Library |
 |---|---|
-| GUI + drag-and-drop | PyQt6 (Fusion) |
+| GUI + drag-and-drop | PyQt6 6.10+ (Fusion) |
 | PDF read/write/split/render | PyMuPDF (`import fitz`) |
 | Project manager | uv |
 | Tests | pytest + pytest-qt |

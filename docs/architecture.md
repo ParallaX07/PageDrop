@@ -17,7 +17,7 @@ main.py → WindowManager → MainWindow(s)
 ```
 
 - **`WindowManager`** owns multi-window lifetime and cross-window page transfer
-- **`ui/`** owns widgets, menus, shortcuts, toasts, and job chrome
+- **`ui/`** owns widgets, menus, shortcuts, toasts, and job chrome. The main window is frameless: a title bar holds the menu bar and window controls (they stay when the menu bar and toolbar are hidden), Qt supplies edge resizing, and on Windows `native_frame.py` keeps the native frame for resize and snap. `main.py` passes command-line PDF paths to `MainWindow.open_command_line_paths` once the window shows and any crash-recovery prompt has finished. The minimum size is 480 × 320; the toolbar overflows into **More** and hosted tool pages scroll
 - **`core/`** owns PDF open/edit/write/merge/extract and tool job handlers
 - Optional backends (Office COM, LibreOffice, OCR data, codecs) live behind a soft **capability registry** so missing extras never break startup
 

@@ -628,6 +628,10 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(a["undo"])
         edit_menu.addAction(a["redo"])
         edit_menu.addSeparator()
+        edit_menu.addAction(a["select_all"])
+        edit_menu.addAction(a["deselect_all"])
+        edit_menu.addAction(a["page_jump"])
+        edit_menu.addSeparator()
         edit_menu.addAction(a["preferences"])
 
         view_menu = menubar.addMenu("&View")
@@ -1093,6 +1097,7 @@ class MainWindow(QMainWindow):
                 self._rotate_ccw_action,
             ),
             (self._delete_pages_action,),
+            (self._page_jump_action,),
             (
                 self._extract_selected_action,
                 self._extract_selected_to_tab_action,
@@ -2411,7 +2416,7 @@ class MainWindow(QMainWindow):
         self._tips_overlay.show_tips()
 
     def _show_keyboard_shortcuts(self) -> None:
-        KeyboardShortcutsDialog(self).exec()
+        KeyboardShortcutsDialog(self._actions.values(), self).exec()
 
     def _show_about(self) -> None:
         QMessageBox.about(
@@ -3149,6 +3154,30 @@ class MainWindow(QMainWindow):
             tab.set_zoom_level(thumbnail_zoom())
             self._load_pdf(path, tab=tab)
         self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
+
+    def open_command_line_paths(self, paths: list[str]) -> None:
+        """Open PDFs named on the command line; report any that cannot be opened."""
+        good: list[str] = []
+        problems: list[str] = []
+        for path in paths:
+            file = Path(path)
+            if not file.is_file():
+                problems.append(f"{file.name or path}: file not found")
+            elif file.suffix.lower() != ".pdf":
+                problems.append(f"{file.name}: not a PDF file")
+            else:
+                good.append(path)
+        if problems:
+            message = "Could not open " + "; ".join(problems)
+            self._transient_status(message)
+            self._show_toast(message, kind="error")
+        if not good:
+            return
+        remember_directory(good[0])
+        active = self._active_tab()
+        if active is None:
+            active = self._tab_manager.add_blank_tab()
+        self._open_paths_as_tabs(good, first_tab=active if active.is_blank else None)
 
     def _populate_open_recent_menu(self) -> None:
         menu = self._open_recent_menu

@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from PyQt6.QtCore import QByteArray, QSettings
+from PyQt6.QtCore import QByteArray, QSettings, Qt
+from PyQt6.QtGui import QGuiApplication
 
 ORGANIZATION = "PageDrop"
 APPLICATION = "PageDrop"
@@ -274,8 +275,14 @@ def load_window_geometry() -> QByteArray | None:
 
 
 def light_theme() -> bool:
-    """Use the light app chrome (default: False / dark)."""
-    return _settings().value(KEY_LIGHT_THEME, False, type=bool)
+    """Use the light app chrome; until the user chooses, follow the OS scheme."""
+    settings = _settings()
+    if settings.contains(KEY_LIGHT_THEME):
+        return settings.value(KEY_LIGHT_THEME, False, type=bool)
+    if QGuiApplication.instance() is None:
+        return False
+    hints = QGuiApplication.styleHints()
+    return hints is not None and hints.colorScheme() == Qt.ColorScheme.Light
 
 
 def set_light_theme(enabled: bool) -> None:

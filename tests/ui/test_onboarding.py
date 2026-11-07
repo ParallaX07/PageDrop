@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 from PyQt6.QtCore import QPoint, QRect, Qt
 from PyQt6.QtGui import QKeySequence, QStatusTipEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QToolBar, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QScrollArea, QToolBar, QWidget
 
+from pagedrop.ui.command_palette import action_label
 from pagedrop.ui.onboarding import (
     FIRST_RUN_TIPS,
     KeyboardShortcutsDialog,
-    SHORTCUT_GROUPS,
     show_context_hint,
 )
 from pagedrop.ui.settings import (
@@ -74,21 +74,59 @@ def test_testing_env_skips_auto_tips(isolated_settings, main_window, qtbot):
     assert has_seen_tips() is False
 
 
-def test_shortcut_groups_document_ctrl_tab_mru():
-    tabs = dict(SHORTCUT_GROUPS)["Tabs"]
-    by_label = dict(tabs)
-    assert "Previous tab (MRU)" in by_label
-    assert "Ctrl+Tab" in by_label["Previous tab (MRU)"]
+def _dialog_rows(dialog):
+    names = [lab.text() for lab in dialog.findChildren(QLabel, "ShortcutAction")]
+    keys = [lab.text() for lab in dialog.findChildren(QLabel, "ShortcutKeys")]
+    assert len(names) == len(keys)
+    return list(zip(names, keys, strict=True))
 
 
-def test_shortcut_groups_document_tools_not_ctrl_t():
-    view = dict(SHORTCUT_GROUPS)["View"]
-    by_label = dict(view)
-    assert "Tools" in by_label
-    assert "Ctrl+Shift+O" in by_label["Tools"]
-    assert "Ctrl+T" in by_label["Tools"]  # documents avoidance
-    tabs = dict(SHORTCUT_GROUPS)["Tabs"]
-    assert dict(tabs)["New tab"] == "Ctrl+T"
+def test_shortcut_dialog_lists_every_shortcut_action_once(main_window, qtbot):
+    dialog = KeyboardShortcutsDialog(main_window._actions.values(), main_window)
+    qtbot.addWidget(dialog)
+    rows = _dialog_rows(dialog)
+    names = [name for name, _ in rows]
+    for action in main_window._actions.values():
+        label = action_label(action)
+        if label and action.shortcuts():
+            assert names.count(label) == 1, label
+            expected = ", ".join(
+                s.toString(QKeySequence.SequenceFormat.NativeText)
+                for s in action.shortcuts()
+            )
+            assert dict(rows)[label] == expected
+        elif label:
+            assert label not in names, f"{label!r} has no shortcut"
+    assert dict(rows)["Previous tab (MRU)"] == QKeySequence("Ctrl+Tab").toString(
+        QKeySequence.SequenceFormat.NativeText
+    )
+    assert "Tools" in dict(rows)
+
+
+def test_shortcut_dialog_follows_changed_shortcut(main_window, qtbot):
+    main_window._actions["go_to_page"].setShortcut(QKeySequence("Ctrl+Alt+J"))
+    dialog = KeyboardShortcutsDialog(main_window._actions.values(), main_window)
+    qtbot.addWidget(dialog)
+    expected = QKeySequence("Ctrl+Alt+J").toString(QKeySequence.SequenceFormat.NativeText)
+    assert dict(_dialog_rows(dialog))["Go to page"] == expected
+    assert QKeySequence("Ctrl+G").toString(QKeySequence.SequenceFormat.NativeText) not in [
+        keys for _, keys in _dialog_rows(dialog)
+    ]
+
+
+def test_shortcut_dialog_keeps_gestures_and_drops_pages_menu_pointer(main_window, qtbot):
+    dialog = KeyboardShortcutsDialog(main_window._actions.values(), main_window)
+    qtbot.addWidget(dialog)
+    rows = dict(_dialog_rows(dialog))
+    assert rows["Preview page"] == "Enter · double-click"
+    assert rows["Thumbnail zoom"] == "Ctrl+scroll"
+    assert rows["Clear selection or close preview"] == "Esc"
+    assert rows["Select a range of pages"] == "Shift+click"
+    assert rows["Add or remove a page from the selection"] == "Ctrl+click"
+    assert "Arrow keys" in rows.values()
+    joined = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "Pages menu" not in joined
+    assert "Select pages" not in rows  # no shortcut, so no row
 
 
 def test_help_menu_keyboard_shortcuts_action(main_window):
@@ -135,13 +173,24 @@ def test_help_about_shows_current_application_version(main_window, monkeypatch):
         app.setApplicationVersion(previous)
 
 
-def test_keyboard_shortcuts_dialog_lists_categories(qtbot):
-    dialog = KeyboardShortcutsDialog()
+def test_keyboard_shortcuts_dialog_lists_categories(main_window, qtbot):
+    dialog = KeyboardShortcutsDialog(main_window._actions.values(), main_window)
     qtbot.addWidget(dialog)
-    joined = " ".join(label.text() for label in dialog.findChildren(QLabel))
-    assert "Tabs" in joined
-    assert "Previous tab (MRU)" in joined
-    assert "Ctrl+Tab" in joined
+    headings = [lab.text() for lab in dialog.findChildren(QLabel, "ShortcutCategory")]
+    assert headings == ["Document", "Pages", "View", "Tools", "Mouse and keyboard"]
+
+
+def test_keyboard_shortcuts_dialog_scrolls_in_a_small_parent(main_window, qtbot):
+    main_window.resize(480, 320)
+    dialog = KeyboardShortcutsDialog(main_window._actions.values(), main_window)
+    qtbot.addWidget(dialog)
+    dialog.resize(dialog.minimumSize())
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    scroll = dialog.findChild(QScrollArea)
+    assert scroll is not None
+    assert scroll.verticalScrollBar().maximum() > 0
+    assert dialog.findChild(QPushButton).isVisible()
 
 
 _TOOLBAR_HINT_LABELS = {

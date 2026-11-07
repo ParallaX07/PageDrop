@@ -132,3 +132,37 @@ def test_main_restores_the_library_path_before_dispatching_worker_flags(monkeypa
 
     assert main_module.main() == 0
     assert seen == ["/usr/lib/x"]
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["--pagedrop-redact-verify", "--pagedrop-compress-worker"],
+)
+def test_module_run_exits_with_the_helper_status(flag):
+    """A helper started as ``python -m pagedrop.main`` reports failure to its parent."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pagedrop.main", flag],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    assert result.returncode == 1, result.stderr
+    assert "Usage:" in result.stderr
+
+
+def test_command_line_paths_drop_options_and_blanks():
+    from pagedrop.main import command_line_paths
+
+    args = [
+        "--pagedrop-office-com-worker",
+        "a.pdf",
+        "",
+        "--pagedrop-redact-verify",
+        "-platform",
+        "/tmp/b.pdf",
+        "--pagedrop-compress-worker",
+    ]
+    assert command_line_paths(args) == ["a.pdf", "/tmp/b.pdf"]
+    assert command_line_paths([]) == []

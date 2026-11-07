@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, pyqtSignal
+import pytest
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea, QWidget
 
@@ -321,3 +322,56 @@ def test_open_preferences_releases_dialog_and_coordinator_connections(
     assert parent.findChildren(PreferencesDialog) == []
     assert coordinator.receivers(coordinator.check_failed) == 0
     assert coordinator.receivers(coordinator.check_succeeded) == 0
+
+
+def _stub_color_scheme(monkeypatch, scheme):
+    from PyQt6.QtGui import QGuiApplication
+
+    class Hints:
+        @staticmethod
+        def colorScheme():  # noqa: N802
+            return scheme
+
+    monkeypatch.setattr(QGuiApplication, "styleHints", staticmethod(lambda: Hints))
+
+
+@pytest.mark.parametrize(
+    ("scheme", "expected"),
+    [
+        (Qt.ColorScheme.Light, True),
+        (Qt.ColorScheme.Dark, False),
+        (Qt.ColorScheme.Unknown, False),
+    ],
+)
+def test_light_theme_follows_the_os_scheme_until_chosen(
+    qtbot, isolated_settings, monkeypatch, scheme, expected
+):
+    _stub_color_scheme(monkeypatch, scheme)
+    assert light_theme() is expected
+    # Reading never stores a choice.
+    assert not settings_mod._settings().contains(settings_mod.KEY_LIGHT_THEME)
+
+
+def test_explicit_light_theme_choice_beats_the_os_scheme(
+    qtbot, isolated_settings, monkeypatch
+):
+    _stub_color_scheme(monkeypatch, Qt.ColorScheme.Light)
+    set_light_theme(False)
+    assert light_theme() is False
+    _stub_color_scheme(monkeypatch, Qt.ColorScheme.Dark)
+    set_light_theme(True)
+    assert light_theme() is True
+
+
+def test_light_theme_menu_action_starts_in_step_with_the_os_scheme(
+    qtbot, isolated_settings, monkeypatch
+):
+    from pagedrop.ui.main_window import MainWindow
+
+    _stub_color_scheme(monkeypatch, Qt.ColorScheme.Light)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    try:
+        assert window._light_theme_action.isChecked()
+    finally:
+        window._temp_manager.cleanup()

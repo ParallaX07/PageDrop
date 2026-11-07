@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
 from PyQt6 import sip
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QAction, QFont, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -16,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.ui.command_palette import action_label
 from pagedrop.ui.settings import (
     has_seen_context_hint,
     set_has_seen_context_hint,
@@ -28,56 +31,50 @@ FIRST_RUN_TIPS: tuple[tuple[str, str], ...] = (
     ("Drop zone", "Drop a PDF onto an empty tab to open it."),
 )
 
-# Grouped for Help → Keyboard Shortcuts. Ctrl+Tab is documented as MRU.
-SHORTCUT_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+# Gestures that are not QActions; action shortcuts are read from the window.
+GESTURE_GROUP: tuple[str, tuple[tuple[str, str], ...]] = (
+    "Mouse and keyboard",
     (
-        "File",
-        (
-            ("Open PDF", "Ctrl+O"),
-            ("Save as", "Ctrl+Shift+S"),
-            ("New window", "Ctrl+Shift+N"),
-        ),
-    ),
-    (
-        "Pages",
-        (
-            ("Select all", "Ctrl+A"),
-            ("Clear selection", "Esc"),
-            ("Delete selected", "Delete"),
-            ("Duplicate selected", "Ctrl+D"),
-            ("Move selected up", "Ctrl+↑"),
-            ("Move selected down", "Ctrl+↓"),
-            ("Move to page", "Ctrl+Shift+M"),
-            ("Undo", "Ctrl+Z"),
-            ("Redo", "Ctrl+Shift+Z"),
-        ),
-    ),
-    (
-        "View",
-        (
-            ("Preview page", "Enter · double-click"),
-            ("Go to page", "Ctrl+G"),
-            ("Select pages", "Use Pages menu"),
-            ("Reset zoom", "Ctrl+0"),
-            ("Thumbnail zoom", "Ctrl+scroll"),
-            ("Command palette", "Ctrl+Shift+P"),
-            ("Tools", "Ctrl+Shift+O, not Ctrl+T (that opens a new tab)"),
-            ("Keyboard shortcuts", "Ctrl+/"),
-        ),
-    ),
-    (
-        "Tabs",
-        (
-            (
-                "Previous tab (MRU)",
-                "Ctrl+Tab toggles the last two tabs, not sequential next",
-            ),
-            ("Cycle tabs backward", "Ctrl+Shift+Tab"),
-            ("New tab", "Ctrl+T"),
-            ("Close tab", "Ctrl+W"),
-        ),
+        ("Move between pages", "Arrow keys"),
+        ("Select a range of pages", "Shift+click"),
+        ("Add or remove a page from the selection", "Ctrl+click"),
+        ("Preview page", "Enter · double-click"),
+        ("Clear selection or close preview", "Esc"),
+        ("Thumbnail zoom", "Ctrl+scroll"),
+        ("Copy pages to another window or the file manager", "Drag pages out"),
+        ("Move instead of copy between windows", "Shift+drop"),
     ),
 )
+
+# Display order for action categories; unknown ones follow alphabetically.
+_CATEGORY_ORDER = ("Document", "Pages", "View", "Tools")
+
+
+def shortcut_groups(
+    actions: Iterable[QAction],
+) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Group the actions that have shortcuts by command category, then add gestures."""
+    by_category: dict[str, list[tuple[str, str]]] = {}
+    for action in actions:
+        label = action_label(action)
+        keys = [
+            seq.toString(QKeySequence.SequenceFormat.NativeText)
+            for seq in action.shortcuts()
+        ]
+        if not label or not keys:
+            continue
+        category = str(action.property("commandCategory") or "Document")
+        by_category.setdefault(category, []).append((label, ", ".join(keys)))
+    ordered = sorted(
+        by_category,
+        key=lambda name: (
+            _CATEGORY_ORDER.index(name) if name in _CATEGORY_ORDER else len(_CATEGORY_ORDER),
+            name,
+        ),
+    )
+    groups = [(name, by_category[name]) for name in ordered]
+    groups.append((GESTURE_GROUP[0], list(GESTURE_GROUP[1])))
+    return groups
 
 
 class TipsOverlay(QWidget):
@@ -227,12 +224,16 @@ def show_context_hint(parent: QWidget, anchor: QWidget, key: str, text: str) -> 
 class KeyboardShortcutsDialog(QDialog):
     """Categorized shortcut reference (Help → Keyboard Shortcuts)."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, actions: Iterable[QAction], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("KeyboardShortcutsDialog")
         self.setWindowTitle("Keyboard shortcuts")
         self.setModal(True)
-        self.setMinimumSize(480, 520)
+        # The list scrolls, so the dialog may shrink below its comfortable size.
+        self.setMinimumSize(320, 240)
+        self.resize(480, 520)
         self.setSizeGripEnabled(True)
 
         root = QVBoxLayout(self)
@@ -240,6 +241,7 @@ class KeyboardShortcutsDialog(QDialog):
         root.setSpacing(12)
 
         scroll = QScrollArea()
+        scroll.setObjectName("ShortcutsScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         body = QWidget()
@@ -250,16 +252,16 @@ class KeyboardShortcutsDialog(QDialog):
         mono = QFont()
         mono.setStyleHint(QFont.StyleHint.Monospace)
 
-        for category, entries in SHORTCUT_GROUPS:
+        for category, entries in shortcut_groups(actions):
             heading = QLabel(category)
             heading.setObjectName("ShortcutCategory")
             body_layout.addWidget(heading)
 
             for action, keys in entries:
                 row = QHBoxLayout()
-                action_label = QLabel(action)
-                action_label.setObjectName("ShortcutAction")
-                action_label.setWordWrap(True)
+                name_label = QLabel(action)
+                name_label.setObjectName("ShortcutAction")
+                name_label.setWordWrap(True)
                 keys_label = QLabel(keys)
                 keys_label.setObjectName("ShortcutKeys")
                 keys_label.setFont(mono)
@@ -267,7 +269,7 @@ class KeyboardShortcutsDialog(QDialog):
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 )
                 keys_label.setWordWrap(True)
-                row.addWidget(action_label, 1)
+                row.addWidget(name_label, 1)
                 row.addWidget(keys_label, 1)
                 body_layout.addLayout(row)
 
