@@ -111,6 +111,12 @@ def unsaved_answer(monkeypatch):
     return fake
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _fusion_style(qapp):
+    """Match the app's style so widget metrics agree across platforms."""
+    qapp.setStyle("Fusion")
+
+
 def _install_nonblocking_qt() -> None:
     """Patch modal Qt APIs before any widgets exist.
 

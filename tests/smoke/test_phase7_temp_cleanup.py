@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from pagedrop.core.page_extractor import extract_pages_to_files
-from pagedrop.utils.temp_manager import TempManager
+from pagedrop.utils.temp_manager import TempManager, process_is_alive
 
 
 def test_five_simulated_extractions_per_drag_cleanup(five_page_pdf):
@@ -88,11 +92,25 @@ app.exec()
     assert not created_dir.exists()
 
 
+def _kill_and_wait(pid: int, timeout: float = 10.0) -> None:
+    """Terminate *pid* if it is still running and wait until it is gone."""
+    if not process_is_alive(pid):
+        return
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while process_is_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not process_is_alive(pid)
+
+
 def test_subprocess_force_kill_orphan_is_scrubbed_by_next_manager():
     """SIGKILL/taskkill skips atexit cleanup; the next TempManager scrubs the orphan.
 
     The killed process wrote ``.pagedrop_owner`` with its pid, so once it is dead
-    the orphan is removed at once (no grace wait).
+    the orphan is removed at once (no grace wait). On Windows a venv's
+    ``sys.executable`` is a launcher that spawns the real interpreter, so the
+    recorded owner is killed explicitly as well.
     """
     code = """
 import os
@@ -118,15 +136,18 @@ time.sleep(30)
         text=True,
     )
     orphan_dir = None
+    owner_pid = None
     try:
         assert proc.stdout is not None
         line = proc.stdout.readline().strip()
         assert line
         orphan_dir = Path(line)
         assert orphan_dir.exists()
+        owner_pid = int((orphan_dir / ".pagedrop_owner").read_text(encoding="ascii"))
 
         proc.kill()
         proc.wait(timeout=10)
+        _kill_and_wait(owner_pid)
         # atexit never ran; a parallel worker may already have scrubbed the tree,
         # so only the post-scrub state is asserted.
         tm = TempManager()
@@ -138,5 +159,7 @@ time.sleep(30)
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+        if owner_pid is not None:
+            _kill_and_wait(owner_pid)
         if orphan_dir is not None:
             shutil.rmtree(orphan_dir, ignore_errors=True)

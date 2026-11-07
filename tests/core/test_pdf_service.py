@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import sys
 from pathlib import Path
 
 import fitz
@@ -26,6 +27,11 @@ from pagedrop.core.pdf_service import (
     search_model,
 )
 from pagedrop.core.thread_policy import is_fitz_document
+
+_needs_unlocked_open_files = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="an open document locks its file on Windows, so it cannot be replaced or deleted",
+)
 
 
 def test_public_api_annotations_exclude_fitz_document() -> None:
@@ -442,6 +448,7 @@ def _replace_file(target: Path, source: Path) -> None:
     assert (after.st_mtime_ns, after.st_size) != (before.st_mtime_ns, before.st_size)
 
 
+@_needs_unlocked_open_files
 def test_replaced_encrypted_file_asks_for_the_new_password(tmp_path: Path) -> None:
     from pagedrop.core.pdf_loader import PdfPasswordError
     from tests.core.test_jobs import _encrypted_pdf
@@ -459,6 +466,7 @@ def test_replaced_encrypted_file_asks_for_the_new_password(tmp_path: Path) -> No
     assert page_count(str(target), password="two") == 1
 
 
+@_needs_unlocked_open_files
 def test_locked_file_replaced_by_plain_file_is_not_a_password_probe(
     tmp_path: Path,
 ) -> None:
@@ -476,6 +484,7 @@ def test_locked_file_replaced_by_plain_file_is_not_a_password_probe(
     assert encryption_state(str(target)) == "none"
 
 
+@_needs_unlocked_open_files
 def test_plain_file_replaced_by_locked_file_needs_a_password(tmp_path: Path) -> None:
     from pagedrop.core.pdf_loader import PdfPasswordRequiredError
     from tests.core.test_jobs import _encrypted_pdf
@@ -494,6 +503,7 @@ def test_plain_file_replaced_by_locked_file_needs_a_password(tmp_path: Path) -> 
     assert encryption_state(str(target)) == "password"
 
 
+@_needs_unlocked_open_files
 def test_deleted_file_evicts_cache_entry_and_raises_typed_error(
     tmp_path: Path,
 ) -> None:
