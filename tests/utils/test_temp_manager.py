@@ -34,6 +34,49 @@ def test_pid_alive_self_and_bogus():
     assert _pid_alive(2_147_000_000) is False
 
 
+def _fake_win32(monkeypatch, *, handle, exit_code=None, last_error=0):
+    """Install a fake kernel32 on a pretend Windows platform."""
+    import ctypes
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    def get_exit_code(_handle, ref):
+        ref._obj.value = exit_code
+        return 1
+
+    kernel32 = SimpleNamespace(
+        OpenProcess=MagicMock(return_value=handle),
+        GetExitCodeProcess=MagicMock(side_effect=get_exit_code),
+        CloseHandle=MagicMock(return_value=1),
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel32), raising=False)
+    monkeypatch.setattr(ctypes, "GetLastError", lambda: last_error, raising=False)
+    return kernel32
+
+
+def test_pid_alive_windows_running_process(monkeypatch):
+    k32 = _fake_win32(monkeypatch, handle=0x1234, exit_code=259)
+    assert _pid_alive(4321) is True
+    k32.CloseHandle.assert_called_once()
+
+
+def test_pid_alive_windows_exited_process_with_open_handle(monkeypatch):
+    k32 = _fake_win32(monkeypatch, handle=0x1234, exit_code=1)
+    assert _pid_alive(4321) is False
+    k32.CloseHandle.assert_called_once()
+
+
+def test_pid_alive_windows_access_denied_counts_as_alive(monkeypatch):
+    _fake_win32(monkeypatch, handle=0, last_error=5)
+    assert _pid_alive(4321) is True
+
+
+def test_pid_alive_windows_open_failure_is_dead(monkeypatch):
+    _fake_win32(monkeypatch, handle=0, last_error=87)
+    assert _pid_alive(4321) is False
+
+
 def test_creates_prefixed_dir():
     tm = TempManager()
     try:
