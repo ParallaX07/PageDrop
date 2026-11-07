@@ -89,7 +89,7 @@ office = [
 [package.metadata]
 requires-dist = [
     { name = "pymupdf", specifier = ">=1.24.0" },
-    { name = "pyqt6", specifier = ">=6.6.0" },
+    { name = "pyqt6", specifier = ">=6.10" },
     { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'office'", specifier = ">=306" },
 ]
 provides-extras = ["office"]

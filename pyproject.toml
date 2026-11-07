@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "ParallaX07" }]
 dependencies = [
-    "PyQt6>=6.6.0",
+    "PyQt6>=6.10",
     "PyMuPDF>=1.24.0",
 ]
 
