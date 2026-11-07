@@ -99,6 +99,14 @@ def _assert_license_wording() -> None:
         "mupdf.com/releases",
     ):
         assert link in template, f"release-notes/TEMPLATE.md must link source: {link}"
+    notes = ROOT / "release-notes" / f"v{read_version()}.md"
+    if notes.is_file():
+        marker = "PageDrop is free software under AGPL-3.0-or-later."
+        assert marker in template, "release-notes/TEMPLATE.md must keep the licence paragraph"
+        paragraph = template[template.index(marker):].strip()
+        assert paragraph in notes.read_text(encoding="utf-8"), (
+            f"{notes.relative_to(ROOT).as_posix()} must end with the TEMPLATE.md licence paragraph"
+        )
 
 
 def _assert_no_paid_licence_wording() -> None:
