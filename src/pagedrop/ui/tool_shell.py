@@ -48,7 +48,7 @@ from pagedrop.ui.job_chrome import (
     run_with_fitz_lock,
 )
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
+from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader, scrollable_page_body
 
 _PRIVACY_LINE = "Files stay on this computer. Nothing is uploaded."
 _PDF_FILTER = "PDF files (*.pdf);;All files (*)"
@@ -728,9 +728,11 @@ class ToolShellWindow(JobChromeMixin, QWidget):
 
         self.setWindowTitle(title)
         self.setObjectName("ToolShellWindow")
-        self.setMinimumSize(520, 480)
+        self.setMinimumSize(480, 320)
 
-        root = QVBoxLayout(self)
+        # Content scrolls when the window is smaller than it needs.
+        root = QVBoxLayout(scrollable_page_body(self))
+        self._body_layout = root
         root.setContentsMargins(16, 16, 16, 8)
         root.setSpacing(12)
 
@@ -872,7 +874,7 @@ class ToolShellWindow(JobChromeMixin, QWidget):
                 continue
             child.deleteLater()
 
-        root = self.layout()
+        root = self._body_layout
         scroll_idx = root.indexOf(self._options_scroll) if root is not None else -1
         header_in_options = self._header_host.parentWidget() is self._options_host
 

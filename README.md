@@ -54,8 +54,8 @@ supports the published zsync updates. macOS binaries aren't published yet.
 
 ## Quick start
 
-1. **Open a PDF**: File → Open PDF (`Ctrl+O`), or the toolbar Open button. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab.
-2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or use **Select pages** in the Pages menu for a range like `1-5`.
+1. **Open a PDF**: File → Open PDF (`Ctrl+O`), the toolbar Open button, or name files on the command line (`pagedrop file.pdf`). Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab.
+2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or use **Select pages** (Edit menu or grid context menu) for a range like `1-5`.
 3. **Drag to a folder**: drag selected thumbnails into your file manager. Each page becomes its own PDF; PageDrop explains this on your first selection.
 4. **Edit across PDFs**: reorder, delete, duplicate (`Ctrl+D`), or rotate. Drop another PDF onto the grid to insert pages. Drag between windows; hold Shift to move instead of copy. Undo with `Ctrl+Z`. Then File → Save As.
 5. **Merge, Create PDF, or Tools**: Merge and Create PDF open as editor tabs. **Tools** (`Ctrl+Shift+O`) is the searchable hub for organize, convert, modify, optimize, and secure jobs.
@@ -95,7 +95,7 @@ Searchable catalogue (`Ctrl+Shift+O`) for organize, convert, modify, optimize, a
 
 ### Preferences and accessibility
 
-Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available.
+Light theme (the first run follows the OS light or dark scheme), thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available. The window shrinks to 480 × 320, and Ctrl+Shift+H hides the menus and toolbar while the title bar and window controls stay.
 
 ## Keyboard shortcuts
 
@@ -108,6 +108,7 @@ Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platfo
 | Close tab | Ctrl+W |
 | Previous tab (MRU) / cycle backward | Ctrl+Tab / Ctrl+Shift+Tab |
 | Select all pages | Ctrl+A |
+| Hide / show menu and toolbar | Ctrl+Shift+H |
 | Clear selection | Escape |
 | Delete selected pages | Delete |
 | Duplicate selected pages | Ctrl+D |
@@ -129,7 +130,7 @@ More detail: [docs/user-guide.md](docs/user-guide.md).
 
 ## Run from source
 
-**Requirements:** Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+**Requirements:** Python 3.11+, PyQt6 6.10 or later (installed by `uv sync`), and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/ParallaX07/PageDrop.git

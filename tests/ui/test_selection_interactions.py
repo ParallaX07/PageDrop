@@ -232,6 +232,7 @@ def test_context_menu_projects_registered_page_actions(
         window._rotate_cw_action,
         window._rotate_ccw_action,
         window._delete_pages_action,
+        window._page_jump_action,
         window._extract_selected_action,
         window._extract_selected_to_tab_action,
         window._extract_selected_to_window_action,

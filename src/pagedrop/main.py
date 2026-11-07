@@ -1,6 +1,6 @@
 import os
 import sys
-from collections.abc import MutableMapping
+from collections.abc import MutableMapping, Sequence
 
 _APP_NAME = "PageDrop"
 _ORG_NAME = "PageDrop"
@@ -28,6 +28,11 @@ def restore_inherited_library_path(
         environ.pop("LD_LIBRARY_PATH", None)
     else:
         environ["LD_LIBRARY_PATH"] = original
+
+
+def command_line_paths(args: Sequence[str]) -> list[str]:
+    """File arguments to open: everything that is not an option or empty."""
+    return [a for a in args if a and not a.startswith("-")]
 
 
 def _app_version() -> str:
@@ -101,10 +106,17 @@ def main() -> int:
         except WindowsUpdateError as exc:
             mutex_error = str(exc)
     manager = WindowManager(app, update_mutex=mutex, update_mutex_error=mutex_error)
-    win = manager.open_new_window()
-    win.restore_saved_geometry()
-    win.setWindowIcon(icon)
-    QTimer.singleShot(0, win.restore_recovery_drafts)
+    win = manager.open_new_window(restore_geometry=True)
+    if win is not None:
+        win.setWindowIcon(icon)
+        paths = command_line_paths(app.arguments()[1:])
+
+        def finish_startup() -> None:
+            # One callback so a recovery prompt finishes before the files open.
+            win.restore_recovery_drafts()
+            win.open_command_line_paths(paths)
+
+        QTimer.singleShot(0, finish_startup)
     exit_code = app.exec()
 
     # Flush top-level widgets before interpreter shutdown. Leaving the viewer's
@@ -118,4 +130,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -6,7 +6,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QStackedWidget, QToolBar, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QSizePolicy,
+    QStackedWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
@@ -105,6 +111,11 @@ class PdfTab(QWidget):
         self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
         self._preview_widget.markup_changed.connect(self._on_markup_changed)
+        # The stack sizes itself from every page, hidden ones included. Let the
+        # viewer's side panels give way instead of setting the window's floor.
+        self._preview_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored
+        )
 
         self._content_stack.addWidget(self._thumbnail_grid)
         self._content_stack.addWidget(self._preview_widget)

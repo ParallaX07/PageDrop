@@ -7,7 +7,7 @@ from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar
 
 from pagedrop.core.pdf_loader import PdfLoader
-from pagedrop.ui.main_window import MainWindow
+from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, MainWindow
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import ZOOM_WHEEL_STEP
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -176,8 +176,7 @@ def test_qsettings_remembers_directory(
 def test_minimum_window_size(main_window, qtbot):
     min_w = main_window.minimumWidth()
     min_h = main_window.minimumHeight()
-    assert min_w >= 720
-    assert min_h >= 480
+    assert (min_w, min_h) == (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
     main_window.showMinimized()
     qtbot.waitExposed(main_window, timeout=5000)
