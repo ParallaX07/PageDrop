@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
@@ -76,33 +76,24 @@ def refresh_themed_widgets(app: QApplication | None = None) -> None:
 
     refresh_icons()
 
-class _AccessibilityWatcher(QObject):
-    """Re-apply chrome when the system palette changes.
-
-    PyQt6 6.11 exposes ``contrastPreferenceChanged`` as a plain method, so this
-    is the live path for picking up a platform contrast change.
-    """
-
-    def eventFilter(self, obj, event) -> bool:  # noqa: ANN001
-        if event.type() == QEvent.Type.ApplicationPaletteChange:
-            apply_app_stylesheet()
-        return False
-
-
 def install_accessibility(app: QApplication) -> None:
-    """Apply theme for current prefs and watch for contrast / palette changes."""
+    """Apply theme for current prefs and re-apply it when the platform appearance changes."""
     apply_app_stylesheet(app)
 
-    hints = _accessibility_hints()
-    if hints is not None:
-        # PyQt6 currently exposes this as a plain method, not a bound signal.
-        # Connect when the binding provides .connect; else palette watcher covers it.
-        changed = getattr(hints, "contrastPreferenceChanged", None)
-        connect = getattr(changed, "connect", None)
-        if callable(connect):
-            connect(lambda *_: apply_app_stylesheet(app))
+    if app.property("_pagedrop_a11y_watcher") is not None:
+        return
+    app.setProperty("_pagedrop_a11y_watcher", True)
+    # PyQt6 exposes contrastPreferenceChanged as a plain method, not a signal, so a
+    # color scheme change and re-activation pick up a platform contrast change.
+    applied = {"high_contrast": prefers_high_contrast()}
 
-    if app.property("_pagedrop_a11y_watcher") is None:
-        watcher = _AccessibilityWatcher(app)
-        app.installEventFilter(watcher)
-        app.setProperty("_pagedrop_a11y_watcher", watcher)
+    def reapply() -> None:
+        applied["high_contrast"] = prefers_high_contrast()
+        apply_app_stylesheet(app)
+
+    def on_state(state: Qt.ApplicationState) -> None:
+        if state == Qt.ApplicationState.ApplicationActive and prefers_high_contrast() != applied["high_contrast"]:
+            reapply()
+
+    QGuiApplication.styleHints().colorSchemeChanged.connect(lambda *_: reapply())
+    app.applicationStateChanged.connect(on_state)
