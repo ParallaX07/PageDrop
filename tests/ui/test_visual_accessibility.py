@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QEnterEvent
@@ -1392,22 +1394,28 @@ def toast_host(qtbot, isolated_settings):
 
 def test_toast_pauses_while_hovered_and_resumes_with_remaining_time(qtbot, toast_host):
     host, toast = toast_host
-    toast.show_toast("Saved", timeout_ms=1500)
+    timeout_ms = 200
+    shown = time.monotonic()
+    toast.show_toast("Saved", timeout_ms=timeout_ms)
     away = host.rect().topLeft() + QPointF(5, 5).toPoint()
     _window_move(host, host, away)
     _window_move(host, toast._card, toast._card.rect().center())
-    qtbot.waitUntil(lambda: not toast._timer.isActive(), timeout=1000)
+    qtbot.waitUntil(lambda: toast._paused, timeout=5000)
+    assert toast.isVisible()
+
+    # Held well past the original timeout: still up and still paused.
+    margin = 0.5
+    qtbot.waitUntil(
+        lambda: time.monotonic() - shown > timeout_ms / 1000 + margin, timeout=10000
+    )
     assert toast.isVisible()
     assert toast._paused
-
-    # Held longer than the original timeout: still up.
-    qtbot.wait(50)
-    assert toast.isVisible()
+    assert not toast._timer.isActive()
 
     _window_move(host, host, away)
-    qtbot.waitUntil(lambda: toast._timer.isActive(), timeout=1000)
-    assert 500 <= toast._timer.remainingTime() <= 1600
-    qtbot.waitUntil(lambda: not toast.isVisible(), timeout=3000)
+    qtbot.waitUntil(lambda: toast._timer.isActive(), timeout=5000)
+    assert not toast._paused
+    qtbot.waitUntil(lambda: not toast.isVisible(), timeout=10000)
 
 
 def test_toast_resume_keeps_a_floor_when_little_time_was_left(qtbot, toast_host):

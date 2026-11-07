@@ -835,7 +835,7 @@ def test_window_controls_come_last_in_the_focus_chain(main_window, qtbot):
     assert [chain.index(w) for w in controls] == sorted(chain.index(w) for w in controls)
     assert min(chain.index(w) for w in controls) > last_zoom
     main_window.activateWindow()
-    qtbot.wait(50)
+    qtbot.waitUntil(main_window.isActiveWindow, timeout=3000)
     assert main_window.focusWidget() not in controls
 
 

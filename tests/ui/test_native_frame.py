@@ -50,7 +50,7 @@ class Sender:
 def native(main_window, qtbot, monkeypatch):
     monkeypatch.setattr(main_window, "_uses_native_frame", lambda: True)
     monkeypatch.setattr(nf, "apply_frame_styles", lambda hwnd: None)
-    monkeypatch.setattr(nf, "window_origin", lambda hwnd: ORIGIN)
+    monkeypatch.setattr(nf, "client_origin", lambda hwnd: ORIGIN)
     monkeypatch.setattr(nf, "resize_frame_thickness", lambda hwnd: THICKNESS)
     monkeypatch.setattr(nf, "is_zoomed", lambda hwnd: False)
     monkeypatch.setattr(nf, "track_nonclient_leave", lambda hwnd: None)
@@ -149,8 +149,27 @@ def test_hit_test_converts_physical_pixels_with_origin_and_scale(native, main_wi
     monkeypatch.setattr(main_window, "devicePixelRatioF", lambda: 1.5)
     point = center_in_window(main_window, main_window._maximize_button)
     # A window left of the primary monitor; an ignored origin or scale misses the button.
-    monkeypatch.setattr(nf, "window_origin", lambda hwnd: (-1500, 40))
+    monkeypatch.setattr(nf, "client_origin", lambda hwnd: (-1500, 40))
     assert native.hit(point.x(), point.y(), 1.5, origin=(-1500, 40)) == nf.HTMAXBUTTON
+
+
+def test_maximized_hit_test_uses_the_client_origin(native, main_window, monkeypatch):
+    # Maximized, the client area is inset from the window rectangle by the
+    # frame thickness; Qt's (0, 0) is the client corner.
+    client = (ORIGIN[0] + THICKNESS[0], ORIGIN[1] + THICKNESS[1])
+    monkeypatch.setattr(nf, "is_zoomed", lambda hwnd: True)
+    monkeypatch.setattr(main_window, "isMaximized", lambda: True)
+    monkeypatch.setattr(nf, "client_origin", lambda hwnd: client)
+    monkeypatch.setattr(nf, "window_origin", lambda hwnd: ORIGIN, raising=False)
+
+    maximize = main_window._maximize_button
+    close = main_window._window_controls.findChild(type(maximize), "WindowClose")
+    close_left = close.mapTo(main_window, QPoint(0, close.height() // 2))
+    max_right = maximize.mapTo(main_window, QPoint(maximize.width() - 1, maximize.height() // 2))
+    assert native.hit(close_left.x(), close_left.y(), origin=client) == nf.HTCLIENT
+    assert native.hit(max_right.x(), max_right.y(), origin=client) == nf.HTMAXBUTTON
+    blank = blank_title_point(main_window)
+    assert native.hit(blank.x(), blank.y(), origin=client) == nf.HTCAPTION
 
 
 def test_calc_size_leaves_a_normal_window_unchanged(native):
@@ -193,6 +212,20 @@ def test_maximize_button_press_and_release_toggles_once(native, main_window, mon
     # A release with no matching press is swallowed and does nothing.
     assert native.send(nf.WM_NCLBUTTONUP, nf.HTMAXBUTTON)[0] is True
     assert toggles == [1]
+
+
+def test_maximize_button_double_click_toggles_twice(native, main_window, monkeypatch):
+    toggles = []
+    monkeypatch.setattr(main_window, "_toggle_maximized", lambda: toggles.append(1))
+    button = main_window._maximize_button
+    assert native.send(nf.WM_NCLBUTTONDOWN, nf.HTMAXBUTTON) == (True, 0)
+    assert native.send(nf.WM_NCLBUTTONUP, nf.HTMAXBUTTON) == (True, 0)
+    # The second press of a fast double-click arrives as a double-click message.
+    assert native.send(nf.WM_NCLBUTTONDBLCLK, nf.HTMAXBUTTON) == (True, 0)
+    assert button.isDown()
+    assert native.send(nf.WM_NCLBUTTONUP, nf.HTMAXBUTTON) == (True, 0)
+    assert toggles == [1, 1]
+    assert not button.isDown()
 
 
 def test_other_caption_presses_are_left_to_windows(native, main_window, monkeypatch):
@@ -295,7 +328,7 @@ def test_native_message_error_is_logged_once_and_falls_through(native, main_wind
     def boom(hwnd):
         raise OSError("no rect")
 
-    monkeypatch.setattr(nf, "window_origin", boom)
+    monkeypatch.setattr(nf, "client_origin", boom)
     monkeypatch.setattr(
         "pagedrop.ui.main_window.log_failure", lambda op, exc, **ctx: logged.append(exc)
     )
@@ -320,7 +353,7 @@ def test_real_predicate_falls_through_without_touching_win32(main_window, qtbot,
         raise AssertionError("Win32 wrapper called")
 
     for name in (
-        "window_origin", "apply_frame_styles", "resize_frame_thickness",
+        "client_origin", "apply_frame_styles", "resize_frame_thickness",
         "is_zoomed", "track_nonclient_leave",
     ):
         monkeypatch.setattr(nf, name, forbidden)

@@ -2496,7 +2496,12 @@ class MainWindow(QMainWindow):
         if kind == native_frame.WM_NCHITTEST:
             return True, self._native_hit_test(hwnd, msg.lParam)
         button = self._maximize_button
-        if kind == native_frame.WM_NCLBUTTONDOWN and msg.wParam == native_frame.HTMAXBUTTON:
+        if (
+            kind in (native_frame.WM_NCLBUTTONDOWN, native_frame.WM_NCLBUTTONDBLCLK)
+            and msg.wParam == native_frame.HTMAXBUTTON
+        ):
+            # The window class has CS_DBLCLKS, so the second press of a fast
+            # double-click arrives as a double-click message, not a press.
             button.setDown(True)
             return True, 0
         if kind == native_frame.WM_NCLBUTTONUP and msg.wParam == native_frame.HTMAXBUTTON:
@@ -2516,7 +2521,7 @@ class MainWindow(QMainWindow):
         return False, 0
 
     def _native_hit_test(self, hwnd: int, lparam: int) -> int:
-        origin_x, origin_y = native_frame.window_origin(hwnd)
+        origin_x, origin_y = native_frame.client_origin(hwnd)
         screen_x, screen_y = native_frame.lparam_point(lparam)
         ratio = self.devicePixelRatioF()
         point = QPoint(

@@ -20,6 +20,7 @@ WM_NCHITTEST = 0x0084
 WM_NCMOUSEMOVE = 0x00A0
 WM_NCLBUTTONDOWN = 0x00A1
 WM_NCLBUTTONUP = 0x00A2
+WM_NCLBUTTONDBLCLK = 0x00A3
 WM_NCMOUSELEAVE = 0x02A2
 
 HTCLIENT = 1
@@ -80,6 +81,10 @@ class RECT(ctypes.Structure):
         ("right", ctypes.c_int32),
         ("bottom", ctypes.c_int32),
     )
+
+
+class POINT(ctypes.Structure):
+    _fields_ = (("x", ctypes.c_int32), ("y", ctypes.c_int32))
 
 
 class NCCALCSIZE_PARAMS(ctypes.Structure):  # noqa: N801
@@ -145,8 +150,8 @@ def _user32():
     # A private library handle: argtypes set here must not leak to other users.
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     hwnd = ctypes.c_void_p
-    user32.GetWindowRect.argtypes = (hwnd, ctypes.POINTER(RECT))
-    user32.GetWindowRect.restype = ctypes.c_int
+    user32.ClientToScreen.argtypes = (hwnd, ctypes.POINTER(POINT))
+    user32.ClientToScreen.restype = ctypes.c_int
     get_long = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
     set_long = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
     get_long.argtypes = (hwnd, ctypes.c_int)
@@ -174,13 +179,17 @@ def _user32():
     return user32, get_long, set_long
 
 
-def window_origin(hwnd: int) -> tuple[int, int]:
-    """Top-left of the window in physical screen pixels."""
+def client_origin(hwnd: int) -> tuple[int, int]:
+    """Top-left of the client area in physical screen pixels.
+
+    Qt's (0, 0) is the client origin, which sits inside the window rectangle
+    by the resize-frame thickness while the window is maximized.
+    """
     user32, _, _ = _user32()
-    rect = RECT()
-    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+    point = POINT(0, 0)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
         raise ctypes.WinError(ctypes.get_last_error())
-    return rect.left, rect.top
+    return point.x, point.y
 
 
 def is_zoomed(hwnd: int) -> bool:
