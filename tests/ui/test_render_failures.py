@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 
 import pytest
 from PyQt6.QtWidgets import QMessageBox
@@ -12,6 +13,11 @@ from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui import thumbnail_grid as thumbnail_grid_module
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from tests.conftest import file_sha256, wait_for_grid_loaded
+
+_needs_unlocked_open_files = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="an open document locks its file on Windows, so it cannot be replaced or deleted",
+)
 
 
 def _has_thumbnail(grid: ThumbnailGrid, index: int) -> bool:
@@ -71,6 +77,7 @@ def test_missing_source_does_not_block_other_pages(
     assert modal_calls == []
 
 
+@_needs_unlocked_open_files
 def test_source_deleted_mid_session_notifies_once_across_zooms(
     qtbot, tmp_path, five_page_pdf, modal_calls
 ):
