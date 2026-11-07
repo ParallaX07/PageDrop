@@ -17,6 +17,7 @@ from PyQt6.QtGui import (
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
+    QWindow,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -2652,9 +2653,9 @@ class MainWindow(QMainWindow):
                 self._refit_toolbar()
             elif event.type() == QEvent.Type.Show:
                 QTimer.singleShot(0, self._refit_toolbar)
-        handle = self.windowHandle()
-        if handle is not None and obj is handle:
-            if self._handle_edge_resize_event(event):
+        if isinstance(obj, QWindow):
+            # Only a window handle can be ours; skip the lookup for every widget event.
+            if obj is self.windowHandle() and self._handle_edge_resize_event(event):
                 return True
         elif obj is self and event.type() == QEvent.Type.WindowDeactivate:
             self._clear_edge_state()
@@ -2689,6 +2690,7 @@ class MainWindow(QMainWindow):
                 if press is not None and event.buttons() & Qt.MouseButton.LeftButton:
                     if (pos - press).manhattanLength() >= QApplication.startDragDistance():
                         self._title_press_pos = None
+                        handle = self.windowHandle()
                         if handle is None or not handle.startSystemMove():
                             self._window_drag_offset = press - self.frameGeometry().topLeft()
                             self.move(pos - self._window_drag_offset)
