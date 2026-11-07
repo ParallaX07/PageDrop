@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,12 @@ if TYPE_CHECKING:
 
 # Headless Qt on CI/Linux; harmless on Windows when supported.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if sys.platform == "win32":
+    # Offscreen Qt reads fonts from Qt's own fonts folder, which Windows wheels
+    # lack; without real fonts every glyph is a wide box and layouts overflow.
+    os.environ.setdefault(
+        "QT_QPA_FONTDIR", str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts")
+    )
 os.environ["PAGEDROP_TESTING"] = "1"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
