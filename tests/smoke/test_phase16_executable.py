@@ -3,8 +3,8 @@
 The launch test checks the binary stays alive. The re-entry probes run the
 binary with each helper flag the app uses to start its own worker processes
 (redaction verifier, lossy compressor, Office COM worker) and check the reply.
-A frozen process always exits 0 from the entry point, so the probes assert on
-the reply (JSON on stdout, or the output file), never the return code.
+The probes check the reply (JSON on stdout, or the output file) rather than
+the exit code.
 
 Skipped unless PAGEDROP_EXE points at a built binary:
 
