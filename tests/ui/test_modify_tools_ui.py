@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMessageBox, QPushButton
 
 from pagedrop.core.modify_ops import RASTER_EFFECT_WARNING
 from pagedrop.ui.modify_tools_shell import SHELL_MODIFY_IDS, open_modify_shell
@@ -750,3 +752,72 @@ def test_bates_multi_file_same_stem_writes_distinct_pdfs(
         "Foo_bates.pdf",
     ]
     assert [file_sha256(p) for p in sources] == hashes
+
+
+def test_watermark_swatch_ring_follows_theme_change(qtbot, isolated_settings):
+    import re
+
+    from PyQt6 import sip
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from pagedrop.ui.accessibility import refresh_themed_widgets
+    from pagedrop.ui.settings import light_theme, set_light_theme
+    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT
+
+    app = QApplication.instance()
+    previous_sheet = app.styleSheet()
+    previous_light = light_theme()
+    tools = ToolsWindow()
+    shell = open_modify_shell(tools, "watermark")
+    assert shell is not None
+    try:
+        shell.resize(960, 700)
+        shell.show()
+        qtbot.waitExposed(shell)
+        swatch = next(
+            b
+            for b in shell._options_host.findChildren(QPushButton)
+            if re.fullmatch(r"#[0-9A-F]{6}", b.text())
+        )
+        fill = QColor(swatch.text()).rgb()
+        other = shell._options_host.findChild(QLineEdit)
+        assert other is not None
+
+        def count(color: str) -> int:
+            img = swatch.grab().toImage()
+            target = QColor(color).rgb()
+            return sum(
+                1
+                for y in range(img.height())
+                for x in range(img.width())
+                if img.pixelColor(x, y).rgb() == target
+            )
+
+        for light, ring, stale in (
+            (False, FOCUS_RING, FOCUS_RING_LIGHT),
+            (True, FOCUS_RING_LIGHT, FOCUS_RING),
+            (False, FOCUS_RING, FOCUS_RING_LIGHT),
+        ):
+            set_light_theme(light)
+            refresh_themed_widgets()
+            other.setFocus(Qt.FocusReason.TabFocusReason)
+            qtbot.waitUntil(lambda: not swatch.hasFocus(), timeout=1000)
+            assert count(ring) == 0
+            swatch.setFocus(Qt.FocusReason.TabFocusReason)
+            qtbot.waitUntil(swatch.hasFocus, timeout=1000)
+            assert count(ring) >= 40
+            assert count(stale) == 0
+            # The fill still shows under the app sheet's focus border.
+            assert swatch.grab().toImage().pixelColor(12, swatch.height() // 2).rgb() == fill
+    finally:
+        set_light_theme(previous_light)
+        refresh_themed_widgets()  # Resets the icon cache for the restored theme.
+        app.setStyleSheet(previous_sheet)
+        shell.close()
+        tools.close()
+        shell.deleteLater()
+        tools.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert sip.isdeleted(shell)
+        assert sip.isdeleted(tools)

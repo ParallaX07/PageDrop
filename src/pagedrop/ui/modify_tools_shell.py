@@ -43,12 +43,11 @@ from pagedrop.core.modify_ops import (
 )
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.supported_formats import is_pdf_path
-from pagedrop.ui.accessibility import contrast_ratio, prefers_high_contrast
+from pagedrop.ui.accessibility import contrast_ratio
 from pagedrop.ui.dialogs import confirm_remove_blank_pages
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.ui.theme import focus_ring_hex
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
@@ -211,19 +210,14 @@ def _configure_crop(shell: ToolShellWindow) -> None:
 
 
 def _color_swatch_style(fill: str) -> str:
-    """Inline QSS for a colour swatch button: readable label and a visible focus ring.
+    """Inline QSS for a colour swatch button: its fill and a readable label.
 
-    An inline sheet beats the app sheet, so the focus border must be restated
-    here at the theme's width. The ring sits against the surrounding surface,
-    which the focus tokens already contrast with, not against the swatch fill.
+    Only the per-swatch properties live here. The border and the keyboard focus
+    ring come from the app sheet (the swatch is a ``ToolbarSecondary`` button),
+    so a theme change restyles them like any other control.
     """
     ink = max(("#000000", "#FFFFFF"), key=lambda c: contrast_ratio(c, fill))
-    width = 3 if prefers_high_contrast() else 2
-    return (
-        f"QPushButton {{ background-color: {fill}; color: {ink}; "
-        "border: 1px solid palette(mid); }"
-        f"QPushButton:focus {{ border: {width}px solid {focus_ring_hex()}; }}"
-    )
+    return f"QPushButton {{ background-color: {fill}; color: {ink}; }}"
 
 
 def _set_form_row_visible(form: QFormLayout, field: QWidget, visible: bool) -> None:

@@ -1792,23 +1792,38 @@ def test_watermark_swatch_label_is_readable_and_focus_ring_visible(
     assert _color_count(swatch, ring) >= 40
 
 
-def test_watermark_swatch_ring_follows_theme(isolated_settings):
+def test_watermark_swatch_sheet_leaves_border_to_app_sheet():
     from pagedrop.ui.modify_tools_shell import _color_swatch_style
-    from pagedrop.ui.settings import set_light_theme
-    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT, focus_ring_hex
 
-    assert focus_ring_hex() == FOCUS_RING
-    assert f"2px solid {FOCUS_RING}" in _color_swatch_style("#8C8C8C")
-    set_light_theme(True)
-    assert focus_ring_hex() == FOCUS_RING_LIGHT
-    assert f"2px solid {FOCUS_RING_LIGHT}" in _color_swatch_style("#8C8C8C")
+    style = _color_swatch_style("#8C8C8C")
+    assert "border" not in style
+    assert ":focus" not in style
 
 
-def test_watermark_swatch_uses_high_contrast_width(monkeypatch):
-    from pagedrop.ui import modify_tools_shell
+def test_watermark_swatch_ring_is_wider_in_high_contrast(qtbot, themed_app):
+    from PyQt6.QtWidgets import QPushButton
 
-    monkeypatch.setattr(modify_tools_shell, "prefers_high_contrast", lambda: True)
-    assert "3px solid" in modify_tools_shell._color_swatch_style("#8C8C8C")
+    from pagedrop.ui.modify_tools_shell import _color_swatch_style
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    swatch = QPushButton("#8C8C8C")
+    swatch.setObjectName("ToolbarSecondary")
+    swatch.setFixedWidth(88)
+    swatch.setStyleSheet(_color_swatch_style("#8C8C8C"))
+    sibling = QPushButton("other")
+    layout.addWidget(swatch)
+    layout.addWidget(sibling)
+    _show(qtbot, host)
+    ring = _ring_for(False)
+    counts = {}
+    for high_contrast in (False, True):
+        themed_app(light=False, high_contrast=high_contrast)
+        sibling.setFocus()
+        QApplication.processEvents()
+        _focus(qtbot, swatch)
+        counts[high_contrast] = _color_count(swatch, ring)
+    assert counts[True] > counts[False] >= 40
 
 
 # --- Platform contrast preference -----------------------------------------
