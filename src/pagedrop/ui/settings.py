@@ -19,6 +19,7 @@ KEY_CONFIRM_CLOSE_DIRTY = "safety/confirm_before_closing_dirty_tabs"
 KEY_REMEMBER_GEOMETRY = "window/remember_geometry"
 KEY_WINDOW_GEOMETRY = "window/geometry"
 KEY_LIGHT_THEME = "view/light_theme"
+KEY_APPEARANCE = "view/appearance"
 KEY_CHROME_VISIBLE = "view/chrome_visible"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
@@ -50,6 +51,9 @@ OFFICE_BACKEND_VALUES: tuple[OfficePreferredBackend, ...] = (
 # Confirm multi-page delete when selection size exceeds this (instant for ≤3).
 DELETE_CONFIRM_THRESHOLD = 3
 RECENT_FILES_MAX = 10
+
+Appearance = Literal["system", "light", "dark"]
+APPEARANCE_VALUES: tuple[Appearance, ...] = ("system", "light", "dark")
 
 ThumbnailQuality = Literal["low", "medium", "high"]
 THUMBNAIL_QUALITY_VALUES: tuple[ThumbnailQuality, ...] = ("low", "medium", "high")
@@ -274,11 +278,34 @@ def load_window_geometry() -> QByteArray | None:
     return None
 
 
-def light_theme() -> bool:
-    """Use the light app chrome; until the user chooses, follow the OS scheme."""
+def appearance() -> Appearance:
+    """Chosen appearance: ``system`` (follow the OS), ``light`` or ``dark``."""
     settings = _settings()
-    if settings.contains(KEY_LIGHT_THEME):
-        return settings.value(KEY_LIGHT_THEME, False, type=bool)
+    if not settings.contains(KEY_APPEARANCE) and settings.contains(KEY_LIGHT_THEME):
+        # Earlier versions stored a light/dark flag; carry it over once.
+        migrated = "light" if settings.value(KEY_LIGHT_THEME, False, type=bool) else "dark"
+        settings.setValue(KEY_APPEARANCE, migrated)
+        settings.remove(KEY_LIGHT_THEME)
+    raw = str(settings.value(KEY_APPEARANCE, "system")).lower()
+    if raw in APPEARANCE_VALUES:
+        return raw  # type: ignore[return-value]
+    if settings.contains(KEY_APPEARANCE):
+        settings.remove(KEY_APPEARANCE)
+    return "system"
+
+
+def set_appearance(value: Appearance | str) -> None:
+    choice = str(value).lower()
+    if choice not in APPEARANCE_VALUES:
+        raise ValueError(f"Unknown appearance: {value!r}")
+    _settings().setValue(KEY_APPEARANCE, choice)
+
+
+def light_theme() -> bool:
+    """Whether the effective chrome is light, following the OS for ``system``."""
+    choice = appearance()
+    if choice != "system":
+        return choice == "light"
     if QGuiApplication.instance() is None:
         return False
     hints = QGuiApplication.styleHints()
@@ -286,7 +313,7 @@ def light_theme() -> bool:
 
 
 def set_light_theme(enabled: bool) -> None:
-    _settings().setValue(KEY_LIGHT_THEME, bool(enabled))
+    set_appearance("light" if enabled else "dark")
 
 
 def chrome_visible() -> bool:

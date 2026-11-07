@@ -33,8 +33,10 @@ from pagedrop.core.capabilities import (
     set_configured_tessdata_path,
 )
 from pagedrop.core.tessdata_pack import user_tessdata_dir
+from pagedrop.ui.accessibility import apply_appearance
 from pagedrop.ui.dialogs import run_tessdata_download
 from pagedrop.ui.settings import (
+    appearance,
     apply_office_settings_to_capabilities,
     apply_optional_settings_to_capabilities,
     apply_tessdata_settings_to_capabilities,
@@ -76,6 +78,7 @@ class PreferencesDialog(QDialog):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
+        content.setObjectName("PreferencesContent")
         root = QVBoxLayout(content)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
@@ -132,6 +135,18 @@ class PreferencesDialog(QDialog):
         )
         self._remember_geometry.setChecked(remember_window_geometry())
         root.addWidget(self._remember_geometry)
+
+        appearance_form = QFormLayout()
+        appearance_form.setContentsMargins(0, 0, 0, 0)
+        self._appearance = QComboBox()
+        self._appearance.setObjectName("PreferencesAppearance")
+        self._appearance.setAccessibleName("Appearance")
+        self._appearance.addItem("System", "system")
+        self._appearance.addItem("Light", "light")
+        self._appearance.addItem("Dark", "dark")
+        self._appearance.setCurrentIndex(max(0, self._appearance.findData(appearance())))
+        appearance_form.addRow("Appearance", self._appearance)
+        root.addLayout(appearance_form)
 
         root.addWidget(self._prefs_divider())
 
@@ -391,6 +406,9 @@ class PreferencesDialog(QDialog):
         set_confirm_before_closing_dirty_tabs(self._confirm_close_dirty.isChecked())
         set_remember_window_geometry(self._remember_geometry.isChecked())
         set_reduce_motion(self._reduce_motion.isChecked())
+        chosen = str(self._appearance.currentData())
+        if chosen != appearance():
+            apply_appearance(chosen)
         if self._update_coordinator is not None:
             self._update_coordinator.set_automatic_enabled(self._automatic_updates.isChecked())
         else:

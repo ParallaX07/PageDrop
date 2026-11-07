@@ -2281,6 +2281,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_BADGE}px;
     }}
 
+    QScrollArea#PreferencesScroll,
+    QScrollArea#PreferencesScroll > QWidget#qt_scrollarea_viewport,
+    QWidget#PreferencesContent {{
+        background-color: {bg_surface};
+    }}
     QLabel#PreferencesSection {{
         color: {text_muted};
         font-size: 11px;

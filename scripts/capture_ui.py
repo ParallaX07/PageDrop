@@ -39,7 +39,7 @@ def _set_theme(theme: str) -> None:
     from pagedrop.ui import settings
     from pagedrop.ui.accessibility import refresh_themed_widgets
 
-    settings.set_light_theme(theme == "light")
+    settings.set_appearance(theme)
     refresh_themed_widgets(QApplication.instance())
 
 

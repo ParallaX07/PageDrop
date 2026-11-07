@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
@@ -76,6 +76,31 @@ def refresh_themed_widgets(app: QApplication | None = None) -> None:
 
     refresh_icons()
 
+
+def apply_appearance(value: str) -> None:
+    """Store the appearance choice, re-theme, and sync every window's menu."""
+    app_settings.set_appearance(value)
+    refresh_themed_widgets()
+    for widget in QApplication.topLevelWidgets():
+        try:
+            action = getattr(widget, "_appearance_actions", {}).get(value)
+            if action is not None:
+                # The group's ``triggered`` only fires on user triggers, so
+                # this keeps its exclusivity without re-entering the handler.
+                action.setChecked(True)
+            relayout = getattr(widget, "_update_responsive_shell", None)
+            if relayout is not None:
+                QTimer.singleShot(0, relayout)
+        except RuntimeError:  # window already deleted
+            continue
+
+
+def _on_color_scheme_changed(*_: object) -> None:
+    """Follow an OS light/dark switch, unless a theme was chosen explicitly."""
+    if app_settings.appearance() == "system":
+        refresh_themed_widgets()
+
+
 class _AccessibilityWatcher(QObject):
     """Re-apply chrome when the system palette changes.
 
@@ -101,6 +126,14 @@ def install_accessibility(app: QApplication) -> None:
         connect = getattr(changed, "connect", None)
         if callable(connect):
             connect(lambda *_: apply_app_stylesheet(app))
+
+    if app.property("_pagedrop_scheme_hooked") is None:
+        style_hints = QGuiApplication.styleHints()
+        scheme_changed = getattr(style_hints, "colorSchemeChanged", None)
+        connect = getattr(scheme_changed, "connect", None)
+        if callable(connect):
+            connect(_on_color_scheme_changed)
+            app.setProperty("_pagedrop_scheme_hooked", True)
 
     if app.property("_pagedrop_a11y_watcher") is None:
         watcher = _AccessibilityWatcher(app)

@@ -85,14 +85,14 @@ from pagedrop.ui.onboarding import (
 )
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
-from pagedrop.ui.accessibility import refresh_themed_widgets
+from pagedrop.ui.accessibility import apply_appearance
 from pagedrop.ui import icons, native_frame
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
     has_seen_tips,
     last_directory,
-    light_theme,
+    appearance,
     load_window_geometry,
     recent_files,
     remember_directory,
@@ -100,7 +100,6 @@ from pagedrop.ui.settings import (
     save_window_geometry,
     settings_file_path,
     set_chrome_visible,
-    set_light_theme,
     set_thumbnail_quality,
     set_thumbnail_zoom,
     KEY_CONTEXT_HINT_BACK_TO_GRID,
@@ -320,12 +319,25 @@ class MainWindow(QMainWindow):
             shortcuts=["Ctrl+Shift+Z", QKeySequence.StandardKey.Redo],
             enabled=False,
         )
-        self._light_theme_action = actions.register(
-            "light_theme",
-            "Toggle &light theme",
-            slot=self._on_light_theme_toggled,
-            checkable=True,
-            checked=light_theme(),
+        self._appearance_group = QActionGroup(self)
+        self._appearance_group.setExclusive(True)
+        self._appearance_actions: dict[str, QAction] = {}
+        for choice, label in (
+            ("system", "&System appearance"),
+            ("light", "&Light appearance"),
+            ("dark", "&Dark appearance"),
+        ):
+            action = actions.register(
+                f"appearance_{choice}",
+                label,
+                checkable=True,
+                checked=appearance() == choice,
+                data=choice,
+            )
+            self._appearance_group.addAction(action)
+            self._appearance_actions[choice] = action
+        self._appearance_group.triggered.connect(
+            lambda action: apply_appearance(str(action.data()))
         )
         self._chrome_visible_action = actions.register(
             "chrome_visible",
@@ -562,7 +574,8 @@ class MainWindow(QMainWindow):
                 "page_jump",
             },
             "View": {
-                "light_theme", "chrome_visible", "quality_low", "quality_medium",
+                "appearance_system", "appearance_light", "appearance_dark",
+                "chrome_visible", "quality_low", "quality_medium",
                 "quality_high", "command_palette", "reset_zoom",
             },
             "Tools": {"merge", "create_pdf", "tools"},
@@ -636,7 +649,9 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(a["preferences"])
 
         view_menu = menubar.addMenu("&View")
-        view_menu.addAction(a["light_theme"])
+        appearance_menu = view_menu.addMenu("&Appearance")
+        for key in ("appearance_system", "appearance_light", "appearance_dark"):
+            appearance_menu.addAction(a[key])
         view_menu.addAction(a["chrome_visible"])
         quality_menu = view_menu.addMenu("Thumbnail &quality")
         for key in ("quality_low", "quality_medium", "quality_high"):
@@ -2324,19 +2339,6 @@ class MainWindow(QMainWindow):
             tab = self._active_tab()
             if tab is not None:
                 self._transient_status(f"Thumbnail size: {tab.zoom_level} px")
-
-    def _on_light_theme_toggled(self, enabled: bool) -> None:
-        set_light_theme(enabled)
-        refresh_themed_widgets()
-        QTimer.singleShot(0, self._update_responsive_shell)
-        # Keep other windows' checkboxes in sync.
-        if self._window_manager is not None:
-            for window in self._window_manager.windows:
-                action = getattr(window, "_light_theme_action", None)
-                if action is not None and action.isChecked() != enabled:
-                    action.blockSignals(True)
-                    action.setChecked(enabled)
-                    action.blockSignals(False)
 
     def _toggle_chrome_visible(self) -> None:
         action = getattr(self, "_chrome_visible_action", None)
