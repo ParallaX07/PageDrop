@@ -29,6 +29,7 @@ _live_backend_dirs: set[Path] = set()
 # Windows: OpenProcess access right for existence check (no terminate / no signal).
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _ERROR_ACCESS_DENIED = 5
+_STILL_ACTIVE = 259  # GetExitCodeProcess value while the process runs
 
 
 def _write_owner_pid(path: Path) -> None:
@@ -50,13 +51,29 @@ def _pid_alive(pid: int) -> bool:
         return False
     if sys.platform == "win32":
         import ctypes
+        from ctypes import wintypes
 
-        handle = ctypes.windll.kernel32.OpenProcess(
-            _PROCESS_QUERY_LIMITED_INFORMATION, False, pid
-        )
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if handle:
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return True
+            # An exited process stays openable while any handle to it lives,
+            # so a successful open alone does not mean it is running.
+            code = wintypes.DWORD()
+            try:
+                ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            finally:
+                kernel32.CloseHandle(handle)
+            return bool(ok) and code.value == _STILL_ACTIVE
         # Access denied ⇒ process exists but we cannot open it.
         return ctypes.GetLastError() == _ERROR_ACCESS_DENIED
     try:
