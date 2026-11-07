@@ -1497,6 +1497,50 @@ class _ViewerScrollArea(QScrollArea):
         super().wheelEvent(event)
 
 
+class _ToolbarScrollArea(QScrollArea):
+    """Frameless one-row scroll area as tall as its bar, plus the scroll bar when needed.
+
+    The height comes from the area and its own widget alone, so nothing outside
+    them has to stay alive for the layout to ask for it.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def setWidget(self, widget: QWidget | None) -> None:  # noqa: N802
+        super().setWidget(widget)
+        if widget is not None:
+            widget.installEventFilter(self)
+
+    def _fitted_height(self) -> int:
+        bar = self.widget()
+        if bar is None:
+            return 0
+        height = bar.sizeHint().height()
+        if bar.minimumSizeHint().width() > self.maximumViewportSize().width():
+            height += self.horizontalScrollBar().sizeHint().height()
+        return height
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(super().sizeHint().width(), self._fitted_height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(super().minimumSizeHint().width(), self._fitted_height())
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.widget() and event.type() == QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.updateGeometry()
+
+
 class PdfViewerWidget(QWidget):
     """Virtualized continuous / single / spread PDF viewer."""
 
@@ -1563,21 +1607,8 @@ class PdfViewerWidget(QWidget):
 
         self._toolbar = self._build_toolbar()
         # The bar scrolls sideways instead of setting the viewer's minimum width.
-        self._toolbar_scroll = QScrollArea()
-        self._toolbar_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self._toolbar_scroll.setWidgetResizable(True)
-        self._toolbar_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self._toolbar_scroll = _ToolbarScrollArea()
         self._toolbar_scroll.setWidget(self._toolbar)
-        hbar = self._toolbar_scroll.horizontalScrollBar()
-
-        def fit_toolbar_height(*_args: int) -> None:
-            extra = hbar.sizeHint().height() if hbar.maximum() > 0 else 0
-            self._toolbar_scroll.setFixedHeight(self._toolbar.sizeHint().height() + extra)
-
-        hbar.rangeChanged.connect(fit_toolbar_height)
-        fit_toolbar_height()
         root.addWidget(self._toolbar_scroll)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
