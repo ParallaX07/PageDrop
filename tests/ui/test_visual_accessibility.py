@@ -538,7 +538,7 @@ def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):
     assert shell.drop_zone._clear_btn.objectName() == "ToolbarSecondary"
 
 
-def test_theme_smoke_light_dark_and_high_contrast():
+def test_theme_smoke_light_dark_and_high_contrast(qapp, isolated_settings, monkeypatch):
     """O8: tokens + objectName chrome present in dark, light, and HC sheets."""
     from pagedrop.ui.theme import (
         DARK,
@@ -581,6 +581,32 @@ def test_theme_smoke_light_dark_and_high_contrast():
     assert STATUS_SUCCESS.startswith("#")
     assert STATUS_WARNING.startswith("#")
     assert token_qcolor(STATUS_SUCCESS, 90).alpha() == 90
+
+    # The theme switch end to end: choice -> stylesheet -> current_theme().
+    from pagedrop.ui import accessibility, settings
+    from pagedrop.ui.theme import current_theme
+    from tests.ui.test_user_preferences import _stub_color_scheme
+
+    previous_sheet = qapp.styleSheet()
+    try:
+        for choice, theme in (("light", LIGHT), ("dark", DARK)):
+            settings.set_appearance(choice)
+            accessibility.refresh_themed_widgets(qapp)
+            assert current_theme() is theme
+            assert theme.chrome in qapp.styleSheet()
+            assert theme.text in qapp.styleSheet()
+
+        settings.set_appearance("system")
+        sheets = []
+        for scheme, theme in ((Qt.ColorScheme.Light, LIGHT), (Qt.ColorScheme.Dark, DARK)):
+            _stub_color_scheme(monkeypatch, scheme)
+            accessibility._on_color_scheme_changed()
+            assert current_theme() is theme
+            assert theme.chrome in qapp.styleSheet()
+            sheets.append(qapp.styleSheet())
+        assert sheets[0] != sheets[1]
+    finally:
+        qapp.setStyleSheet(previous_sheet)
 
 
 def test_toolbar_secondary_is_ghost_not_primary():
