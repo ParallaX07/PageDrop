@@ -122,12 +122,10 @@ from pagedrop.ui.theme import (
     SEARCH_HIT,
     SEARCH_HIT_ACTIVE,
     SEARCH_HIT_ACTIVE_EDGE,
-    TEXT_MUTED,
-    TEXT_SECONDARY,
     VIEWER_PAGE_BG,
     ZOOM_WHEEL_STEP,
-    accent_qcolor,
     close_tab_hex,
+    page_accent_qcolor,
     status_success_hex,
     token_qcolor,
 )
@@ -291,7 +289,7 @@ def _hit_resize_handle(wr: QRectF, pos: QPointF, handle_px: float = _HANDLE_PX) 
 def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
     # Outline only — never fill the box (that painted an opaque white cover).
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(accent_qcolor(), 1, Qt.PenStyle.DashLine))
+    painter.setPen(QPen(page_accent_qcolor(), 1, Qt.PenStyle.DashLine))
     painter.drawRect(wr)
     hs = _HANDLE_PX
     mid_x = wr.center().x()
@@ -307,7 +305,7 @@ def _paint_resize_handles(painter: QPainter, wr: QRectF) -> None:
         (wr.left(), mid_y),
     )
     painter.setBrush(token_qcolor(VIEWER_PAGE_BG))
-    painter.setPen(QPen(accent_qcolor(), 1))
+    painter.setPen(QPen(page_accent_qcolor(), 1))
     for px, py in points:
         painter.drawRect(QRectF(px - hs / 2, py - hs / 2, hs, hs))
 
@@ -689,7 +687,7 @@ class _PageTile(QWidget):
                         pix.rect(),
                     )
             else:
-                painter.setPen(token_qcolor(TEXT_MUTED))
+                painter.setPen(token_qcolor(PAGE_INK, 140))
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "…")
 
             for hit in self._hits:
@@ -720,8 +718,8 @@ class _PageTile(QWidget):
                         self.height(),
                         self._rotation,
                     )
-                    painter.setPen(QPen(accent_qcolor(alpha=180), 1, Qt.PenStyle.DashLine))
-                    painter.fillRect(wr, accent_qcolor(alpha=30))
+                    painter.setPen(QPen(page_accent_qcolor(alpha=180), 1, Qt.PenStyle.DashLine))
+                    painter.fillRect(wr, page_accent_qcolor(alpha=30))
                     painter.drawRect(wr)
 
             if self._sel_start is not None and self._sel_end is not None:
@@ -758,9 +756,9 @@ class _PageTile(QWidget):
                             token_qcolor(SEARCH_HIT, 40),
                         )
                 else:
-                    fill = accent_qcolor(alpha=60)
+                    fill = page_accent_qcolor(alpha=60)
                     if self._tool != AnnotTool.SELECT:
-                        fill = accent_qcolor(alpha=50)
+                        fill = page_accent_qcolor(alpha=50)
                     painter.fillRect(QRectF(x0, y0, x1 - x0, y1 - y0), fill)
                     if self._tool in (
                         AnnotTool.RECT,
@@ -775,7 +773,7 @@ class _PageTile(QWidget):
                             QColor.fromRgbF(*self._markup_color)
                             if self._tool
                             in (AnnotTool.RECT, AnnotTool.CIRCLE, AnnotTool.LINE)
-                            else accent_qcolor()
+                            else page_accent_qcolor()
                         )
                         painter.setPen(QPen(stroke, 2))
                         if self._tool == AnnotTool.CIRCLE:
@@ -889,8 +887,8 @@ class _PageTile(QWidget):
                     if pix is not None and not pix.isNull():
                         painter.drawPixmap(wr.toRect(), pix)
                     else:
-                        painter.fillRect(wr, token_qcolor(TEXT_SECONDARY, 120))
-                        painter.setPen(token_qcolor(TEXT_MUTED))
+                        painter.fillRect(wr, token_qcolor(PAGE_INK, 40))
+                        painter.setPen(token_qcolor(PAGE_INK, 140))
                         painter.drawText(wr, Qt.AlignmentFlag.AlignCenter, "Image")
                 elif op.kind in ("rect", "stamp", "freetext"):
                     if op.kind == "freetext":

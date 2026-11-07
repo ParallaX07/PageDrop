@@ -35,8 +35,7 @@ from pagedrop.ui.busy_overlay import ToastOverlay
 from pagedrop.ui.dialogs import prompt_missing_capability
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
 from pagedrop.ui.organize_tools import launch_organize_tool
-from pagedrop.ui.settings import light_theme
-from pagedrop.ui.theme import ICON_SIZE, TEXT_MUTED, TEXT_MUTED_LIGHT
+from pagedrop.ui.theme import ICON_SIZE, current_theme
 from pagedrop.ui.tool_page import StatusFooter
 
 _EMPTY_GLYPH_PX = 32
@@ -921,7 +920,7 @@ class ToolsWindow(QWidget):
         self._refresh_empty_glyph()
 
     def _refresh_empty_glyph(self) -> None:
-        tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED
+        tint = current_theme().text_muted
         pix = icons.icon("wrench", color=tint).pixmap(
             QSize(_EMPTY_GLYPH_PX, _EMPTY_GLYPH_PX)
         )

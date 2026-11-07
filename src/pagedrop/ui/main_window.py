@@ -115,8 +115,8 @@ from pagedrop.ui.theme import (
     ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
-    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
+    current_theme,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
 from pagedrop.utils.page_jump import parse_page_ranges
@@ -1642,7 +1642,7 @@ class MainWindow(QMainWindow):
             if button is not None:
                 button.setObjectName("ToolbarPrimary")
                 icon_name = "folder-open" if primary is self._actions["open"] else "floppy-disk"
-                button.setIcon(icons.icon(icon_name, color=ON_PRIMARY))
+                button.setIcon(icons.icon(icon_name, color=current_theme().on_ink))
                 button.style().unpolish(button)
                 button.style().polish(button)
 

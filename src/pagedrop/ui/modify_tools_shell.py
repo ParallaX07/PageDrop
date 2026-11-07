@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, QRunnable, Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QObject, QRunnable, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -43,11 +43,12 @@ from pagedrop.core.modify_ops import (
 )
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.supported_formats import is_pdf_path
-from pagedrop.ui.accessibility import contrast_ratio
+from pagedrop.ui import icons
 from pagedrop.ui.dialogs import confirm_remove_blank_pages
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
+from pagedrop.ui.theme import ICON_SIZE_SMALL, current_theme
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
@@ -209,15 +210,35 @@ def _configure_crop(shell: ToolShellWindow) -> None:
     shell.set_run_handler(on_run)
 
 
-def _color_swatch_style(fill: str) -> str:
-    """Inline QSS for a colour swatch button: its fill and a readable label.
+class _ColorSwatchButton(QPushButton):
+    """Button that shows the chosen colour as a small square beside its label.
 
-    Only the per-swatch properties live here. The border and the keyboard focus
-    ring come from the app sheet (the swatch is a ``ToolbarSecondary`` button),
-    so a theme change restyles them like any other control.
+    The button itself stays styled by the app sheet; only the icon carries the
+    colour, with an edge in the theme line colour that follows theme changes.
     """
-    ink = max(("#000000", "#FFFFFF"), key=lambda c: contrast_ratio(c, fill))
-    return f"QPushButton {{ background-color: {fill}; color: {ink}; }}"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._fill = ""
+        icons.register_refresh(self._refresh_icon)
+
+    def set_fill(self, fill: str) -> None:
+        self._fill = fill
+        self.setText(fill)
+        self._refresh_icon()
+
+    def _refresh_icon(self) -> None:
+        if not self._fill:
+            return
+        side = ICON_SIZE_SMALL
+        pixmap = QPixmap(side, side)
+        pixmap.fill(QColor(self._fill))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor(current_theme().line_strong))
+        painter.drawRect(0, 0, side - 1, side - 1)
+        painter.end()
+        self.setIcon(QIcon(pixmap))
+        self.setIconSize(QSize(side, side))
 
 
 def _set_form_row_visible(form: QFormLayout, field: QWidget, visible: bool) -> None:
@@ -387,7 +408,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     fontsize.setValue(72.0)
     fontsize.setDecimals(1)
 
-    color_btn = QPushButton()
+    color_btn = _ColorSwatchButton()
     color_btn.setObjectName("ToolbarSecondary")
     color_btn.setFixedWidth(88)
     color_rgb = [0.55, 0.55, 0.55]
@@ -395,8 +416,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     def _set_color_btn(rgb: list[float]) -> None:
         r, g, b = (int(c * 255) for c in rgb)
         fill = f"#{r:02X}{g:02X}{b:02X}"
-        color_btn.setStyleSheet(_color_swatch_style(fill))
-        color_btn.setText(fill)
+        color_btn.set_fill(fill)
 
     def pick_color() -> None:
         initial = QColor(

@@ -1,7 +1,7 @@
 """Theme-aware Phosphor SVG toolbar icons.
 
 Vendored regular-weight SVGs live under ``pagedrop/assets/icons/``. Tint uses
-chrome text (dark/light) or ``ACCENT``; call ``refresh_icons()`` after a theme
+chrome text (dark/light) or the theme ink; call ``refresh_icons()`` after a theme
 swap so cached pixmaps and registered toolbar rebuilds stay in sync.
 """
 
@@ -18,9 +18,8 @@ from PyQt6.QtCore import QByteArray, QRectF, Qt
 from PyQt6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
-from pagedrop.ui.theme import ACCENT, TEXT_PRIMARY, TEXT_PRIMARY_LIGHT
+from pagedrop.ui.theme import current_theme
 
-# Module TEXT_PRIMARY is dark-only; light chrome uses TEXT_PRIMARY_LIGHT.
 _ICON_SIZES = (16, 20, 24, 32)
 
 _cache: dict[tuple[str, str, tuple[float, ...]], QIcon] = {}
@@ -38,10 +37,10 @@ def available_names() -> frozenset[str]:
 def icon(name: str, *, accent: bool = False, color: str | None = None) -> QIcon:
     """Load a vendored Phosphor SVG as a tinted ``QIcon``.
 
-    Default tint is chrome ``TEXT_PRIMARY`` (light-aware). Pass ``accent=True``
-    for ``ACCENT``, or ``color`` for an explicit ``#RRGGBB`` override.
+    Default tint is the chrome text colour (light-aware). Pass ``accent=True``
+    for the theme ink, or ``color`` for an explicit ``#RRGGBB`` override.
     """
-    tint = color or (ACCENT if accent else _chrome_text_hex())
+    tint = color or (current_theme().ink if accent else current_theme().text)
     ratios = _device_pixel_ratios()
     key = (name, tint.lower(), ratios)
     cached = _cache.get(key)
@@ -105,12 +104,6 @@ def unregister_refresh(callback: Callable[[], None]) -> None:
         for registered in _refresh_callbacks
         if (registered() if isinstance(registered, WeakMethod) else registered) not in (None, callback)
     ]
-
-
-def _chrome_text_hex() -> str:
-    from pagedrop.ui.settings import light_theme
-
-    return TEXT_PRIMARY_LIGHT if light_theme() else TEXT_PRIMARY
 
 
 def _icons_dir() -> Path:

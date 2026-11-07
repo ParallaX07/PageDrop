@@ -41,6 +41,8 @@ from pagedrop.ui.settings import (
 from datetime import UTC, datetime
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    DARK,
+    LIGHT,
     MAX_THUMBNAIL_WIDTH,
     app_stylesheet,
 )
@@ -51,8 +53,8 @@ def test_light_theme_stylesheet_differs(isolated_settings):
     dark = app_stylesheet(light=False)
     light = app_stylesheet(light=True)
     assert dark != light
-    assert "#F7F8FA" in light
-    assert "#131316" in dark
+    assert LIGHT.chrome in light
+    assert DARK.chrome in dark
 
 
 def test_light_theme_pref_round_trip(isolated_settings):
