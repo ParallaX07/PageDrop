@@ -220,6 +220,8 @@ class _ColorSwatchButton(QPushButton):
     def __init__(self) -> None:
         super().__init__()
         self._fill = ""
+        # Hug the icon plus the hex label so the text is never clipped.
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         icons.register_refresh(self._refresh_icon)
 
     def set_fill(self, fill: str) -> None:
@@ -410,7 +412,6 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
 
     color_btn = _ColorSwatchButton()
     color_btn.setObjectName("ToolbarSecondary")
-    color_btn.setFixedWidth(88)
     color_rgb = [0.55, 0.55, 0.55]
 
     def _set_color_btn(rgb: list[float]) -> None:

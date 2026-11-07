@@ -1795,7 +1795,6 @@ def _swatch_button(fill: str):
 
     swatch = _ColorSwatchButton()
     swatch.setObjectName("ToolbarSecondary")
-    swatch.setFixedWidth(88)
     swatch.set_fill(fill)
     return swatch
 
@@ -1838,6 +1837,19 @@ def test_watermark_swatch_shows_colour_square_and_focus_ring(
     resting = _color_count(swatch, ring)
     _focus(qtbot, swatch)
     assert _color_count(swatch, ring) >= resting + 40
+
+
+def test_watermark_swatch_is_wide_enough_for_icon_and_label(qtbot, themed_app):
+    themed_app(light=False)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    swatch = _swatch_button("#8C8C8C")
+    layout.addWidget(swatch)
+    _show(qtbot, host)
+
+    assert swatch.width() >= swatch.sizeHint().width()
+    text_width = swatch.fontMetrics().horizontalAdvance(swatch.text())
+    assert swatch.width() >= text_width + swatch.iconSize().width()
 
 
 def test_watermark_swatch_edge_follows_theme_change(qtbot, isolated_settings):
