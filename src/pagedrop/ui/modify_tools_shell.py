@@ -43,10 +43,12 @@ from pagedrop.core.modify_ops import (
 )
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.supported_formats import is_pdf_path
+from pagedrop.ui.accessibility import contrast_ratio, prefers_high_contrast
 from pagedrop.ui.dialogs import confirm_remove_blank_pages
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
+from pagedrop.ui.theme import focus_ring_hex
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
@@ -206,6 +208,22 @@ def _configure_crop(shell: ToolShellWindow) -> None:
         )
 
     shell.set_run_handler(on_run)
+
+
+def _color_swatch_style(fill: str) -> str:
+    """Inline QSS for a colour swatch button: readable label and a visible focus ring.
+
+    An inline sheet beats the app sheet, so the focus border must be restated
+    here at the theme's width. The ring sits against the surrounding surface,
+    which the focus tokens already contrast with, not against the swatch fill.
+    """
+    ink = max(("#000000", "#FFFFFF"), key=lambda c: contrast_ratio(c, fill))
+    width = 3 if prefers_high_contrast() else 2
+    return (
+        f"QPushButton {{ background-color: {fill}; color: {ink}; "
+        "border: 1px solid palette(mid); }"
+        f"QPushButton:focus {{ border: {width}px solid {focus_ring_hex()}; }}"
+    )
 
 
 def _set_form_row_visible(form: QFormLayout, field: QWidget, visible: bool) -> None:
@@ -382,10 +400,9 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
 
     def _set_color_btn(rgb: list[float]) -> None:
         r, g, b = (int(c * 255) for c in rgb)
-        color_btn.setStyleSheet(
-            f"background-color: rgb({r},{g},{b}); border: 1px solid palette(mid);"
-        )
-        color_btn.setText(f"#{r:02X}{g:02X}{b:02X}")
+        fill = f"#{r:02X}{g:02X}{b:02X}"
+        color_btn.setStyleSheet(_color_swatch_style(fill))
+        color_btn.setText(fill)
 
     def pick_color() -> None:
         initial = QColor(

@@ -7,7 +7,7 @@ from weakref import WeakMethod, ref
 
 import pytest
 from PyQt6.QtCore import QEvent
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QImage
 
 
 def test_available_names_cover_toolbar_set():
@@ -172,3 +172,107 @@ def test_zoom_controls_is_collectable_after_delete(qapp):
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     gc.collect()
     assert controls_ref() is None
+
+
+def _reference_render(name: str, tint: str, pixels: int):
+    """Independent render of the tinted SVG straight at ``pixels`` square."""
+    from PyQt6.QtCore import QByteArray, Qt
+    from PyQt6.QtGui import QImage, QPainter
+    from PyQt6.QtSvg import QSvgRenderer
+
+    from pagedrop.ui.icons import _load_svg
+
+    svg = _load_svg(name).replace("currentColor", tint).encode()
+    image = QImage(pixels, pixels, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    QSvgRenderer(QByteArray(svg)).render(painter)
+    painter.end()
+    return image
+
+
+def test_device_pixel_ratios_include_one_and_dedupe(monkeypatch, qapp):
+    from pagedrop.ui import icons
+
+    class _Screen:
+        def __init__(self, ratio):
+            self._ratio = ratio
+
+        def devicePixelRatio(self):  # noqa: N802
+            return self._ratio
+
+    class _App:
+        @staticmethod
+        def screens():
+            return [_Screen(2.0), _Screen(1.5), _Screen(2.0)]
+
+    monkeypatch.setattr(icons, "QGuiApplication", _App)
+    assert icons._device_pixel_ratios() == (1.0, 1.5, 2.0)
+
+    _App.screens = staticmethod(lambda: [])
+    assert icons._device_pixel_ratios() == (1.0,)
+
+
+def test_icon_renders_natively_at_each_device_pixel_ratio(monkeypatch, qapp, isolated_settings):
+    from PyQt6.QtCore import QSize
+
+    from pagedrop.ui import icons
+    from pagedrop.ui.theme import TEXT_PRIMARY
+
+    monkeypatch.setattr(icons, "_device_pixel_ratios", lambda: (1.0, 2.0))
+    icons.refresh_icons()
+    result = icons.icon("folder-open")
+
+    assert QSize(32, 32) in result.availableSizes()
+    one = result.pixmap(QSize(16, 16), 1.0)
+    two = result.pixmap(QSize(16, 16), 2.0)
+    assert (one.width(), one.height()) == (16, 16)
+    assert (two.width(), two.height()) == (32, 32)
+    assert two.devicePixelRatio() == 2.0
+    # Rendered from the vector at 32 px, not a 16 px bitmap scaled up.
+    rendered = two.toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    assert rendered == _reference_render("folder-open", TEXT_PRIMARY, 32)
+    icons.refresh_icons()
+
+
+def test_icon_supports_fractional_device_pixel_ratio(monkeypatch, qapp, isolated_settings):
+    from PyQt6.QtCore import QSize
+
+    from pagedrop.ui import icons
+
+    monkeypatch.setattr(icons, "_device_pixel_ratios", lambda: (1.0, 1.5))
+    icons.refresh_icons()
+    result = icons.icon("folder-open")
+    for logical, pixels in ((16, 24), (20, 30), (24, 36), (32, 48)):
+        pixmap = result.pixmap(QSize(logical, logical), 1.5)
+        assert (pixmap.width(), pixmap.height()) == (pixels, pixels)
+        assert pixmap.devicePixelRatio() == 1.5
+
+    # Non-integer products round up so the pixmap always covers the logical size.
+    odd = icons._render_pixmap(icons._load_svg("x").encode(), 16, 1.1)
+    assert odd.width() == 18
+    assert odd.devicePixelRatio() == 1.1
+    icons.refresh_icons()
+
+
+def test_icon_cache_is_keyed_by_ratios_and_tint(monkeypatch, qapp, isolated_settings):
+    from PyQt6.QtCore import QSize
+
+    from pagedrop.ui import icons
+
+    icons.refresh_icons()
+    monkeypatch.setattr(icons, "_device_pixel_ratios", lambda: (1.0,))
+    low = icons.icon("x")
+    assert icons.icon("x") is low
+    assert icons.icon("x", color="#FF0000") is not low
+
+    monkeypatch.setattr(icons, "_device_pixel_ratios", lambda: (1.0, 2.0))
+    high = icons.icon("x")
+    assert high is not low
+    assert icons.icon("x") is high
+    assert QSize(40, 40) in high.availableSizes()
+    assert QSize(40, 40) not in low.availableSizes()
+
+    icons.refresh_icons()
+    assert icons._cache == {}

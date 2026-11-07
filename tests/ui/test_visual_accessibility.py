@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QEnterEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
     QLineEdit,
+    QListWidget,
     QScrollArea,
     QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
@@ -212,7 +216,7 @@ def test_checkbox_focus_ring_stays_on_indicator(qtbot, isolated_settings):
     from PyQt6.QtGui import QColor
     from PyQt6.QtWidgets import QApplication, QCheckBox, QVBoxLayout, QWidget
 
-    from pagedrop.ui.theme import ACCENT, app_stylesheet
+    from pagedrop.ui.theme import FOCUS_RING, app_stylesheet
 
     app = QApplication.instance()
     assert app is not None
@@ -232,12 +236,12 @@ def test_checkbox_focus_ring_stays_on_indicator(qtbot, isolated_settings):
     qtbot.waitUntil(cb.hasFocus, timeout=1000)
 
     img = host.grab().toImage()
-    accent = QColor(ACCENT)
+    ring = QColor(FOCUS_RING)
     g = cb.geometry()
     top_accent = sum(
         1
         for x in range(g.x(), g.x() + g.width())
-        if img.pixelColor(x, g.y()) == accent
+        if img.pixelColor(x, g.y()) == ring
     )
     # Widget-level frame would paint nearly the full width; indicator is ~16–20px.
     assert top_accent < g.width() // 4
@@ -246,7 +250,7 @@ def test_checkbox_focus_ring_stays_on_indicator(qtbot, isolated_settings):
 
 def test_r10a_page_chips_and_prefs_chrome():
     """R10a: theme-aware chips, annot rail focus, prefs section/divider QSS."""
-    from pagedrop.ui.theme import ACCENT, TEXT_ON_ACCENT
+    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT, TEXT_ON_ACCENT
 
     dark = app_stylesheet()
     light = app_stylesheet(light=True)
@@ -254,7 +258,10 @@ def test_r10a_page_chips_and_prefs_chrome():
     dark_chip = "rgba(19, 19, 22, 160)"
     light_chip = "rgba(26, 26, 31, 170)"
 
-    for sheet, chip_bg in ((dark, dark_chip), (light, light_chip)):
+    for sheet, chip_bg, ring in (
+        (dark, dark_chip, FOCUS_RING),
+        (light, light_chip, FOCUS_RING_LIGHT),
+    ):
         page = sheet.split("QLabel#PageCardPageOverlay")[1].split("}")[0]
         rot = sheet.split("QLabel#PageCardRotationOverlay")[1].split("}")[0]
         assert chip_bg in page
@@ -266,7 +273,7 @@ def test_r10a_page_chips_and_prefs_chrome():
         assert "QWidget#PdfViewerAnnotTools QToolButton:pressed" in sheet
         assert "QToolButton#PdfViewerAnnotCollapse:focus" in sheet
         assert "QToolButton#PdfViewerAnnotExpand:pressed" in sheet
-        assert f"solid {ACCENT}" in sheet.split(
+        assert f"solid {ring}" in sheet.split(
             "QWidget#PdfViewerAnnotTools QToolButton:focus"
         )[1].split("}")[0]
 
@@ -843,29 +850,37 @@ def test_r6_tab_manager_underline_and_inactive_mute():
 
 def test_r6_tool_tile_quiet_chrome_keeps_focus_rings():
     """R6: ToolTiles are quiet at rest; focus rings stay HC-aware and visible."""
-    from pagedrop.ui.theme import ACCENT, app_stylesheet
+    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT, app_stylesheet
 
     dark = app_stylesheet()
     high = app_stylesheet(high_contrast=True)
+    light = app_stylesheet(light=True)
 
     rest = dark.split("QFrame#ToolTile {")[1].split("QFrame#ToolTile:hover")[0]
     assert "background-color: transparent" in rest
     assert "border: 1px solid transparent" in rest
 
     assert "QFrame#ToolTile:focus" in dark
-    assert f"border: 2px solid {ACCENT}" in dark
-    assert f"border: 3px solid {ACCENT}" in high
+    assert f"border: 2px solid {FOCUS_RING}" in dark
+    assert f"border: 3px solid {FOCUS_RING}" in high
+    assert f"border: 2px solid {FOCUS_RING_LIGHT}" in light
     assert 'QFrame#ToolTile[blocked="true"]:hover' in dark
     assert 'QFrame#ToolTile[compact="true"]' in dark
 
 
 def test_r6_tool_shell_drop_and_result_match_secondary():
     """R6: drop zone + result actions use ghost/outline secondary language."""
-    from pagedrop.ui.theme import ACCENT, BG_BASE, BG_BASE_LIGHT, app_stylesheet
+    from pagedrop.ui.theme import (
+        BG_BASE,
+        BG_BASE_LIGHT,
+        FOCUS_RING,
+        FOCUS_RING_LIGHT,
+        app_stylesheet,
+    )
 
-    for sheet, expected_base in (
-        (app_stylesheet(), BG_BASE),
-        (app_stylesheet(light=True), BG_BASE_LIGHT),
+    for sheet, expected_base, ring in (
+        (app_stylesheet(), BG_BASE, FOCUS_RING),
+        (app_stylesheet(light=True), BG_BASE_LIGHT, FOCUS_RING_LIGHT),
     ):
         drop = sheet.split("QFrame#ToolShellDropZone {")[1].split(
             "QFrame#ToolShellDropZone[dropActive"
@@ -884,7 +899,7 @@ def test_r6_tool_shell_drop_and_result_match_secondary():
         assert "background-color: transparent" in btn
         assert "border: 1px solid" in btn
         assert "QFrame#ToolShellDropZone:focus" in sheet
-        assert f"dashed {ACCENT}" in sheet
+        assert f"dashed {ring}" in sheet
 
         # Light/dark: options scroll must be solid — transparent + unthemed
         # viewport paints charcoal under light ink (Watermark-class bug).
@@ -1133,6 +1148,8 @@ def test_r8_light_hc_parity_freeze(isolated_settings):
         BG_CARD_LIGHT,
         BG_GRID_LIGHT,
         CLOSE_TAB,
+        FOCUS_RING,
+        FOCUS_RING_LIGHT,
         CLOSE_TAB_LIGHT,
         STATUS_SUCCESS,
         STATUS_SUCCESS_LIGHT,
@@ -1184,8 +1201,9 @@ def test_r8_light_hc_parity_freeze(isolated_settings):
     assert light_hc != dark_hc
     assert "border: 2px solid" in dark
     assert "border: 3px solid" in dark_hc
+    assert f"border: 3px solid {FOCUS_RING}" in dark_hc
     assert f"border: 4px solid {ACCENT}" in dark_hc
-    assert f"border: 3px solid {ACCENT}" in light_hc
+    assert f"border: 3px solid {FOCUS_RING_LIGHT}" in light_hc
     assert f"border: 4px solid {ACCENT}" in light_hc
     assert TEXT_PRIMARY_LIGHT in light
     success_block = light.split('ToastOverlayMessage[kind="success"]')[1].split("}")[0]
@@ -1288,9 +1306,6 @@ def _assert_mask_follows_card(tabs, toast, grid):
     assert _within(grid, tabs.childAt(just_above))
     assert _within(grid, tabs.childAt(card.mapTo(tabs, card.rect().center()) - type(inside)(0, 200)))
     assert toast.mask().boundingRect() == card.geometry()
-
-
-import pytest  # noqa: E402
 
 
 @pytest.mark.parametrize("reduce", [False, True])
@@ -1474,3 +1489,358 @@ def test_hover_during_exit_is_ignored(qtbot, isolated_settings):
     _window_move(host, toast._card, toast._card.rect().center())
     assert not toast._paused
     qtbot.waitUntil(lambda: not toast.isVisible(), timeout=2000)
+
+
+# --- Focus ring: contrast, window controls, item views, swatch -------------
+
+_LIGHT_SURFACES = {
+    "BG_BASE_LIGHT": "#F7F8FA",
+    "BG_CARD_LIGHT": "#FFFFFF",
+    "BG_GRID_LIGHT": "#F0F1F4",
+    "card hover": "#EEF0F4",
+    "empty thumbnail / pressed": "#E2E4EA",
+}
+
+_STYLE_MODES = (
+    dict(light=False, high_contrast=False),
+    dict(light=True, high_contrast=False),
+    dict(light=False, high_contrast=True),
+    dict(light=True, high_contrast=True),
+)
+
+
+def _ring_for(light: bool) -> str:
+    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT
+
+    return FOCUS_RING_LIGHT if light else FOCUS_RING
+
+
+def _focus_surfaces(light: bool) -> dict[str, str]:
+    from pagedrop.ui import theme
+
+    if light:
+        return _LIGHT_SURFACES
+    names = (
+        "BG_BASE",
+        "BG_SURFACE",
+        "BG_GRID",
+        "BG_CARD",
+        "BG_CARD_HOVER",
+        "BG_TOOLBAR",
+        "BG_STATUS",
+        "BG_TAB_BAR",
+        "BG_PREVIEW_FOOTER",
+    )
+    surfaces = {name: getattr(theme, name) for name in names}
+    surfaces["empty thumbnail"] = "#2A2A32"
+    return surfaces
+
+
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_focus_ring_meets_3_to_1_on_every_surface(light):
+    ring = _ring_for(light)
+    for name, surface in _focus_surfaces(light).items():
+        assert contrast_ratio(ring, surface) >= 3.0, (name, surface, ring)
+
+
+@pytest.mark.parametrize("mode", _STYLE_MODES)
+def test_focus_rules_use_ring_token_not_accent(mode):
+    """Every :focus border uses the ring token; ACCENT only fills or primary buttons."""
+    import re
+
+    from pagedrop.ui.theme import ACCENT
+
+    sheet = re.sub(r"/\*.*?\*/", "", app_stylesheet(**mode), flags=re.S)
+    ring = _ring_for(mode["light"])
+    # Primary buttons and selected items sit on an ACCENT fill; they use ink instead.
+    allowed_accent = ("ToolbarPrimary", "::handle", "::item:selected:focus")
+    seen = 0
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
+        if ":focus" not in selector:
+            continue
+        borders = [
+            line
+            for line in body.splitlines()
+            if line.strip().startswith("border") and "none" not in line
+        ]
+        if not borders:
+            continue
+        if any(token in selector for token in allowed_accent):
+            continue
+        seen += 1
+        assert all(ACCENT not in line for line in borders), selector.strip()
+        assert any(ring in line for line in borders), selector.strip()
+    assert seen > 20
+    assert ring in sheet.split("QLabel#PageCardFocusRing")[1].split("}")[0]
+
+
+@pytest.fixture
+def themed_app(qtbot, isolated_settings):
+    app = QApplication.instance()
+    assert app is not None
+    previous = app.styleSheet()
+
+    def apply(**mode):
+        app.setStyleSheet(app_stylesheet(**mode))
+
+    yield apply
+    app.setStyleSheet(previous)
+
+
+def _color_count(widget, hex_color: str) -> int:
+    from PyQt6.QtGui import QColor
+
+    img = widget.grab().toImage()
+    target = QColor(hex_color).rgb()
+    return sum(
+        1
+        for y in range(img.height())
+        for x in range(img.width())
+        if img.pixelColor(x, y).rgb() == target
+    )
+
+
+def _focus(qtbot, widget) -> None:
+    widget.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.waitUntil(widget.hasFocus, timeout=1000)
+    QApplication.processEvents()
+
+
+def _show(qtbot, widget) -> None:
+    qtbot.addWidget(widget)
+    widget.show()
+    qtbot.waitExposed(widget)
+
+
+@pytest.mark.parametrize("mode", _STYLE_MODES)
+def test_window_control_buttons_show_focus_without_resizing(
+    qtbot, main_window, themed_app, mode
+):
+    themed_app(**mode)
+    ring = _ring_for(mode["light"])
+    _show(qtbot, main_window)
+    buttons = main_window._window_control_buttons
+    assert {b.objectName() for b in buttons} == {
+        "WindowMinimize",
+        "WindowMaximize",
+        "WindowClose",
+    }
+    for button in buttons:
+        button.clearFocus()
+        QApplication.processEvents()
+        size = button.size()
+        assert _color_count(button, ring) == 0
+        _focus(qtbot, button)
+        assert button.size() == size
+        assert _color_count(button, ring) >= 40, button.objectName()
+
+
+def test_window_close_keeps_hover_treatment_while_focused(
+    qtbot, main_window, themed_app
+):
+    from PyQt6.QtGui import QColor
+
+    from pagedrop.ui.theme import CLOSE_TAB_HOVER_BG, FOCUS_RING
+
+    themed_app()
+    _show(qtbot, main_window)
+    close = next(
+        b for b in main_window._window_control_buttons if b.objectName() == "WindowClose"
+    )
+    _focus(qtbot, close)
+    close.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, True)
+    close.update()
+    img = close.grab().toImage()
+    inner = img.pixelColor(img.width() // 2, 4)
+    assert inner == QColor(CLOSE_TAB_HOVER_BG)
+    assert _color_count(close, FOCUS_RING) >= 40
+
+
+@pytest.mark.parametrize("light", [False, True])
+@pytest.mark.parametrize(
+    ("kind", "name"),
+    [
+        ("tool", "NewTabButton"),
+        ("tool", "ChromeToggleButton"),
+        ("tool", "OpenTabsButton"),
+        ("tool", "WindowClose"),
+        ("push", "MoveUndoButton"),
+        ("push", "ZoomButton"),
+        ("push", "ToastOverlayUndo"),
+        ("tool", "ToolsUpcomingToggle"),
+    ],
+)
+def test_chrome_buttons_show_visible_focus(qtbot, themed_app, light, kind, name):
+    from PyQt6.QtWidgets import QPushButton
+
+    themed_app(light=light)
+    ring = _ring_for(light)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    button = (QToolButton if kind == "tool" else QPushButton)()
+    button.setText("+")
+    button.setObjectName(name)
+    other = QPushButton("other")
+    layout.addWidget(button)
+    layout.addWidget(other)
+    _show(qtbot, host)
+    other.setFocus()
+    QApplication.processEvents()
+    assert _color_count(button, ring) == 0
+    _focus(qtbot, button)
+    assert _color_count(button, ring) >= 20
+
+
+@pytest.mark.parametrize("light", [False, True])
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("kind", ["list", "tree"])
+def test_item_views_show_the_current_item_when_focused(
+    qtbot, themed_app, light, selected, kind
+):
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
+
+    themed_app(light=light)
+    ring = _ring_for(light)
+    expected = ("#000000" if light else "#FFFFFF") if selected else ring
+    if kind == "list":
+        view = QListWidget()
+        view.addItems(["one", "two", "three"])
+        item = view.item(1)
+    else:
+        view = QTreeWidget()
+        view.setHeaderHidden(True)
+        for label in ("a", "b", "c"):
+            QTreeWidgetItem(view, [label])
+        item = view.topLevelItem(1)
+    view.resize(220, 160)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    field = QLineEdit()
+    layout.addWidget(field)
+    layout.addWidget(view)
+    _show(qtbot, host)
+    view.setCurrentItem(item)
+    item.setSelected(selected)
+
+    def edge_pixel() -> QColor:
+        rect = view.visualItemRect(item)
+        img = view.viewport().grab().toImage()
+        return img.pixelColor(rect.left() + 1, rect.center().y())
+
+    _focus(qtbot, field)
+    assert not view.hasFocus()
+    assert edge_pixel() != QColor(expected)
+    size = view.visualItemRect(item).size()
+    _focus(qtbot, view)
+    assert edge_pixel() == QColor(expected)
+    assert view.visualItemRect(item).size() == size
+
+
+def test_selected_item_focus_ring_contrasts_with_accent_fill():
+    from pagedrop.ui.theme import ACCENT
+
+    assert contrast_ratio("#FFFFFF", ACCENT) >= 3.0
+    assert contrast_ratio("#000000", ACCENT) >= 3.0
+
+
+@pytest.mark.parametrize(
+    "fill", ["#000000", "#FFFFFF", "#8C8C8C", "#FFFF00", "#00008B"]
+)
+def test_watermark_swatch_label_is_readable_and_focus_ring_visible(
+    qtbot, themed_app, fill
+):
+    import re
+
+    from PyQt6.QtWidgets import QPushButton
+
+    from pagedrop.ui.modify_tools_shell import _color_swatch_style
+
+    themed_app()
+    style = _color_swatch_style(fill)
+    ink = re.search(r"; color: (#[0-9A-F]{6});", style).group(1)
+    assert ink in ("#000000", "#FFFFFF")
+    other = "#FFFFFF" if ink == "#000000" else "#000000"
+    assert contrast_ratio(ink, fill) >= contrast_ratio(other, fill)
+    assert contrast_ratio(ink, fill) >= 4.5
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    swatch = QPushButton(fill)
+    swatch.setObjectName("ToolbarSecondary")
+    swatch.setFixedWidth(88)
+    swatch.setStyleSheet(style)
+    sibling = QPushButton("other")
+    layout.addWidget(swatch)
+    layout.addWidget(sibling)
+    _show(qtbot, host)
+    sibling.setFocus()
+    QApplication.processEvents()
+    ring = _ring_for(False)
+    assert _color_count(swatch, ring) == 0
+    _focus(qtbot, swatch)
+    assert _color_count(swatch, ring) >= 40
+
+
+def test_watermark_swatch_ring_follows_theme(isolated_settings):
+    from pagedrop.ui.modify_tools_shell import _color_swatch_style
+    from pagedrop.ui.settings import set_light_theme
+    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT, focus_ring_hex
+
+    assert focus_ring_hex() == FOCUS_RING
+    assert f"2px solid {FOCUS_RING}" in _color_swatch_style("#8C8C8C")
+    set_light_theme(True)
+    assert focus_ring_hex() == FOCUS_RING_LIGHT
+    assert f"2px solid {FOCUS_RING_LIGHT}" in _color_swatch_style("#8C8C8C")
+
+
+def test_watermark_swatch_uses_high_contrast_width(monkeypatch):
+    from pagedrop.ui import modify_tools_shell
+
+    monkeypatch.setattr(modify_tools_shell, "prefers_high_contrast", lambda: True)
+    assert "3px solid" in modify_tools_shell._color_swatch_style("#8C8C8C")
+
+
+# --- Platform contrast preference -----------------------------------------
+
+
+class _StubHints:
+    def __init__(self, preference):
+        self._preference = preference
+
+    def contrastPreference(self):  # noqa: N802
+        return self._preference
+
+
+def test_prefers_high_contrast_follows_platform_preference(monkeypatch):
+    from pagedrop.ui import accessibility
+
+    monkeypatch.setattr(
+        accessibility,
+        "_accessibility_hints",
+        lambda: _StubHints(Qt.ContrastPreference.HighContrast),
+    )
+    assert accessibility.prefers_high_contrast() is True
+
+
+def test_prefers_high_contrast_ignores_a_high_contrast_palette(monkeypatch):
+    from PyQt6.QtGui import QColor, QPalette
+
+    from pagedrop.ui import accessibility
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ColorRole.Window, QColor("#000000"))
+    previous = QApplication.palette()
+    QApplication.setPalette(palette)
+    try:
+        monkeypatch.setattr(
+            accessibility,
+            "_accessibility_hints",
+            lambda: _StubHints(Qt.ContrastPreference.NoPreference),
+        )
+        assert accessibility.prefers_high_contrast() is False
+    finally:
+        QApplication.setPalette(previous)
