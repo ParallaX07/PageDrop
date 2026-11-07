@@ -23,11 +23,20 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core.backends.office import capability_report
-from pagedrop.core.capabilities import TESSDATA, clear_cache, probe, probe_all
+from pagedrop.core.capabilities import (
+    TESSDATA,
+    clear_cache,
+    probe,
+    probe_all,
+    set_configured_office_backend,
+    set_configured_soffice_path,
+    set_configured_tessdata_path,
+)
 from pagedrop.core.tessdata_pack import user_tessdata_dir
 from pagedrop.ui.dialogs import run_tessdata_download
 from pagedrop.ui.settings import (
     apply_office_settings_to_capabilities,
+    apply_optional_settings_to_capabilities,
     apply_tessdata_settings_to_capabilities,
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
@@ -277,7 +286,7 @@ class PreferencesDialog(QDialog):
         from pagedrop.ui.settings import last_successful_check_utc
 
         checked = last_successful_check_utc()
-        text = "No successful update check yet" if checked is None else f"Last successful check: {checked.strftime('%Y-%m-%d %H:%M UTC')}"
+        text = "No successful update check yet" if checked is None else f"Last successful check: {checked.astimezone().strftime('%Y-%m-%d %H:%M %Z')}"
         if self._update_coordinator is not None and getattr(self._update_coordinator, "last_error", ""):
             text += f"\nCurrent background error: {self._update_coordinator.last_error}"
         self._update_status.setText(text)
@@ -314,8 +323,7 @@ class PreferencesDialog(QDialog):
         if path is None:
             return
         self._tessdata.setText(str(path.parent))
-        set_tessdata_path(path.parent)
-        clear_cache()
+        self._push_to_registry()
         probe_all(refresh=True)
         self._refresh_status()
         QMessageBox.information(
@@ -325,11 +333,8 @@ class PreferencesDialog(QDialog):
         )
 
     def _on_recheck(self) -> None:
-        # Apply path into the registry before probing so Recheck sees it.
-        set_office_soffice_path(self._soffice.text().strip() or None)
-        set_office_preferred_backend(str(self._backend.currentData()))
-        set_tessdata_path(self._tessdata.text().strip() or None)
-        clear_cache()
+        # Probe the typed values; they are saved only on OK.
+        self._push_to_registry()
         probe_all(refresh=True)
         self._refresh_status()
         report = capability_report(refresh=False)
@@ -354,18 +359,21 @@ class PreferencesDialog(QDialog):
             return f"OCR: {len(langs)} language(s) at {status.extras.get('path')}"
         return f"OCR: {status.detail}"
 
-    def _refresh_status(self) -> None:
-        apply_office_settings_to_capabilities()
-        apply_tessdata_settings_to_capabilities()
-        # Reflect in-dialog edits without requiring OK yet for the soffice line
-        # when recheck already applied; otherwise show last-saved + combo.
-        from pagedrop.core.capabilities import (
-            set_configured_office_backend,
-            set_configured_tessdata_path,
-        )
-
+    def _push_to_registry(self) -> None:
+        """Make the capability registry follow the widgets, without saving."""
+        set_configured_soffice_path(self._soffice.text().strip() or None)
         set_configured_office_backend(str(self._backend.currentData()))
         set_configured_tessdata_path(self._tessdata.text().strip() or None)
+        clear_cache()
+
+    def reject(self) -> None:
+        # Cancel, Esc and the close button all land here: drop unsaved probes.
+        apply_optional_settings_to_capabilities()
+        super().reject()
+
+    def _refresh_status(self) -> None:
+        # Show what the widgets say, saved or not.
+        self._push_to_registry()
         report = capability_report()
         office = "available" if report.any_available else "unavailable"
         self._status.setText(f"Office conversion is {office}.")

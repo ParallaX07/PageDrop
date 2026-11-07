@@ -47,6 +47,9 @@ class RedactionError(JobError):
 class RedactionVerifyError(JobError):
     """Raised when post-redaction verification fails (output must not be kept)."""
 
+    # The message embeds redacted text; log files must not keep it.
+    log_detail_sensitive = True
+
     def __init__(self, message: str, *, failures: Sequence[str] = ()) -> None:
         self.failures = tuple(failures)
         super().__init__(message)

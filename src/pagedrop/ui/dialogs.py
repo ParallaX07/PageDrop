@@ -709,7 +709,12 @@ def prompt_missing_libreoffice(
             return "recheck"
         return prompt_missing_libreoffice(parent, refreshed, tool_title=tool_title)
     if name == "lo_download":
-        QDesktopServices.openUrl(QUrl(DOWNLOAD_URL))
+        if not QDesktopServices.openUrl(QUrl(DOWNLOAD_URL)):
+            QMessageBox.warning(
+                parent,
+                "LibreOffice",
+                f"PageDrop could not open your browser. Open {DOWNLOAD_URL} in your browser.",
+            )
         return "download"
     if name == "lo_copy_winget":
         _copy_libreoffice_winget_command(parent)
