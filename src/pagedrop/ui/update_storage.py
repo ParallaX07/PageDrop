@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ from pagedrop.utils.update_checker import ReleaseInfo, UpdateStorageError
 
 _INSTALLER_RE = re.compile(r"^PageDrop-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-Setup\.exe$")
 _EXPIRY = timedelta(days=7)
+_LOG = logging.getLogger("pagedrop")
 
 
 class UpdateStorage:
@@ -77,13 +79,21 @@ class UpdateStorage:
         cutoff = (now or datetime.now(UTC)).timestamp() - _EXPIRY.total_seconds()
         with contextlib.closing(self._inactive_sessions()) as sessions:
             for session in sessions:
-                for child in session.iterdir():
-                    if child.is_symlink() or not child.is_file():
-                        continue
-                    if child.name.endswith(".part") and _INSTALLER_RE.fullmatch(child.name[:-5]):
-                        child.unlink(missing_ok=True)
-                    elif _INSTALLER_RE.fullmatch(child.name) and child.stat().st_mtime < cutoff:
-                        child.unlink(missing_ok=True)
+                try:
+                    children = list(session.iterdir())
+                except OSError:
+                    _LOG.warning("Could not list update cache folder %s", session, exc_info=True)
+                    continue
+                for child in children:
+                    try:
+                        if child.is_symlink() or not child.is_file():
+                            continue
+                        if child.name.endswith(".part") and _INSTALLER_RE.fullmatch(child.name[:-5]):
+                            child.unlink(missing_ok=True)
+                        elif _INSTALLER_RE.fullmatch(child.name) and child.stat().st_mtime < cutoff:
+                            child.unlink(missing_ok=True)
+                    except OSError:  # Best effort: a locked leftover must not block downloads.
+                        _LOG.warning("Could not clean update cache file %s", child, exc_info=True)
 
     def _inactive_sessions(self):
         """Yield each other session with its lock held; drop it afterwards if empty."""
