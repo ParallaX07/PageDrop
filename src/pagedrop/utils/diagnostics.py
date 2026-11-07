@@ -291,7 +291,7 @@ def _install_exception_hooks() -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             return
         _LOG.critical(
-            "Unhandled exception terminated the application (%s: %s)",
+            "Unhandled exception (%s: %s)",
             exc_type.__name__,
             exc,
             exc_info=(exc_type, exc, traceback),
