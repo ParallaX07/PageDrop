@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QApplication, QFileDialog, QToolBar
+from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from pagedrop.core.pdf_loader import PdfLoader
-from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, MainWindow
+from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import ZOOM_WHEEL_STEP
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -189,17 +189,9 @@ def test_minimum_window_size(main_window, qtbot):
     assert main_window.height() >= min_h
 
 
-def _toolbar_action(window: MainWindow, label: str):
-    for toolbar in window.findChildren(QToolBar):
-        for action in toolbar.actions():
-            if action.text() == label:
-                return action
-    raise AssertionError(f"Toolbar action {label!r} not found")
-
-
 def test_select_all_deselect_all_toolbar(main_window, five_page_pdf, qtbot):
-    select_all = _toolbar_action(main_window, "Select all")
-    deselect_all = _toolbar_action(main_window, "Clear selection")
+    select_all = main_window._actions["select_all"]
+    deselect_all = main_window._actions["deselect_all"]
     assert not select_all.icon().isNull()
     assert not deselect_all.icon().isNull()
     assert not main_window._move_to_action.icon().isNull()

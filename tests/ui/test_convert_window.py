@@ -221,14 +221,15 @@ def test_create_pdf_success_shows_toast_and_result_actions(qtbot, tmp_path, monk
     assert window._result_bar._folder_btn.text() == "Show in folder"
 
 
-def test_menubar_create_pdf_beside_merge(main_window, qtbot):
-    menubar = main_window.menuBar()
-    labels = [action.text().replace("&", "") for action in menubar.actions()]
+def test_tools_menu_create_pdf_beside_merge(main_window, qtbot):
+    tools_menu = main_window._tools_menu_action.menu()
+    actions = [a for a in tools_menu.actions() if not a.isSeparator()]
+    labels = [action.text().replace("&", "") for action in actions]
 
     merge_index = labels.index("Merge PDFs")
     assert labels[merge_index + 1] == "Create PDF"
 
-    create_action = menubar.actions()[merge_index + 1]
+    create_action = actions[merge_index + 1]
     create_action.trigger()
 
     qtbot.waitUntil(

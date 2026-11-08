@@ -1,6 +1,6 @@
 # Tools hub
 
-The Tools hub (`Ctrl+Shift+O`, or the Tools menu) is a searchable catalogue tab for batch and multi-step jobs. It is secondary to the drag-and-drop editor: tiles open modeless tool pages in the same tab strip as your PDFs.
+The Tools hub (`Ctrl+Shift+O`, or **Tools → All tools**) is a searchable catalogue tab for batch and multi-step jobs. It is secondary to the drag-and-drop editor: tiles open modeless tool pages in the same tab strip as your PDFs.
 
 ## How a tool runs
 

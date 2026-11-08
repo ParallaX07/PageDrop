@@ -510,20 +510,21 @@ def test_r3_zoom_controls_use_spacing_tokens(qtbot):
 
 
 def test_r3_toolbar_roles_match_action_weight(main_window, qtbot):
-    """R3: Open / Merge / Save PDF / Run are primary; browse/add are secondary."""
+    """R3: Save as / Merge / Save PDF / Run are primary; browse/add are secondary."""
     from pagedrop.ui import icons
     from pagedrop.ui.theme import ICON_SIZE, ON_PRIMARY
 
     open_btn = main_window._toolbar.widgetForAction(main_window._actions["open"])
     assert open_btn is not None
-    assert open_btn.objectName() == "ToolbarPrimary"
-    assert open_btn.icon().cacheKey() == icons.icon(
-        "folder-open", color=ON_PRIMARY
+    assert open_btn.objectName() == ""
+    save_btn = main_window._toolbar.widgetForAction(main_window._actions["save_as"])
+    assert save_btn is not None
+    assert save_btn.objectName() == "ToolbarPrimary"
+    assert save_btn.icon().cacheKey() == icons.icon(
+        "floppy-disk", color=ON_PRIMARY
     ).cacheKey()
     assert main_window._toolbar.iconSize().width() == ICON_SIZE
-    preview = main_window._toolbar.widgetForAction(main_window._actions["preview"])
-    assert preview is not None
-    assert preview.objectName() == ""
+    assert main_window._toolbar.widgetForAction(main_window._actions["preview"]) is None
 
     from pagedrop.ui.merge_window import MergeWindow
 
@@ -1723,6 +1724,23 @@ def test_window_close_keeps_hover_treatment_while_focused(
 
 
 @pytest.mark.parametrize("light", [False, True])
+def test_chrome_buttons_have_a_pressed_state(light):
+    from pagedrop.ui.theme import DARK, LIGHT, blend
+
+    theme = LIGHT if light else DARK
+    sheet = app_stylesheet(light=light)
+
+    def pressed_body(selector: str) -> str:
+        start = sheet.index(selector + ":pressed")
+        return sheet[sheet.index("{", start) : sheet.index("}", start)]
+
+    for name in ("ChromeToggleButton", "WindowMinimize", "WindowMaximize"):
+        assert f"background-color: {theme.line};" in pressed_body(f"QToolButton#{name}")
+    close = blend(theme.danger, theme.text, 0.8)
+    assert f"background-color: {close};" in pressed_body("QToolButton#WindowClose")
+
+
+@pytest.mark.parametrize("light", [False, True])
 @pytest.mark.parametrize(
     ("kind", "name"),
     [
@@ -2007,8 +2025,7 @@ def test_tabular_font_applied_to_numeric_displays(qtbot, main_window):
     assert badge.isFeatureSet(_TNUM)
     assert badge.pixelSize() == 13
 
-    for label in (main_window._selection_toolbar_label, main_window._selection_status):
-        assert label.font().isFeatureSet(_TNUM)
+    assert main_window._selection_toolbar_label.font().isFeatureSet(_TNUM)
 
     viewer = PdfViewerWidget()
     qtbot.addWidget(viewer)

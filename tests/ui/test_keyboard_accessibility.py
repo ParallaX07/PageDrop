@@ -26,8 +26,13 @@ def test_menu_mnemonics_are_unambiguous(main_window):
     menubar = main_window.menuBar()
     top_labels = [action.text() for action in menubar.actions()]
     assert "&File" in top_labels
-    assert "&Merge PDFs" in top_labels
-    assert "&Create PDF" in top_labels
+    assert "&Pages" in top_labels
+    assert "&Tools" in top_labels
+    assert "&Merge PDFs" not in top_labels
+    assert "&Create PDF" not in top_labels
+    tools_menu = main_window._tools_menu_action.menu()
+    tools_labels = [a.text() for a in tools_menu.actions() if not a.isSeparator()]
+    assert tools_labels == ["&Merge PDFs", "&Create PDF", "All &tools"]
 
     file_menu = next(
         action.menu()
@@ -467,3 +472,145 @@ def _ring_for_theme(light: bool) -> str:
     from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT
 
     return FOCUS_RING_LIGHT if light else FOCUS_RING
+
+
+def test_view_switch_segments_are_reached_with_arrow_keys_and_tab(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    toolbar = main_window._toolbar
+    grid_segment, pages_segment = main_window._view_switch.segments
+    qtbot.waitUntil(lambda: pages_segment.isVisible())
+
+    ordered = focusable_toolbar_widgets(toolbar)
+    assert ordered.index(pages_segment) == ordered.index(grid_segment) + 1
+    assert grid_segment.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert pages_segment.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    # Tab order walks the segments one after the other.
+    assert grid_segment.nextInFocusChain() is pages_segment
+
+    _focus(qtbot, grid_segment)
+    qtbot.keyClick(grid_segment, Qt.Key.Key_Right)
+    qtbot.waitUntil(pages_segment.hasFocus, timeout=1000)
+    qtbot.keyClick(pages_segment, Qt.Key.Key_Left)
+    qtbot.waitUntil(grid_segment.hasFocus, timeout=1000)
+
+    # Arrow keys cross from the neighbouring buttons into the switch and out again.
+    before = ordered[ordered.index(grid_segment) - 1]
+    after = ordered[ordered.index(pages_segment) + 1]
+    _focus(qtbot, before)
+    qtbot.keyClick(before, Qt.Key.Key_Right)
+    qtbot.waitUntil(grid_segment.hasFocus, timeout=1000)
+    qtbot.keyClick(grid_segment, Qt.Key.Key_Right)
+    qtbot.keyClick(pages_segment, Qt.Key.Key_Right)
+    qtbot.waitUntil(after.hasFocus, timeout=1000)
+
+    # Space on the focused segment switches the view through the same action.
+    tab = main_window._active_tab()
+    _focus(qtbot, pages_segment)
+    qtbot.keyClick(pages_segment, Qt.Key.Key_Space)
+    qtbot.waitUntil(tab.is_viewer_mode)
+    assert pages_segment.isChecked() and not grid_segment.isChecked()
+
+
+def test_disabled_view_switch_is_skipped_by_toolbar_navigation(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    grid_segment, pages_segment = main_window._view_switch.segments
+    assert {grid_segment, pages_segment} <= set(
+        focusable_toolbar_widgets(main_window._toolbar)
+    )
+
+    main_window._actions["preview"].setEnabled(False)
+    reachable = set(focusable_toolbar_widgets(main_window._toolbar))
+    assert grid_segment not in reachable and pages_segment not in reachable
+
+
+def _open_menu_with_mnemonic(qtbot, window, key, menu):
+    """Open a top-level menu the way a keyboard user does: Alt plus its letter."""
+    from PyQt6.QtWidgets import QApplication
+
+    _show(qtbot, window)
+    window.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is window, timeout=3000)
+    qtbot.keyClick(window, key, Qt.KeyboardModifier.AltModifier)
+    qtbot.waitUntil(menu.isVisible, timeout=3000)
+
+
+def _entries_reached_with_down(qtbot, menu, presses: int) -> list:
+    reached = [menu.activeAction()]
+    for _ in range(presses - 1):
+        qtbot.keyClick(menu, Qt.Key.Key_Down)
+        reached.append(menu.activeAction())
+    return reached
+
+
+def test_tools_menu_opens_and_its_entries_are_reached_with_arrow_keys(main_window, qtbot):
+    menu = main_window._tools_menu_action.menu()
+    _open_menu_with_mnemonic(qtbot, main_window, Qt.Key.Key_T, menu)
+    entries = [action for action in menu.actions() if not action.isSeparator()]
+    assert [a.text() for a in entries] == ["&Merge PDFs", "&Create PDF", "All &tools"]
+
+    assert _entries_reached_with_down(qtbot, menu, len(entries)) == entries
+    qtbot.keyClick(menu, Qt.Key.Key_Down)
+    assert menu.activeAction() is entries[0]
+    qtbot.keyClick(menu, Qt.Key.Key_Up)
+    assert menu.activeAction() is entries[-1]
+    qtbot.keyClick(menu, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not menu.isVisible(), timeout=3000)
+
+
+def test_pages_menu_opens_and_its_enabled_entries_are_reached_with_arrow_keys(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    grid = main_window._active_tab().thumbnail_grid
+    grid.selection_manager.select_single(2)
+    qtbot.waitUntil(lambda: main_window._actions["move_up"].isEnabled())
+    menu = main_window._pages_menu_action.menu()
+    _open_menu_with_mnemonic(qtbot, main_window, Qt.Key.Key_P, menu)
+
+    # Disabled entries are skipped; every enabled one is reached, in menu order.
+    enabled = [a for a in menu.actions() if not a.isSeparator() and a.isEnabled()]
+    assert main_window._actions["select_all"] in enabled
+    assert main_window._actions["move_up"] in enabled
+    assert _entries_reached_with_down(qtbot, menu, len(enabled)) == enabled
+
+    # Enter on the first entry runs it: Select all, with no toolbar button involved.
+    qtbot.keyClick(menu, Qt.Key.Key_Down)
+    assert menu.activeAction() is main_window._actions["select_all"]
+    qtbot.keyClick(menu, Qt.Key.Key_Return)
+    qtbot.waitUntil(lambda: len(grid.selection_manager.selection) == 5)
+    qtbot.waitUntil(lambda: not menu.isVisible(), timeout=3000)
+
+
+def test_move_commands_fire_from_their_shortcuts_with_no_toolbar_button(
+    main_window, five_page_pdf, qtbot
+):
+    from PyQt6.QtWidgets import QApplication
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    main_window.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is main_window, timeout=3000)
+    grid = main_window._active_tab().thumbnail_grid
+    toolbar_actions = main_window._toolbar.actions()
+    for key in ("select_all", "deselect_all", "move_up", "move_down"):
+        assert main_window._actions[key] not in toolbar_actions
+
+    # Send the key to the window, not the grid, so only the QAction shortcut can fire.
+    grid.selection_manager.select_single(2)
+    qtbot.waitUntil(lambda: main_window._actions["move_up"].isEnabled())
+    qtbot.keyClick(main_window, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: grid.selection_manager.selection == {1})
+    qtbot.keyClick(main_window, Qt.Key.Key_Down, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: grid.selection_manager.selection == {2})
+    qtbot.keyClick(main_window, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: len(grid.selection_manager.selection) == 5)

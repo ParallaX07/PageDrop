@@ -123,7 +123,7 @@ def test_tools_tab_has_no_detach_menu(main_window, qtbot):
 
 def test_command_palette_finds_tools(main_window):
     labels = {a.text().replace("&", "") for a in collect_actions(main_window)}
-    assert "Tools" in labels
+    assert "All tools" in labels
     assert main_window._actions["tools"] in collect_actions(main_window)
 
 

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QDrag
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QDrag, QMouseEvent
+from PyQt6.QtWidgets import QApplication
 
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
@@ -87,6 +88,39 @@ def test_detach_tab_creates_new_window_with_same_pdf(
     assert detached._toolbar.parentWidget() is detached_tab
     assert source.windowTitle().endswith("(1 page)")
     assert detached.windowTitle().endswith("(5 pages)")
+
+
+def test_detached_tab_keeps_its_colour_and_leaves_the_new_counter_alone(
+    one_page_pdf,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.showMinimized()
+
+    source._tab_manager.add_blank_tab()
+    moving = _tab_at(source, 1)
+    source._load_pdf(str(one_page_pdf), tab=moving)
+    _wait_for_tab_loaded(qtbot, moving)
+    assert moving.index_colour == "index_teal"
+
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(1)
+    qtbot.waitUntil(
+        lambda: len(_windows_added(manager, windows_before)) == 1,
+        timeout=5000,
+    )
+    detached = _windows_added(manager, windows_before)[0]
+    qtbot.addWidget(detached)
+
+    assert _tab_at(detached, 0) is moving
+    assert moving.index_colour == "index_teal"
+    assert detached._tab_manager._tab_index_colour(0) == "index_teal"
+    # The adopted tab did not use up a colour: the first new tab starts at clay.
+    fresh = detached._tab_manager.add_blank_tab()
+    assert fresh.index_colour == "index_clay"
 
 
 def test_move_to_new_window_context_menu(
@@ -193,3 +227,104 @@ def test_drag_after_source_window_closes_lives_in_new_windows_root(
     detached.close()
     assert not dropped[0].exists()
     assert not new_root.exists()
+
+
+def _send_mouse(bar, kind, local: QPoint, global_pos: QPoint) -> None:
+    """Deliver a real mouse event (QTest.mouseMove is a no-op offscreen)."""
+    left = Qt.MouseButton.LeftButton
+    release = kind == QEvent.Type.MouseButtonRelease
+    QApplication.sendEvent(
+        bar,
+        QMouseEvent(
+            kind,
+            QPointF(local),
+            QPointF(global_pos),
+            left if kind != QEvent.Type.MouseMove else Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton if release else left,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    QApplication.processEvents()
+
+
+def test_dragging_a_tab_out_of_the_window_after_reordering_detaches_that_tab(
+    one_page_pdf,
+    five_page_pdf,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.show()
+    qtbot.waitExposed(source)
+
+    tab_a = source._tab_manager.add_blank_tab()
+    source._load_pdf(str(one_page_pdf), tab=tab_a)
+    tab_b = source._tab_manager.add_blank_tab()
+    source._load_pdf(str(five_page_pdf), tab=tab_b)
+    source._tab_manager.removeTab(0)
+    _wait_for_tab_loaded(qtbot, tab_a)
+    _wait_for_tab_loaded(qtbot, tab_b)
+    bar = source._tab_manager.tabBar()
+    assert bar.isMovable()
+
+    start = bar.tabRect(0).center()
+    press_global = bar.mapToGlobal(start)
+    _send_mouse(bar, QEvent.Type.MouseButtonPress, start, press_global)
+    # Drag within the bar over the second tab: the dragged tab is reordered.
+    for dx in range(5, bar.tabRect(0).width(), 15):
+        _send_mouse(bar, QEvent.Type.MouseMove, start + QPoint(dx, 0), press_global + QPoint(dx, 0))
+    qtbot.waitUntil(lambda: source._tab_manager.indexOf(tab_a) == 1, timeout=3000)
+    moving = bar._moving_tab
+    assert moving is not None and moving.isVisible()
+
+    # Past the threshold and outside the window: the drag arms a detach.
+    frame = source.frameGeometry()
+    outside = QPoint(frame.right() + 300, frame.bottom() + 300)
+    windows_before = frozenset(manager.windows)
+    _send_mouse(bar, QEvent.Type.MouseMove, start + QPoint(40, 0), outside)
+    assert bar._detach_armed
+    assert bar.tabToolTip(1) == "Release to open in new window"
+    _send_mouse(bar, QEvent.Type.MouseButtonRelease, start + QPoint(40, 0), outside)
+
+    qtbot.waitUntil(
+        lambda: len(_windows_added(manager, windows_before)) == 1,
+        timeout=5000,
+    )
+    detached = _windows_added(manager, windows_before)[0]
+    qtbot.addWidget(detached)
+    assert _tab_at(detached, 0) is tab_a
+    assert source._tab_manager.count() == 1
+    assert _tab_at(source, 0) is tab_b
+    qtbot.waitUntil(lambda: not moving.isVisible(), timeout=3000)
+    assert not bar._detach_armed
+
+
+def test_refused_detach_still_ends_the_tab_drag(one_page_pdf, qtbot, qapp):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.show()
+    qtbot.waitExposed(source)
+    tab = source._tab_manager.add_blank_tab()
+    source._load_pdf(str(one_page_pdf), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+    source._window_manager = None  # the detach is refused and the tab stays
+    bar = source._tab_manager.tabBar()
+
+    start = bar.tabRect(source._tab_manager.indexOf(tab)).center()
+    press_global = bar.mapToGlobal(start)
+    _send_mouse(bar, QEvent.Type.MouseButtonPress, start, press_global)
+    for dx in (5, 20, 40):
+        _send_mouse(bar, QEvent.Type.MouseMove, start + QPoint(dx, 0), press_global + QPoint(dx, 0))
+    moving = bar._moving_tab
+    assert moving is not None and moving.isVisible()
+
+    frame = source.frameGeometry()
+    outside = QPoint(frame.right() + 300, frame.bottom() + 300)
+    _send_mouse(bar, QEvent.Type.MouseMove, start + QPoint(40, 0), outside)
+    _send_mouse(bar, QEvent.Type.MouseButtonRelease, start + QPoint(40, 0), outside)
+
+    assert source._tab_manager.indexOf(tab) >= 0
+    qtbot.waitUntil(lambda: not moving.isVisible(), timeout=3000)

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
 from PyQt6.QtGui import QAction, QKeySequence
 
-from pagedrop.ui.command_palette import CommandPalette, ranked_actions
+from pagedrop.ui.command_palette import (
+    CommandPalette,
+    action_label,
+    collect_actions,
+    ranked_actions,
+)
 
 
 def _action(label: str, category: str = "Document", *, enabled: bool = True) -> QAction:
@@ -118,3 +124,24 @@ def test_palette_arrows_do_nothing_without_selectable_rows(qtbot) -> None:
     palette._refilter("zzz")
     qtbot.keyClick(palette, Qt.Key.Key_Down)
     qtbot.keyClick(palette, Qt.Key.Key_Up)
+
+
+@pytest.mark.parametrize(
+    ("query", "key", "label"),
+    [
+        ("Merge PDFs", "merge", "Merge PDFs"),
+        ("Create PDF", "create_pdf", "Create PDF"),
+        ("All tools", "tools", "All tools"),
+        ("Select all", "select_all", "Select all"),
+        ("Clear selection", "deselect_all", "Clear selection"),
+        ("Move up", "move_up", "Move up"),
+        ("Move down", "move_down", "Move down"),
+    ],
+)
+def test_palette_finds_shell_commands_by_their_current_text(
+    main_window, query: str, key: str, label: str
+) -> None:
+    found = ranked_actions(collect_actions(main_window), query)
+    action = main_window._actions[key]
+    assert found[0] is action
+    assert action_label(action) == label

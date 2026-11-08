@@ -26,7 +26,7 @@ def test_smoke_selection_matrix(qtbot, pdf_fixtures_dir):
 
     cards = window._thumbnail_grid._cards
     assert len(cards) == 10
-    selection_status = window._selection_status
+    selection_status = window._selection_toolbar_label
 
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     assert _selected_indices(cards) == {0}

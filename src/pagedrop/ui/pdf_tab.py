@@ -81,6 +81,9 @@ class PdfTab(QWidget):
         self._dirty = False
         self._drop_initialized = False
         self._custom_tab_title: str | None = None
+        # Name of the index colour token (e.g. "index_clay"); set by the first
+        # tab strip that hosts the tab and kept when it moves or detaches.
+        self.index_colour: str | None = None
         self._quality_guidance_shown = False
         self._recovery_path = (
             recovery_dir / f"{uuid4().hex}.json" if recovery_dir is not None else None

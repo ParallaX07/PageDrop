@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtGui import QWheelEvent
-from PyQt6.QtWidgets import QToolBar
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_preview import PagePreviewWidget
@@ -78,29 +77,19 @@ def test_ctrl_scroll_zoom_out_decreases_thumbnail_width(qtbot, five_page_pdf):
     loader.close()
 
 
-def test_preview_button_disabled_without_pdf(main_window):
-    preview_action = None
-    for toolbar in main_window.findChildren(QToolBar):
-        for action in toolbar.actions():
-            if action.text() == "Preview":
-                preview_action = action
-                break
-    assert preview_action is not None
-    assert not preview_action.isEnabled()
+def test_view_switch_disabled_without_pdf(main_window):
+    assert not main_window._actions["preview"].isEnabled()
+    assert not main_window._view_switch.isEnabled()
+    assert not any(button.isEnabled() for button in main_window._view_switch.segments)
 
 
-def test_preview_button_enabled_with_pdf(main_window, five_page_pdf, qtbot):
+def test_view_switch_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     main_window._load_pdf(str(five_page_pdf))
     wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
 
-    preview_action = None
-    for toolbar in main_window.findChildren(QToolBar):
-        for action in toolbar.actions():
-            if action.text() == "Preview":
-                preview_action = action
-                break
-    assert preview_action is not None
-    assert preview_action.isEnabled()
+    assert main_window._actions["preview"].isEnabled()
+    assert main_window._view_switch.isEnabled()
+    assert all(button.isEnabled() for button in main_window._view_switch.segments)
 
 
 def _preview_zoom_step(preview: PagePreviewWidget) -> int:
@@ -450,3 +439,105 @@ def test_preview_render_error_shows_status_and_dialog(
 
     assert captured == [("Preview", "Could not render preview:\nsimulated failure")]
     assert main_window.statusBar().currentMessage() == "Preview rendering failed"
+
+
+def _switch_state(window) -> tuple[bool, bool]:
+    grid_segment, pages_segment = window._view_switch.segments
+    return grid_segment.isChecked(), pages_segment.isChecked()
+
+
+def test_view_switch_is_an_icon_only_two_segment_control(main_window):
+    switch = main_window._view_switch
+    grid_segment, pages_segment = switch.segments
+    assert switch.objectName() == "ToolbarViewSwitch"
+    assert main_window._toolbar.widgetForAction(main_window._view_switch_action) is switch
+    assert [button.toolTip() for button in switch.segments] == ["Grid view", "Pages view"]
+    assert [button.accessibleName() for button in switch.segments] == [
+        "Grid view",
+        "Pages view",
+    ]
+    for button in switch.segments:
+        assert button.isCheckable()
+        assert button.text() == ""
+        assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+        assert not button.icon().isNull()
+    assert _switch_state(main_window) == (True, False)
+    # The registered action stays; it is what More lists when the switch is displaced.
+    assert main_window._actions["preview"] in main_window._toolbar_displaceable
+    assert main_window._toolbar.widgetForAction(main_window._actions["preview"]) is None
+
+
+def test_view_switch_drives_the_registered_preview_action(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    tab = main_window._active_tab()
+    grid_segment, pages_segment = main_window._view_switch.segments
+    triggered: list[bool] = []
+    main_window._actions["preview"].triggered.connect(lambda: triggered.append(True))
+
+    # The current segment does nothing.
+    grid_segment.click()
+    assert triggered == []
+    assert not tab.is_viewer_mode()
+    assert _switch_state(main_window) == (True, False)
+
+    pages_segment.click()
+    qtbot.waitUntil(tab.is_viewer_mode)
+    assert triggered == [True]
+    assert _switch_state(main_window) == (False, True)
+
+    pages_segment.click()
+    assert triggered == [True]
+    assert tab.is_viewer_mode()
+    assert _switch_state(main_window) == (False, True)
+
+    grid_segment.click()
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode())
+    assert triggered == [True, True]
+    assert _switch_state(main_window) == (True, False)
+
+
+def test_view_switch_follows_the_view_however_it_changes(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    tab = main_window._active_tab()
+
+    main_window._actions["preview"].trigger()
+    qtbot.waitUntil(tab.is_viewer_mode)
+    assert _switch_state(main_window) == (False, True)
+
+    # Esc, the palette and double-click all go through the window, not the switch.
+    main_window._close_preview()
+    assert _switch_state(main_window) == (True, False)
+    main_window._open_preview_at(1)
+    assert _switch_state(main_window) == (False, True)
+
+    # Another tab has its own view; the switch shows the active one's.
+    main_window._new_blank_tab()
+    assert _switch_state(main_window) == (True, False)
+    assert not main_window._view_switch.isEnabled()
+    main_window._tab_manager.setCurrentWidget(tab)
+    # Activating a document tab returns it to its grid.
+    assert not tab.is_viewer_mode()
+    assert main_window._view_switch.isEnabled()
+    assert _switch_state(main_window) == (True, False)
+
+
+def test_view_switch_is_disabled_with_its_action(main_window, five_page_pdf, qtbot):
+    switch = main_window._view_switch
+    assert not main_window._actions["preview"].isEnabled()
+    assert not switch.isEnabled()
+    assert all(not button.isEnabled() for button in switch.segments)
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    assert switch.isEnabled()
+
+    main_window._actions["preview"].setEnabled(False)
+    assert all(not button.isEnabled() for button in switch.segments)
+    main_window._actions["preview"].setEnabled(True)
+    assert all(button.isEnabled() for button in switch.segments)

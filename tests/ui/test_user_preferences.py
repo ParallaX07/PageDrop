@@ -378,16 +378,21 @@ def test_chrome_toggle_hides_menu_and_toolbar(isolated_settings, main_window, qt
     assert not main_window.menuBar().isHidden()
     assert not main_window._toolbar.isHidden()
     assert main_window._chrome_visible_action.isChecked()
-    assert main_window._chrome_toggle_btn.text() == "⌃"
-    assert main_window._chrome_toggle_btn.toolTip() == "Hide menu and toolbar"
+    toggle = main_window._chrome_toggle_btn
+    assert toggle.text() == ""
+    assert toggle.toolTip() == toggle.accessibleName() == "Hide menu and toolbar"
+    assert not toggle.icon().isNull()
+    up_icon = toggle.icon().pixmap(16, 16).toImage()
 
     main_window._chrome_toggle_btn.click()
     assert main_window.menuBar().isHidden()
     assert main_window._toolbar.isHidden()
     assert not main_window._chrome_visible_action.isChecked()
     assert chrome_visible() is False
-    assert main_window._chrome_toggle_btn.text() == "⌄"
-    assert main_window._chrome_toggle_btn.toolTip() == "Show menu and toolbar"
+    assert toggle.text() == ""
+    assert toggle.toolTip() == toggle.accessibleName() == "Show menu and toolbar"
+    assert not toggle.icon().isNull()
+    assert toggle.icon().pixmap(16, 16).toImage() != up_icon
 
     main_window._chrome_visible_action.trigger()
     assert not main_window.menuBar().isHidden()

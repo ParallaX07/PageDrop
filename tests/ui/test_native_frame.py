@@ -315,7 +315,7 @@ def test_failed_styles_hand_edge_resize_back_to_qt(main_window, qtbot, monkeypat
         nf, "apply_frame_styles", lambda hwnd: (_ for _ in ()).throw(OSError("no frame"))
     )
     monkeypatch.setattr("pagedrop.ui.main_window.log_failure", lambda *a, **k: None)
-    monkeypatch.setattr("pagedrop.ui.main_window.sys.platform", "win32")
+    monkeypatch.setattr("pagedrop.ui.window_chrome.sys.platform", "win32")
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     assert not main_window._uses_native_frame()
@@ -330,7 +330,7 @@ def test_native_message_error_is_logged_once_and_falls_through(native, main_wind
 
     monkeypatch.setattr(nf, "client_origin", boom)
     monkeypatch.setattr(
-        "pagedrop.ui.main_window.log_failure", lambda op, exc, **ctx: logged.append(exc)
+        "pagedrop.ui.window_chrome.log_failure", lambda op, exc, **ctx: logged.append(exc)
     )
     assert not native.send(nf.WM_NCHITTEST, 0, pack(300, 200))[0]
     assert not native.send(nf.WM_NCHITTEST, 0, pack(300, 200))[0]
@@ -371,5 +371,5 @@ def test_qt_edge_resize_stays_off_on_windows(main_window, qtbot, monkeypatch):
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     assert main_window._uses_qt_edge_resize()
-    monkeypatch.setattr("pagedrop.ui.main_window.sys.platform", "win32")
+    monkeypatch.setattr("pagedrop.ui.window_chrome.sys.platform", "win32")
     assert not main_window._uses_qt_edge_resize()

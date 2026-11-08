@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QFileInfo, QPoint, QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QFileInfo, QPoint, QRect, QRectF, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
+    QPainterPath,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDragMoveEvent,
@@ -29,9 +30,33 @@ from pagedrop.core.drag_mime import (
 from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.ui import icons
 from pagedrop.ui.pdf_tab import PdfTab
-from pagedrop.ui.theme import accent_qcolor, tab_close_icon
+from pagedrop.ui.theme import (
+    INDEX_COLOUR_NAMES,
+    RADIUS_SURFACE,
+    SPACE_1,
+    TAB_EDGE_HEIGHT,
+    TAB_UNSAVED_DOT,
+    accent_qcolor,
+    current_theme,
+    index_qcolor,
+    tab_close_icon,
+    token_qcolor,
+)
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
+
+
+class _DragMarks(QWidget):
+    """Transparent layer over the bar; paints the dragged tab's stripe and dot."""
+
+    def __init__(self, bar: QTabBar) -> None:
+        super().__init__(bar)
+        self._bar = bar
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def paintEvent(self, event) -> None:
+        self._bar._paint_dragged_tab_marks(self)
 
 
 class DetachableTabBar(QTabBar):
@@ -42,6 +67,7 @@ class DetachableTabBar(QTabBar):
     tab_rename_requested = pyqtSignal(int)
 
     DETACH_THRESHOLD_PX = 20
+    TAB_GAP_PX = 2  # the style sheet's tab margin-right
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,7 +77,14 @@ class DetachableTabBar(QTabBar):
         self._detach_hint_index = -1
         self._pre_hint_tooltip = ""
         self._drop_highlight_index = -1
+        self._hover_index = -1
+        # Qt draws a dragged tab in a private child from a pixmap of its own.
+        self._moving_tab: QWidget | None = None
+        self._marks = _DragMarks(self)
         self.setAcceptDrops(True)
+        self.setMouseTracking(True)
+        self.currentChanged.connect(lambda _index: self.sync_close_buttons())
+        self.tabMoved.connect(self._on_tab_moved)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_tab_context_menu)
 
@@ -63,6 +96,7 @@ class DetachableTabBar(QTabBar):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self._set_hover_index(self.tabAt(event.pos()))
         if (
             self._drag_tab_index >= 0
             and self._drag_start_global is not None
@@ -81,6 +115,69 @@ class DetachableTabBar(QTabBar):
                 self._detach_armed = False
                 self.unsetCursor()
         super().mouseMoveEvent(event)
+        if self._drag_tab_index >= 0:
+            self._watch_moving_tab()
+
+    def _on_tab_moved(self, from_index: int, to_index: int) -> None:
+        self._set_hover_index(-1)
+        # Dragging over a neighbour swaps the pair; the pressed tab follows.
+        if self._drag_tab_index == from_index:
+            self._drag_tab_index = to_index
+        elif self._drag_tab_index == to_index:
+            self._drag_tab_index = from_index
+
+    def _watch_moving_tab(self) -> None:
+        """Find Qt's dragged-tab child and lay a marks layer over it."""
+        if self._moving_tab is not None:
+            return
+        for child in self.children():
+            if type(child) is QWidget and child.isVisible():
+                self._moving_tab = child
+                child.installEventFilter(self)
+                child.destroyed.connect(self._forget_moving_tab)
+                self._marks.setGeometry(self.rect())
+                self._marks.raise_()
+                self._marks.show()
+                return
+
+    def _forget_moving_tab(self) -> None:
+        self._moving_tab = None
+
+    def _dragging_index(self) -> int:
+        """The dragged tab (the pressed tab is current), or -1 when none is moving."""
+        if self._moving_tab is not None and self._moving_tab.isVisible():
+            return self.currentIndex()
+        return -1
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._moving_tab and event.type() in (
+            QEvent.Type.Move,
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+        ):
+            self._marks.update()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._marks.setGeometry(self.rect())
+
+    def _paint_dragged_tab_marks(self, target: QWidget) -> None:
+        """Draw the stripe and dot on the tab Qt is dragging (it paints a bare pixmap)."""
+        moving = self._moving_tab
+        index = self._dragging_index()
+        slot = self.tabRect(index)
+        if moving is None or index < 0 or not slot.isValid():
+            return
+        # The pixmap spans the tab plus the style's tab overlap on both sides.
+        overlap = (moving.width() - slot.width()) // 2
+        rect = QRect(moving.x() + overlap, moving.y(), slot.width(), slot.height())
+        painter = QPainter(target)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        self._paint_index_edge(painter, index, rect)
+        self._paint_unsaved_dot(painter, index, rect)
+        painter.end()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if (
@@ -90,11 +187,48 @@ class DetachableTabBar(QTabBar):
         ):
             index = self._drag_tab_index
             self._reset_drag_state()
+            # Let Qt end its drag so the dragged-tab pixmap does not outlive the tab.
+            super().mouseReleaseEvent(event)
             self.tab_detach_requested.emit(index)
             event.accept()
             return
         self._reset_drag_state()
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        self._set_hover_index(-1)
+        super().leaveEvent(event)
+
+    def tabInserted(self, index: int) -> None:
+        super().tabInserted(index)
+        self._hover_index = -1
+        self.sync_close_buttons()
+
+    def tabRemoved(self, index: int) -> None:
+        super().tabRemoved(index)
+        self._hover_index = -1
+        self.sync_close_buttons()
+
+    def _set_hover_index(self, index: int) -> None:
+        if index != self._hover_index:
+            self._hover_index = index
+            self.sync_close_buttons()
+
+    def close_button_shown(self, index: int) -> bool:
+        """Close buttons appear on the active tab and the hovered tab only."""
+        return index == self.currentIndex() or index == self._hover_index
+
+    def sync_close_buttons(self) -> None:
+        for index in range(self.count()):
+            button = self.tabButton(index, QTabBar.ButtonPosition.RightSide)
+            if button is not None:
+                button.setVisible(self.close_button_shown(index))
+
+    def _tab_widget(self, index: int) -> QWidget | None:
+        tab_manager = self.parent()
+        if isinstance(tab_manager, QTabWidget):
+            return tab_manager.widget(index)
+        return None
 
     def _page_is_pdf(self, index: int) -> bool:
         tab_manager = self.parent()
@@ -251,8 +385,58 @@ class DetachableTabBar(QTabBar):
             target_grid.pdf_drop_failed.emit(exc)
             event.ignore()
 
+    def _paint_index_edge(self, painter: QPainter, index: int, rect) -> None:
+        """Index-colour top edge; style sheets cannot colour individual tabs."""
+        manager = self.parent()
+        name = (
+            manager._tab_index_colour(index)
+            if isinstance(manager, TabManager)
+            else INDEX_COLOUR_NAMES[-1]
+        )
+        # The tab's right margin is part of tabRect; keep the edge on the tab.
+        body = QRectF(rect.adjusted(0, 0, -self.TAB_GAP_PX, 0))
+        # Round the top corners like the tab, then keep only the edge band.
+        outline = QPainterPath()
+        outline.addRoundedRect(
+            body.adjusted(0, 0, 0, RADIUS_SURFACE), RADIUS_SURFACE, RADIUS_SURFACE
+        )
+        band = QPainterPath()
+        band.addRect(QRectF(body.x(), body.y(), body.width(), TAB_EDGE_HEIGHT))
+        painter.fillPath(outline.intersected(band), index_qcolor(name))
+
+    def _paint_unsaved_dot(self, painter: QPainter, index: int, rect) -> None:
+        widget = self._tab_widget(index)
+        if not isinstance(widget, PdfTab) or not widget.is_dirty:
+            return
+        button = self.tabButton(index, QTabBar.ButtonPosition.RightSide)
+        right = (
+            button.geometry().left() - SPACE_1
+            if button is not None
+            else rect.right() - self.TAB_GAP_PX
+        )
+        centre_y = (rect.top() + TAB_EDGE_HEIGHT + rect.bottom()) / 2
+        painter.setBrush(token_qcolor(current_theme().on_bar))
+        painter.drawEllipse(
+            QRectF(
+                right - TAB_UNSAVED_DOT,
+                centre_y - TAB_UNSAVED_DOT / 2,
+                TAB_UNSAVED_DOT,
+                TAB_UNSAVED_DOT,
+            )
+        )
+
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        dragging = self._dragging_index()
+        for index in range(self.count()):
+            rect = self.tabRect(index)
+            if rect.isValid() and index != dragging:
+                self._paint_index_edge(painter, index, rect)
+                self._paint_unsaved_dot(painter, index, rect)
+        painter.end()
         if self._drop_highlight_index < 0:
             return
 
@@ -295,16 +479,17 @@ class TabManager(QTabWidget):
         super().__init__(parent)
         self._temp_manager = temp_manager
         self._recovery_dir = recovery_dir
+        self._next_index_colour = 0
         self.setObjectName("TabManager")
         self.setDocumentMode(True)
-        self.setMovable(True)
         self.setUsesScrollButtons(True)
         self.setElideMode(Qt.TextElideMode.ElideRight)
 
         self._detachable_tab_bar = DetachableTabBar(self)
         self.setTabBar(self._detachable_tab_bar)
-        # setTabBar replaces the bar and drops tabsClosable — apply after.
+        # setTabBar replaces the bar and drops tabsClosable and movable — apply after.
         self.setTabsClosable(True)
+        self.setMovable(True)
         self._detachable_tab_bar.tab_detach_requested.connect(
             self.tab_detach_requested.emit
         )
@@ -359,7 +544,12 @@ class TabManager(QTabWidget):
                 temp_manager=self._temp_manager,
                 recovery_dir=self._recovery_dir,
             )
-        index = self.addTab(tab, tab.tab_title)
+        if tab.index_colour is None:
+            tab.index_colour = INDEX_COLOUR_NAMES[
+                self._next_index_colour % len(INDEX_COLOUR_NAMES)
+            ]
+            self._next_index_colour += 1
+        index = self.addTab(tab, tab.display_name)
         self._connect_tab(tab, index)
         self._style_close_button(index)
         self._apply_tab_icon(index, tab)
@@ -382,6 +572,10 @@ class TabManager(QTabWidget):
         self.setCurrentWidget(page)
         self._schedule_open_tabs_update()
         return page
+
+    def _tab_index_colour(self, index: int) -> str:
+        """Index colour token name for a tab; tool pages are always slate."""
+        return getattr(self.widget(index), "index_colour", None) or "index_slate"
 
     def find_page_id(self, page_id: str) -> QWidget | None:
         for index in range(self.count()):
@@ -438,7 +632,8 @@ class TabManager(QTabWidget):
         # content box minus ~22px close button and a margin for the wider
         # weight-600 selected font; recompute from the style if tab sizing
         # ever becomes configurable.
-        title = tab.tab_title
+        # The unsaved dot is painted by the tab bar, so the text stays clean.
+        title = tab.display_name
         self._apply_page_title(index, title)
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
@@ -449,6 +644,7 @@ class TabManager(QTabWidget):
             accessible += ", unsaved changes"
         self.tabBar().setAccessibleTabName(index, accessible)
         self._schedule_open_tabs_update()
+        self.tabBar().update()
 
     def _connect_tab(self, tab: PdfTab, index: int) -> None:
         tab.pdf_loaded.connect(lambda: self.update_tab_title(tab))
@@ -474,11 +670,15 @@ class TabManager(QTabWidget):
             btn.setAutoRaise(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip("Close tab")
+            retain = btn.sizePolicy()
+            retain.setRetainSizeWhenHidden(True)
+            btn.setSizePolicy(retain)
             btn.setAccessibleName("Close tab")
             btn.clicked.connect(self._on_tab_close_button_clicked)
             bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, btn)
         btn.setIcon(tab_close_icon())
         btn.setIconSize(QSize(14, 14))
+        btn.setVisible(self._detachable_tab_bar.close_button_shown(index))
 
     def _on_tab_close_button_clicked(self) -> None:
         btn = self.sender()
@@ -554,3 +754,4 @@ class TabManager(QTabWidget):
             widget = self.widget(index)
             if widget is not None:
                 self._apply_tab_icon(index, widget)
+        self.tabBar().update()

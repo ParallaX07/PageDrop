@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.ui.view_switch import ViewSwitch
 from pagedrop.ui.zoom_controls import ZoomControls
 
 _ARROW_KEYS = {
@@ -55,6 +56,9 @@ def focusable_toolbar_widgets(toolbar: QToolBar) -> list[QWidget]:
             for child in (widget._zoom_out, widget._slider, widget._zoom_in):
                 if child.isVisible() and child.isEnabled():
                     widgets.append(child)
+            continue
+        if isinstance(widget, ViewSwitch):
+            widgets.extend(widget.segments)
             continue
         if isinstance(widget, (QToolButton, QAbstractButton, QSlider)):
             widgets.append(widget)
@@ -115,6 +119,10 @@ def enable_toolbar_keyboard_navigation(toolbar: QToolBar) -> ToolbarArrowNavFilt
             for child in (widget._zoom_out, widget._slider, widget._zoom_in):
                 child.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
                 child.installEventFilter(nav_filter)
+        elif isinstance(widget, ViewSwitch):
+            for segment in widget.segments:
+                segment.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                segment.installEventFilter(nav_filter)
         elif isinstance(widget, (QToolButton, QAbstractButton, QSlider)):
             widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             widget.installEventFilter(nav_filter)

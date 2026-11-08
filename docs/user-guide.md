@@ -43,7 +43,7 @@ Right-click to extract selected pages to a folder, a new tab, or a new window. F
 
 ## Merge PDFs
 
-Open via the menu bar **Merge PDFs** or the Tools hub tile. It is an editor tab for combining whole PDF files:
+Open via **Tools → Merge PDFs** or the Tools hub tile. It is an editor tab for combining whole PDF files:
 
 - Add, remove, and reorder files (drag-and-drop supported)
 - Add folder recursively adds PDFs from a directory
@@ -53,7 +53,7 @@ Open via the menu bar **Merge PDFs** or the Tools hub tile. It is an editor tab 
 
 ## Create PDF
 
-Open via the menu bar **Create PDF** or the Tools hub tile. Turn images into PDFs:
+Open via **Tools → Create PDF** or the Tools hub tile. Turn images into PDFs:
 
 - Supports PNG, JPEG, BMP, GIF, TIFF, WebP, and other raster formats PyMuPDF can open
 - Add images via dialog or drag-and-drop (PDFs are rejected here; use Merge PDFs for those)
