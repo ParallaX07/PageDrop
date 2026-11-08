@@ -194,34 +194,50 @@ def remember_directory(path: str | Path) -> None:
         _settings().setValue(KEY_LAST_DIRECTORY, str(directory))
 
 
-def recent_files() -> list[str]:
-    """Most recently opened PDF paths (newest first), missing files omitted."""
+def _recent_entries(*, keep_missing: bool) -> list[tuple[str, bool]]:
     raw = _settings().value(KEY_RECENT_FILES, [])
     if not isinstance(raw, list):
         return []
-    result: list[str] = []
+    result: list[tuple[str, bool]] = []
     seen: set[str] = set()
     for item in raw:
         path = Path(str(item))
-        key = str(path.resolve()) if path.exists() else ""
+        exists = path.exists()
+        if not exists and not keep_missing:
+            continue
+        key = str(path.resolve())
         if not key or key in seen:
             continue
         seen.add(key)
-        result.append(str(path))
+        result.append((str(path), exists))
         if len(result) >= RECENT_FILES_MAX:
             break
     return result
 
 
+def recent_files() -> list[str]:
+    """Most recently opened PDF paths (newest first), missing files omitted."""
+    return [path for path, _ in _recent_entries(keep_missing=False)]
+
+
+def recent_file_entries() -> list[tuple[str, bool]]:
+    """Recent PDF paths (newest first) with whether each still exists."""
+    return _recent_entries(keep_missing=True)
+
+
 def remember_recent_file(path: str | Path) -> None:
-    """Prepend *path* to the recent-files list (deduped, capped)."""
+    """Prepend *path* to the recent-files list (deduped, capped).
+
+    Entries whose file has gone missing stay in the list so the start screen can
+    still show them.
+    """
     resolved = Path(path)
     if not resolved.is_file():
         return
     key = str(resolved.resolve())
     existing = [
         p
-        for p in recent_files()
+        for p, _ in recent_file_entries()
         if str(Path(p).resolve()) != key
     ]
     _settings().setValue(KEY_RECENT_FILES, [key, *existing][:RECENT_FILES_MAX])

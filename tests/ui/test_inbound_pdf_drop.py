@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+from PyQt6.QtWidgets import QLabel
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.pdf_tab import PdfTab
@@ -149,7 +150,7 @@ def test_blank_tab_accepts_inbound_pdf_drop(main_window, five_page_pdf, qtbot):
     tab = main_window._active_tab()
     assert tab is not None and tab.is_blank
     grid = tab.thumbnail_grid
-    assert "drop" in grid._empty_kbd.text().lower()
+    assert "drop" in tab.start_screen.findChild(QLabel, "GridEmptyKbd").text().lower()
 
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(str(five_page_pdf))])

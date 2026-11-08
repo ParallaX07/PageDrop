@@ -276,9 +276,6 @@ class ThumbnailGrid(QScrollArea):
         self._layout = QGridLayout(self._container)
         self._layout.setSpacing(SPACE_3)
         self._layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
-        self._layout.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
-        )
 
         self._empty_state = QWidget()
         self._empty_state.setObjectName("EmptyStatePanel")
@@ -329,15 +326,16 @@ class ThumbnailGrid(QScrollArea):
         empty_layout.addWidget(self._empty_open_button, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addWidget(self._empty_kbd)
         empty_layout.addStretch(2)
-        self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
         self.setWidget(self._container)
 
         self._cards: list[PageCard] = []
+        self._update_empty_state()
         self._model: PdfEditModel | None = None
         self._get_loader: Callable[[str], PdfLoader] | None = None
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
         self._card_width = CARD_WIDTH
+        self._base_card_width = CARD_WIDTH
         self._page_render_width: list[int] = []
         self._last_rendered_width_px = 0
         self._grid_cols = 0
@@ -371,6 +369,13 @@ class ThumbnailGrid(QScrollArea):
         self._background_render_timer.setSingleShot(True)
         self._background_render_timer.setInterval(200)
         self._background_render_timer.timeout.connect(self._render_background_quality)
+        # Fit on open waits for the grid's real size: panes and the page itself
+        # are laid out after the document loads.
+        self._autofit_pending = False
+        self._autofit_timer = QTimer(self)
+        self._autofit_timer.setSingleShot(True)
+        self._autofit_timer.setInterval(0)
+        self._autofit_timer.timeout.connect(self._run_pending_autofit)
         self._deferred_thumbnail_timer = QTimer(self)
         self._deferred_thumbnail_timer.setSingleShot(True)
         self._deferred_thumbnail_timer.timeout.connect(
@@ -905,6 +910,8 @@ class ThumbnailGrid(QScrollArea):
         self._worker_signals.clear()
 
     def clear(self) -> None:
+        self._autofit_pending = False
+        self._autofit_timer.stop()
         self._zoom_render_timer.stop()
         self._scroll_render_timer.stop()
         self._background_render_timer.stop()
@@ -957,10 +964,12 @@ class ThumbnailGrid(QScrollArea):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self._refresh_empty_logo()
+        self._rearm_autofit()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reflow_grid()
+        self._rearm_autofit()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if not self._cards:
@@ -1909,10 +1918,18 @@ class ThumbnailGrid(QScrollArea):
         spacing = self._layout.spacing()
         margins = self._layout.contentsMargins()
         available = self.viewport().width() - margins.left() - margins.right()
+        bar = self.verticalScrollBar()
+        if not bar.isVisibleTo(self):
+            # The bar appears once the fitted cards overflow; leave its room now
+            # so the column count does not change when it does.
+            available -= bar.sizeHint().width()
         if available <= 0:
             return self._thumbnail_width_px
-        cols = max(1, available // (self._card_width + spacing))
-        card = (available - (cols - 1) * spacing) // cols
+        # Columns follow the size the user chose, not the size the last fit left, so
+        # fitting again at the same viewport gives the same answer.
+        cols = max(1, available // (self._base_card_width + spacing))
+        # Each column pays for its own gap, as the layout counts them.
+        card = available // cols - spacing
         raw = max(
             MIN_THUMBNAIL_WIDTH,
             min(MAX_THUMBNAIL_WIDTH, card - CARD_PADDING),
@@ -1921,6 +1938,30 @@ class ThumbnailGrid(QScrollArea):
         steps = (raw - MIN_THUMBNAIL_WIDTH) // ZOOM_WHEEL_STEP
         return MIN_THUMBNAIL_WIDTH + steps * ZOOM_WHEEL_STEP
 
+
+    def request_autofit(self) -> None:
+        """Fit the columns once the grid has settled at its real size.
+
+        Does nothing after a manual zoom, and is dropped if the document goes
+        away first.
+        """
+        self._autofit_pending = True
+        self._rearm_autofit()
+
+    def _rearm_autofit(self) -> None:
+        if self._autofit_pending:
+            self._autofit_timer.start()
+
+    def _run_pending_autofit(self) -> None:
+        if not self._autofit_pending:
+            return
+        if self._manual_zoom or self._model is None:
+            self._autofit_pending = False
+            return
+        if not self.isVisible():
+            return  # fitted when it is shown
+        self._autofit_pending = False
+        self.autofit_thumbnails_if_allowed()
 
     def autofit_thumbnails_if_allowed(self) -> bool:
         """Fill columns on open. No-op after manual zoom. Returns True when size changed."""
@@ -1950,6 +1991,10 @@ class ThumbnailGrid(QScrollArea):
         )
         if manual:
             self._manual_zoom = True
+        # An explicit size, manual or not, is not to be fitted over later.
+        self._autofit_pending = False
+        self._autofit_timer.stop()
+        self._base_card_width = clamped + CARD_PADDING
         if clamped != self._thumbnail_width_px:
             self._apply_zoom(clamped)
 
@@ -2163,8 +2208,7 @@ class ThumbnailGrid(QScrollArea):
             item = self._layout.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
-        self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
-        self._empty_state.show()
+        self._update_empty_state()
 
     def _set_empty_drop_active(self, active: bool) -> None:
         """Toggle dashed-panel dropActive chrome while the empty state is visible."""
@@ -2176,10 +2220,19 @@ class ThumbnailGrid(QScrollArea):
         style.polish(self._empty_state)
 
     def _update_empty_state(self) -> None:
+        # Cards pack at the top left; the empty panel centres in the viewport.
         if self._cards:
+            self._layout.setAlignment(
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+            )
             self._set_empty_drop_active(False)
             self._empty_state.hide()
         else:
+            self._layout.setAlignment(Qt.AlignmentFlag(0))
+            if self._layout.indexOf(self._empty_state) < 0:
+                self._layout.addWidget(
+                    self._empty_state, 0, 0, 1, 1, Qt.AlignmentFlag.AlignCenter
+                )
             self._empty_state.show()
 
     def _compute_grid_cols(self) -> int:

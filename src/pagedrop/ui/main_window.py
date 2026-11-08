@@ -11,6 +11,10 @@ from PyQt6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QKeyEvent,
     QKeySequence,
     QWindow,
@@ -196,6 +200,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.resize(960, 680)
+        # The whole window takes a drop while the active tab is on its start screen.
+        self.setAcceptDrops(True)
 
         self._tab_order_applied = False
         self._build_actions()
@@ -1135,6 +1141,10 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         grid.bind_open_action(self._actions["open"])
+        tab.start_screen.bind_actions(
+            self._actions["open"], self._actions["merge"], self._actions["tools"]
+        )
+        tab.start_screen.recent_file_requested.connect(self._open_recent_if_present)
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
         tab.workspace_panes_changed.connect(self._on_workspace_panes_changed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
@@ -1246,6 +1256,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
+            (tab.start_screen.recent_file_requested, self._open_recent_if_present),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
             (tab.workspace_panes_changed, self._on_workspace_panes_changed),
             (preview.page_changed, self._on_preview_page_changed),
@@ -2212,9 +2223,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         tab = self.sender()
         if not isinstance(tab, PdfTab):
             return
-        if tab.thumbnail_grid.autofit_thumbnails_if_allowed():
-            if tab is self._active_tab():
-                self._zoom_controls.set_value(tab.zoom_level)
+        # Fitted once the grid has its real size; the zoom control follows
+        # through the grid's zoom signal.
+        tab.thumbnail_grid.request_autofit()
         if tab is self._active_tab():
             self._maybe_quality_scale_guidance(tab)
 
@@ -2968,6 +2979,10 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         path = action.data()
         if not isinstance(path, str) or not path:
             return
+        self._open_recent_if_present(path)
+
+    def _open_recent_if_present(self, path: str) -> None:
+        """Open a recent file, or say why not when it has gone."""
         if not Path(path).is_file():
             QMessageBox.warning(
                 self,
@@ -3164,6 +3179,41 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             if cancelled_previous:
                 self._show_toast("Cancelled previous load", kind="info")
             self._persistent_status(f"Loading {count} {noun}…")
+
+    def _blank_tab_start_screen(self):
+        """The active tab's start screen, or None when something else is showing."""
+        tab = self._active_tab()
+        if tab is None or not tab.is_blank:
+            return None
+        if tab.content_stack.currentWidget() is not tab.start_screen:
+            return None
+        return tab.start_screen
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is None:
+            event.ignore()
+            return
+        screen.dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is None:
+            event.ignore()
+            return
+        screen.dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is not None:
+            screen.dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is None:
+            event.ignore()
+            return
+        screen.dropEvent(event)
 
     def _on_open_pdfs_requested(self, paths: list) -> None:
         """Open PDFs dropped onto a blank tab (first into that tab, rest as new tabs)."""

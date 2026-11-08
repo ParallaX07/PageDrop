@@ -412,12 +412,135 @@ def test_autofit_on_open_fills_columns(main_window, five_page_pdf, qtbot):
     main_window.showMinimized()
     qtbot.waitExposed(main_window)
     grid = main_window._thumbnail_grid
-    expected = grid.fitted_thumbnail_width()
     main_window._load_pdf(str(five_page_pdf))
-    assert grid.thumbnail_width_px == expected
+    # Fitted to the viewport the grid ends up with, not the one it had at load.
+    qtbot.waitUntil(
+        lambda: grid.thumbnail_width_px == grid.fitted_thumbnail_width()
+        and grid.thumbnail_width_px != DEFAULT_THUMBNAIL_WIDTH,
+        timeout=5000,
+    )
+    wait_for_pdf_loaded(qtbot, main_window)
+    assert grid.thumbnail_width_px == grid.fitted_thumbnail_width()
     assert not grid.manual_zoom
+    assert main_window._zoom_controls._value_label.text() == f"{grid.thumbnail_width_px}px"
     # Auto-fit must not clobber the remembered preference.
     assert thumbnail_zoom() == DEFAULT_THUMBNAIL_WIDTH
+
+
+def test_autofit_fills_the_shown_window_once_panes_and_scrollbar_are_in(
+    main_window, tmp_path, qtbot
+):
+    from pagedrop.ui.theme import ZOOM_WHEEL_STEP
+    from tests.fixtures.generate_fixtures import generate_n_page
+
+    many = tmp_path / "many.pdf"
+    generate_n_page(many, 40)
+    main_window.resize(1400, 860)
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    grid = main_window._thumbnail_grid
+    main_window._load_pdf(str(many))
+    tab = main_window._active_tab()
+    qtbot.waitUntil(
+        lambda: tab.section_index.isVisible() and tab.document_panel.isVisible(),
+        timeout=5000,
+    )
+    qtbot.waitUntil(
+        lambda: grid.thumbnail_width_px == grid.fitted_thumbnail_width()
+        and grid.thumbnail_width_px != DEFAULT_THUMBNAIL_WIDTH,
+        timeout=5000,
+    )
+    wait_for_pdf_loaded(qtbot, main_window)
+
+    viewport = grid.viewport()
+    assert grid.verticalScrollBar().isVisible()  # enough pages to overflow
+    assert grid.thumbnail_width_px == grid.fitted_thumbnail_width()
+    assert not grid.manual_zoom
+    assert main_window._zoom_controls._value_label.text() == f"{grid.thumbnail_width_px}px"
+
+    margins = grid._layout.contentsMargins()
+    spacing = grid._layout.spacing()
+    cols = len({card.geometry().x() for card in grid._cards})
+    right = max(card.geometry().right() for card in grid._cards)
+    leftover = viewport.width() - margins.right() - right - 1
+    # Each column loses less than one zoom step to rounding, plus one gap.
+    assert leftover < cols * ZOOM_WHEEL_STEP + spacing, (cols, leftover)
+    assert leftover < grid.card_width + spacing
+
+
+def test_a_zoom_made_before_the_fit_runs_is_kept(main_window, five_page_pdf, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    grid = main_window._thumbnail_grid
+    main_window._load_pdf(str(five_page_pdf))
+    grid.set_thumbnail_zoom(240)  # before the event loop gets to the fit
+    wait_for_pdf_loaded(qtbot, main_window)
+    qtbot.waitUntil(lambda: not grid._autofit_timer.isActive())
+    assert grid.thumbnail_width_px == 240
+    assert grid.manual_zoom
+
+
+def test_closing_before_the_fit_runs_drops_it(main_window, five_page_pdf, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    tab = main_window._active_tab()
+    grid = tab.thumbnail_grid
+    before = grid.thumbnail_width_px
+    main_window._load_pdf(str(five_page_pdf))
+    tab.close_loader()
+    qtbot.waitUntil(lambda: not grid._autofit_timer.isActive())
+    assert tab.is_blank
+    assert grid.thumbnail_width_px == before
+    assert not grid._autofit_pending
+
+
+def test_a_document_opened_in_a_background_tab_is_fitted_when_shown(
+    main_window, five_page_pdf, qtbot
+):
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    first = main_window._active_tab()
+    other = main_window._tab_manager.add_blank_tab()
+    main_window._tab_manager.setCurrentWidget(other)
+    main_window._load_pdf(str(five_page_pdf), tab=first)
+    grid = first.thumbnail_grid
+    assert not grid.isVisible()
+    assert grid.thumbnail_width_px == DEFAULT_THUMBNAIL_WIDTH
+
+    main_window._tab_manager.setCurrentWidget(first)
+    qtbot.waitUntil(
+        lambda: grid.thumbnail_width_px == grid.fitted_thumbnail_width()
+        and grid.thumbnail_width_px != DEFAULT_THUMBNAIL_WIDTH,
+        timeout=5000,
+    )
+    assert not grid.manual_zoom
+
+
+def test_a_restored_draft_is_fitted_too(main_window, five_page_pdf, tmp_path, qtbot):
+    from pagedrop.ui.pdf_tab import PdfTab
+    from pagedrop.utils.temp_manager import TempManager
+
+    drafts = tmp_path / "drafts"
+    drafts.mkdir()
+    source = PdfTab(TempManager(), recovery_dir=drafts)
+    qtbot.addWidget(source)
+    source.load_pdf(str(five_page_pdf))
+    source.thumbnail_grid.selection_manager.select_single(1)
+    assert source.thumbnail_grid.delete_selected_pages()
+    source._sync_dirty_from_model()
+    assert source.recovery_path is not None and source.recovery_path.exists()
+
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    tab = main_window._active_tab()
+    grid = tab.thumbnail_grid
+    tab.restore_recovery_draft(source.recovery_path)
+    qtbot.waitUntil(
+        lambda: grid.thumbnail_width_px == grid.fitted_thumbnail_width()
+        and grid.thumbnail_width_px != DEFAULT_THUMBNAIL_WIDTH,
+        timeout=5000,
+    )
+    assert not grid.manual_zoom
 
 
 def test_autofit_skips_after_manual_zoom(main_window, five_page_pdf, qtbot):

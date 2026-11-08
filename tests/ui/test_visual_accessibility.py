@@ -351,6 +351,7 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
 
     from pagedrop.ui.convert_file_grid import ConvertFileGrid
     from pagedrop.ui.merge_file_grid import MergeFileGrid
+    from pagedrop.ui.start_screen import StartScreen
     from pagedrop.ui.theme import DARK, LIGHT, app_stylesheet
     from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 
@@ -365,6 +366,11 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
         assert 'QWidget#EmptyStatePanel[dropActive="true"]' in sheet
         assert f"border-color: {theme.ink}" in sheet.split(
             'QWidget#EmptyStatePanel[dropActive="true"]'
+        )[1].split("}")[0]
+        # The start screen welcomes a drop with the same ink outline.
+        assert 'QWidget#StartScreen[dropActive="true"]' in sheet
+        assert f"border-color: {theme.ink}" in sheet.split(
+            'QWidget#StartScreen[dropActive="true"]'
         )[1].split("}")[0]
 
     grid = ThumbnailGrid()
@@ -384,6 +390,12 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
         grid._empty_kbd,
     ]
     assert isinstance(grid._empty_open_button, QPushButton)
+
+    # A blank tab shows the start screen, with the same logo and drop copy.
+    screen = StartScreen()
+    qtbot.addWidget(screen)
+    assert screen.findChild(QLabel, "GridEmptyLogo").accessibleName() == "PageDrop logo"
+    assert screen.findChild(QLabel, "GridEmptyKbd").text() == "or drop a file here"
 
     merge = MergeFileGrid()
     convert = ConvertFileGrid()
@@ -705,6 +717,12 @@ def test_progress_and_empty_state_accessible_names(main_window, qtbot):
     assert isinstance(grid, ThumbnailGrid)
     assert grid._empty_state.accessibleName()
     assert grid._empty_logo.accessibleName() == "PageDrop logo"
+    screen = main_window._active_tab().start_screen
+    assert screen.accessibleName() == "Open a PDF"
+    assert screen.findChild(QLabel, "GridEmptyLogo").accessibleName() == "PageDrop logo"
+    assert screen.recent_list.accessibleName() == "Recent files"
+    for button in (screen.open_button, screen.merge_button, screen.tools_button):
+        assert button.accessibleName() == button.text()
 
     corner = main_window._tab_manager.cornerWidget(Qt.Corner.TopRightCorner)
     new_tab = corner.findChild(QToolButton, "NewTabButton")
@@ -781,6 +799,14 @@ def test_r2_empty_state_drop_copy_and_spacing(qtbot):
     assert empty_margins.left() == SPACE_6
     assert empty_margins.top() == SPACE_7
     assert grid._empty_kbd.text() == "or drop a file here"
+
+    from pagedrop.ui.start_screen import StartScreen
+
+    screen = StartScreen()
+    qtbot.addWidget(screen)
+    assert screen.findChild(QLabel, "GridEmptyKbd").text() == "or drop a file here"
+    content = screen.findChild(QWidget, "StartScreenContent").layout().contentsMargins()
+    assert (content.left(), content.top()) == (SPACE_6, SPACE_7)
 
 
 def test_r5_card_chrome_and_empty_tokens():
@@ -1249,6 +1275,7 @@ def test_r8_light_hc_parity_freeze(isolated_settings):
         "QWidget#ZoomControls",
         "QFrame#ToolShellDropZone",
         "QWidget#EmptyStatePanel",
+        "QWidget#StartScreen",
     )
     sheets = {f"{m['light']}_{m['high_contrast']}": app_stylesheet(**m) for m in modes}
     for sheet in sheets.values():

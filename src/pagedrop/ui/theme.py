@@ -1497,6 +1497,37 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
     }}
 
+    /* Start screen: fills the tab; the dashed ink outline appears while a drag is welcome. */
+    QWidget#StartScreen {{
+        background-color: {bg_grid};
+        border: 1px dashed transparent;
+    }}
+
+    QWidget#StartScreen[dropActive="true"] {{
+        border-color: {ink};
+        background-color: {bg_card_hover};
+    }}
+
+    QScrollArea#StartScreenScroll,
+    QWidget#StartScreenContent,
+    QWidget#StartScreenColumn {{
+        background: transparent;
+        border: none;
+    }}
+
+    QLabel#StartScreenSection {{
+        background: transparent;
+        color: {text_muted};
+        font-size: 13px;
+        font-weight: 600;
+        padding: {SPACE_2}px 0 0 0;
+    }}
+
+    QWidget#StartScreen QPushButton {{
+        min-height: 30px;
+        padding: 3px {SPACE_4}px;
+    }}
+
     QLabel#GridEmptyLogo {{
         background: transparent;
         border: none;

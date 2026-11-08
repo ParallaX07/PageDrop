@@ -42,6 +42,7 @@ from pagedrop.ui.settings import (
     thumbnail_quality,
 )
 from pagedrop.ui.recovery import RecoveryError, read_draft, write_draft
+from pagedrop.ui.start_screen import StartScreen
 from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
@@ -169,13 +170,6 @@ class PdfTab(QWidget):
         self._thumbnail_grid.set_annotation_provider(
             self._pending_annotations_for_page
         )
-        self._thumbnail_grid.set_empty_state_message(
-            "Open a PDF",
-            hint="Arrange pages, extract selections, or combine documents",
-            show_hint=True,
-            show_shortcuts=True,
-            show_open_button=True,
-        )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)
         self._thumbnail_grid.selection_changed.connect(self._on_grid_selection_changed)
@@ -189,8 +183,14 @@ class PdfTab(QWidget):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored
         )
 
+        # Shown instead of the grid while the tab has no document.
+        self._start_screen = StartScreen()
+        self._start_screen.set_drop_target(self._thumbnail_grid)
+
         self._content_stack.addWidget(self._thumbnail_grid)
         self._content_stack.addWidget(self._preview_widget)
+        self._content_stack.addWidget(self._start_screen)
+        self._content_stack.setCurrentWidget(self._start_screen)
 
         self._document_panel = DocumentPanel()
         # Side panes give way before the window floor does.
@@ -215,7 +215,8 @@ class PdfTab(QWidget):
         layout.addWidget(self._splitter)
 
         # Sections list, then the grid or viewer, then the document list.
-        QWidget.setTabOrder(self._section_index, self._thumbnail_grid)
+        QWidget.setTabOrder(self._section_index, self._start_screen.open_button)
+        QWidget.setTabOrder(self._start_screen.recent_list, self._thumbnail_grid)
         QWidget.setTabOrder(self._thumbnail_grid, self._preview_widget)
         QWidget.setTabOrder(self._preview_widget, self._document_panel)
         self._apply_panes()
@@ -232,6 +233,10 @@ class PdfTab(QWidget):
     @property
     def viewer_widget(self) -> PdfViewerWidget:
         return self._preview_widget
+
+    @property
+    def start_screen(self) -> StartScreen:
+        return self._start_screen
 
     @property
     def content_stack(self) -> QStackedWidget:
@@ -354,9 +359,18 @@ class PdfTab(QWidget):
             return None
         return path
 
+    def _sync_start_screen(self) -> None:
+        """The start screen is the current page exactly while the tab is blank."""
+        stack = self._content_stack
+        if self._edit_model is None:
+            stack.setCurrentWidget(self._start_screen)
+        elif stack.currentWidget() is self._start_screen:
+            stack.setCurrentWidget(self._thumbnail_grid)
+
     def _refresh_workspace_panes(self) -> None:
         """Bring both side panes in line with the edit model."""
         model = self._edit_model
+        self._sync_start_screen()
         if model is None:
             self._outline_paths = None
             self._panel_path = _UNSET

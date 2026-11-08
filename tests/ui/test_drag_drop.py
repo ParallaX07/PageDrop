@@ -146,6 +146,35 @@ def test_drag_after_reverse_ctrl_selection_carries_pages_in_page_order(
     assert (cards[1].selection_rank, cards[3].selection_rank) == (1, 2)
 
 
+def test_outbound_drag_mime_formats_are_exactly_the_documented_set(
+    qtbot, five_page_pdf, monkeypatch
+):
+    card, loader, selection_manager, _ = _make_card(qtbot, five_page_pdf, page_index=0)
+    selection_manager.select_single(0)
+    selection_manager.toggle(2)
+    before = file_sha256(five_page_pdf)
+    seen: dict[str, object] = {}
+
+    def capture(drag: QDrag) -> None:
+        mime = drag.mimeData()
+        assert mime is not None
+        seen["formats"] = set(mime.formats())
+        seen["refs"] = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        seen["indices"] = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+        seen["urls"] = mime.urls()
+
+    _patch_drag_exec(monkeypatch, capture)
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(200, 200))
+
+    assert seen["formats"] == {INTERNAL_PAGE_MIME, PAGE_TRANSFER_MIME, "text/uri-list"}
+    assert seen["indices"] == [0, 2]
+    assert [ref.source_index for ref in seen["refs"]] == [0, 2]
+    assert all(url.isLocalFile() and url.toLocalFile().endswith(".pdf") for url in seen["urls"])
+    loader.close()
+    assert file_sha256(five_page_pdf) == before
+
+
 def test_drag_threshold_respected(qtbot, five_page_pdf, monkeypatch):
     card, loader, _, _ = _make_card(qtbot, five_page_pdf, page_index=0)
     drag_started: list[bool] = []

@@ -58,6 +58,35 @@ def test_delete_all_pages_shows_empty_state(qtbot, five_page_pdf):
     assert len(grid._cards) == 0
     assert grid._empty_title.text() == "No pages in this document"
     assert tab.is_dirty
+    # Dirty, so the grid stays (undo must work); it is not the start screen.
+    assert tab.content_stack.currentWidget() is grid
+
+
+def test_all_pages_deleted_panel_is_centred_in_the_viewport(qtbot, five_page_pdf):
+    tab = _load_tab(qtbot, five_page_pdf)
+    grid = tab.thumbnail_grid
+    grid.selection_manager.select_all()
+    assert tab.delete_selected_pages()
+
+    panel = grid._empty_state
+    qtbot.waitUntil(panel.isVisible)
+    viewport = grid.viewport()
+
+    def centre():
+        return panel.mapTo(viewport, panel.rect().center())
+
+    qtbot.waitUntil(
+        lambda: abs(centre().x() - viewport.width() // 2) <= 1
+        and abs(centre().y() - viewport.height() // 2) <= 1
+    )
+    # Sized to its content rather than stretched across the viewport.
+    assert panel.width() < viewport.width()
+
+    # Undo brings the cards back at the top left again.
+    assert tab.undo_edit()
+    qtbot.waitUntil(lambda: len(grid._cards) == 5)
+    assert not panel.isVisibleTo(grid)
+    assert grid._cards[0].mapTo(viewport, grid._cards[0].rect().topLeft()).x() < viewport.width() // 4
 
 
 def test_delete_key_removes_selected_page(qtbot, five_page_pdf):

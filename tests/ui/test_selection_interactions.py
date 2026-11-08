@@ -118,6 +118,42 @@ def test_selecting_an_earlier_page_renumbers_later_ones(qtbot, five_page_pdf):
     assert cards[3]._order_chip.isHidden()
 
 
+def test_selection_order_does_not_change_the_drag_payload(qtbot, five_page_pdf, monkeypatch):
+    from PyQt6.QtGui import QDrag
+
+    from pagedrop.core.drag_mime import (
+        INTERNAL_PAGE_MIME,
+        PAGE_TRANSFER_MIME,
+        decode_page_indices,
+        decode_page_refs,
+    )
+
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+    for index in (4, 0, 2):
+        _ctrl_click(qtbot, cards[index])
+    assert _ranks(cards) == {0: 1, 2: 2, 4: 3}
+
+    seen: dict[str, object] = {}
+
+    def fake_exec(drag, *args, **kwargs):
+        mime = drag.mimeData()
+        seen["formats"] = set(mime.formats())
+        seen["indices"] = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+        seen["refs"] = [r.source_index for r in decode_page_refs(mime.data(PAGE_TRANSFER_MIME))]
+        return Qt.DropAction.IgnoreAction
+
+    monkeypatch.setattr(QDrag, "exec", fake_exec)
+    qtbot.mousePress(cards[4], Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(cards[4], pos=QPoint(200, 200))
+
+    assert seen["formats"] == {INTERNAL_PAGE_MIME, PAGE_TRANSFER_MIME, "text/uri-list"}
+    # Page order, not the order the pages were clicked in.
+    assert seen["indices"] == [0, 2, 4]
+    assert seen["refs"] == [0, 2, 4]
+    assert grid.selection_manager.selection == {0, 2, 4}
+
+
 def test_unchanged_ranks_are_not_pushed_again(qtbot, five_page_pdf, monkeypatch):
     grid = _load_grid(qtbot, five_page_pdf)
     cards = grid._cards

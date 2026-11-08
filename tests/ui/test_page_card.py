@@ -418,3 +418,48 @@ def test_overlays_anchor_to_the_page_not_the_cell(qtbot):
     assert page.contains(rotation.geometry())
     assert rotation.y() >= page.top()
     assert page_number.geometry().bottom() <= page.bottom()
+
+
+def test_the_order_chip_leaves_the_drag_payload_unchanged(qtbot, five_page_pdf, monkeypatch):
+    from PyQt6.QtGui import QDrag
+
+    from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, PAGE_TRANSFER_MIME, decode_page_indices
+    from pagedrop.core.pdf_editor import PdfEditModel
+    from pagedrop.core.pdf_loader import PdfLoader
+    from pagedrop.core.selection_manager import SelectionManager
+    from pagedrop.utils.temp_manager import TempManager
+
+    loader = PdfLoader(str(five_page_pdf))
+    model = PdfEditModel(loader.path, loader.page_count)
+    selection = SelectionManager()
+    selection.set_page_count(model.logical_count())
+    card = PageCard(1)
+    qtbot.addWidget(card)
+    card.resize(200, 200)
+    card.show()
+    card.set_drag_context(model, selection, TempManager())
+
+    def drag_formats_and_indices(rank: int | None):
+        selection.select_single(1)
+        card.set_selection_rank(rank)
+        seen: dict[str, object] = {}
+
+        def fake_exec(drag, *args, **kwargs):
+            mime = drag.mimeData()
+            seen["formats"] = set(mime.formats())
+            seen["indices"] = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+            return Qt.DropAction.IgnoreAction
+
+        monkeypatch.setattr(QDrag, "exec", fake_exec)
+        qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+        qtbot.mouseMove(card, pos=QPoint(200, 200))
+        qtbot.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(200, 200))
+        return seen
+
+    plain = drag_formats_and_indices(None)
+    with_chip = drag_formats_and_indices(3)
+    loader.close()
+
+    assert plain == with_chip
+    assert plain["formats"] == {INTERNAL_PAGE_MIME, PAGE_TRANSFER_MIME, "text/uri-list"}
+    assert plain["indices"] == [1]

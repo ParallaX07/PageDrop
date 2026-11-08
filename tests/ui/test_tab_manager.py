@@ -594,7 +594,7 @@ def test_detached_blank_tab_opens_files_in_its_new_window(qtbot, qapp, monkeypat
     )
     source._actions["open"].triggered.connect(lambda: opened.append("source"))
     detached._actions["open"].triggered.connect(lambda: opened.append("detached"))
-    _tab_at(detached, 0).thumbnail_grid._empty_open_button.click()
+    _tab_at(detached, 0).start_screen.open_button.click()
     assert opened == ["detached"]
 
 

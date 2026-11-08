@@ -551,16 +551,21 @@ def test_shell_uses_rendered_geometry_after_menu_font_growth(
     assert main_window._actions["open"] in _file_menu_actions(main_window)
 
 
-def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, monkeypatch):
-    grid = main_window._active_tab().thumbnail_grid
-    button = grid.findChild(QPushButton, "EmptyStateOpenButton")
-    assert button is not None
+def test_blank_start_screen_uses_the_registered_open_action(main_window, monkeypatch):
+    tab = main_window._active_tab()
+    screen = tab.start_screen
+    assert tab.content_stack.currentWidget() is screen
+    button = screen.findChild(QPushButton, "EmptyStateOpenButton")
+    assert button is screen.open_button
     assert not button.isHidden()
     assert button.accessibleName() == "Open PDF"
-    assert grid._empty_title.text() == "Open a PDF"
-    assert grid._empty_hint.text() == "Arrange pages, extract selections, or combine documents"
-    assert grid._empty_kbd.text() == "or drop a file here"
-    assert "select" not in grid._empty_kbd.text().lower()
+    assert screen.findChild(QLabel, "GridEmptyState").text() == "Open a PDF"
+    drop_hint = screen.findChild(QLabel, "GridEmptyKbd")
+    assert drop_hint.text() == "or drop a file here"
+    assert "select" not in drop_hint.text().lower()
+    assert screen.accessibleDescription() == (
+        "Arrange pages, extract selections, or combine documents"
+    )
     assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
     assert main_window._toolbar.isHidden()
     for action in (
