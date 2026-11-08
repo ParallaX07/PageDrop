@@ -85,7 +85,7 @@ from pagedrop.ui.onboarding import (
 )
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
-from pagedrop.ui.accessibility import apply_appearance
+from pagedrop.ui.accessibility import apply_appearance, prefers_high_contrast
 from pagedrop.ui import icons, native_frame
 from pagedrop.ui.settings import (
     chrome_visible,
@@ -112,6 +112,7 @@ from pagedrop.ui.tab_manager import TabManager
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
     ICON_SIZE,
+    ICON_SIZE_SMALL,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
     ZOOM_WHEEL_STEP,
@@ -608,6 +609,20 @@ class MainWindow(QMainWindow):
         a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
         a["extract_selected"].setIcon(icons.icon("export"))
         self._set_toolbar_primary()
+        self._refresh_window_control_icons()
+
+    def _refresh_window_control_icons(self) -> None:
+        """Tint the title-bar glyphs like the bar text; close turns red on hover."""
+        theme = current_theme()
+        tint = theme.text if prefers_high_contrast() else theme.on_bar
+        glyphs = {
+            "WindowMinimize": ("minus", None),
+            "WindowMaximize": ("copy" if self.isMaximized() else "square", None),
+            "WindowClose": ("x", theme.danger),
+        }
+        for button in self._window_control_buttons:
+            name, active = glyphs[button.objectName()]
+            button.setIcon(icons.icon(name, color=tint, active_color=active))
 
     def menuBar(self) -> QMenuBar:  # noqa: N802
         # The menu bar lives inside the title bar; the base implementation
@@ -711,14 +726,17 @@ class MainWindow(QMainWindow):
         self._title_label.setObjectName("WindowTitle")
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._title_label)
-        for text, name, slot, label in (
-            ("−", "WindowMinimize", self.showMinimized, "Minimize window"),
-            ("□", "WindowMaximize", self._toggle_maximized, "Maximize window"),
-            ("×", "WindowClose", self.close, "Close window"),
+        for name, slot, label in (
+            ("WindowMinimize", self.showMinimized, "Minimize window"),
+            ("WindowMaximize", self._toggle_maximized, "Maximize window"),
+            ("WindowClose", self.close, "Close window"),
         ):
             button = QToolButton(window_controls)
             button.setObjectName(name)
-            button.setText(text)
+            button.setIconSize(QSize(ICON_SIZE_SMALL, ICON_SIZE_SMALL))
+            # The hover tint is the icon's Active pixmap, which Qt only picks
+            # for auto-raise tool buttons.
+            button.setAutoRaise(True)
             button.setToolTip(label)
             button.setAccessibleName(label)
             button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -729,6 +747,7 @@ class MainWindow(QMainWindow):
         self._window_control_buttons = tuple(
             window_controls.findChildren(QToolButton)
         )
+        self._refresh_window_control_icons()
         title_layout.addWidget(menubar, 1)
         title_layout.addWidget(window_controls, 0, Qt.AlignmentFlag.AlignRight)
         self.setMenuWidget(title_bar)
@@ -2912,7 +2931,7 @@ class MainWindow(QMainWindow):
             button = getattr(self, "_maximize_button", None)
             if button is not None:
                 maximized = self.isMaximized()
-                button.setText("❐" if maximized else "□")
+                self._refresh_window_control_icons()
                 button.setToolTip("Restore window" if maximized else "Maximize window")
                 button.setAccessibleName(button.toolTip())
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):

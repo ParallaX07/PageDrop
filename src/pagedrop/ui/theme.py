@@ -219,6 +219,11 @@ COMPACT_CONTROL_HEIGHT = 32
 FORM_CONTROL_HEIGHT = 36
 ICON_SIZE_SMALL = 16
 ICON_SIZE = 18
+# Marks are drawn at their own size inside the 16px indicator, not scaled to fill it.
+INDICATOR_CHECK_SIZE = 12
+INDICATOR_DOT_SIZE = 8
+INDICATOR_ARROW_SIZE = 10
+FORM_BUTTON_WIDTH = 24
 RADIUS_CONTROL = 4
 RADIUS_SURFACE = 6
 RADIUS_CARD = RADIUS_SURFACE
@@ -267,6 +272,14 @@ def relative_luminance(hex_color: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+def _indicator_image(name: str, color: str, size: int, canvas: int | None = None) -> str:
+    """QSS ``image:`` rule for a tinted indicator, or nothing if it cannot be rendered."""
+    from pagedrop.ui import icons
+
+    path = icons.indicator_path(name, color=color, size=size, canvas=canvas)
+    return f'image: url("{path}");' if path else ""
+
+
 def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # High contrast is an overlay on either theme: all text in ``text`` and
     # surface edges drawn in ``text``, with a thicker focus ring.
@@ -299,6 +312,15 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Chips sit on page-paper thumbs (always light): a page-ink pill in both themes.
     page_chip_bg = rgba(PAGE_INK, 170 if light else 160)
     focus_width = 3 if high_contrast else 2
+    mark_disabled = blend(text_muted, bg_card, 0.5)
+    check_mark = _indicator_image("check-bold", on_ink, INDICATOR_CHECK_SIZE, ICON_SIZE_SMALL)
+    check_mark_off = _indicator_image("check-bold", mark_disabled, INDICATOR_CHECK_SIZE, ICON_SIZE_SMALL)
+    dot_mark = _indicator_image("circle-fill", on_ink, INDICATOR_DOT_SIZE, ICON_SIZE_SMALL)
+    dot_mark_off = _indicator_image("circle-fill", mark_disabled, INDICATOR_DOT_SIZE, ICON_SIZE_SMALL)
+    arrow_down = _indicator_image("caret-down-bold", text_muted, INDICATOR_ARROW_SIZE)
+    arrow_down_off = _indicator_image("caret-down-bold", mark_disabled, INDICATOR_ARROW_SIZE)
+    arrow_up = _indicator_image("caret-up-bold", text_muted, INDICATOR_ARROW_SIZE)
+    arrow_up_off = _indicator_image("caret-up-bold", mark_disabled, INDICATOR_ARROW_SIZE)
     # Selection reads thicker than keyboard focus (multi-select still obvious in HC)
     selected_width = focus_width + 1
     return f"""
@@ -529,10 +551,58 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: 8px;
     }}
 
+    QCheckBox::indicator:hover,
+    QRadioButton::indicator:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QCheckBox::indicator:pressed,
+    QRadioButton::indicator:pressed {{
+        background-color: {bg_pressed};
+    }}
+
+    QCheckBox::indicator:disabled,
+    QRadioButton::indicator:disabled {{
+        background-color: {bg_card};
+        border-color: {border_subtle};
+    }}
+
     QCheckBox::indicator:checked,
     QRadioButton::indicator:checked {{
         background-color: {ink};
         border-color: {ink_pressed};
+    }}
+
+    QCheckBox::indicator:checked {{
+        {check_mark}
+    }}
+
+    QRadioButton::indicator:checked {{
+        {dot_mark}
+    }}
+
+    QCheckBox::indicator:checked:hover,
+    QRadioButton::indicator:checked:hover {{
+        background-color: {ink_hover};
+    }}
+
+    QCheckBox::indicator:checked:pressed,
+    QRadioButton::indicator:checked:pressed {{
+        background-color: {ink_pressed};
+    }}
+
+    QCheckBox::indicator:checked:disabled,
+    QRadioButton::indicator:checked:disabled {{
+        background-color: {bg_card};
+        border-color: {border_subtle};
+    }}
+
+    QCheckBox::indicator:checked:disabled {{
+        {check_mark_off}
+    }}
+
+    QRadioButton::indicator:checked:disabled {{
+        {dot_mark_off}
     }}
 
     QCheckBox:focus,
@@ -553,7 +623,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px {SPACE_2}px;
+        padding: 6px {FORM_BUTTON_WIDTH}px 6px {SPACE_2}px;
         min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
     }}
 
@@ -566,8 +636,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
         border: none;
-        width: 24px;
+        width: {FORM_BUTTON_WIDTH}px;
+    }}
+
+    QComboBox::down-arrow {{
+        {arrow_down}
+    }}
+
+    QComboBox::down-arrow:disabled {{
+        {arrow_down_off}
     }}
 
     QComboBox QAbstractItemView {{
@@ -584,7 +664,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px 8px;
+        padding: 6px {FORM_BUTTON_WIDTH}px 6px 8px;
         selection-background-color: {ink};
         selection-color: {on_ink};
     }}
@@ -592,6 +672,64 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QSpinBox:focus,
     QDoubleSpinBox:focus {{
         border: {focus_width}px solid {focus_ring};
+    }}
+
+    QSpinBox::up-button,
+    QDoubleSpinBox::up-button {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: {FORM_BUTTON_WIDTH}px;
+        border: none;
+        border-top-right-radius: {RADIUS_CONTROL}px;
+        background-color: transparent;
+    }}
+
+    QSpinBox::down-button,
+    QDoubleSpinBox::down-button {{
+        subcontrol-origin: padding;
+        subcontrol-position: bottom right;
+        width: {FORM_BUTTON_WIDTH}px;
+        border: none;
+        border-bottom-right-radius: {RADIUS_CONTROL}px;
+        background-color: transparent;
+    }}
+
+    QSpinBox::up-button:hover,
+    QSpinBox::down-button:hover,
+    QDoubleSpinBox::up-button:hover,
+    QDoubleSpinBox::down-button:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QSpinBox::up-button:pressed,
+    QSpinBox::down-button:pressed,
+    QDoubleSpinBox::up-button:pressed,
+    QDoubleSpinBox::down-button:pressed {{
+        background-color: {bg_pressed};
+    }}
+
+    QSpinBox::up-arrow,
+    QDoubleSpinBox::up-arrow {{
+        {arrow_up}
+    }}
+
+    QSpinBox::down-arrow,
+    QDoubleSpinBox::down-arrow {{
+        {arrow_down}
+    }}
+
+    QSpinBox::up-arrow:disabled,
+    QSpinBox::up-arrow:off,
+    QDoubleSpinBox::up-arrow:disabled,
+    QDoubleSpinBox::up-arrow:off {{
+        {arrow_up_off}
+    }}
+
+    QSpinBox::down-arrow:disabled,
+    QSpinBox::down-arrow:off,
+    QDoubleSpinBox::down-arrow:disabled,
+    QDoubleSpinBox::down-arrow:off {{
+        {arrow_down_off}
     }}
 
     QTextEdit {{
@@ -1461,7 +1599,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont,
     QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize {{
         min-height: 24px;
-        padding: 2px 4px;
+        padding: 2px {FORM_BUTTON_WIDTH}px 2px 4px;
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         background-color: {bg_card};

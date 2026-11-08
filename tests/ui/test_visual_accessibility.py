@@ -2036,3 +2036,267 @@ def test_stylesheet_has_no_monospace_chrome():
         lowered = sheet.lower()
         for family in ("monospace", "consolas", "cascadia"):
             assert family not in lowered
+
+
+# --- Form-control indicator images ------------------------------------------
+
+
+def _theme_for(light: bool):
+    from pagedrop.ui.theme import DARK, LIGHT
+
+    return LIGHT if light else DARK
+
+
+def _closer_to(img, rect, near: str, far: str) -> int:
+    """Pixels in ``rect`` nearer to ``near`` than to ``far`` (anti-aliasing tolerant)."""
+    from PyQt6.QtGui import QColor
+
+    def dist(c, target) -> int:
+        t = QColor(target)
+        return (c.red() - t.red()) ** 2 + (c.green() - t.green()) ** 2 + (c.blue() - t.blue()) ** 2
+
+    count = 0
+    for y in range(rect.top(), rect.bottom() + 1):
+        for x in range(rect.left(), rect.right() + 1):
+            c = img.pixelColor(x, y)
+            if dist(c, near) < dist(c, far):
+                count += 1
+    return count
+
+
+def _exact_count(img, rect, hex_color: str) -> int:
+    from PyQt6.QtGui import QColor
+
+    target = QColor(hex_color).rgb()
+    return sum(
+        1
+        for y in range(rect.top(), rect.bottom() + 1)
+        for x in range(rect.left(), rect.right() + 1)
+        if img.pixelColor(x, y).rgb() == target
+    )
+
+
+def _indicator_interior(widget):
+    """Inside the 16px indicator's border: only its fill and mark are in here."""
+    from PyQt6.QtCore import QRect
+
+    g = widget.geometry()
+    return QRect(g.x() + 2, g.center().y() - 5, 12, 11)
+
+
+def _hosted(qtbot, widget):
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.addWidget(widget)
+    _show(qtbot, host)
+    QApplication.processEvents()
+    return host
+
+
+@pytest.mark.parametrize("mode", _STYLE_MODES)
+@pytest.mark.parametrize("kind", ["check", "radio"])
+def test_checked_indicator_draws_mark_on_ink_fill(qtbot, themed_app, mode, kind):
+    from PyQt6.QtWidgets import QCheckBox, QRadioButton
+
+    themed_app(**mode)
+    theme = _theme_for(mode["light"])
+    widget = QCheckBox() if kind == "check" else QRadioButton()
+    widget.setChecked(True)
+    host = _hosted(qtbot, widget)
+    img = host.grab().toImage()
+    area = _indicator_interior(widget)
+    assert _exact_count(img, area, theme.ink) >= 40
+    # The mark's own pixels: nearer the on-ink tint than the ink fill.
+    assert _closer_to(img, area, theme.on_ink, theme.ink) >= 6
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_unchecked_indicator_has_no_mark(qtbot, themed_app, light):
+    from PyQt6.QtWidgets import QCheckBox
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    box = QCheckBox()
+    host = _hosted(qtbot, box)
+    img = host.grab().toImage()
+    assert _exact_count(img, _indicator_interior(box), theme.ink) == 0
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_combo_arrow_is_drawn_in_the_drop_down(qtbot, themed_app, light):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QComboBox
+
+    from pagedrop.ui.theme import FORM_BUTTON_WIDTH
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    combo = QComboBox()
+    combo.addItem("")
+    host = _hosted(qtbot, combo)
+    img = host.grab().toImage()
+    g = combo.geometry()
+    inner = g.adjusted(3, 3, -3, -3)
+    arrow = QRect(inner.right() - FORM_BUTTON_WIDTH + 1, inner.top(), FORM_BUTTON_WIDTH, inner.height())
+    assert _closer_to(img, arrow, theme.text_muted, theme.raised) >= 4
+
+
+@pytest.mark.parametrize("cls_name", ["QSpinBox", "QDoubleSpinBox"])
+@pytest.mark.parametrize("light", [False, True])
+def test_spin_box_draws_both_arrows_at_the_right_edge(qtbot, themed_app, light, cls_name):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox
+
+    from pagedrop.ui.theme import FORM_BUTTON_WIDTH
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    spin = {"QSpinBox": QSpinBox, "QDoubleSpinBox": QDoubleSpinBox}[cls_name]()
+    spin.setValue(5)
+    host = _hosted(qtbot, spin)
+    img = host.grab().toImage()
+    g = spin.geometry()
+    inner = g.adjusted(3, 3, -3, -3)
+    x = inner.right() - FORM_BUTTON_WIDTH + 1
+    half = inner.height() // 2
+    up = QRect(x, inner.top(), FORM_BUTTON_WIDTH, half)
+    down = QRect(x, inner.top() + half, FORM_BUTTON_WIDTH, inner.height() - half)
+    assert _closer_to(img, up, theme.text_muted, theme.raised) >= 3
+    assert _closer_to(img, down, theme.text_muted, theme.raised) >= 3
+
+
+def test_spin_box_arrow_dims_at_its_limit(qtbot, themed_app):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QSpinBox
+
+    from pagedrop.ui.theme import FORM_BUTTON_WIDTH
+
+    themed_app(light=True)
+    theme = _theme_for(True)
+    spin = QSpinBox()
+    spin.setRange(0, 10)
+    spin.setValue(10)
+    host = _hosted(qtbot, spin)
+    img = host.grab().toImage()
+    inner = spin.geometry().adjusted(3, 3, -3, -3)
+    x = inner.right() - FORM_BUTTON_WIDTH + 1
+    half = inner.height() // 2
+    up = QRect(x, inner.top(), FORM_BUTTON_WIDTH, half)
+    down = QRect(x, inner.top() + half, FORM_BUTTON_WIDTH, inner.height() - half)
+    # The up arrow is at its limit, so it is paler than the live down arrow.
+    assert _closer_to(img, down, theme.text_muted, theme.raised) > _closer_to(
+        img, up, theme.text_muted, theme.raised
+    )
+
+
+def test_indicator_images_load_from_a_directory_with_a_space(
+    qtbot, themed_app, tmp_path, monkeypatch
+):
+    from PyQt6.QtWidgets import QCheckBox
+
+    from pagedrop.ui import icons
+
+    folder = tmp_path / "with space"
+    folder.mkdir()
+    monkeypatch.setattr(icons, "_indicator_dir", lambda: folder)
+    themed_app(light=True)
+    assert list(folder.glob("*.png"))
+    theme = _theme_for(True)
+    box = QCheckBox()
+    box.setChecked(True)
+    host = _hosted(qtbot, box)
+    img = host.grab().toImage()
+    assert _closer_to(img, _indicator_interior(box), theme.on_ink, theme.ink) >= 6
+
+
+def test_window_controls_are_icons_not_glyphs(qtbot, main_window, themed_app):
+    from PyQt6.QtGui import QIcon
+
+    themed_app()
+    expected = {
+        "WindowMinimize": "Minimize window",
+        "WindowMaximize": "Maximize window",
+        "WindowClose": "Close window",
+    }
+    for button in main_window._window_control_buttons:
+        assert button.text() == ""
+        assert not button.icon().isNull()
+        assert button.accessibleName() == expected[button.objectName()]
+        assert button.toolTip() == expected[button.objectName()]
+        assert button.autoRaise()
+    close = next(b for b in main_window._window_control_buttons if b.objectName() == "WindowClose")
+    size = close.iconSize()
+    normal = close.icon().pixmap(size, QIcon.Mode.Normal).toImage()
+    active = close.icon().pixmap(size, QIcon.Mode.Active).toImage()
+    assert normal != active
+
+
+def test_window_close_icon_turns_red_when_hovered(qtbot, main_window, themed_app):
+    from PyQt6.QtGui import QColor
+
+    themed_app()
+    theme = _theme_for(False)
+    _show(qtbot, main_window)
+    close = next(b for b in main_window._window_control_buttons if b.objectName() == "WindowClose")
+
+    def mark_colour() -> QColor:
+        """Colour of the pixel that stands furthest out from the button fill."""
+        img = close.grab().toImage()
+        fill = img.pixelColor(img.width() // 2, 3)
+
+        def away(c: QColor) -> int:
+            return abs(c.red() - fill.red()) + abs(c.green() - fill.green()) + abs(c.blue() - fill.blue())
+
+        return max(
+            (img.pixelColor(x, y) for x in range(img.width()) for y in range(3, img.height() - 3)),
+            key=away,
+        )
+
+    def nearer(c: QColor, hex_color: str, other: str) -> bool:
+        def dist(target: str) -> int:
+            t = QColor(target)
+            return (c.red() - t.red()) ** 2 + (c.green() - t.green()) ** 2 + (c.blue() - t.blue()) ** 2
+
+        return dist(hex_color) < dist(other)
+
+    assert nearer(mark_colour(), theme.on_bar, theme.danger)
+    close.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, True)
+    close.update()
+    assert nearer(mark_colour(), theme.danger, theme.on_bar)
+
+
+def test_maximize_control_swaps_icon_and_tooltip(qtbot, main_window):
+    from PyQt6.QtGui import QIcon
+
+    _show(qtbot, main_window)
+    button = main_window._maximize_button
+    size = button.iconSize()
+    normal = button.icon().pixmap(size).toImage()
+    main_window.showMaximized()
+    qtbot.waitUntil(main_window.isMaximized)
+    assert button.toolTip() == "Restore window"
+    assert button.accessibleName() == "Restore window"
+    assert button.text() == ""
+    restore = button.icon().pixmap(size, QIcon.Mode.Normal).toImage()
+    assert restore != normal
+    main_window.showNormal()
+    qtbot.waitUntil(lambda: not main_window.isMaximized())
+    assert button.toolTip() == "Maximize window"
+    assert button.icon().pixmap(size).toImage() == normal
+
+
+def test_window_control_icons_retint_on_theme_change(qtbot, main_window, themed_app, isolated_settings):
+    from pagedrop.ui import icons
+    from pagedrop.ui.settings import set_light_theme
+
+    set_light_theme(False)
+    icons.refresh_icons()
+    minimize = next(b for b in main_window._window_control_buttons if b.objectName() == "WindowMinimize")
+    dark = minimize.icon().pixmap(minimize.iconSize()).toImage()
+    set_light_theme(True)
+    icons.refresh_icons()
+    try:
+        assert minimize.icon().pixmap(minimize.iconSize()).toImage() != dark
+    finally:
+        set_light_theme(False)
+        icons.refresh_icons()

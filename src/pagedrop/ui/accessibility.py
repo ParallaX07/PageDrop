@@ -114,7 +114,8 @@ def install_accessibility(app: QApplication) -> None:
 
     def reapply() -> None:
         applied["high_contrast"] = prefers_high_contrast()
-        apply_app_stylesheet(app)
+        # Icons tinted for the bar follow the contrast preference too.
+        refresh_themed_widgets(app)
 
     def on_state(state: Qt.ApplicationState) -> None:
         if state == Qt.ApplicationState.ApplicationActive and prefers_high_contrast() != applied["high_contrast"]:

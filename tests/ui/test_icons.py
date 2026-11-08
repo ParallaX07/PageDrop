@@ -33,6 +33,11 @@ def test_available_names_cover_toolbar_set():
         "check",
         "minus",
         "plus",
+        "check-bold",
+        "caret-down-bold",
+        "caret-up-bold",
+        "circle-fill",
+        "square",
         "stack",
         "scissors",
         "lock",
@@ -276,3 +281,132 @@ def test_icon_cache_is_keyed_by_ratios_and_tint(monkeypatch, qapp, isolated_sett
 
     icons.refresh_icons()
     assert icons._cache == {}
+
+
+# --- Style sheet indicator images ------------------------------------------
+
+
+def _image_urls(sheet: str) -> list[str]:
+    import re
+
+    return re.findall(r'image: url\("([^"]+)"\)', sheet)
+
+
+def test_indicator_path_writes_one_and_two_x_files(qapp):
+    from pathlib import Path
+
+    from pagedrop.ui.icons import indicator_path
+
+    path = Path(indicator_path("check-bold", color="#FFFFFF", size=12))
+    retina = path.with_name("check-bold-12-ffffff@2x.png")
+    assert path.name == "check-bold-12-ffffff.png"
+    assert path.is_file() and retina.is_file()
+    assert (QImage(str(path)).width(), QImage(str(retina)).width()) == (12, 24)
+    # Same tint, same file; no new directory per call.
+    assert Path(indicator_path("check-bold", color="#ffffff", size=12)) == path
+
+
+def test_indicator_canvas_centres_the_mark(qapp):
+    from pathlib import Path
+
+    from pagedrop.ui.icons import indicator_path
+
+    path = Path(indicator_path("circle-fill", color="#FF0000", size=8, canvas=16))
+    image = QImage(str(path))
+    assert image.width() == 16
+    assert image.pixelColor(8, 8).alpha() == 255
+    assert image.pixelColor(1, 1).alpha() == 0
+    assert image.pixelColor(8, 3).alpha() == 0  # circle spans 4..12 only
+
+
+def test_indicator_path_needs_no_gui_application():
+    """The style sheet is built before (and without) any QGuiApplication."""
+    import subprocess
+    import sys
+
+    code = (
+        "from pagedrop.ui.theme import app_stylesheet\n"
+        "sheet = app_stylesheet(light=True)\n"
+        "print('image: url(' in sheet)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+
+
+def test_light_dark_and_high_contrast_sheets_use_different_existing_images(qapp):
+    from pathlib import Path
+
+    from pagedrop.ui.theme import app_stylesheet
+
+    sheets = {
+        "dark": app_stylesheet(light=False),
+        "light": app_stylesheet(light=True),
+        "dark-hc": app_stylesheet(light=False, high_contrast=True),
+        "light-hc": app_stylesheet(light=True, high_contrast=True),
+    }
+    urls = {name: set(_image_urls(sheet)) for name, sheet in sheets.items()}
+    for name, found in urls.items():
+        assert found, name
+        for url in found:
+            assert Path(url).is_file(), url
+            assert Path(url.replace(".png", "@2x.png")).is_file(), url
+    assert urls["dark"] != urls["light"]
+    # High contrast restyles the arrows (muted text becomes full text).
+    assert urls["dark"] != urls["dark-hc"]
+    assert urls["light"] != urls["light-hc"]
+
+
+def test_deleted_indicator_is_rendered_again(qapp):
+    from pathlib import Path
+
+    from pagedrop.ui.theme import app_stylesheet
+
+    url = Path(_image_urls(app_stylesheet(light=True))[0])
+    url.unlink()
+    again = _image_urls(app_stylesheet(light=True))
+    assert str(url) in again
+    assert url.is_file()
+    url.with_name(url.stem + "@2x.png").unlink()
+    app_stylesheet(light=True)
+    assert url.with_name(url.stem + "@2x.png").is_file()
+
+
+def test_failed_indicator_write_warns_and_the_sheet_still_builds(qapp, monkeypatch, tmp_path, caplog):
+    import logging
+
+    from pagedrop.ui import icons
+    from pagedrop.ui.theme import app_stylesheet
+
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("x")
+    monkeypatch.setattr(icons, "_indicator_dir", lambda: blocker / "inside")
+    with caplog.at_level(logging.WARNING, logger="pagedrop"):
+        sheet = app_stylesheet(light=True)
+    assert "QCheckBox::indicator:checked" in sheet
+    assert "QComboBox::down-arrow" in sheet
+    assert _image_urls(sheet) == []
+    assert any("indicator image" in r.message for r in caplog.records)
+
+
+def test_theme_change_points_the_sheet_at_new_images(qapp, isolated_settings):
+    from PyQt6.QtWidgets import QApplication
+
+    from pagedrop.ui.accessibility import refresh_themed_widgets
+    from pagedrop.ui.settings import set_light_theme
+
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    try:
+        set_light_theme(False)
+        refresh_themed_widgets()
+        dark = set(_image_urls(app.styleSheet()))
+        set_light_theme(True)
+        refresh_themed_widgets()
+        light = set(_image_urls(app.styleSheet()))
+        assert dark and light and dark != light
+    finally:
+        set_light_theme(False)
+        app.setStyleSheet(previous)

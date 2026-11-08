@@ -7,6 +7,7 @@ swap so cached pixmaps and registered toolbar rebuilds stay in sync.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from importlib.resources import files
@@ -15,15 +16,21 @@ from weakref import WeakMethod
 
 from PyQt6 import sip
 from PyQt6.QtCore import QByteArray, QRectF, Qt
-from PyQt6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QGuiApplication, QIcon, QImage, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
 from pagedrop.ui.theme import current_theme
+from pagedrop.utils.temp_manager import TempManager
+
+_LOG = logging.getLogger("pagedrop")
 
 _ICON_SIZES = (16, 20, 24, 32)
 
-_cache: dict[tuple[str, str, tuple[float, ...]], QIcon] = {}
+_cache: dict[tuple[str, str, str, tuple[float, ...]], QIcon] = {}
 _refresh_callbacks: list[Callable[[], None] | WeakMethod] = []
+# Shared by every window and removed at exit; a window's own manager is gone
+# once that window closes while the style sheet still points at these files.
+_indicator_manager: TempManager | None = None
 
 
 def available_names() -> frozenset[str]:
@@ -34,25 +41,36 @@ def available_names() -> frozenset[str]:
     return frozenset(p.stem for p in root.glob("*.svg"))
 
 
-def icon(name: str, *, accent: bool = False, color: str | None = None) -> QIcon:
+def icon(
+    name: str,
+    *,
+    accent: bool = False,
+    color: str | None = None,
+    active_color: str | None = None,
+) -> QIcon:
     """Load a vendored Phosphor SVG as a tinted ``QIcon``.
 
     Default tint is the chrome text colour (light-aware). Pass ``accent=True``
     for the theme ink, or ``color`` for an explicit ``#RRGGBB`` override.
+    ``active_color`` adds the tint used while the pointer is over an auto-raise
+    tool button.
     """
     tint = color or (current_theme().ink if accent else current_theme().text)
     ratios = _device_pixel_ratios()
-    key = (name, tint.lower(), ratios)
+    key = (name, tint.lower(), (active_color or "").lower(), ratios)
     cached = _cache.get(key)
     if cached is not None:
         return cached
 
     svg = _load_svg(name)
-    tinted = svg.replace("currentColor", tint).encode("utf-8")
     result = QIcon()
-    for size in _ICON_SIZES:
-        for ratio in ratios:
-            result.addPixmap(_render_pixmap(tinted, size, ratio))
+    for mode, mode_tint in ((QIcon.Mode.Normal, tint), (QIcon.Mode.Active, active_color)):
+        if mode_tint is None:
+            continue
+        tinted = svg.replace("currentColor", mode_tint).encode("utf-8")
+        for size in _ICON_SIZES:
+            for ratio in ratios:
+                result.addPixmap(_render_pixmap(tinted, size, ratio), mode)
     _cache[key] = result
     return result
 
@@ -119,15 +137,58 @@ def _load_svg(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _render_pixmap(svg_utf8: bytes, size: int, ratio: float = 1.0) -> QPixmap:
+def _render_image(
+    svg_utf8: bytes, size: int, ratio: float = 1.0, canvas: int | None = None
+) -> QImage:
+    """Render at ``size`` logical px, centred on a transparent ``canvas`` square."""
     renderer = QSvgRenderer(QByteArray(svg_utf8))
-    pixels = math.ceil(size * ratio)
-    pixmap = QPixmap(pixels, pixels)
-    pixmap.setDevicePixelRatio(ratio)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
+    canvas = canvas or size
+    pixels = math.ceil(canvas * ratio)
+    image = QImage(pixels, pixels, QImage.Format.Format_ARGB32_Premultiplied)
+    image.setDevicePixelRatio(ratio)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     logical = pixels / ratio
-    renderer.render(painter, QRectF(0, 0, logical, logical))
+    inset = (logical - size) / 2
+    renderer.render(painter, QRectF(inset, inset, size, size))
     painter.end()
-    return pixmap
+    return image
+
+
+def _render_pixmap(svg_utf8: bytes, size: int, ratio: float = 1.0) -> QPixmap:
+    return QPixmap.fromImage(_render_image(svg_utf8, size, ratio))
+
+
+def _indicator_dir() -> Path:
+    global _indicator_manager
+    if _indicator_manager is None:
+        _indicator_manager = TempManager()
+    return _indicator_manager.get_dir()
+
+
+def indicator_path(
+    name: str, *, color: str, size: int, canvas: int | None = None
+) -> str | None:
+    """Path of a tinted PNG for a style sheet ``image:`` rule, rendered on demand.
+
+    A ``<name>-<size>-<hex>.png`` file and its ``@2x`` sibling are written once
+    per tint and reused until they go missing. With ``canvas`` the mark keeps
+    ``size`` but sits centred on a transparent square of that side, which Qt
+    would otherwise stretch to fill a fixed-size indicator on a 2x display.
+    Returns ``None`` (after logging a warning) when they cannot be written, so
+    the style sheet just omits the image. Works without a ``QGuiApplication``.
+    """
+    try:
+        stem = f"{name}-{size}{f'in{canvas}' if canvas else ''}-{color.lstrip('#').lower()}"
+        target = _indicator_dir() / f"{stem}.png"
+        retina = target.with_name(f"{stem}@2x.png")
+        if not (target.is_file() and retina.is_file()):
+            tinted = _load_svg(name).replace("currentColor", color).encode("utf-8")
+            for path, ratio in ((target, 1.0), (retina, 2.0)):
+                if not _render_image(tinted, size, ratio, canvas).save(str(path), "PNG"):
+                    raise OSError(f"could not write {path}")
+    except (OSError, ValueError) as exc:
+        _LOG.warning("Could not render indicator image %r: %s", name, exc)
+        return None
+    return target.as_posix()
