@@ -60,9 +60,12 @@ class BaseFileCard(QFrame):
 
         self._shadow: QGraphicsDropShadowEffect | None = None
 
-        self._thumbnail_label = QLabel()
+        self._thumbnail_label = self._make_thumbnail_label()
         self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._thumbnail_label.setMinimumHeight(80)
+
+    def _make_thumbnail_label(self) -> QLabel:
+        return QLabel()
 
     def _item_index(self) -> int:
         raise NotImplementedError

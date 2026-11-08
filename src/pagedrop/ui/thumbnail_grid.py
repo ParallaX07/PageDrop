@@ -565,11 +565,17 @@ class ThumbnailGrid(QScrollArea):
         ref = self._model.page_at(logical_index)
         card.set_page_ref(ref)
         card.set_page_size_provider(lambda r=ref: self._page_size_mm_for(r))
+        card.set_index_colour_provider(self._tab_index_colour)
         card.clicked.connect(self._on_card_clicked)
         card.double_clicked.connect(self.preview_requested.emit)
         card.context_menu_requested.connect(self._on_card_context_menu)
         card.set_page_overlay_visible(self._page_overlay_visible())
         return card
+
+    def _tab_index_colour(self) -> str:
+        """The document's index colour, read when a card paints so a detach follows."""
+        tab = self._parent_tab()
+        return (tab.index_colour if tab is not None else None) or "index_slate"
 
     def _page_size_mm_for(self, ref: PageRef) -> tuple[int, int]:
         assert self._get_loader is not None
@@ -2335,12 +2341,20 @@ class ThumbnailGrid(QScrollArea):
         self.selection_changed.emit(selection)
 
     def _sync_selection_chrome(self, selection: set[int]) -> None:
-        """Update only cards whose selected bit flipped."""
+        """Update cards whose selected bit or place in the selection changed."""
         n = len(self._cards)
         applicable = {i for i in selection if 0 <= i < n}
         for index in self._painted_selection ^ applicable:
             self._cards[index].set_selected(index in applicable)
+        self._push_selection_ranks(applicable)
         self._painted_selection = applicable
+
+    def _push_selection_ranks(self, applicable: set[int]) -> None:
+        """Number selected cards by page order; skip cards whose number is unchanged."""
+        for rank, index in enumerate(sorted(applicable), start=1):
+            card = self._cards[index]
+            if card.selection_rank != rank:
+                card.set_selection_rank(rank)
 
     def _resync_selection_chrome(self) -> None:
         """Full chrome pass after card list surgery (insert/delete/reorder)."""
@@ -2349,4 +2363,5 @@ class ThumbnailGrid(QScrollArea):
         applicable = {i for i in selection if 0 <= i < n}
         for index, card in enumerate(self._cards):
             card.set_selected(index in applicable)
+        self._push_selection_ranks(applicable)
         self._painted_selection = applicable

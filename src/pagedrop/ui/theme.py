@@ -224,6 +224,16 @@ SHADOW_RGB = (14, 22, 38)
 SHADOW_RGB_LIGHT = (30, 40, 60)
 # R5: light hover needs a bit more depth than the old 40 cap; raise again if washout
 SHADOW_ALPHA_CAP_LIGHT = 48
+# shadow-page: the small resting shadow under a page thumbnail. Each layer is
+# (spread, drop, alpha); the layers stack so the edge fades outward. Style
+# sheets have no box-shadow, so the page card paints these itself.
+SHADOW_PAGE_LAYERS = ((1, 1, 40), (2, 1, 24), (3, 1, 12))
+# Page card chrome sits outside the page edge: the selection outline first,
+# then a gap, then the focus ring.
+PAGE_OUTLINE_WIDTH = 2
+PAGE_RING_GAP = 1
+FOCUS_WIDTH = 2
+FOCUS_WIDTH_HIGH_CONTRAST = 3
 
 # The shared metrics are minimums, never fixed heights, so translated or
 # enlarged labels can grow. Keep the legacy radius names as aliases for the
@@ -301,7 +311,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     bg_float = bg_card = t.raised
     bg_grid = t.canvas
     bg_card_hover = t.ink_tint
-    bg_pressed = bg_thumb_empty = t.line
+    bg_pressed = t.line
     bg_toolbar = bg_status = bg_bar = t.bar_top
     bg_tab_bar = t.bar_tabs
     text_primary = t.text
@@ -339,7 +349,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     busy_overlay_bg = rgba(t.chrome, 200 if light else 180)
     # Chips sit on page-paper thumbs (always light): a page-ink pill in both themes.
     page_chip_bg = rgba(PAGE_INK, 170 if light else 160)
-    focus_width = 3 if high_contrast else 2
+    focus_width = FOCUS_WIDTH_HIGH_CONTRAST if high_contrast else FOCUS_WIDTH
     mark_disabled = blend(text_muted, bg_card, 0.5)
     check_mark = _indicator_image("check-bold", on_ink, INDICATOR_CHECK_SIZE, ICON_SIZE_SMALL)
     check_mark_off = _indicator_image("check-bold", mark_disabled, INDICATOR_CHECK_SIZE, ICON_SIZE_SMALL)
@@ -2659,20 +2669,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#ConvertFileCard[selected="true"]:hover {{
         border-color: {ink_hover};
     }}
-    QLabel#PageCardThumbnail {{
-        background-color: {bg_thumb_empty};
-        border: 1px solid {border_subtle};
-        border-radius: 2px;
-    }}
     QLabel#PageCardThumbnail[failed="true"] {{
         color: {text_muted};
-    }}
-    QFrame#PageCard:hover QLabel#PageCardThumbnail {{
-        border-color: {border_hover};
-        background-color: {bg_card_hover};
-    }}
-    QFrame#PageCard[selected="true"] QLabel#PageCardThumbnail {{
-        border: {selected_width}px solid {ink};
     }}
     QLabel#PageCardLabel {{
         color: {text_muted};
@@ -2682,24 +2680,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#PageCard[selected="true"] QLabel#PageCardLabel {{
         color: {text_primary};
-    }}
-    QLabel#PageCardSelectionIndicator {{
-        color: {on_ink};
-        background-color: {ink};
-        border: 1px solid {on_ink};
-        border-radius: 8px;
-        font-size: 12px;
-        font-weight: 400;
-        min-width: 16px;
-        min-height: 16px;
-        max-width: 16px;
-        max-height: 16px;
-        qproperty-alignment: AlignCenter;
-    }}
-    QLabel#PageCardFocusRing {{
-        background-color: transparent;
-        border: {focus_width}px dashed {focus_ring};
-        border-radius: {RADIUS_BADGE}px;
     }}
     QLabel#PageCardPageOverlay {{
         color: {SURFACE_PAPER};

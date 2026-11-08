@@ -11,13 +11,18 @@ from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
-from pagedrop.core.drag_mime import INTERNAL_PAGE_MIME, decode_page_indices
+from pagedrop.core.drag_mime import (
+    INTERNAL_PAGE_MIME,
+    PAGE_TRANSFER_MIME,
+    decode_page_indices,
+    decode_page_refs,
+)
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.page_card import PageCard
 from pagedrop.utils.temp_manager import TempManager
-from tests.conftest import file_sha256, wait_for_pdf_loaded
+from tests.conftest import file_sha256, wait_for_grid_loaded, wait_for_pdf_loaded
 from tests.core.test_jobs import _encrypted_pdf
 
 
@@ -90,6 +95,55 @@ def test_mime_data_contains_file_urls(qtbot, five_page_pdf, monkeypatch):
 
     assert len(captured_urls) == 2
     loader.close()
+
+
+def test_drag_after_reverse_ctrl_selection_carries_pages_in_page_order(
+    qtbot, five_page_pdf, monkeypatch
+):
+    from PyQt6.QtCore import QPoint
+    from pagedrop.ui.thumbnail_grid import ThumbnailGrid
+
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(900, 650)
+    loader = PdfLoader(str(five_page_pdf))
+    grid.load_pdf(loader)
+    wait_for_grid_loaded(qtbot, grid)
+    loader.close()
+    cards = grid._cards
+
+    for index in (3, 1):
+        qtbot.mouseClick(
+            cards[index],
+            Qt.MouseButton.LeftButton,
+            modifier=Qt.KeyboardModifier.ControlModifier,
+        )
+    assert grid.selection_manager.selection == {1, 3}
+    assert (cards[1].selection_rank, cards[3].selection_rank) == (1, 2)
+
+    captured: dict[str, object] = {}
+
+    def capture(drag: QDrag) -> None:
+        mime = drag.mimeData()
+        assert mime is not None
+        captured["indices"] = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+        assert mime.hasFormat(PAGE_TRANSFER_MIME)
+        captured["refs"] = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        captured["urls"] = [url.toLocalFile() for url in mime.urls()]
+
+    _patch_drag_exec(monkeypatch, capture)
+
+    qtbot.mousePress(cards[3], Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(cards[3], pos=QPoint(200, 200))
+
+    assert captured["indices"] == [1, 3]
+    assert [ref.source_index for ref in captured["refs"]] == [1, 3]
+    urls = captured["urls"]
+    assert len(urls) == 2
+    assert all(Path(url).suffix == ".pdf" and Path(url).exists() for url in urls)
+    # Dragging does not reorder or renumber the selection.
+    assert grid.selection_manager.selection == {1, 3}
+    assert (cards[1].selection_rank, cards[3].selection_rank) == (1, 2)
 
 
 def test_drag_threshold_respected(qtbot, five_page_pdf, monkeypatch):
