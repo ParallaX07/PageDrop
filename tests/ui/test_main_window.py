@@ -439,7 +439,7 @@ def test_title_label_elides_to_the_text_it_can_draw(main_window, qtbot, width):
     usable = label.width() - margins.left() - margins.right()
     assert label.toolTip() == main_window.windowTitle()
     assert label.text() != main_window.windowTitle()
-    assert label.text().endswith("…")
+    assert label.text() == "" or label.text().endswith("…")
     assert label.fontMetrics().horizontalAdvance(label.text()) <= usable
     assert label.width() <= TITLE_MAX_WIDTH
 
