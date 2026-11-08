@@ -2175,6 +2175,7 @@ class PdfViewerWidget(QWidget):
         self._hit_label = QLabel("")
         self._hit_label.setObjectName("PdfViewerHitLabel")
         self._hit_label.setAccessibleName("Search results")
+        self._hit_label.setFont(tabular_font())
         find_layout.addWidget(self._hit_label)
         self._ocr_button = QToolButton()
         self._ocr_button.setText("Use OCR")

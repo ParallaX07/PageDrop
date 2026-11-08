@@ -66,6 +66,14 @@ _SKELETON_PULSE_MS = 500
 _SKELETON_PULSE_EASE = QEasingCurve.Type.InOutSine
 
 
+def drag_badge_font() -> QFont:
+    """Font for the count chip painted on a drag preview."""
+    font = tabular_font()
+    font.setPixelSize(13)
+    font.setWeight(QFont.Weight.Medium)
+    return font
+
+
 class PageCard(BaseFileCard):
     context_menu_requested = pyqtSignal(int, QPoint)
 
@@ -593,10 +601,7 @@ class PageCard(BaseFileCard):
             painter.drawPixmap(offset, offset, scaled)
 
         badge_text = f"×{count}"
-        badge_font = tabular_font()
-        badge_font.setPixelSize(13)
-        badge_font.setWeight(QFont.Weight.Medium)
-        painter.setFont(badge_font)
+        painter.setFont(drag_badge_font())
 
         metrics = painter.fontMetrics()
         badge_w = metrics.horizontalAdvance(badge_text) + 10

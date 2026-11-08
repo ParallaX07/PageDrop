@@ -623,7 +623,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px {FORM_BUTTON_WIDTH}px 6px {SPACE_2}px;
+        padding: 6px {SPACE_2}px;
         min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
     }}
 
@@ -664,7 +664,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        padding: 6px {FORM_BUTTON_WIDTH}px 6px 8px;
+        padding: 6px 8px;
         selection-background-color: {ink};
         selection-color: {on_ink};
     }}
@@ -1599,7 +1599,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont,
     QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize {{
         min-height: 24px;
-        padding: 2px {FORM_BUTTON_WIDTH}px 2px 4px;
+        padding: 2px 4px;
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         background-color: {bg_card};

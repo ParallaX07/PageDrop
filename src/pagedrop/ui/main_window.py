@@ -775,7 +775,7 @@ class MainWindow(QMainWindow):
         self._selection_toolbar_label = QLabel()
         self._selection_toolbar_label.setObjectName("ToolbarSelectionCount")
         self._selection_toolbar_label.setFont(tabular_font())
-        self._selection_toolbar_label.setFixedWidth(130)
+        self._selection_toolbar_label.setFixedWidth(180)
         self._selection_toolbar_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self._selection_toolbar_action = toolbar.addWidget(self._selection_toolbar_label)
         toolbar.addAction(a["select_all"])

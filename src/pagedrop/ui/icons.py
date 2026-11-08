@@ -31,6 +31,8 @@ _refresh_callbacks: list[Callable[[], None] | WeakMethod] = []
 # Shared by every window and removed at exit; a window's own manager is gone
 # once that window closes while the style sheet still points at these files.
 _indicator_manager: TempManager | None = None
+# Indicator PNGs handed to the style sheet, so a deleted file can be noticed.
+_issued_indicators: set[Path] = set()
 
 
 def available_names() -> frozenset[str]:
@@ -162,9 +164,26 @@ def _render_pixmap(svg_utf8: bytes, size: int, ratio: float = 1.0) -> QPixmap:
 
 def _indicator_dir() -> Path:
     global _indicator_manager
-    if _indicator_manager is None:
+    # A cleaner of /tmp may remove the directory while the app runs; a fresh
+    # manager brings back the owner marker and the exit cleanup.
+    if _indicator_manager is None or not _indicator_manager.get_dir().is_dir():
         _indicator_manager = TempManager()
     return _indicator_manager.get_dir()
+
+
+def indicator_files_present() -> bool:
+    """False once if an indicator image handed out earlier has gone missing.
+
+    Missing files are forgotten, so a tint no longer in use cannot keep
+    reporting a loss; rebuilding the style sheet re-renders the ones in use.
+    """
+    missing = {
+        path
+        for path in _issued_indicators
+        if not (path.is_file() and path.with_name(f"{path.stem}@2x.png").is_file())
+    }
+    _issued_indicators.difference_update(missing)
+    return not missing
 
 
 def indicator_path(
@@ -191,4 +210,5 @@ def indicator_path(
     except (OSError, ValueError) as exc:
         _LOG.warning("Could not render indicator image %r: %s", name, exc)
         return None
+    _issued_indicators.add(target)
     return target.as_posix()

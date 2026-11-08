@@ -410,3 +410,44 @@ def test_theme_change_points_the_sheet_at_new_images(qapp, isolated_settings):
     finally:
         set_light_theme(False)
         app.setStyleSheet(previous)
+
+
+def test_removed_indicator_directory_is_recreated_with_images(qapp):
+    import shutil
+    from pathlib import Path
+
+    from pagedrop.ui import icons
+    from pagedrop.ui.theme import app_stylesheet
+
+    app_stylesheet(light=True)
+    old = icons._indicator_dir()
+    shutil.rmtree(old)
+
+    urls = _image_urls(app_stylesheet(light=True))
+    assert urls
+    for url in urls:
+        assert Path(url).is_file()
+        assert Path(url.replace(".png", "@2x.png")).is_file()
+    fresh = icons._indicator_dir()
+    assert fresh != old and fresh.is_dir()
+    assert (fresh / ".pagedrop_owner").is_file()
+
+
+def test_indicator_files_present_reports_a_loss_once(qapp):
+    from pathlib import Path
+
+    from pagedrop.ui import icons
+    from pagedrop.ui.theme import app_stylesheet
+
+    url = Path(_image_urls(app_stylesheet(light=True))[0])
+    icons.indicator_files_present()  # forget files lost in earlier tests
+    assert icons.indicator_files_present() is True
+
+    url.unlink()
+    assert icons.indicator_files_present() is False
+    # The loss is forgotten, so an unused tint cannot report it again.
+    assert icons.indicator_files_present() is True
+
+    app_stylesheet(light=True)
+    assert url.is_file()
+    assert icons.indicator_files_present() is True

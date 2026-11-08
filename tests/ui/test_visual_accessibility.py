@@ -1974,7 +1974,27 @@ def test_tabular_font_survives_app_stylesheet_reapply(qtbot):
         app.setStyleSheet(previous)
 
 
-def test_tabular_font_applied_to_numeric_displays(qtbot):
+def test_tabular_font_applied_to_numeric_displays(qtbot, main_window):
+    from pagedrop.ui.page_card import drag_badge_font
+    from pagedrop.ui.pdf_viewer import PdfViewerWidget
+    from pagedrop.ui.tools_window import ToolsWindow
+
+    badge = drag_badge_font()
+    assert badge.isFeatureSet(_TNUM)
+    assert badge.pixelSize() == 13
+
+    for label in (main_window._selection_toolbar_label, main_window._selection_status):
+        assert label.font().isFeatureSet(_TNUM)
+
+    viewer = PdfViewerWidget()
+    qtbot.addWidget(viewer)
+    for widget in (viewer._page_edit, viewer._zoom_button, viewer._hit_label):
+        assert widget.font().isFeatureSet(_TNUM)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    assert tools._match_label.font().isFeatureSet(_TNUM)
+
     card = PageCard(0)
     qtbot.addWidget(card)
     for widget in (card._page_overlay, card._rotation_overlay, card._page_label):
@@ -2300,3 +2320,77 @@ def test_window_control_icons_retint_on_theme_change(qtbot, main_window, themed_
     finally:
         set_light_theme(False)
         icons.refresh_icons()
+
+
+@pytest.mark.parametrize("kind", ["check", "radio"])
+@pytest.mark.parametrize("light", [False, True])
+def test_disabled_checked_indicator_draws_the_disabled_mark(qtbot, themed_app, light, kind):
+    from PyQt6.QtWidgets import QCheckBox, QRadioButton
+
+    from pagedrop.ui.theme import blend
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    widget = QCheckBox() if kind == "check" else QRadioButton()
+    widget.setChecked(True)
+    widget.setEnabled(False)
+    host = _hosted(qtbot, widget)
+    img = host.grab().toImage()
+    area = _indicator_interior(widget)
+    # Not the ink fill of an enabled control: a muted mark on the plain surface.
+    assert _exact_count(img, area, theme.ink) == 0
+    assert _exact_count(img, area, theme.raised) >= 40
+    assert _closer_to(img, area, blend(theme.text_muted, theme.raised, 0.5), theme.raised) >= 6
+
+
+def test_selection_count_label_fits_the_longest_range(main_window, themed_app):
+    from pagedrop.assets import register_fonts
+
+    # Measure in the bundled UI font, which is wider than the fallbacks.
+    register_fonts()
+    themed_app()
+    label = main_window._selection_toolbar_label
+    label.ensurePolished()
+    assert label.fontMetrics().horizontalAdvance("Pages 1000–1000 selected") <= label.width()
+
+
+def test_spin_and_combo_text_stops_before_the_buttons(qtbot, themed_app):
+    from PyQt6.QtWidgets import (
+        QComboBox,
+        QDoubleSpinBox,
+        QSpinBox,
+        QStyle,
+        QStyleOptionComboBox,
+        QStyleOptionSpinBox,
+    )
+
+    themed_app(light=True)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    spins = (QSpinBox(), QDoubleSpinBox())
+    combo = QComboBox()
+    combo.addItem("A long item that has to be elided before the drop-down")
+    for widget in (*spins, combo):
+        layout.addWidget(widget)
+    _show(qtbot, host)
+    QApplication.processEvents()
+
+    for spin in spins:
+        option = QStyleOptionSpinBox()
+        option.initFrom(spin)
+        option.subControls = QStyle.SubControl.SC_All
+        up = spin.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, option, QStyle.SubControl.SC_SpinBoxUp, spin
+        )
+        assert spin.lineEdit().geometry().right() + 1 <= up.left()
+    option = QStyleOptionComboBox()
+    option.initFrom(combo)
+    option.subControls = QStyle.SubControl.SC_All
+    style = combo.style()
+    field = style.subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxEditField, combo
+    )
+    arrow = style.subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, combo
+    )
+    assert field.right() + 1 <= arrow.left()
