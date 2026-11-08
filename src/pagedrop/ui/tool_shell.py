@@ -37,6 +37,7 @@ from pagedrop.core.jobs import (
 from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path, local_paths_from_mime
+from pagedrop.ui.accessibility import set_field_error_state
 from pagedrop.ui.dialogs import (
     confirm_overwrite,
     prompt_pdf_password,
@@ -619,6 +620,7 @@ def show_field_error(field: QWidget, message: str) -> QLabel:
     if isinstance(error, QLabel):
         error.setText(message)
         error.show()
+        set_field_error_state(field, True)
         field.setFocus(Qt.FocusReason.OtherFocusReason)
         return error
     error = QLabel(message, field.parentWidget())
@@ -626,6 +628,7 @@ def show_field_error(field: QWidget, message: str) -> QLabel:
     error.setWordWrap(True)
     error.setAccessibleName(message)
     field.setProperty("toolFieldError", error)
+    set_field_error_state(field, True)
     for layout in [field.parentWidget().layout() if field.parentWidget() else None]:
         if isinstance(layout, QFormLayout):
             row, _role = layout.getWidgetPosition(field)
@@ -674,6 +677,7 @@ def clear_field_error(field: QWidget) -> None:
     error = field.property("toolFieldError")
     if isinstance(error, QLabel):
         error.hide()
+    set_field_error_state(field, False)
 
 
 class _ToolHelpPopup(QFrame):

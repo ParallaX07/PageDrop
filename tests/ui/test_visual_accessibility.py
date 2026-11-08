@@ -194,6 +194,11 @@ def test_stylesheet_includes_focus_rings_for_controls():
     sheet = app_stylesheet()
     assert "QToolBar QToolButton:focus" in sheet
     assert "QToolButton:checked" in sheet
+    assert "QToolButton:checked:focus" in sheet
+    assert "QPushButton:disabled" in sheet
+    assert 'QPushButton[destructive="true"]:pressed' in sheet
+    assert 'QPushButton[destructive="true"]:focus' in sheet
+    assert 'QPushButton[destructive="true"]:disabled' in sheet
     assert "QMenuBar::item:selected" in sheet
     # Menubar ::item:focus highlights every item under Qt — do not use it.
     assert "QMenuBar::item:focus" not in sheet
@@ -211,12 +216,30 @@ def test_stylesheet_includes_focus_rings_for_controls():
     assert "QCheckBox," in sheet
     assert "QLineEdit {" in sheet
     assert "QSlider#ZoomSlider:focus" in sheet
+    assert "QToolBar::separator" in sheet
+    assert "QSlider::handle:horizontal" in sheet
+    assert "QMenu::item:disabled" in sheet
+    assert "QListView," in sheet
+    assert "QTreeView," in sheet
     assert "QPushButton#ZoomButton:focus" in sheet
     assert "QTabWidget#PdfViewerSide::pane" in sheet
     assert "QCheckBox:focus::indicator" not in sheet
     assert "QRadioButton:focus::indicator" not in sheet
     assert "QCheckBox::indicator:focus" in sheet
     assert "QRadioButton::indicator:focus" in sheet
+    for control in (
+        "QLineEdit",
+        "QComboBox",
+        "QSpinBox",
+        "QDoubleSpinBox",
+        "QTextEdit",
+        "QPlainTextEdit",
+    ):
+        assert f"{control}:hover:!focus:enabled" in sheet
+        assert f"{control}:disabled" in sheet
+        assert f'{control}[error="true"]' in sheet
+    assert "QTextBrowser:disabled" in sheet
+    assert "invalid" not in sheet
 
 
 def test_checkbox_focus_ring_stays_on_indicator(qtbot, isolated_settings):
@@ -625,6 +648,7 @@ def test_toolbar_secondary_is_ghost_not_primary():
         )[0]
         assert "transparent" in secondary
         assert theme.ink not in secondary
+        assert f"color: {theme.text}" in secondary
         primary = sheet.split("QPushButton#ToolbarPrimary,")[1].split(
             "QPushButton#ToolbarPrimary:hover"
         )[0]
@@ -1594,7 +1618,7 @@ def test_focus_rules_use_ring_token_not_accent(mode):
     sheet = re.sub(r"/\*.*?\*/", "", app_stylesheet(**mode), flags=re.S)
     ring = _ring_for(mode["light"])
     # Primary buttons and selected items sit on an ACCENT fill; they use ink instead.
-    allowed_accent = ("ToolbarPrimary", "::handle", "::item:selected:focus")
+    allowed_accent = ("ToolbarPrimary", "::handle", "::item:selected:focus", ":default:focus")
     seen = 0
     for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
         if ":focus" not in selector:
@@ -1939,7 +1963,7 @@ _TNUM = QFont.Tag("tnum")
 
 # (font-size px, font-weight): page title, section title, panel title,
 # body, label, caption.
-_TYPE_SCALE = {(22, 600), (18, 600), (15, 600), (13, 400), (13, 500), (12, 400)}
+_TYPE_SCALE = {(22, 600), (18, 600), (15, 600), (13, 400), (13, 500), (13, 600), (12, 400)}
 
 
 def test_tabular_font_sets_tnum_without_pinning_size():
@@ -2394,3 +2418,528 @@ def test_spin_and_combo_text_stops_before_the_buttons(qtbot, themed_app):
         QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, combo
     )
     assert field.right() + 1 <= arrow.left()
+
+
+def _rule_bodies(sheet: str, selector: str) -> list[str]:
+    return [body for sel, body in _qss_rules(sheet) if selector in [x.strip() for x in sel.split(",")]]
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_secondary_text_and_disabled_text_follow_the_button_spec(light):
+    from pagedrop.ui.theme import blend
+
+    theme = _theme_for(light)
+    sheet = app_stylesheet(light=light)
+    faded = blend(theme.text, theme.chrome, 0.5)
+    assert faded != theme.text
+    for selector in ("QPushButton", "QPushButton#ToolbarSecondary"):
+        (rest,) = _rule_bodies(sheet, selector)
+        assert f"color: {theme.text};" in rest
+        assert "background-color: transparent" in rest
+        (off,) = _rule_bodies(sheet, f"{selector}:disabled")
+        assert f"color: {faded};" in off
+        assert "background-color: transparent" in off
+    for selector in ("QToolButton:disabled", 'QPushButton[destructive="true"]:disabled'):
+        (off,) = _rule_bodies(sheet, selector)
+        assert f"color: {faded};" in off
+    (primary_off,) = _rule_bodies(sheet, "QPushButton#ToolbarPrimary:disabled")
+    assert f"background-color: {blend(theme.ink, theme.chrome, 0.5)};" in primary_off
+    assert f"color: {blend(theme.on_ink, theme.chrome, 0.5)};" in primary_off
+    (primary,) = _rule_bodies(sheet, "QPushButton#ToolbarPrimary")
+    assert "font-weight: 600" in primary
+
+
+def _message_box_with_destructive(qtbot, *, default_destructive: bool):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pagedrop.ui.dialogs import fit_message_box_buttons
+
+    box = QMessageBox()
+    box.setText("Discard changes?")
+    discard = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+    keep = box.addButton("Keep editing", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(discard if default_destructive else keep)
+    fit_message_box_buttons(box)
+    _show(qtbot, box)
+    QApplication.processEvents()
+    return box, discard, keep
+
+
+def _inner_border_pixel(img, rect):
+    """Second pixel in from the left edge: ring only when the border is 2px."""
+    return img.pixelColor(rect.left() + 1, rect.center().y()).name().upper()
+
+
+def _button_rect(box, button):
+    from PyQt6.QtCore import QRect
+
+    return QRect(button.mapTo(box, button.rect().topLeft()), button.size())
+
+
+@pytest.mark.parametrize("default_destructive", [False, True], ids=["safe-default", "danger-default"])
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_destructive_button_keeps_danger_look_in_message_box(
+    qtbot, themed_app, light, default_destructive
+):
+    themed_app(light=light)
+    theme = _theme_for(light)
+    box, discard, keep = _message_box_with_destructive(qtbot, default_destructive=default_destructive)
+    img = box.grab().toImage()
+    danger_rect = _button_rect(box, discard)
+    keep_rect = _button_rect(box, keep)
+    # The label is drawn in danger and the fill is never ink. The default
+    # button is focused, so its border is the ring; judge the interior.
+    inside = danger_rect.adjusted(4, 4, -4, -4)
+    assert _closer_to(img, inside, theme.danger, theme.chrome) >= 20
+    assert _exact_count(img, danger_rect, theme.ink) == 0
+    if not default_destructive:
+        assert _exact_count(img, danger_rect, theme.danger) >= 40
+    # The other button is the ink-filled default only when it is the default.
+    assert (_exact_count(img, keep_rect, theme.ink) > 100) == (not default_destructive)
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_focused_destructive_button_shows_focus_ring(qtbot, themed_app, light):
+    themed_app(light=light)
+    theme = _theme_for(light)
+    ring = _ring_for(light)
+    box, discard, _keep = _message_box_with_destructive(qtbot, default_destructive=False)
+    rect = _button_rect(box, discard)
+    assert _inner_border_pixel(box.grab().toImage(), rect) != ring.upper()
+    _focus(qtbot, discard)
+    img = box.grab().toImage()
+    assert _inner_border_pixel(img, rect) == ring.upper()
+    # The label keeps the danger colour.
+    assert _closer_to(img, rect.adjusted(4, 4, -4, -4), theme.danger, theme.chrome) >= 20
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_checked_tool_button_shows_focus_ring(qtbot, themed_app, light):
+    themed_app(light=light)
+    ring = _ring_for(light)
+    button = QToolButton()
+    button.setText("Grid")
+    button.setCheckable(True)
+    button.setChecked(True)
+    host = _hosted(qtbot, button)
+    button.clearFocus()
+    QApplication.processEvents()
+    rect = button.geometry()
+    assert _inner_border_pixel(host.grab().toImage(), rect) != ring.upper()
+    _focus(qtbot, button)
+    assert _inner_border_pixel(host.grab().toImage(), rect) == ring.upper()
+
+
+def _input_factories():
+    from PyQt6.QtWidgets import (
+        QComboBox,
+        QDoubleSpinBox,
+        QPlainTextEdit,
+        QSpinBox,
+        QTextEdit,
+    )
+
+    def combo():
+        box = QComboBox()
+        box.addItems(["One", "Two"])
+        return box
+
+    return {
+        "line": QLineEdit,
+        "page-edit": lambda: _named(QLineEdit(), "PdfViewerPageEdit"),
+        "tools-search": lambda: _named(QLineEdit(), "ToolsSearch"),
+        "combo": combo,
+        "spin": QSpinBox,
+        "double-spin": QDoubleSpinBox,
+        "text": QTextEdit,
+        "plain-text": QPlainTextEdit,
+    }
+
+
+def _named(widget, name):
+    widget.setObjectName(name)
+    return widget
+
+
+def _count_colour(widget, colour: str) -> int:
+    """Pixels of *colour* along the widget's frame (outer 3px)."""
+    from PyQt6.QtGui import QColor
+
+    img = widget.window().grab().toImage()
+    target = QColor(colour)
+    rect = widget.geometry()
+    return sum(
+        1
+        for x in range(rect.left(), rect.right() + 1)
+        for y in range(rect.top(), rect.bottom() + 1)
+        if (
+            min(x - rect.left(), rect.right() - x, y - rect.top(), rect.bottom() - y) < 3
+            and img.pixelColor(x, y) == target
+        )
+    )
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+@pytest.mark.parametrize(
+    "kind",
+    ["line", "page-edit", "tools-search", "combo", "spin", "double-spin", "text", "plain-text"],
+)
+def test_error_state_paints_danger_border_and_clears(qtbot, kind, light):
+    from pagedrop.ui.accessibility import set_field_error_state
+    from pagedrop.ui.theme import DARK, LIGHT
+
+    theme = LIGHT if light else DARK
+    app = QApplication.instance()
+    assert app is not None
+    app.setStyleSheet(app_stylesheet(light=light))
+    try:
+        host = QWidget()
+        lay = QVBoxLayout(host)
+        field = _input_factories()[kind]()
+        other = QLineEdit()
+        lay.addWidget(field)
+        lay.addWidget(other)
+        qtbot.addWidget(host)
+        host.resize(320, 200)
+        host.show()
+        qtbot.waitExposed(host)
+
+        assert _count_colour(field, theme.danger) == 0
+
+        set_field_error_state(field, True)
+        qtbot.waitUntil(lambda: _count_colour(field, theme.danger) > 0, timeout=1000)
+
+        # A focused error field keeps both the focus width and the danger colour.
+        field.setFocus()
+        qtbot.waitUntil(field.hasFocus, timeout=1000)
+        focused_danger = _count_colour(field, theme.danger)
+        assert focused_danger > 0
+        assert _count_colour(field, theme.focus) == 0
+
+        other.setFocus()
+        qtbot.waitUntil(other.hasFocus, timeout=1000)
+        set_field_error_state(field, False)
+        qtbot.waitUntil(lambda: _count_colour(field, theme.danger) == 0, timeout=1000)
+
+        field.setFocus()
+        qtbot.waitUntil(field.hasFocus, timeout=1000)
+        assert _count_colour(field, theme.focus) > 0
+    finally:
+        app.setStyleSheet("")
+
+
+def test_set_field_error_state_is_idempotent(qtbot):
+    from pagedrop.ui.accessibility import set_field_error_state
+
+    field = QLineEdit()
+    qtbot.addWidget(field)
+    set_field_error_state(field, False)
+    assert not field.property("error")
+    set_field_error_state(field, True)
+    set_field_error_state(field, True)
+    assert field.property("error") is True
+    set_field_error_state(field, False)
+    assert field.property("error") is False
+    label = QLabel("no rule")
+    qtbot.addWidget(label)
+    set_field_error_state(label, True)
+    assert label.property("error") is True
+
+
+# --- Separators, menus and sliders ------------------------------------------
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_toolbar_separator_paints_the_line_token(qtbot, themed_app, light):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QToolBar
+
+    themed_app(light=light)
+    bar = QToolBar()
+    bar.addAction("one")
+    bar.addSeparator()
+    bar.addAction("two")
+    _show(qtbot, bar)
+    img = bar.grab().toImage()
+    # The bar's own bottom border also uses the line token, so look above it.
+    body = QRect(0, 0, img.width(), img.height() - 2)
+    assert _exact_count(img, body, _theme_for(light).line) >= 10
+    assert _exact_count(img, QRect(0, 0, img.width(), img.height()), "#D9D9D9") == 0
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_disabled_active_menu_item_shows_no_fill_or_ring(qtbot, themed_app, light):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QColor, QImage, QPainter
+    from PyQt6.QtWidgets import QMenu, QStyle, QStyleOptionMenuItem
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    menu = QMenu()
+    qtbot.addWidget(menu)
+    menu.addAction("Item")
+    menu.show()
+    qtbot.waitExposed(menu)
+    rect = QRect(0, 0, 120, 30)
+
+    def painted(enabled: bool) -> int:
+        # Fusion never makes a disabled item current, but other platform
+        # styles do, so draw the active + disabled state directly.
+        img = QImage(rect.size(), QImage.Format.Format_ARGB32)
+        img.fill(QColor(theme.raised))
+        opt = QStyleOptionMenuItem()
+        opt.initFrom(menu)
+        opt.rect = rect
+        opt.text = "Item"
+        opt.menuItemType = QStyleOptionMenuItem.MenuItemType.Normal
+        opt.state = QStyle.StateFlag.State_Selected
+        if enabled:
+            opt.state |= QStyle.StateFlag.State_Enabled
+        painter = QPainter(img)
+        menu.style().drawControl(QStyle.ControlElement.CE_MenuItem, opt, painter, menu)
+        painter.end()
+        return _exact_count(img, rect.adjusted(0, 0, -1, -1), theme.ink_tint) + _exact_count(
+            img, rect.adjusted(0, 0, -1, -1), _ring_for(light)
+        )
+
+    assert painted(enabled=True) > 0
+    assert painted(enabled=False) == 0
+
+
+@pytest.mark.parametrize("light", [False, True])
+@pytest.mark.parametrize("name", ["", "ZoomSlider", "WatermarkSlider"])
+def test_slider_handle_ink_then_focus_ring_then_disabled_marks(qtbot, themed_app, light, name):
+    from PyQt6.QtWidgets import QSlider
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    ring = _ring_for(light)
+    slider = QSlider(Qt.Orientation.Horizontal)
+    slider.setObjectName(name)
+    slider.setValue(50)
+    field = QLineEdit()
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.addWidget(field)
+    layout.addWidget(slider)
+    _show(qtbot, host)
+    _focus(qtbot, field)
+    assert _color_count(slider, theme.ink) >= 20
+    assert _color_count(slider, ring) == 0
+    _focus(qtbot, slider)
+    assert _color_count(slider, ring) >= 20
+    assert _color_count(slider, theme.ink) == 0
+    slider.setEnabled(False)
+    qtbot.waitUntil(lambda: not slider.isEnabled(), timeout=1000)
+    assert _color_count(slider, theme.ink) == 0
+    assert _color_count(slider, ring) == 0
+    assert _color_count(slider, theme.line) >= 20
+
+
+def _hover_press_fills(qtbot, slider):
+    """Handle-centre colour at rest, with the pointer over it, and pressed."""
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QStyle, QStyleOptionSlider
+
+    host = slider.window()
+    option = QStyleOptionSlider()
+    option.initFrom(slider)
+    option.orientation = slider.orientation()
+    option.minimum, option.maximum = slider.minimum(), slider.maximum()
+    option.sliderPosition = option.sliderValue = slider.value()
+    option.subControls = QStyle.SubControl.SC_All
+    centre = slider.style().subControlRect(
+        QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, slider
+    ).center()
+
+    def fill() -> str:
+        QApplication.processEvents()
+        return slider.grab().toImage().pixelColor(centre.x(), centre.y()).name().upper()
+
+    QTest.mouseMove(host, QPoint(1, 1))
+    rest = fill()
+    QTest.mouseMove(slider, centre)
+    hover = fill()
+    QTest.mousePress(slider, Qt.MouseButton.LeftButton, pos=centre)
+    pressed = fill()
+    QTest.mouseRelease(slider, Qt.MouseButton.LeftButton, pos=centre)
+    QTest.mouseMove(host, QPoint(1, 1))
+    return rest, hover, pressed
+
+
+@pytest.mark.parametrize("light", [False, True])
+@pytest.mark.parametrize("name", ["", "ZoomSlider", "WatermarkSlider"])
+def test_slider_handle_fill_follows_hover_and_pressed_states(qtbot, themed_app, light, name):
+    from PyQt6.QtWidgets import QSlider
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    slider = QSlider(Qt.Orientation.Horizontal)
+    slider.setObjectName(name)
+    slider.setValue(50)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.addWidget(slider)
+    host.resize(300, 80)
+    _show(qtbot, host)
+    rest, hover, pressed = _hover_press_fills(qtbot, slider)
+    assert rest == theme.raised.upper()
+    assert hover == theme.ink_tint.upper()
+    assert pressed == theme.line.upper()
+
+
+def _button_variants():
+    """Factories for each button role whose disabled look is styled separately."""
+    from PyQt6.QtWidgets import QPushButton
+
+    def push(name="", **props):
+        def make():
+            button = QPushButton("Run")
+            button.setObjectName(name)
+            for key, value in props.items():
+                button.setProperty(key, value)
+            return button
+
+        return make
+
+    def tool():
+        button = QToolButton()
+        button.setText("Run")
+        return button
+
+    return {
+        "default": push(),
+        "secondary": push("ToolbarSecondary"),
+        "destructive": push(destructive=True),
+        "tool": tool,
+        "primary": push("ToolbarPrimary"),
+        "result-available": push("ToolbarPrimary", resultAvailable=True),
+    }
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+@pytest.mark.parametrize("kind", ["push", "toolbar-tool"])
+@pytest.mark.parametrize("high_contrast", [False, True], ids=["normal", "hc"])
+def test_result_available_primary_shows_focus_ring(qtbot, themed_app, light, kind, high_contrast):
+    from PyQt6.QtWidgets import QPushButton, QToolBar
+
+    themed_app(light=light, high_contrast=high_contrast)
+    ring = _ring_for(light)
+    other = QLineEdit()
+    if kind == "push":
+        button = QPushButton("Run again")
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        layout.addWidget(other)
+        layout.addWidget(button)
+    else:
+        button = QToolButton()
+        button.setText("Run again")
+        host = QToolBar()
+        host.addWidget(other)
+        host.addWidget(button)
+    button.setObjectName("ToolbarPrimary")
+    button.setProperty("resultAvailable", True)
+    _show(qtbot, host)
+    _focus(qtbot, other)
+    resting = _count_colour(button, ring)
+    _focus(qtbot, button)
+    # In high contrast the resting edge is already the ring colour, so the
+    # focused ring shows as a wider band rather than from zero.
+    assert _count_colour(button, ring) >= resting + 20
+    if not high_contrast:
+        assert resting == 0
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+@pytest.mark.parametrize("kind", list(_button_variants()))
+def test_high_contrast_disabled_buttons_differ_from_enabled(qtbot, themed_app, light, kind):
+    themed_app(light=light, high_contrast=True)
+    button = _button_variants()[kind]()
+    host = _hosted(qtbot, button)
+    enabled = host.grab().toImage()
+    button.setEnabled(False)
+    QApplication.processEvents()
+    assert host.grab().toImage() != enabled
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_disabled_button_edges_stay_solid_outside_high_contrast(light):
+    sheet = app_stylesheet(light=light)
+    for selector in ("QPushButton", "QPushButton#ToolbarSecondary", "QPushButton#ToolbarPrimary"):
+        (off,) = _rule_bodies(sheet, f"{selector}:disabled")
+        assert "dashed" not in off
+    (tool_off,) = _rule_bodies(sheet, "QToolButton:disabled")
+    assert "border-color: transparent;" in tool_off
+
+
+def _declared(body: str, prop: str) -> str:
+    match = re.search(rf"(?<![-\w]){prop}:\s*([^;]+);", body)
+    assert match, (prop, body)
+    return match.group(1).strip()
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_high_contrast_disabled_primary_is_outlined_with_full_contrast_label(light):
+    theme = _theme_for(light)
+    sheet = app_stylesheet(light=light, high_contrast=True)
+    (off,) = _rule_bodies(sheet, "QPushButton#ToolbarPrimary:disabled")
+    assert _declared(off, "background-color") == "transparent"
+    assert _declared(off, "border-style") == "dashed"
+    assert _declared(off, "border-color") == theme.text
+    assert contrast_ratio(_declared(off, "color"), theme.chrome) >= 7.0
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_high_contrast_danger_keeps_7_to_1_and_a_distinct_pressed_fill(light):
+    theme = _theme_for(light)
+    sheet = app_stylesheet(light=light, high_contrast=True)
+    (rest,) = _rule_bodies(sheet, 'QPushButton[destructive="true"]')
+    (hover,) = _rule_bodies(sheet, 'QPushButton[destructive="true"]:hover')
+    (pressed,) = _rule_bodies(sheet, 'QPushButton[destructive="true"]:pressed')
+    (off,) = _rule_bodies(sheet, 'QPushButton[destructive="true"]:disabled')
+    danger = _declared(rest, "color")
+    for surface in (theme.chrome, theme.bar_top, theme.bar_tabs):
+        assert contrast_ratio(danger, surface) >= 7.0
+    assert contrast_ratio(theme.on_ink, _declared(hover, "background-color")) >= 7.0
+    pressed_fill = _declared(pressed, "background-color")
+    assert pressed_fill != _declared(hover, "background-color")
+    assert contrast_ratio(theme.on_ink, pressed_fill) >= 7.0
+    # The disabled label is the plain text colour, not the danger tint.
+    assert _declared(off, "color") == theme.text
+    # Outside high contrast the danger colour is the theme token.
+    normal = app_stylesheet(light=light)
+    assert _declared(_rule_bodies(normal, 'QPushButton[destructive="true"]')[0], "color") == theme.danger
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_free_text_format_fields_take_the_shared_hover_fill(qtbot, themed_app, light):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QFrame
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    bar = QFrame()
+    bar.setObjectName("FreeTextFormatBar")
+    layout = QVBoxLayout(bar)
+    other = QLineEdit()
+    field = QLineEdit()
+    field.setObjectName("FreeTextFormatText")
+    layout.addWidget(other)
+    layout.addWidget(field)
+    _show(qtbot, bar)
+    _focus(qtbot, other)  # hover never overrides focus
+
+    def inner_fill() -> str:
+        QApplication.processEvents()
+        point = field.geometry().center()
+        return bar.grab().toImage().pixelColor(point).name().upper()
+
+    QTest.mouseMove(bar, QPoint(1, 1))
+    assert inner_fill() == theme.raised.upper()
+    QTest.mouseMove(field, field.rect().center())
+    QApplication.processEvents()
+    assert inner_fill() != theme.raised.upper()
+    QTest.mouseMove(bar, QPoint(1, 1))

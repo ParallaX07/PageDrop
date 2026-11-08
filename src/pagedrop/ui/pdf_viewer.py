@@ -111,7 +111,9 @@ from pagedrop.core.pdf_service import (
 )
 from pagedrop.utils.safe_url import is_allowed_open_scheme
 from pagedrop.core.thread_policy import ensure_no_fitz_document
+from pagedrop.ui.accessibility import set_field_error_state
 from pagedrop.ui.busy_overlay import BusyOverlay
+from pagedrop.ui.dialogs import ask_named_confirmation
 from pagedrop.ui.theme import (
     CLOSE_TAB,
     COMMENT_PIN,
@@ -2364,15 +2366,13 @@ class PdfViewerWidget(QWidget):
         total = self._model.logical_count()
         if not page_text.isdigit() or not 1 <= int(page_text) <= total:
             message = f"Enter a page number from 1 to {total}."
-            self._page_edit.setProperty("invalid", True)
+            set_field_error_state(self._page_edit, True)
             self._page_edit.setAccessibleDescription(message)
             self._page_edit.setToolTip(message)
-            self._page_edit.style().unpolish(self._page_edit)
-            self._page_edit.style().polish(self._page_edit)
             self.status_message.emit(message)
             self._page_edit.setFocus()
             return
-        self._page_edit.setProperty("invalid", False)
+        set_field_error_state(self._page_edit, False)
         self._page_edit.setAccessibleDescription("")
         self._page_edit.setToolTip("Enter a page number")
         self.go_to_page(int(page_text) - 1)
@@ -2559,13 +2559,15 @@ class PdfViewerWidget(QWidget):
         if self._markup is None:
             self.status_message.emit("Open a document to flatten forms")
             return
-        reply = QMessageBox.question(
+        if not ask_named_confirmation(
             self,
-            "Flatten forms",
-            "Saving will flatten form fields into page content. They will no longer "
-            "be editable. Continue?",
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            title="Flatten forms",
+            text=(
+                "Saving will flatten form fields into page content. They will no "
+                "longer be editable. Continue?"
+            ),
+            action="Flatten",
+        ):
             return
         self._markup.push_form_flatten()
         self.refresh_markup_overlays()
@@ -3929,14 +3931,13 @@ class PdfViewerWidget(QWidget):
                     f"({scheme}):\n\n{link.uri}",
                 )
                 return
-            reply = QMessageBox.question(
+            confirmed = ask_named_confirmation(
                 self,
-                "Open link",
-                f"Open this link in your browser?\n\n{link.uri}",
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
+                title="Open link",
+                text=f"Open this link in your browser?\n\n{link.uri}",
+                action="Open link",
             )
-            if reply == QMessageBox.StandardButton.Open and not QDesktopServices.openUrl(url):
+            if confirmed and not QDesktopServices.openUrl(url):
                 QMessageBox.warning(
                     self,
                     "Open link",
@@ -3999,7 +4000,7 @@ class PdfViewerWidget(QWidget):
         text = f"Page {self._current_page + 1} of {total}"
         if not self._page_edit.hasFocus():
             self._page_edit.setText(text)
-            self._page_edit.setProperty("invalid", False)
+            set_field_error_state(self._page_edit, False)
         self._page_edit.setAccessibleName(f"Current page, {text}")
 
     # --- events -------------------------------------------------------------

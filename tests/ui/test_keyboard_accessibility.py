@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import pytest
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QToolButton
 
 from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
@@ -346,3 +347,123 @@ def test_grid_shortcuts_still_work_through_key_events(
     larger = tab.zoom_level
     qtbot.keyClick(grid, Qt.Key.Key_Minus)
     assert tab.zoom_level < larger
+
+
+def _focus_band(widget):
+    """The region that carries the focus ring: a check/radio indicator, else the edge."""
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QCheckBox, QRadioButton, QStyle, QStyleOptionButton
+
+    full = widget.rect()
+    if isinstance(widget, QCheckBox | QRadioButton):
+        option = QStyleOptionButton()
+        option.initFrom(widget)
+        option.rect = full
+        element = (
+            QStyle.SubElement.SE_CheckBoxIndicator
+            if isinstance(widget, QCheckBox)
+            else QStyle.SubElement.SE_RadioButtonIndicator
+        )
+        return widget.style().subElementRect(element, option, widget), False
+    return QRect(full), True
+
+
+def _ring_pixels(widget, colour: str) -> int:
+    """Pixels of ``colour`` in the widget's focus band (edge ring or indicator)."""
+    from PyQt6.QtGui import QColor
+
+    band, edge_only = _focus_band(widget)
+    img = widget.grab().toImage()
+    target = QColor(colour).rgb()
+    depth = 3
+    count = 0
+    for y in range(band.top(), band.bottom() + 1):
+        for x in range(band.left(), band.right() + 1):
+            on_edge = (
+                x - band.left() < depth
+                or band.right() - x < depth
+                or y - band.top() < depth
+                or band.bottom() - y < depth
+            )
+            if (on_edge or not edge_only) and img.pixelColor(x, y).rgb() == target:
+                count += 1
+    return count
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_preferences_tab_traversal_shows_focus_on_every_control(
+    qtbot, isolated_settings, light
+):
+    from PyQt6.QtWidgets import QApplication, QScrollArea, QWidget
+
+    from pagedrop.ui.preferences_dialog import PreferencesDialog
+    from pagedrop.ui.theme import app_stylesheet
+
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    app.setStyleSheet(app_stylesheet(light=light))
+    dialog = PreferencesDialog()
+    try:
+        dialog._advanced_button.click()
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        dialog.activateWindow()
+        qtbot.waitUntil(
+            lambda: dialog.isActiveWindow() and dialog.focusWidget() is not None,
+            timeout=2000,
+        )
+
+        expected = {
+            w
+            for w in dialog.findChildren(QWidget)
+            if w.focusPolicy() & Qt.FocusPolicy.TabFocus
+            and w.isVisible()
+            and w.isEnabled()
+        }
+        ring = _ring_for_theme(light)
+        start = dialog.focusWidget()
+        visited: list[QWidget] = []
+        no_ring: list[str] = []
+        for _ in range(len(expected) + 2):
+            current = dialog.focusWidget()
+            assert current is not None and current.isVisible() and current.isEnabled()
+            visited.append(current)
+            focused = _ring_pixels(current, ring)
+            current.clearFocus()
+            QApplication.processEvents()
+            resting = _ring_pixels(current, ring)
+            current.setFocus(Qt.FocusReason.TabFocusReason)
+            qtbot.waitUntil(current.hasFocus, timeout=1000)
+            scroll = dialog.findChild(QScrollArea, "PreferencesScroll")
+            if scroll.isAncestorOf(current):
+                qtbot.waitUntil(
+                    lambda c=current, s=scroll: s.viewport().rect().contains(
+                        c.mapTo(s.viewport(), c.rect().center())
+                    ),
+                    timeout=1000,
+                )
+            # The ring can share the label colour, so count only what focus adds.
+            if focused < resting + 8:
+                no_ring.append(f"{type(current).__name__}:{current.objectName()}")
+            qtbot.keyClick(current, Qt.Key.Key_Tab)
+            qtbot.waitUntil(lambda c=current: dialog.focusWidget() is not c, timeout=1000)
+            if dialog.focusWidget() is start:
+                break
+        else:
+            pytest.fail("Tab never returned to the first control")
+
+        assert expected <= set(visited), expected - set(visited)
+        assert not no_ring, no_ring
+    finally:
+        # Delete the dialog before the sheet is restored; a restyle with the
+        # dialog still alive crashes later restyles intermittently.
+        dialog.close()
+        dialog.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.setStyleSheet(previous)
+
+
+def _ring_for_theme(light: bool) -> str:
+    from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT
+
+    return FOCUS_RING_LIGHT if light else FOCUS_RING

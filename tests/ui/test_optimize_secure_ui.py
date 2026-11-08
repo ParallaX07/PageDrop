@@ -93,6 +93,7 @@ def test_encrypt_password_mismatch_blocked(qtbot, tmp_path, monkeypatch, isolate
 
     shell._encrypt_user_pw.setText("one-password")
     shell._encrypt_confirm_pw.setText("different")
+    assert shell._encrypt_confirm_pw.property("error") is True
 
     warned: list[str] = []
 
@@ -113,6 +114,8 @@ def test_encrypt_password_mismatch_blocked(qtbot, tmp_path, monkeypatch, isolate
     assert any("do not match" in t for t in warned)
     assert save_called["n"] == 0
     assert shell._encrypt_mismatch.isVisible()
+    shell._encrypt_confirm_pw.setText("one-password")
+    assert not shell._encrypt_confirm_pw.property("error")
     shell.close()
     tools.close()
 

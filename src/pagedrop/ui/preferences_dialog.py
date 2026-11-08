@@ -77,6 +77,8 @@ class PreferencesDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        scroll.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
         content = QWidget()
         content.setObjectName("PreferencesContent")
         root = QVBoxLayout(content)

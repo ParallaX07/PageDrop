@@ -143,7 +143,7 @@ def test_recovery_of_protected_source_retries_wrong_password(
     monkeypatch.setattr(main_window, "_prompt_pdf_password", prompt)
     monkeypatch.setattr("pagedrop.ui.main_window.process_is_alive", lambda pid: False)
     monkeypatch.setattr(
-        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.Yes
     )
 
     assert main_window.restore_recovery_drafts() == 1
@@ -164,7 +164,7 @@ def test_recovery_cancelled_password_reports_failure_and_keeps_draft(
     monkeypatch.setattr(main_window, "_prompt_pdf_password", lambda *a, **k: None)
     monkeypatch.setattr("pagedrop.ui.main_window.process_is_alive", lambda pid: False)
     monkeypatch.setattr(
-        QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.Yes
     )
     monkeypatch.setattr(
         QMessageBox, "warning", lambda _p, _t, text, *a, **k: warnings.append(text)

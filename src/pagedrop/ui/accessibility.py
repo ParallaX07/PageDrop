@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from pagedrop.ui import icons
 from pagedrop.ui import settings as app_settings
@@ -76,6 +76,21 @@ def refresh_themed_widgets(app: QApplication | None = None) -> None:
     from pagedrop.ui.icons import refresh_icons
 
     refresh_icons()
+
+
+def set_field_error_state(widget: QWidget, on: bool) -> None:
+    """Mark *widget* as invalid (or clear it) for the shared ``error`` QSS rule.
+
+    Repolishes only when the state changes; widgets without a matching rule
+    are left visually untouched.
+    """
+    if bool(widget.property("error")) == on:
+        return
+    widget.setProperty("error", on)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
 
 
 def apply_appearance(value: str) -> None:

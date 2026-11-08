@@ -302,7 +302,22 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Ring for a focused item on an ink fill; the focus colour cannot contrast
     # with it, so use the ink label colour.
     selected_focus_ring = on_ink
-    close_tab = t.danger
+    # High contrast pulls danger toward the text colour so a danger label
+    # keeps 7:1 on the chrome and both bars; the pressed fill steps further on
+    # so it still reads as pressed next to the hover fill.
+    close_tab = blend(t.danger, t.text, 0.7) if high_contrast else t.danger
+    close_pressed_bg = blend(t.danger, t.text, 0.5 if high_contrast else 0.8)
+    # QSS has no opacity: disabled controls are drawn as the enabled colours
+    # blended half-way into the chrome they sit on.
+    disabled_text = text_muted if high_contrast else blend(t.text, t.chrome, 0.5)
+    # Colour alone cannot mark "disabled" in high contrast (every label is the
+    # full text colour), so those controls also draw a dashed edge. A disabled
+    # primary drops its blended fill for the outlined treatment there.
+    disabled_border_style = "dashed" if high_contrast else "solid"
+    disabled_tool_border = border_subtle if high_contrast else "transparent"
+    primary_disabled_bg = "transparent" if high_contrast else blend(ink, t.chrome, 0.5)
+    primary_disabled_text = disabled_text if high_contrast else blend(on_ink, t.chrome, 0.5)
+    primary_disabled_border = border_subtle if high_contrast else primary_disabled_bg
     close_hover_bg = blend(t.danger, bg_bar, 0.14)
     close_tab_hover_bg = blend(t.danger, bg_tab_bar, 0.14)
     close_tab_pressed_bg = blend(t.danger, bg_tab_bar, 0.26)
@@ -426,6 +441,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {focus_ring};
     }}
 
+    QMenu::item:disabled {{
+        color: {disabled_text};
+        background-color: transparent;
+        border-color: transparent;
+    }}
+
     QMenu::separator {{
         height: 1px;
         background: {border_subtle};
@@ -452,6 +473,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {focus_ring};
     }}
 
+    QListView,
+    QTreeView,
     QListWidget,
     QTreeWidget {{
         background-color: {bg_surface};
@@ -464,6 +487,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     /* The transparent border is paid for out of the padding, so the focus
        ring never changes an item's size. */
+    QListView::item,
+    QTreeView::item,
     QListWidget::item,
     QTreeWidget::item {{
         padding: {8 - focus_width}px {10 - focus_width}px;
@@ -472,26 +497,41 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
     }}
 
+    QListView::item:selected,
+    QTreeView::item:selected,
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
         background-color: {ink};
         color: {on_ink};
     }}
 
+    QListView::item:focus,
+    QTreeView::item:focus,
     QListWidget::item:focus,
     QTreeWidget::item:focus {{
         border-color: {focus_ring};
     }}
 
     /* Selected items fill with ACCENT, which the ring cannot contrast with. */
+    QListView::item:selected:focus,
+    QTreeView::item:selected:focus,
     QListWidget::item:selected:focus,
     QTreeWidget::item:selected:focus {{
         border-color: {selected_focus_ring};
     }}
 
+    QListView::item:hover:!selected,
+    QTreeView::item:hover:!selected,
     QListWidget::item:hover:!selected,
     QTreeWidget::item:hover:!selected {{
         background-color: {bg_card_hover};
+    }}
+
+    QListView::item:disabled,
+    QTreeView::item:disabled,
+    QListWidget::item:disabled,
+    QTreeWidget::item:disabled {{
+        color: {disabled_text};
     }}
 
     QLabel#CommandPaletteHint {{
@@ -500,7 +540,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton {{
-        background-color: {bg_card};
+        background-color: transparent;
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
@@ -522,8 +562,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton:disabled {{
-        color: {text_muted};
+        background-color: transparent;
+        color: {disabled_text};
         border-color: {border_subtle};
+        border-style: {disabled_border_style};
     }}
 
     QCheckBox,
@@ -625,10 +667,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px {SPACE_2}px;
         min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
-    }}
-
-    QComboBox:hover {{
-        border-color: {border_hover};
+        combobox-popup: 0;
     }}
 
     QComboBox:focus {{
@@ -759,6 +798,52 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {focus_ring};
     }}
 
+    /* Shared input states. Hover never overrides focus; a read-only
+       QTextBrowser is a display surface, so it only gets the disabled look. */
+    QLineEdit:hover:!focus:enabled,
+    QComboBox:hover:!focus:enabled,
+    QSpinBox:hover:!focus:enabled,
+    QDoubleSpinBox:hover:!focus:enabled,
+    QTextEdit:hover:!focus:enabled,
+    QPlainTextEdit:hover:!focus:enabled {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+
+    QTextBrowser:hover:!focus:enabled {{
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QLineEdit:disabled,
+    QComboBox:disabled,
+    QSpinBox:disabled,
+    QDoubleSpinBox:disabled,
+    QTextEdit:disabled,
+    QPlainTextEdit:disabled,
+    QTextBrowser:disabled {{
+        background-color: {bg_surface};
+        color: {disabled_text};
+        border: 1px solid {border_subtle};
+    }}
+
+    /* One dynamic error state, last so a focused field keeps its 2px focus
+       width in the danger colour. */
+    QLineEdit[error="true"],
+    QComboBox[error="true"],
+    QSpinBox[error="true"],
+    QDoubleSpinBox[error="true"],
+    QTextEdit[error="true"],
+    QPlainTextEdit[error="true"],
+    QLineEdit[error="true"]:hover:!focus:enabled,
+    QComboBox[error="true"]:hover:!focus:enabled,
+    QSpinBox[error="true"]:hover:!focus:enabled,
+    QDoubleSpinBox[error="true"]:hover:!focus:enabled,
+    QTextEdit[error="true"]:hover:!focus:enabled,
+    QPlainTextEdit[error="true"]:hover:!focus:enabled {{
+        border-color: {close_tab};
+    }}
+
     QGroupBox {{
         color: {text_primary};
         border: 1px solid {border_subtle};
@@ -774,6 +859,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
     }}
 
+    QGroupBox::title:disabled {{
+        color: {disabled_text};
+    }}
+
     /* Encrypt permissions — surface + card radius so it matches section language. */
     QGroupBox#EncryptPermissions {{
         background-color: {bg_surface};
@@ -785,6 +874,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
     }}
 
+    QGroupBox#EncryptPermissions::title:disabled {{
+        color: {disabled_text};
+    }}
+
     QToolBar {{
         background-color: {bg_toolbar};
         border: none;
@@ -793,8 +886,19 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_2}px {SPACE_3}px;
     }}
 
-    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync.
-       R3: default tools are flat/hairline; filled primary + outline secondary stay. */
+    QToolBar::separator:horizontal {{
+        background: {border_subtle};
+        width: 1px;
+        margin: 6px {SPACE_2}px;
+    }}
+
+    QToolBar::separator:vertical {{
+        background: {border_subtle};
+        height: 1px;
+        margin: {SPACE_2}px 13px;
+    }}
+
+    /* Ghost buttons: viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
     QToolButton,
     QToolBar QToolButton {{
         background-color: transparent;
@@ -835,11 +939,16 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {ink_hover};
     }}
 
+    QToolButton:checked:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
     QToolButton:disabled,
     QToolBar QToolButton:disabled {{
-        color: {text_muted};
+        color: {disabled_text};
         background-color: transparent;
-        border-color: transparent;
+        border-color: {disabled_tool_border};
+        border-style: {disabled_border_style};
     }}
 
     QPushButton#ToolbarPrimary,
@@ -848,7 +957,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ink};
         color: {on_ink};
         border: 1px solid {ink_pressed};
-        font-weight: 500;
+        font-weight: 600;
         padding: 6px 14px;
     }}
 
@@ -873,10 +982,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton#ToolbarPrimary:disabled,
-    QPushButton#EmptyStateOpenButton:disabled {{
-        background-color: {bg_card_hover};
-        color: {text_muted};
-        border-color: {border_subtle};
+    QPushButton#EmptyStateOpenButton:disabled,
+    QToolBar QToolButton#ToolbarPrimary:disabled {{
+        background-color: {primary_disabled_bg};
+        color: {primary_disabled_text};
+        border-color: {primary_disabled_border};
+        border-style: {disabled_border_style};
     }}
 
     /* A finished output is the task's primary destination; rerun is quiet. */
@@ -894,11 +1005,25 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {border_hover};
     }}
 
-    /* Ghost / outline secondary — quieter than default fill, not accent primary. */
+    /* Transparent fill: the ordinary ring, not the on-ink one. */
+    QPushButton#ToolbarPrimary[resultAvailable="true"]:focus,
+    QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"]:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
+    QPushButton#ToolbarPrimary[resultAvailable="true"]:disabled,
+    QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"]:disabled {{
+        background-color: transparent;
+        color: {disabled_text};
+        border-color: {border_subtle};
+        border-style: {disabled_border_style};
+    }}
+
+    /* Secondary: outlined, same look as the default QPushButton. */
     QPushButton#ToolbarSecondary,
     QToolBar QToolButton#ToolbarSecondary {{
         background-color: transparent;
-        color: {text_muted};
+        color: {text_primary};
         border: 1px solid {border_default};
         font-weight: 500;
     }}
@@ -923,8 +1048,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ToolbarSecondary:disabled,
     QToolBar QToolButton#ToolbarSecondary:disabled {{
-        color: {text_muted};
+        color: {disabled_text};
         border-color: {border_subtle};
+        border-style: {disabled_border_style};
         background-color: transparent;
     }}
 
@@ -939,6 +1065,23 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {on_ink};
         border-color: {close_tab};
         background-color: {close_tab};
+    }}
+
+    QPushButton[destructive="true"]:pressed {{
+        color: {on_ink};
+        border-color: {close_pressed_bg};
+        background-color: {close_pressed_bg};
+    }}
+
+    QPushButton[destructive="true"]:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
+    QPushButton[destructive="true"]:disabled {{
+        color: {disabled_text};
+        border-color: {border_subtle};
+        border-style: {disabled_border_style};
+        background-color: transparent;
     }}
 
     QToolButton#NewTabButton {{
@@ -1037,71 +1180,99 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: transparent;
     }}
 
+    QSlider::groove:horizontal {{
+        background: {border_default};
+        height: 2px;
+        border-radius: 1px;
+    }}
+
+    QSlider::groove:vertical {{
+        background: {border_default};
+        width: 2px;
+        border-radius: 1px;
+    }}
+
+    QSlider::handle:horizontal {{
+        background: {bg_card};
+        border: 2px solid {ink};
+        width: 8px;
+        height: 8px;
+        margin: -5px 0;
+        border-radius: 6px;
+    }}
+
+    QSlider::handle:vertical {{
+        background: {bg_card};
+        border: 2px solid {ink};
+        width: 8px;
+        height: 8px;
+        margin: 0 -5px;
+        border-radius: 6px;
+    }}
+
+    QSlider::handle:hover {{
+        background: {bg_card_hover};
+    }}
+
+    QSlider::handle:pressed {{
+        background: {bg_pressed};
+    }}
+
+    QSlider::handle:horizontal:focus,
+    QSlider::handle:vertical:focus {{
+        border-color: {focus_ring};
+        border-width: {focus_width}px;
+        width: {12 - 2 * focus_width}px;
+        height: {12 - 2 * focus_width}px;
+    }}
+
+    QSlider::groove:horizontal:disabled,
+    QSlider::groove:vertical:disabled {{
+        background: {border_subtle};
+    }}
+
+    QSlider::handle:horizontal:disabled,
+    QSlider::handle:vertical:disabled {{
+        background: {bg_card};
+        border-color: {mark_disabled};
+    }}
+
     QSlider#ZoomSlider {{
         min-height: 20px;
     }}
 
     QSlider#ZoomSlider::groove:horizontal {{
-        background: {bg_base};
-        border: 1px solid {border_subtle};
-        height: 4px;
-        border-radius: 2px;
-    }}
-
-    QSlider#ZoomSlider::sub-page:horizontal {{
-        background: {ink};
-        border: 1px solid {ink_pressed};
-        height: 4px;
-        border-radius: 2px;
-    }}
-
-    QSlider#ZoomSlider::add-page:horizontal {{
-        background: {bg_base};
-        border: 1px solid {border_subtle};
-        height: 4px;
-        border-radius: 2px;
+        background: {border_default};
+        height: 2px;
+        border-radius: 1px;
     }}
 
     QSlider#ZoomSlider::handle:horizontal {{
-        background: {text_primary};
         border: 2px solid {ink};
-        width: 12px;
-        height: 12px;
+        width: 8px;
+        height: 8px;
         margin: -5px 0;
         border-radius: 6px;
-    }}
-
-    QSlider#ZoomSlider::handle:horizontal:hover {{
-        background: {on_ink};
-        border-color: {ink_hover};
     }}
 
     QSlider#ZoomSlider:focus {{
         background: transparent;
     }}
 
-    QSlider#ZoomSlider:focus::groove:horizontal {{
-        border: {focus_width}px solid {focus_ring};
+    QSlider#ZoomSlider::handle:horizontal:focus {{
+        border-color: {focus_ring};
+        border-width: {focus_width}px;
+        width: {12 - 2 * focus_width}px;
+        height: {12 - 2 * focus_width}px;
     }}
 
-    QSlider#ZoomSlider:focus::handle:horizontal {{
-        background: {ink};
-        border: 2px solid {on_ink};
-        width: 14px;
-        height: 14px;
-        margin: -6px 0;
+    QSlider#ZoomSlider::groove:horizontal:disabled {{
+        background: {border_subtle};
     }}
 
-    QSlider#ZoomSlider:disabled::groove:horizontal,
-    QSlider#ZoomSlider:disabled::sub-page:horizontal,
-    QSlider#ZoomSlider:disabled::add-page:horizontal {{
-        background: {bg_surface};
-        border-color: {border_subtle};
-    }}
-
-    QSlider#ZoomSlider:disabled::handle:horizontal {{
-        background: {border_default};
-        border-color: {border_subtle};
+    QSlider#ZoomSlider::handle:horizontal:disabled {{
+        background: {bg_card};
+        border-color: {mark_disabled};
     }}
 
     QLabel#ZoomValueLabel {{
@@ -1385,32 +1556,51 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QMessageBox QPushButton {{
-        background-color: {bg_card};
-        color: {text_primary};
-        border: 1px solid {border_default};
-        border-radius: {RADIUS_CONTROL}px;
         padding: 6px 20px;
-    }}
-
-    QMessageBox QPushButton:hover {{
-        background-color: {bg_card_hover};
-        border-color: {border_hover};
-    }}
-
-    QMessageBox QPushButton:focus {{
-        border: {focus_width}px solid {focus_ring};
     }}
 
     QMessageBox QPushButton:default {{
         background-color: {ink};
         border-color: {ink};
         color: {on_ink};
-        font-weight: 500;
+        font-weight: 600;
     }}
 
     QMessageBox QPushButton:default:hover {{
         background-color: {ink_hover};
         border-color: {ink_hover};
+    }}
+
+    QMessageBox QPushButton:default:pressed {{
+        background-color: {ink_pressed};
+        border-color: {ink_pressed};
+    }}
+
+    QMessageBox QPushButton:default:focus {{
+        border: {focus_width}px solid {selected_focus_ring};
+    }}
+
+    /* A destructive default keeps the danger treatment, not the ink fill. */
+    QMessageBox QPushButton[destructive="true"]:default {{
+        background-color: transparent;
+        border-color: {close_tab};
+        color: {close_tab};
+    }}
+
+    QMessageBox QPushButton[destructive="true"]:default:hover {{
+        background-color: {close_tab};
+        border-color: {close_tab};
+        color: {on_ink};
+    }}
+
+    QMessageBox QPushButton[destructive="true"]:default:pressed {{
+        background-color: {close_pressed_bg};
+        border-color: {close_pressed_bg};
+        color: {on_ink};
+    }}
+
+    QMessageBox QPushButton[destructive="true"]:default:focus {{
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QScrollArea#PagePreviewScroll {{
@@ -1464,10 +1654,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#PdfViewerToolbarGroup {{
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
-    }}
-
-    QLineEdit#PdfViewerPageEdit[invalid="true"] {{
-        border-color: {close_tab};
     }}
 
     QFrame#PdfViewerAnnotRail {{
@@ -1586,10 +1772,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText {{
         min-height: 24px;
         padding: 2px 6px;
-        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        background-color: {bg_card};
-        color: {text_primary};
     }}
 
     QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText:focus {{
@@ -1600,10 +1783,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize {{
         min-height: 24px;
         padding: 2px 4px;
-        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        background-color: {bg_card};
-        color: {text_primary};
     }}
 
     QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont:focus,
@@ -2301,27 +2481,37 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#WatermarkSlider::groove:horizontal {{
-        height: 4px;
-        background: {border_subtle};
-        border-radius: 2px;
+        background: {border_default};
+        height: 2px;
+        border-radius: 1px;
     }}
 
     QSlider#WatermarkSlider::handle:horizontal {{
-        background: {ink};
-        border: none;
-        width: 14px;
-        height: 14px;
+        border: 2px solid {ink};
+        width: 8px;
+        height: 8px;
         margin: -5px 0;
-        border-radius: 7px;
-    }}
-
-    QSlider#WatermarkSlider::sub-page:horizontal {{
-        background: {ink};
-        border-radius: 2px;
+        border-radius: 6px;
     }}
 
     QSlider#WatermarkSlider:focus {{
         outline: none;
+    }}
+
+    QSlider#WatermarkSlider::handle:horizontal:focus {{
+        border-color: {focus_ring};
+        border-width: {focus_width}px;
+        width: {12 - 2 * focus_width}px;
+        height: {12 - 2 * focus_width}px;
+    }}
+
+    QSlider#WatermarkSlider::groove:horizontal:disabled {{
+        background: {border_subtle};
+    }}
+
+    QSlider#WatermarkSlider::handle:horizontal:disabled {{
+        background: {bg_card};
+        border-color: {mark_disabled};
     }}
 
     /* Card / tile chrome — dynamic properties + :hover/:focus; no per-state setStyleSheet. */

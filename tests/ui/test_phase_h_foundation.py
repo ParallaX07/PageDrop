@@ -104,3 +104,116 @@ def test_confirm_overwrite_follows_dialog_answer(
         overwrite_answer.real(parent, [Path("/tmp/a.pdf")], window_title="T")
         is expected
     )
+
+
+def _capture_confirm(monkeypatch, answer):
+    """Patch exec to record the message box and answer; no modal loop runs."""
+    boxes: list[QMessageBox] = []
+    state = {"labels": None, "destructive": None, "default": None}
+
+    def fake_exec(box):
+        boxes.append(box)
+        yes = box.button(QMessageBox.StandardButton.Yes)
+        no = box.button(QMessageBox.StandardButton.No)
+        state["labels"] = (yes.text(), no.text())
+        state["destructive"] = bool(yes.property("destructive"))
+        state["default"] = (
+            "yes" if box.defaultButton() is yes else "no"
+        )
+        return answer
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    return state
+
+
+_YES = QMessageBox.StandardButton.Yes
+_NO = QMessageBox.StandardButton.No
+
+
+@pytest.mark.parametrize(
+    ("make_call", "action", "decline", "destructive", "safe_default"),
+    [
+        (
+            lambda p, real: real(p, [Path("/tmp/a.pdf")], window_title="T"),
+            "Overwrite",
+            "Cancel",
+            True,
+            True,
+        ),
+        (
+            lambda p, real: dialogs.confirm_delete_pages(p, 12),
+            "Delete 12 pages",
+            "Cancel",
+            True,
+            True,
+        ),
+        (
+            lambda p, real: dialogs.confirm_remove_blank_pages(
+                p, blank_count=3, page_count=9, heuristic_hint="hint"
+            ),
+            "Remove 3 pages",
+            "Cancel",
+            True,
+            True,
+        ),
+        (
+            lambda p, real: dialogs.confirm_remove_blank_pages(
+                p, blank_count=1, page_count=9, heuristic_hint="hint"
+            ),
+            "Remove 1 page",
+            "Cancel",
+            True,
+            True,
+        ),
+        (
+            lambda p, real: dialogs.ask_named_confirmation(
+                p,
+                title="Recover",
+                text="Recover?",
+                action="Recover",
+                decline="Discard",
+                default_action=True,
+            ),
+            "Recover",
+            "Discard",
+            False,
+            False,
+        ),
+        (
+            lambda p, real: dialogs.ask_named_confirmation(
+                p, title="Flatten forms", text="Flatten?", action="Flatten"
+            ),
+            "Flatten",
+            "Cancel",
+            False,
+            True,
+        ),
+    ],
+    ids=["overwrite", "delete", "blank-many", "blank-one", "recover", "flatten"],
+)
+@pytest.mark.parametrize("answer", [_YES, _NO])
+def test_named_confirmations_label_buttons_and_follow_answer(
+    monkeypatch,
+    qtbot,
+    isolated_settings,
+    overwrite_answer,
+    make_call,
+    action,
+    decline,
+    destructive,
+    safe_default,
+    answer,
+):
+    monkeypatch.delenv("PAGEDROP_TESTING", raising=False)
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    state = _capture_confirm(monkeypatch, answer)
+
+    # confirm_overwrite is replaced by an autouse stand-in; use the real one.
+    result = make_call(parent, overwrite_answer.real)
+
+    assert result is (answer == _YES)
+    # Each label carries an Alt accelerator on its first letter.
+    assert state["labels"] == (f"&{action}", f"&{decline}")
+    assert state["destructive"] is destructive
+    assert state["default"] == ("no" if safe_default else "yes")
