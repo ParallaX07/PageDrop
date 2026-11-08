@@ -647,6 +647,9 @@ def _two_windows_with_pending_move(qtbot, qapp, pdf_path):
     )
     assert window_a._pending_move_undo is not None
     assert tab_a.edit_model.logical_count() == 4
+    # Freeing the grid joins its pool; a worker still running then needs the GIL
+    # the deleting thread holds, so let the dropped page's render finish first.
+    blank_b.thumbnail_grid._render_pool.waitForDone()
     return window_a, window_b, tab_a, blank_b
 
 
