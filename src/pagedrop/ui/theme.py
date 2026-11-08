@@ -1069,6 +1069,71 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
     }}
 
+    /* Command-bar view switch: two joined icon segments, the current one in ink.
+       The id rule outranks the generic tool-button states, so every state is set here. */
+    QToolButton#ToolbarViewSegment {{
+        background-color: transparent;
+        color: {text_primary};
+        border: 1px solid {border_subtle};
+        border-radius: 0;
+        padding: {COMPACT_CONTROL_VERTICAL_PADDING}px {SPACE_2}px;
+    }}
+
+    QToolButton#ToolbarViewSegment[segment="first"] {{
+        border-top-left-radius: {RADIUS_CONTROL}px;
+        border-bottom-left-radius: {RADIUS_CONTROL}px;
+    }}
+
+    QToolButton#ToolbarViewSegment[segment="last"] {{
+        border-top-right-radius: {RADIUS_CONTROL}px;
+        border-bottom-right-radius: {RADIUS_CONTROL}px;
+        border-left-width: 0;
+    }}
+
+    QToolButton#ToolbarViewSegment:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_default};
+    }}
+
+    QToolButton#ToolbarViewSegment:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
+    QToolButton#ToolbarViewSegment:checked {{
+        background-color: {ink};
+        color: {on_ink};
+        border-color: {ink_pressed};
+    }}
+
+    QToolButton#ToolbarViewSegment:checked:hover {{
+        background-color: {ink_hover};
+        border-color: {ink_hover};
+    }}
+
+    QToolButton#ToolbarViewSegment:checked:pressed {{
+        background-color: {ink_pressed};
+        border-color: {ink_pressed};
+    }}
+
+    QToolButton#ToolbarViewSegment:focus,
+    QToolButton#ToolbarViewSegment:checked:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
+    QToolButton#ToolbarViewSegment:disabled {{
+        background-color: transparent;
+        color: {disabled_text};
+        border-color: {border_subtle};
+        border-style: {disabled_border_style};
+    }}
+
+    QToolButton#ToolbarViewSegment:checked:disabled {{
+        background-color: {primary_disabled_bg};
+        color: {primary_disabled_text};
+        border-color: {primary_disabled_border};
+    }}
+
     /* Destructive controls use text, role, and a distinct color treatment. */
     QPushButton[destructive="true"] {{
         color: {close_tab};

@@ -472,3 +472,60 @@ def _ring_for_theme(light: bool) -> str:
     from pagedrop.ui.theme import FOCUS_RING, FOCUS_RING_LIGHT
 
     return FOCUS_RING_LIGHT if light else FOCUS_RING
+
+
+def test_view_switch_segments_are_reached_with_arrow_keys_and_tab(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    toolbar = main_window._toolbar
+    grid_segment, pages_segment = main_window._view_switch.segments
+    qtbot.waitUntil(lambda: pages_segment.isVisible())
+
+    ordered = focusable_toolbar_widgets(toolbar)
+    assert ordered.index(pages_segment) == ordered.index(grid_segment) + 1
+    assert grid_segment.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert pages_segment.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    # Tab order walks the segments one after the other.
+    assert grid_segment.nextInFocusChain() is pages_segment
+
+    _focus(qtbot, grid_segment)
+    qtbot.keyClick(grid_segment, Qt.Key.Key_Right)
+    qtbot.waitUntil(pages_segment.hasFocus, timeout=1000)
+    qtbot.keyClick(pages_segment, Qt.Key.Key_Left)
+    qtbot.waitUntil(grid_segment.hasFocus, timeout=1000)
+
+    # Arrow keys cross from the neighbouring buttons into the switch and out again.
+    before = ordered[ordered.index(grid_segment) - 1]
+    after = ordered[ordered.index(pages_segment) + 1]
+    _focus(qtbot, before)
+    qtbot.keyClick(before, Qt.Key.Key_Right)
+    qtbot.waitUntil(grid_segment.hasFocus, timeout=1000)
+    qtbot.keyClick(grid_segment, Qt.Key.Key_Right)
+    qtbot.keyClick(pages_segment, Qt.Key.Key_Right)
+    qtbot.waitUntil(after.hasFocus, timeout=1000)
+
+    # Space on the focused segment switches the view through the same action.
+    tab = main_window._active_tab()
+    _focus(qtbot, pages_segment)
+    qtbot.keyClick(pages_segment, Qt.Key.Key_Space)
+    qtbot.waitUntil(tab.is_viewer_mode)
+    assert pages_segment.isChecked() and not grid_segment.isChecked()
+
+
+def test_disabled_view_switch_is_skipped_by_toolbar_navigation(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window, timeout=15000)
+    _show(qtbot, main_window)
+    grid_segment, pages_segment = main_window._view_switch.segments
+    assert {grid_segment, pages_segment} <= set(
+        focusable_toolbar_widgets(main_window._toolbar)
+    )
+
+    main_window._actions["preview"].setEnabled(False)
+    reachable = set(focusable_toolbar_widgets(main_window._toolbar))
+    assert grid_segment not in reachable and pages_segment not in reachable

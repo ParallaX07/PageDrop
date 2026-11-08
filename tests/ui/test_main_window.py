@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QToolBar,
     QToolButton,
     QWidget,
@@ -179,12 +180,10 @@ def test_contextual_toolbar_promotes_save_as_after_edit(main_window, five_page_p
     )
     assert save_button is not None and save_button.objectName() == "ToolbarPrimary"
     assert save_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    qtbot.waitUntil(lambda: extract_button is not None and not extract_button.isHidden())
+    qtbot.waitUntil(lambda: extract_button is not None and extract_button.isEnabled())
     assert extract_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
     assert main_window._selection_toolbar_label.text() == "Page 2 selected"
-
-    preview_button = main_window._toolbar.widgetForAction(main_window._actions["preview"])
-    assert preview_button is not None and preview_button.text() == "Pages / Preview"
+    assert main_window._toolbar.widgetForAction(main_window._actions["preview"]) is None
 
 
 def test_toolbar_overflow_owns_only_actions_displaced_from_the_toolbar(
@@ -205,7 +204,7 @@ def test_toolbar_overflow_owns_only_actions_displaced_from_the_toolbar(
     assert main_window._toolbar.widgetForAction(actions["move_to"]) is None
     rotate = main_window._toolbar.widgetForAction(actions["rotate_cw"])
     assert rotate is not None
-    assert rotate.accessibleName() == "Rotate clockwise"
+    assert rotate.accessibleName() == "Rotate right"
     assert actions["move_to"].shortcut().toString()
 
 
@@ -545,11 +544,11 @@ def test_blank_grid_empty_state_uses_the_registered_open_action(main_window, mon
     assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
     assert main_window._toolbar.isHidden()
     for action in (
-        main_window._actions["select_all"],
         main_window._actions["extract_selected"],
         main_window._actions["delete_pages"],
     ):
-        assert main_window._toolbar.widgetForAction(action).isHidden()
+        assert main_window._toolbar.widgetForAction(action) is not None
+        assert not action.isEnabled()
 
     triggered: list[bool] = []
     main_window._actions["open"].triggered.connect(lambda: triggered.append(True))
@@ -571,7 +570,7 @@ def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pd
     main_window._tab_manager.add_page(tool_page, "Test tool")
 
     assert main_window._toolbar.isHidden()
-    assert main_window._selection_status.isHidden()
+    assert not main_window._selection_toolbar_label.isVisible()
     assert main_window.windowTitle() == "PageDrop: Test tool"
     assert main_window.statusBar().currentMessage() != pdf_status
 
@@ -1006,6 +1005,13 @@ def _toolbar_fits(window: MainWindow) -> bool:
     return extension is None or not extension.isVisible()
 
 
+def _style_window(window: MainWindow) -> None:
+    """Give the window the app style sheet so button padding is the real one."""
+    from pagedrop.ui.theme import app_stylesheet
+
+    window.setStyleSheet(app_stylesheet(light=True))
+
+
 def _open_loaded_window(main_window, five_page_pdf, qtbot, *, width: int, height: int = 680):
     main_window._load_pdf(str(five_page_pdf))
     wait_for_pdf_loaded(qtbot, main_window)
@@ -1067,6 +1073,7 @@ def test_viewer_content_fits_the_compact_floor(main_window, five_page_pdf, qtbot
 def test_toolbar_moves_trailing_actions_to_more_when_narrow(
     main_window, five_page_pdf, qtbot
 ):
+    _style_window(main_window)
     tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
     actions = main_window._actions
     toolbar = main_window._toolbar
@@ -1078,27 +1085,26 @@ def test_toolbar_moves_trailing_actions_to_more_when_narrow(
         lambda: toolbar.width() <= MIN_WINDOW_WIDTH
         and actions["delete_pages"] in overflow_menu.actions()
         and main_window._toolbar_overflow.isVisible()
-        and not main_window._selection_toolbar_label.isVisible()
         and _toolbar_fits(main_window)
     )
 
-    # Last to go first: the label, then the trailing page actions; Open,
-    # Pages / Preview, Save as and More stay on the bar.
-    assert not main_window._selection_toolbar_label.isVisible()
-    for key in ("open", "preview", "save_as"):
+    # The trailing commands go to More; the selection cell, Open, Save as and
+    # More stay on the bar.
+    assert main_window._selection_toolbar_label.isVisible()
+    assert main_window._selection_toolbar_label.text() == "Page 3 selected"
+    for key in ("open", "save_as"):
         assert toolbar.widgetForAction(actions[key]).isVisible()
     assert main_window._toolbar_overflow.isVisible()
     assert main_window._toolbar_overflow in focusable_toolbar_widgets(toolbar)
     assert toolbar.widgetForAction(actions["delete_pages"]) is None
     displaced = [a for a in overflow_menu.actions() if a in main_window._toolbar_displaceable]
-    assert actions["delete_pages"] in displaced and actions["extract_selected"] in displaced
-    assert actions["select_all"] not in displaced
+    assert actions["delete_pages"] in displaced
+    assert actions["preview"] in displaced and actions["tools"] in displaced
+    assert not main_window._view_switch.isVisible()
     assert actions["export_all"] in overflow_menu.actions()
     assert actions["move_to"] in overflow_menu.actions()
     # Shared commands stay visible; only their toolbar button is gone.
     assert all(action.isVisible() for action in actions.values() if action in displaced)
-    # The status bar still carries the selection count once the label is gone.
-    assert main_window._selection_status.text() == "Page 3 selected"
 
     # Wide enough for every button whatever font an earlier test left behind.
     main_window.resize(1600, 680)
@@ -1106,9 +1112,10 @@ def test_toolbar_moves_trailing_actions_to_more_when_narrow(
         lambda: overflow_menu.actions() == [actions["export_all"], actions["move_to"]]
         and toolbar.widgetForAction(actions["delete_pages"]) is not None
         and main_window._selection_toolbar_label.isVisible()
+        and main_window._view_switch.isVisible()
         and _toolbar_fits(main_window)
     )
-    for key in ("select_all", "rotate_cw", "extract_selected", "delete_pages"):
+    for key in ("rotate_cw", "extract_selected", "delete_pages", "tools"):
         assert toolbar.widgetForAction(actions[key]).isVisible()
     assert toolbar.widgetForAction(actions["rotate_cw"]).accessibleName() == actions[
         "rotate_cw"
@@ -1144,6 +1151,7 @@ def test_toolbar_never_needs_the_qt_extension_button_at_any_width(
 def test_displaced_toolbar_actions_stay_disabled_in_more_and_keep_their_shortcut(
     main_window, five_page_pdf, qtbot
 ):
+    _style_window(main_window)
     tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
     actions = main_window._actions
     toolbar = main_window._toolbar
@@ -1152,15 +1160,14 @@ def test_displaced_toolbar_actions_stay_disabled_in_more_and_keep_their_shortcut
     qtbot.waitUntil(lambda: actions["delete_pages"] in overflow_menu.actions())
 
     # Nothing is selected: displaced commands appear in More, disabled.
-    for key in ("extract_selected", "delete_pages"):
+    for key in ("delete_pages",):
         assert actions[key] in overflow_menu.actions()
         assert not actions[key].isEnabled()
         assert actions[key].isVisible()
 
-    # A larger font widens the buttons and pushes more commands into More.
-    font = main_window.font()
-    font.setPointSize(font.pointSize() + 10)
-    main_window.setFont(font)
+    # A narrower window than the floor pushes more commands into More.
+    main_window.setMinimumSize(0, 0)
+    main_window.resize(300, MIN_WINDOW_HEIGHT)
     tab.thumbnail_grid.selection_manager.select_single(0)
     duplicate = actions["duplicate_pages"]
     qtbot.waitUntil(
@@ -1246,3 +1253,481 @@ def test_hosted_compare_page_scrolls_instead_of_raising_the_window_minimum(
 
     _assert_hosted_page_scrolls(main_window, page, page._compare_btn, qtbot)
     wait_for_compare_render(qtbot, page)
+
+
+_COMMAND_BAR_ORDER = [
+    "open",
+    "save_as",
+    "|",
+    "selection",
+    "rotate_ccw",
+    "rotate_cw",
+    "duplicate_pages",
+    "extract_selected",
+    "|",
+    "delete_pages",
+    "view",
+    "tools",
+    "more",
+]
+_COMMAND_BAR_LABELS = {
+    "open": "Open",
+    "save_as": "Save as",
+    "rotate_ccw": "Rotate left",
+    "rotate_cw": "Rotate right",
+    "duplicate_pages": "Duplicate",
+    "extract_selected": "Extract",
+    "delete_pages": "Delete",
+    "tools": "Tools",
+}
+_DROPPABLE_LABELS = ["open", "rotate_ccw", "rotate_cw", "duplicate_pages", "extract_selected", "delete_pages", "tools"]
+
+
+def _command_bar_sequence(window: MainWindow) -> list[str]:
+    """The bar's contents left to right; the zero-width anchor and spacer are layout only."""
+    named = {action: key for key, action in window._actions.items()}
+    named[window._selection_toolbar_action] = "selection"
+    named[window._view_switch_action] = "view"
+    named[window._toolbar_overflow_action] = "more"
+    sequence = []
+    for action in window._toolbar.actions():
+        if action.isSeparator():
+            sequence.append("|")
+        elif action in named:
+            sequence.append(named[action])
+    return sequence
+
+
+def _label_style(window: MainWindow, key: str):
+    return window._toolbar.widgetForAction(window._actions[key]).toolButtonStyle()
+
+
+def test_command_bar_is_grouped_as_file_selection_and_view(main_window):
+    assert _command_bar_sequence(main_window) == _COMMAND_BAR_ORDER
+    toolbar = main_window._toolbar
+    # The view group is pushed to the right edge by one expanding spacer.
+    actions = toolbar.actions()
+    spacer = main_window._toolbar_spacer
+    assert toolbar.widgetForAction(actions[actions.index(main_window._view_switch_action) - 1]) is spacer
+    assert spacer.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert sum(1 for action in actions if action.isSeparator()) == 2
+    for key in ("select_all", "deselect_all", "move_up", "move_down"):
+        assert toolbar.widgetForAction(main_window._actions[key]) is None
+
+
+def test_command_bar_buttons_carry_short_labels_beside_their_icons(main_window):
+    toolbar = main_window._toolbar
+    for key, label in _COMMAND_BAR_LABELS.items():
+        button = toolbar.widgetForAction(main_window._actions[key])
+        assert button.text() == label, key
+        assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        assert not button.icon().isNull()
+        assert button.toolTip(), key
+    # Menus and the palette keep the full wording; the button names itself with it.
+    actions = main_window._actions
+    assert actions["rotate_cw"].text() == "Rotate right"
+    assert actions["rotate_ccw"].text() == "Rotate left"
+    assert "counter-clockwise" in actions["rotate_ccw"].toolTip()
+    assert "clockwise" in actions["rotate_cw"].toolTip()
+    assert actions["delete_pages"].text() == "Delete selected pages"
+    assert actions["tools"].text() == "All &tools"
+    assert toolbar.widgetForAction(actions["delete_pages"]).accessibleName() == (
+        "Delete selected pages"
+    )
+    assert toolbar.widgetForAction(actions["tools"]).accessibleName() == "All tools"
+
+
+def test_command_bar_separators_use_the_line_token(main_window):
+    from pagedrop.ui.theme import LIGHT, app_stylesheet
+
+    sheet = app_stylesheet(light=True)
+    start = sheet.index("QToolBar::separator:horizontal")
+    assert f"background: {LIGHT.line};" in sheet[start : sheet.index("}", start)]
+
+
+def test_removed_toolbar_commands_keep_their_shortcuts(main_window, five_page_pdf, qtbot):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=960)
+    grid = tab.thumbnail_grid
+    main_window.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is main_window)
+    grid.setFocus()
+    qtbot.waitUntil(grid.hasFocus)
+
+    qtbot.keyClick(grid, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: len(grid.selection_manager.selection) == 5)
+    main_window._actions["deselect_all"].trigger()
+    qtbot.waitUntil(lambda: not grid.selection_manager.selection)
+
+    grid.selection_manager.select_single(2)
+    qtbot.waitUntil(lambda: main_window._actions["move_up"].isEnabled())
+    qtbot.keyClick(grid, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: grid.selection_manager.selection == {1})
+    qtbot.keyClick(grid, Qt.Key.Key_Down, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: grid.selection_manager.selection == {2})
+    assert main_window._actions["move_up"].shortcut() == QKeySequence("Ctrl+Up")
+    assert main_window._actions["move_down"].shortcut() == QKeySequence("Ctrl+Down")
+
+
+def test_page_commands_stay_on_the_bar_and_nothing_shifts_with_selection(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
+    toolbar = main_window._toolbar
+    keys = ("rotate_ccw", "rotate_cw", "duplicate_pages", "extract_selected", "delete_pages")
+    qtbot.waitUntil(lambda: _toolbar_fits(main_window) and main_window._view_switch.isVisible())
+
+    def settled(read):
+        """Read *read* once the layout has stopped moving."""
+        seen: list = []
+
+        def stable() -> bool:
+            seen.append(read())
+            return len(seen) > 2 and seen[-1] == seen[-2] == seen[-3]
+
+        qtbot.waitUntil(stable)
+        return seen[-1]
+
+    def positions() -> list[int]:
+        label = main_window._selection_toolbar_label
+        xs = [label.mapTo(toolbar, QPoint(0, 0)).x()]
+        for key in keys:
+            xs.append(toolbar.widgetForAction(main_window._actions[key]).x())
+        return xs
+
+    before = settled(positions)
+    for key in keys:
+        button = toolbar.widgetForAction(main_window._actions[key])
+        assert button.isVisible(), key
+        assert not button.isEnabled(), key
+    assert main_window._selection_toolbar_label.text() == "No selection"
+    assert main_window._selection_toolbar_label.width() == 180
+
+    tab.thumbnail_grid.selection_manager.select_single(1)
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 2 selected")
+    for key in keys:
+        button = toolbar.widgetForAction(main_window._actions[key])
+        assert button.isVisible(), key
+        assert button.isEnabled(), key
+    assert settled(positions) == before
+
+    tab.thumbnail_grid.selection_manager.set_selection({0, 2, 3})
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "3 pages selected")
+    assert settled(positions) == before
+
+
+def _primary_buttons(window: MainWindow) -> list[QToolButton]:
+    return [
+        button
+        for button in window._toolbar.findChildren(QToolButton)
+        if button.objectName() == "ToolbarPrimary"
+    ]
+
+
+def test_save_as_is_the_only_primary_action_in_every_state(
+    main_window, five_page_pdf, qtbot
+):
+    save_button = main_window._toolbar.widgetForAction(main_window._actions["save_as"])
+    open_button = main_window._toolbar.widgetForAction(main_window._actions["open"])
+
+    # Blank tab, nothing to save yet.
+    assert _primary_buttons(main_window) == [save_button]
+    assert open_button.objectName() != "ToolbarPrimary"
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    tab = main_window._active_tab()
+    assert not tab.is_dirty
+    assert _primary_buttons(main_window) == [save_button]
+    assert save_button.isEnabled()
+
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    main_window._duplicate_selected_pages()
+    qtbot.waitUntil(lambda: tab.is_dirty)
+    assert _primary_buttons(main_window) == [save_button]
+    assert open_button.objectName() != "ToolbarPrimary"
+
+    # A new blank tab and back keeps the same single primary.
+    main_window._new_blank_tab()
+    assert _primary_buttons(main_window) == [save_button]
+    main_window._tab_manager.setCurrentWidget(tab)
+    assert _primary_buttons(main_window) == [save_button]
+    assert open_button.objectName() != "ToolbarPrimary"
+
+
+def test_save_as_keeps_its_primary_look_when_its_action_changes(
+    main_window, five_page_pdf, qtbot
+):
+    from pagedrop.ui.theme import current_theme
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    action = main_window._actions["save_as"]
+    button = main_window._toolbar.widgetForAction(action)
+    # Qt reloads the action's own icon whenever the action changes; the primary
+    # button must go back to its on-ink icon.
+    action.setEnabled(False)
+    action.setEnabled(True)
+    assert main_window._toolbar.widgetForAction(action) is button
+    assert button.objectName() == "ToolbarPrimary"
+    from pagedrop.ui import icons
+
+    expected = icons.icon("floppy-disk", color=current_theme().on_ink).pixmap(18, 18).toImage()
+    assert button.icon().pixmap(18, 18).toImage() == expected
+
+
+def _command_bar_state(window: MainWindow):
+    """(icon-only keys on the bar, keys in More, labelled flags in bar order)."""
+    toolbar = window._toolbar
+    on_bar = []
+    for key in _DROPPABLE_LABELS:
+        button = toolbar.widgetForAction(window._actions[key])
+        if button is not None:
+            on_bar.append(
+                (key, button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly)
+            )
+    more = {
+        key
+        for key, action in window._actions.items()
+        if action in window._toolbar_overflow_menu.actions()
+    }
+    return on_bar, more
+
+
+def _settle_at(qtbot, window: MainWindow, width: int) -> None:
+    window.resize(width, 680)
+    qtbot.waitUntil(
+        lambda: abs(window._toolbar.width() - width) < 10 and _toolbar_fits(window)
+    )
+    # One more turn so a deferred refit has run before the state is read.
+    qtbot.wait(20)
+
+
+def test_narrow_bar_drops_labels_from_the_right_before_using_more(
+    main_window, five_page_pdf, qtbot
+):
+    _style_window(main_window)
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
+    tab.thumbnail_grid.selection_manager.select_single(1)
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 2 selected")
+    command_keys = {"rotate_ccw", "rotate_cw", "duplicate_pages", "extract_selected", "delete_pages", "preview", "tools"}
+
+    saw_mixed = saw_more = False
+    for width in range(1600, MIN_WINDOW_WIDTH - 1, -40):
+        _settle_at(qtbot, main_window, width)
+        on_bar, more = _command_bar_state(main_window)
+        # Save as is primary, so it always keeps its label.
+        assert _label_style(main_window, "save_as") == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        # Labels go from the right: left of any bare icon, no label is missing.
+        flags = [icon_only for _key, icon_only in on_bar]
+        assert flags == sorted(flags), (width, on_bar)
+        saw_mixed = saw_mixed or (any(flags) and not all(flags))
+        displaced = more & command_keys
+        # The count is shown nowhere else, so the cell holds on to the floor.
+        assert main_window._selection_toolbar_label.isVisible(), width
+        if displaced:
+            saw_more = True
+            # Nothing reaches More while a label is still showing.
+            assert all(flags), (width, on_bar, displaced)
+        # Dropped labels keep their tooltip and accessible name.
+        for key, _icon_only in on_bar:
+            button = main_window._toolbar.widgetForAction(main_window._actions[key])
+            assert button.toolTip() and button.accessibleName(), key
+    assert saw_mixed and saw_more
+
+    _settle_at(qtbot, main_window, 1600)
+    on_bar, more = _command_bar_state(main_window)
+    assert not any(icon_only for _key, icon_only in on_bar)
+    assert len(on_bar) == len(_DROPPABLE_LABELS)
+    assert not more & command_keys
+    assert main_window._selection_toolbar_label.isVisible()
+    assert main_window._view_switch.isVisible()
+
+
+@pytest.mark.parametrize("selected", [False, True], ids=["no selection", "selection"])
+def test_command_bar_fits_the_compact_floor_without_the_qt_extension_button(
+    main_window, five_page_pdf, qtbot, selected
+):
+    _style_window(main_window)
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    if selected:
+        tab.thumbnail_grid.selection_manager.select_single(0)
+        qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 1 selected")
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(
+        lambda: main_window.size().width() == MIN_WINDOW_WIDTH and _toolbar_fits(main_window)
+    )
+    toolbar = main_window._toolbar
+    for key in ("open", "save_as"):
+        assert toolbar.widgetForAction(main_window._actions[key]).isVisible()
+    assert main_window._toolbar_overflow.isVisible()
+    # More holds only what left the bar plus its own always-there commands.
+    on_bar_actions = set(toolbar.actions())
+    for action in main_window._toolbar_overflow_menu.actions():
+        if action.isSeparator():
+            continue
+        assert action not in on_bar_actions
+    assert main_window._toolbar_overflow.width() <= toolbar.width()
+    extension = toolbar.findChild(QToolButton, "qt_toolbar_ext_button")
+    assert extension is None or not extension.isVisible()
+
+
+def _visible_texts(window: MainWindow) -> list[str]:
+    return [
+        widget.text()
+        for widget in window.findChildren((QLabel, QToolButton))
+        if widget.isVisible() and widget.text()
+    ]
+
+
+def test_selection_count_has_no_status_bar_copy(main_window, five_page_pdf, qtbot):
+    assert not hasattr(main_window, "_selection_status")
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
+    qtbot.waitUntil(lambda: _toolbar_fits(main_window))
+    assert _visible_texts(main_window).count("No selection") == 1
+
+    tab.thumbnail_grid.selection_manager.select_single(1)
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 2 selected")
+    texts = _visible_texts(main_window)
+    assert texts.count("Page 2 selected") == 1
+    assert "No selection" not in texts
+    assert "selected" not in main_window.statusBar().currentMessage()
+    status_labels = [
+        label.text() for label in main_window.statusBar().findChildren(QLabel) if label.isVisible()
+    ]
+    assert not [text for text in status_labels if "selected" in text or text == "No selection"]
+    assert main_window._selection_toolbar_label.accessibleName() == "Page 2 selected"
+
+    tab.thumbnail_grid.selection_manager.set_selection({0, 2, 3})
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "3 pages selected")
+    assert main_window._selection_toolbar_label.accessibleName() == (
+        "3 pages selected: Pages 1, 3–4"
+    )
+    assert _visible_texts(main_window).count("3 pages selected") == 1
+
+
+def test_thumbnail_size_caption_appears_once_in_the_status_bar(
+    main_window, five_page_pdf, qtbot
+):
+    from PyQt6.QtGui import QFont
+
+    _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
+    qtbot.waitUntil(lambda: main_window._thumbnail_zoom_label.isVisible())
+    captions = [
+        label
+        for label in main_window.statusBar().findChildren(QLabel)
+        if label.isVisible() and label.text() == "Thumbnail size"
+    ]
+    assert captions == [main_window._thumbnail_zoom_label]
+    assert sum("Thumbnail size" in text for text in _visible_texts(main_window)) == 1
+    # The caption is ordinary text; only the numeric readout is tabular.
+    font = captions[0].font()
+    assert not font.fixedPitch()
+    assert font.styleHint() != QFont.StyleHint.Monospace
+    assert main_window._zoom_controls._slider.accessibleName() == "Thumbnail size"
+
+
+def _members_on_bar(window: MainWindow):
+    return {action for action in window._toolbar.actions() if action.isVisible()}
+
+
+def test_all_labels_show_at_1280_with_the_app_style_sheet(main_window, five_page_pdf, qtbot):
+    _style_window(main_window)
+    _open_loaded_window(main_window, five_page_pdf, qtbot, width=1280)
+    qtbot.waitUntil(lambda: abs(main_window._toolbar.width() - 1280) < 10 and _toolbar_fits(main_window))
+    qtbot.wait(20)
+    on_bar, more = _command_bar_state(main_window)
+    assert [key for key, _icon_only in on_bar] == _DROPPABLE_LABELS
+    assert not [key for key, icon_only in on_bar if icon_only]
+    for key in _COMMAND_BAR_LABELS:
+        assert _label_style(main_window, key) == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    assert main_window._view_switch.isVisible()
+    assert not more & {"preview", "tools"}
+
+
+def test_width_estimate_matches_the_real_layout_and_labels_drop_only_when_needed(
+    main_window, five_page_pdf, qtbot
+):
+    _style_window(main_window)
+    _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
+    toolbar = main_window._toolbar
+    spacer = main_window._toolbar_spacer
+    for width in range(1600, MIN_WINDOW_WIDTH - 1, -23):
+        _settle_at(qtbot, main_window, width)
+        members = _members_on_bar(main_window)
+        icon_only = main_window._toolbar_icon_only
+        # Every member sits inside the bar, the last one included.
+        assert _toolbar_fits(main_window), width
+        last = max(
+            (toolbar.widgetForAction(a) for a in members if toolbar.widgetForAction(a) is not None),
+            key=lambda widget: widget.geometry().right(),
+        )
+        assert last.geometry().right() < toolbar.width(), width
+        # The estimate the fit works from is the width the layout really uses:
+        # the bar minus the spacer's free space.
+        estimate = main_window._toolbar_width_for(members, icon_only)
+        assert abs(estimate - (toolbar.width() - spacer.width())) <= 2, (width, estimate)
+        # A label only goes when its width would not fit in the free space.
+        bare = [a for a in main_window._toolbar_label_droppable if a in icon_only and toolbar.widgetForAction(a)]
+        if bare and not any(
+            action in main_window._toolbar_overflow_menu.actions()
+            for action in main_window._toolbar_displaceable
+        ):
+            leftmost = bare[0]
+            extra = main_window._toolbar_hint_widths[leftmost] - main_window._toolbar_icon_widths[leftmost]
+            assert spacer.width() < extra, (width, spacer.width(), extra)
+
+
+def test_selection_cell_leaves_the_bar_last_and_only_below_the_floor(
+    main_window, five_page_pdf, qtbot
+):
+    _style_window(main_window)
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 1 selected")
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(
+        lambda: main_window.size().width() == MIN_WINDOW_WIDTH and _toolbar_fits(main_window)
+    )
+    qtbot.wait(20)
+    toolbar = main_window._toolbar
+    actions = main_window._actions
+    label = main_window._selection_toolbar_label
+    assert label.isVisible() and label.text() == "Page 1 selected"
+    for key in ("open", "save_as"):
+        assert toolbar.widgetForAction(actions[key]).isVisible()
+    assert main_window._toolbar_overflow.isVisible()
+    assert _toolbar_fits(main_window)
+    # Every command that has no room is in More while the cell is still showing.
+    for key in ("delete_pages", "preview", "tools"):
+        assert actions[key] in main_window._toolbar_overflow_menu.actions()
+
+    # Only a window below the floor pushes the cell out, after every command.
+    main_window.setMinimumSize(0, 0)
+    main_window.resize(300, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(lambda: not label.isVisible() and _toolbar_fits(main_window))
+    for action in main_window._toolbar_displaceable:
+        assert action in main_window._toolbar_overflow_menu.actions()
+    assert toolbar.widgetForAction(actions["save_as"]).isVisible()
+
+
+def test_every_command_bar_label_is_inside_its_accessible_name(main_window):
+    toolbar = main_window._toolbar
+    for action in main_window._toolbar_label_actions:
+        button = toolbar.widgetForAction(action)
+        visible = action.iconText()
+        assert visible, action.text()
+        assert visible.casefold() in button.accessibleName().casefold(), (
+            visible,
+            button.accessibleName(),
+        )
+
+
+def test_rotate_commands_are_found_by_their_direction_in_the_palette(main_window):
+    from pagedrop.ui.command_palette import ranked_actions
+
+    actions = main_window._actions
+    labelled = [action for action in actions.values() if action.text()]
+    assert actions["rotate_ccw"] in ranked_actions(labelled, "counterclockwise")
+    assert actions["rotate_cw"] in ranked_actions(labelled, "clockwise")
+    assert ranked_actions(labelled, "rotate left")[0] is actions["rotate_ccw"]
+    assert ranked_actions(labelled, "rotate right")[0] is actions["rotate_cw"]

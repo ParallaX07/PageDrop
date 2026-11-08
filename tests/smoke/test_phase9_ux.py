@@ -2,18 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QToolBar
 
 from pagedrop.ui.main_window import MainWindow
 from tests.conftest import wait_for_grid_loaded, wait_for_pdf_loaded
-
-
-def _toolbar_action(window: MainWindow, label: str):
-    for toolbar in window.findChildren(QToolBar):
-        for action in toolbar.actions():
-            if action.text() == label:
-                return action
-    raise AssertionError(f"Toolbar action {label!r} not found")
 
 
 def test_smoke_window_title_includes_page_count(qtbot, five_page_pdf):
@@ -33,9 +24,9 @@ def test_smoke_toolbar_buttons_enabled_states(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    preview = _toolbar_action(window, "Preview")
-    select_all = _toolbar_action(window, "Select all")
-    deselect_all = _toolbar_action(window, "Clear selection")
+    preview = window._actions["preview"]
+    select_all = window._actions["select_all"]
+    deselect_all = window._actions["deselect_all"]
 
     assert not preview.isEnabled()
     assert not select_all.isEnabled()

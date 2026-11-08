@@ -227,8 +227,8 @@ _TOOLBAR_HINT_LABELS = {
     "Move to…",
     "Delete selected pages",
     "Duplicate selected pages",
-    "Rotate clockwise",
-    "Rotate counterclockwise",
+    "Rotate right",
+    "Rotate left",
 }
 
 

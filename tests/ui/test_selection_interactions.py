@@ -108,7 +108,7 @@ def test_escape_clears_selection(qtbot, five_page_pdf):
     window.close()
 
 
-def test_status_bar_matches_selection(qtbot, five_page_pdf):
+def test_selection_label_matches_selection(qtbot, five_page_pdf):
     window = MainWindow()
     qtbot.addWidget(window)
     window.showMinimized()
@@ -118,10 +118,9 @@ def test_status_bar_matches_selection(qtbot, five_page_pdf):
     cards = window._thumbnail_grid._cards
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     qtbot.waitUntil(
-        lambda: window._selection_status.text() == "Page 1 selected",
+        lambda: window._selection_toolbar_label.text() == "Page 1 selected",
         timeout=1000,
     )
-    assert window._selection_status.isVisible()
 
     qtbot.mouseClick(
         cards[2],
@@ -129,13 +128,13 @@ def test_status_bar_matches_selection(qtbot, five_page_pdf):
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
     qtbot.waitUntil(
-        lambda: window._selection_status.text() == "2 pages selected",
+        lambda: window._selection_toolbar_label.text() == "2 pages selected",
         timeout=1000,
     )
 
     qtbot.keyClick(window, Qt.Key.Key_Escape)
     qtbot.waitUntil(
-        lambda: window._selection_status.text() == "No selection",
+        lambda: window._selection_toolbar_label.text() == "No selection",
         timeout=1000,
     )
     window.close()
@@ -150,13 +149,13 @@ def test_selection_toolbar_coalesces_storm(qtbot, five_page_pdf) -> None:
     wait_for_pdf_loaded(qtbot, window)
 
     updates: list[set[int]] = []
-    real_status = window._update_selection_status
+    real_sync = window._sync_contextual_toolbar
 
-    def tracking_status(selection: set[int]) -> None:
+    def tracking_sync(selection: set[int]) -> None:
         updates.append(set(selection))
-        real_status(selection)
+        real_sync(selection)
 
-    window._update_selection_status = tracking_status  # type: ignore[method-assign]
+    window._sync_contextual_toolbar = tracking_sync  # type: ignore[method-assign]
     updates.clear()
 
     grid = window._thumbnail_grid
@@ -170,7 +169,7 @@ def test_selection_toolbar_coalesces_storm(qtbot, five_page_pdf) -> None:
     assert updates == [{0}]
     qtbot.waitUntil(lambda: not window._selection_coalesce_timer.isActive(), timeout=1000)
     assert updates == [{0}, {0, 1, 2, 3, 4}]
-    assert window._selection_status.text() == "Pages 1–5 selected"
+    assert window._selection_toolbar_label.text() == "Pages 1–5 selected"
     assert window._deselect_all_action.isEnabled()
     window.close()
 
@@ -187,7 +186,6 @@ def test_selection_context_is_compact_and_accessible(qtbot, five_page_pdf) -> No
     qtbot.waitUntil(
         lambda: window._selection_toolbar_label.text() == "Pages 3–5 selected"
     )
-    assert window._selection_status.text() == "Pages 3–5 selected"
 
     grid.selection_manager.set_selection({0, 2, 3})
     qtbot.waitUntil(
@@ -196,7 +194,6 @@ def test_selection_context_is_compact_and_accessible(qtbot, five_page_pdf) -> No
     expected = "3 pages selected: Pages 1, 3–4"
     assert window._selection_toolbar_label.toolTip() == expected
     assert window._selection_toolbar_label.accessibleName() == expected
-    assert window._selection_status.toolTip() == expected
     window.close()
 
 
@@ -209,10 +206,19 @@ def test_context_menu_projects_registered_page_actions(
     window._load_pdf(str(five_page_pdf))
     wait_for_pdf_loaded(qtbot, window)
     grid = window._thumbnail_grid
-    select_button = window._toolbar.widgetForAction(window._select_all_action)
-    clear_button = window._toolbar.widgetForAction(window._deselect_all_action)
-    assert select_button is not None and clear_button is not None
-    stable_positions = (select_button.pos(), clear_button.pos())
+    assert window._toolbar.widgetForAction(window._select_all_action) is None
+    assert window._toolbar.widgetForAction(window._deselect_all_action) is None
+    command_buttons = [
+        window._toolbar.widgetForAction(action)
+        for action in (
+            window._rotate_cw_action,
+            window._duplicate_pages_action,
+            window._extract_selected_action,
+            window._delete_pages_action,
+        )
+    ]
+    assert all(button is not None for button in command_buttons)
+    stable_positions = [button.pos() for button in command_buttons]
 
     captured: list[QMenu] = []
 
@@ -245,7 +251,7 @@ def test_context_menu_projects_registered_page_actions(
     ]
     grid.selection_manager.select_single(0)
     qtbot.waitUntil(lambda: window._deselect_all_action.isEnabled())
-    assert (select_button.pos(), clear_button.pos()) == stable_positions
+    assert [button.pos() for button in command_buttons] == stable_positions
     assert window._deselect_all_action.text() == "Clear selection"
     window.close()
 
