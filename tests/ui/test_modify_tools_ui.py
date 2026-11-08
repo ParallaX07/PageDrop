@@ -673,11 +673,11 @@ def test_invert_run_shows_raster_warning_dialog(
 
     warned: list[str] = []
 
-    def fake_warning(parent, title, text, *args, **kwargs):
-        warned.append(text)
+    def fake_exec(box):
+        warned.append(box.text())
         return QMessageBox.StandardButton.No
 
-    monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
     save_called = {"n": 0}
 
     def fake_save(*_a, **_k):

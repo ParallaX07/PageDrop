@@ -44,7 +44,7 @@ from pagedrop.core.modify_ops import (
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui import icons
-from pagedrop.ui.dialogs import confirm_remove_blank_pages
+from pagedrop.ui.dialogs import ask_named_confirmation, confirm_remove_blank_pages
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
@@ -1426,14 +1426,13 @@ def _configure_color_effects(shell: ToolShellWindow) -> None:
         source = paths[0]
         eff = effect.currentData()
         if eff == "invert":
-            reply = QMessageBox.warning(
+            if not ask_named_confirmation(
                 shell,
-                shell.WINDOW_TITLE,
-                RASTER_EFFECT_WARNING + "\n\nContinue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
+                title=shell.WINDOW_TITLE,
+                text=RASTER_EFFECT_WARNING + "\n\nContinue?",
+                action="Apply effect",
+                icon=QMessageBox.Icon.Warning,
+            ):
                 return
         output = _pick_save_path(
             shell, "Save PDF", _suggested_output(source, "color_effects")

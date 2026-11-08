@@ -156,6 +156,60 @@ def fit_message_box_buttons(message: QMessageBox) -> None:
     message.setMinimumWidth(message.sizeHint().width())
 
 
+def name_confirm_buttons(
+    message: QMessageBox,
+    action: str,
+    *,
+    decline: str = "Cancel",
+    destructive: bool = False,
+) -> None:
+    """Label a Yes/No message box with the action it confirms.
+
+    The standard buttons stay in place so ``exec()`` results and Esc handling
+    are unchanged; only their text (and optionally the destructive look) change.
+    """
+    yes = message.button(QMessageBox.StandardButton.Yes)
+    no = message.button(QMessageBox.StandardButton.No)
+    yes.setText(action)
+    no.setText(decline)
+    if destructive:
+        yes.setProperty("destructive", True)
+        # The property arrives after the button was styled; restyle it.
+        yes.style().unpolish(yes)
+        yes.style().polish(yes)
+
+
+def ask_named_confirmation(
+    parent: QWidget | None,
+    *,
+    title: str,
+    text: str,
+    action: str,
+    decline: str = "Cancel",
+    icon: QMessageBox.Icon = QMessageBox.Icon.Question,
+    destructive: bool = False,
+    default_action: bool = False,
+) -> bool:
+    """Ask a yes/no question whose buttons name the action. True means proceed."""
+    message = QMessageBox(parent)
+    message.setIcon(icon)
+    message.setWindowTitle(title)
+    message.setText(text)
+    message.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    message.setDefaultButton(
+        QMessageBox.StandardButton.Yes
+        if default_action
+        else QMessageBox.StandardButton.No
+    )
+    name_confirm_buttons(
+        message, action, decline=decline, destructive=destructive
+    )
+    fit_message_box_buttons(message)
+    return message.exec() == QMessageBox.StandardButton.Yes
+
+
 def prompt_discard_file_list(
     parent: QWidget,
     *,
@@ -221,19 +275,16 @@ def confirm_overwrite(
     extra = ""
     if len(paths) > 5:
         extra = f"\n…and {len(paths) - 5} more"
-    message = QMessageBox(parent)
-    message.setIcon(QMessageBox.Icon.Question)
-    message.setWindowTitle(window_title)
-    message.setText(
-        f"The following file(s) already exist and will be overwritten:\n\n"
-        f"{names}{extra}\n\nContinue?"
+    return ask_named_confirmation(
+        parent,
+        title=window_title,
+        text=(
+            f"The following file(s) already exist and will be overwritten:\n\n"
+            f"{names}{extra}\n\nContinue?"
+        ),
+        action="Overwrite",
+        destructive=True,
     )
-    message.setStandardButtons(
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-    )
-    message.setDefaultButton(QMessageBox.StandardButton.No)
-    fit_message_box_buttons(message)
-    return message.exec() == QMessageBox.StandardButton.Yes
 
 
 def confirm_delete_pages(parent: QWidget, count: int) -> bool:
@@ -245,16 +296,13 @@ def confirm_delete_pages(parent: QWidget, count: int) -> bool:
     if os.environ.get("PAGEDROP_TESTING") == "1":
         return True
 
-    message = QMessageBox(parent)
-    message.setIcon(QMessageBox.Icon.Question)
-    message.setWindowTitle("Delete pages")
-    message.setText(f"Delete {count} pages?")
-    message.setStandardButtons(
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    return ask_named_confirmation(
+        parent,
+        title="Delete pages",
+        text=f"Delete {count} pages?",
+        action=f"Delete {count} pages",
+        destructive=True,
     )
-    message.setDefaultButton(QMessageBox.StandardButton.No)
-    fit_message_box_buttons(message)
-    return message.exec() == QMessageBox.StandardButton.Yes
 
 
 def confirm_remove_blank_pages(
@@ -281,6 +329,11 @@ def confirm_remove_blank_pages(
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
     )
     message.setDefaultButton(QMessageBox.StandardButton.No)
+    name_confirm_buttons(
+        message,
+        f"Remove {blank_count} {'page' if blank_count == 1 else 'pages'}",
+        destructive=True,
+    )
     fit_message_box_buttons(message)
     return message.exec() == QMessageBox.StandardButton.Yes
 

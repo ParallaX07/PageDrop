@@ -483,10 +483,9 @@ def test_external_link_confirms(qtbot, linked_pdf: Path, monkeypatch) -> None:
     viewer, model, loader = _bind_viewer(qtbot, linked_pdf)
     opened: list[str] = []
 
-    def fake_question(*_args, **_kwargs):
-        return QMessageBox.StandardButton.Cancel
-
-    monkeypatch.setattr(QMessageBox, "question", fake_question)
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.No
+    )
     monkeypatch.setattr(
         "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
         lambda url: opened.append(url.toString()),
@@ -509,9 +508,7 @@ def test_https_link_opens_after_confirm(
     warned: list[str] = []
 
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_a, **_k: QMessageBox.StandardButton.Open,
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.Yes
     )
     monkeypatch.setattr(
         QMessageBox,
@@ -537,7 +534,7 @@ def test_link_that_cannot_be_opened_warns(qtbot, linked_pdf: Path, monkeypatch) 
     viewer, model, loader = _bind_viewer(qtbot, linked_pdf)
     warned: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Open
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.Yes
     )
     monkeypatch.setattr(
         QMessageBox, "warning", lambda _parent, title, text: warned.append((title, text))
@@ -562,9 +559,7 @@ def test_file_scheme_link_rejected(qtbot, viewer_pdf: Path, monkeypatch) -> None
         lambda *_a, **_k: warned.append("warned"),
     )
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_a, **_k: QMessageBox.StandardButton.Open,
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.Yes
     )
     monkeypatch.setattr(
         "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
@@ -596,9 +591,7 @@ def test_unknown_scheme_link_rejected(
         lambda *_a, **_k: warned.append("warned"),
     )
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_a, **_k: QMessageBox.StandardButton.Open,
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.Yes
     )
     monkeypatch.setattr(
         "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",

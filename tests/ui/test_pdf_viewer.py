@@ -212,10 +212,9 @@ def test_external_link_confirms(main_window, linked_pdf, qtbot, monkeypatch):
 
     opened: list[str] = []
 
-    def fake_question(*_args, **_kwargs):
-        return QMessageBox.StandardButton.Cancel
-
-    monkeypatch.setattr(QMessageBox, "question", fake_question)
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda _self: QMessageBox.StandardButton.No
+    )
     monkeypatch.setattr(
         "pagedrop.ui.pdf_viewer.QDesktopServices.openUrl",
         lambda url: opened.append(url.toString()),

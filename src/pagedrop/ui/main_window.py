@@ -68,6 +68,7 @@ from pagedrop.ui.editor_jobs import (
 from pagedrop.ui.command_palette import CommandPalette, action_label
 from pagedrop.utils.page_jump import format_indices_as_ranges
 from pagedrop.ui.dialogs import (
+    ask_named_confirmation,
     fit_message_box_buttons,
     prompt_pdf_password,
     prompt_redaction_scope,
@@ -1174,16 +1175,19 @@ class MainWindow(QMainWindow):
             return 0
         if not drafts:
             return 0
-        reply = QMessageBox.question(
+        recover = ask_named_confirmation(
             self,
-            "Recover unsaved changes",
-            f"PageDrop found unsaved changes from an earlier session "
-            f"({len(drafts)} {'document' if len(drafts) == 1 else 'documents'}). "
-            "Recover them now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            title="Recover unsaved changes",
+            text=(
+                f"PageDrop found unsaved changes from an earlier session "
+                f"({len(drafts)} {'document' if len(drafts) == 1 else 'documents'}). "
+                "Recover them now?"
+            ),
+            action="Recover",
+            decline="Discard",
+            default_action=True,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not recover:
             for path in drafts:
                 try:
                     path.unlink(missing_ok=True)

@@ -113,6 +113,7 @@ from pagedrop.utils.safe_url import is_allowed_open_scheme
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.ui.accessibility import set_field_error_state
 from pagedrop.ui.busy_overlay import BusyOverlay
+from pagedrop.ui.dialogs import ask_named_confirmation
 from pagedrop.ui.theme import (
     CLOSE_TAB,
     COMMENT_PIN,
@@ -2558,13 +2559,15 @@ class PdfViewerWidget(QWidget):
         if self._markup is None:
             self.status_message.emit("Open a document to flatten forms")
             return
-        reply = QMessageBox.question(
+        if not ask_named_confirmation(
             self,
-            "Flatten forms",
-            "Saving will flatten form fields into page content. They will no longer "
-            "be editable. Continue?",
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            title="Flatten forms",
+            text=(
+                "Saving will flatten form fields into page content. They will no "
+                "longer be editable. Continue?"
+            ),
+            action="Flatten",
+        ):
             return
         self._markup.push_form_flatten()
         self.refresh_markup_overlays()
@@ -3928,14 +3931,13 @@ class PdfViewerWidget(QWidget):
                     f"({scheme}):\n\n{link.uri}",
                 )
                 return
-            reply = QMessageBox.question(
+            confirmed = ask_named_confirmation(
                 self,
-                "Open link",
-                f"Open this link in your browser?\n\n{link.uri}",
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
+                title="Open link",
+                text=f"Open this link in your browser?\n\n{link.uri}",
+                action="Open link",
             )
-            if reply == QMessageBox.StandardButton.Open and not QDesktopServices.openUrl(url):
+            if confirmed and not QDesktopServices.openUrl(url):
                 QMessageBox.warning(
                     self,
                     "Open link",
