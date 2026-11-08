@@ -216,6 +216,11 @@ def test_stylesheet_includes_focus_rings_for_controls():
     assert "QCheckBox," in sheet
     assert "QLineEdit {" in sheet
     assert "QSlider#ZoomSlider:focus" in sheet
+    assert "QToolBar::separator" in sheet
+    assert "QSlider::handle:horizontal" in sheet
+    assert "QMenu::item:disabled" in sheet
+    assert "QListView," in sheet
+    assert "QTreeView," in sheet
     assert "QPushButton#ZoomButton:focus" in sheet
     assert "QTabWidget#PdfViewerSide::pane" in sheet
     assert "QCheckBox:focus::indicator" not in sheet
@@ -2639,3 +2644,93 @@ def test_set_field_error_state_is_idempotent(qtbot):
     qtbot.addWidget(label)
     set_field_error_state(label, True)
     assert label.property("error") is True
+
+
+# --- Separators, menus and sliders ------------------------------------------
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_toolbar_separator_paints_the_line_token(qtbot, themed_app, light):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QToolBar
+
+    themed_app(light=light)
+    bar = QToolBar()
+    bar.addAction("one")
+    bar.addSeparator()
+    bar.addAction("two")
+    _show(qtbot, bar)
+    img = bar.grab().toImage()
+    # The bar's own bottom border also uses the line token, so look above it.
+    body = QRect(0, 0, img.width(), img.height() - 2)
+    assert _exact_count(img, body, _theme_for(light).line) >= 10
+    assert _exact_count(img, QRect(0, 0, img.width(), img.height()), "#D9D9D9") == 0
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_disabled_active_menu_item_shows_no_fill_or_ring(qtbot, themed_app, light):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QColor, QImage, QPainter
+    from PyQt6.QtWidgets import QMenu, QStyle, QStyleOptionMenuItem
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    menu = QMenu()
+    qtbot.addWidget(menu)
+    menu.addAction("Item")
+    menu.show()
+    qtbot.waitExposed(menu)
+    rect = QRect(0, 0, 120, 30)
+
+    def painted(enabled: bool) -> int:
+        # Fusion never makes a disabled item current, but other platform
+        # styles do, so draw the active + disabled state directly.
+        img = QImage(rect.size(), QImage.Format.Format_ARGB32)
+        img.fill(QColor(theme.raised))
+        opt = QStyleOptionMenuItem()
+        opt.initFrom(menu)
+        opt.rect = rect
+        opt.text = "Item"
+        opt.menuItemType = QStyleOptionMenuItem.MenuItemType.Normal
+        opt.state = QStyle.StateFlag.State_Selected
+        if enabled:
+            opt.state |= QStyle.StateFlag.State_Enabled
+        painter = QPainter(img)
+        menu.style().drawControl(QStyle.ControlElement.CE_MenuItem, opt, painter, menu)
+        painter.end()
+        return _exact_count(img, rect.adjusted(0, 0, -1, -1), theme.ink_tint) + _exact_count(
+            img, rect.adjusted(0, 0, -1, -1), _ring_for(light)
+        )
+
+    assert painted(enabled=True) > 0
+    assert painted(enabled=False) == 0
+
+
+@pytest.mark.parametrize("light", [False, True])
+@pytest.mark.parametrize("name", ["", "ZoomSlider", "WatermarkSlider"])
+def test_slider_handle_ink_then_focus_ring_then_disabled_marks(qtbot, themed_app, light, name):
+    from PyQt6.QtWidgets import QSlider
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    ring = _ring_for(light)
+    slider = QSlider(Qt.Orientation.Horizontal)
+    slider.setObjectName(name)
+    slider.setValue(50)
+    field = QLineEdit()
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.addWidget(field)
+    layout.addWidget(slider)
+    _show(qtbot, host)
+    _focus(qtbot, field)
+    assert _color_count(slider, theme.ink) >= 20
+    assert _color_count(slider, ring) == 0
+    _focus(qtbot, slider)
+    assert _color_count(slider, ring) >= 20
+    assert _color_count(slider, theme.ink) == 0
+    slider.setEnabled(False)
+    qtbot.waitUntil(lambda: not slider.isEnabled(), timeout=1000)
+    assert _color_count(slider, theme.ink) == 0
+    assert _color_count(slider, ring) == 0
+    assert _color_count(slider, theme.line) >= 20

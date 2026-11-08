@@ -432,6 +432,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {focus_ring};
     }}
 
+    QMenu::item:disabled {{
+        color: {disabled_text};
+        background-color: transparent;
+        border-color: transparent;
+    }}
+
     QMenu::separator {{
         height: 1px;
         background: {border_subtle};
@@ -458,6 +464,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {focus_ring};
     }}
 
+    QListView,
+    QTreeView,
     QListWidget,
     QTreeWidget {{
         background-color: {bg_surface};
@@ -470,6 +478,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     /* The transparent border is paid for out of the padding, so the focus
        ring never changes an item's size. */
+    QListView::item,
+    QTreeView::item,
     QListWidget::item,
     QTreeWidget::item {{
         padding: {8 - focus_width}px {10 - focus_width}px;
@@ -478,26 +488,41 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
     }}
 
+    QListView::item:selected,
+    QTreeView::item:selected,
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
         background-color: {ink};
         color: {on_ink};
     }}
 
+    QListView::item:focus,
+    QTreeView::item:focus,
     QListWidget::item:focus,
     QTreeWidget::item:focus {{
         border-color: {focus_ring};
     }}
 
     /* Selected items fill with ACCENT, which the ring cannot contrast with. */
+    QListView::item:selected:focus,
+    QTreeView::item:selected:focus,
     QListWidget::item:selected:focus,
     QTreeWidget::item:selected:focus {{
         border-color: {selected_focus_ring};
     }}
 
+    QListView::item:hover:!selected,
+    QTreeView::item:hover:!selected,
     QListWidget::item:hover:!selected,
     QTreeWidget::item:hover:!selected {{
         background-color: {bg_card_hover};
+    }}
+
+    QListView::item:disabled,
+    QTreeView::item:disabled,
+    QListWidget::item:disabled,
+    QTreeWidget::item:disabled {{
+        color: {disabled_text};
     }}
 
     QLabel#CommandPaletteHint {{
@@ -632,6 +657,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px {SPACE_2}px;
         min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
+        combobox-popup: 0;
     }}
 
     QComboBox:focus {{
@@ -823,6 +849,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
     }}
 
+    QGroupBox::title:disabled {{
+        color: {disabled_text};
+    }}
+
     /* Encrypt permissions — surface + card radius so it matches section language. */
     QGroupBox#EncryptPermissions {{
         background-color: {bg_surface};
@@ -834,12 +864,28 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
     }}
 
+    QGroupBox#EncryptPermissions::title:disabled {{
+        color: {disabled_text};
+    }}
+
     QToolBar {{
         background-color: {bg_toolbar};
         border: none;
         border-bottom: 1px solid {border_subtle};
         spacing: {SPACE_2}px;
         padding: {SPACE_2}px {SPACE_3}px;
+    }}
+
+    QToolBar::separator:horizontal {{
+        background: {border_subtle};
+        width: 1px;
+        margin: 6px {SPACE_2}px;
+    }}
+
+    QToolBar::separator:vertical {{
+        background: {border_subtle};
+        height: 1px;
+        margin: {SPACE_2}px 13px;
     }}
 
     /* Ghost buttons: viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
@@ -1113,71 +1159,104 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: transparent;
     }}
 
+    QSlider::groove:horizontal {{
+        background: {border_default};
+        height: 2px;
+        border-radius: 1px;
+    }}
+
+    QSlider::groove:vertical {{
+        background: {border_default};
+        width: 2px;
+        border-radius: 1px;
+    }}
+
+    QSlider::handle:horizontal {{
+        background: {bg_card};
+        border: 2px solid {ink};
+        width: 8px;
+        height: 8px;
+        margin: -5px 0;
+        border-radius: 6px;
+    }}
+
+    QSlider::handle:vertical {{
+        background: {bg_card};
+        border: 2px solid {ink};
+        width: 8px;
+        height: 8px;
+        margin: 0 -5px;
+        border-radius: 6px;
+    }}
+
+    QSlider::handle:hover {{
+        background: {bg_card_hover};
+    }}
+
+    QSlider::handle:pressed {{
+        background: {bg_pressed};
+    }}
+
+    QSlider::handle:horizontal:focus,
+    QSlider::handle:vertical:focus {{
+        border-color: {focus_ring};
+        border-width: {focus_width}px;
+        width: {12 - 2 * focus_width}px;
+        height: {12 - 2 * focus_width}px;
+    }}
+
+    QSlider::groove:horizontal:disabled,
+    QSlider::groove:vertical:disabled {{
+        background: {border_subtle};
+    }}
+
+    QSlider::handle:horizontal:disabled,
+    QSlider::handle:vertical:disabled {{
+        background: {bg_card};
+        border-color: {mark_disabled};
+    }}
+
     QSlider#ZoomSlider {{
         min-height: 20px;
     }}
 
     QSlider#ZoomSlider::groove:horizontal {{
-        background: {bg_base};
-        border: 1px solid {border_subtle};
-        height: 4px;
-        border-radius: 2px;
-    }}
-
-    QSlider#ZoomSlider::sub-page:horizontal {{
-        background: {ink};
-        border: 1px solid {ink_pressed};
-        height: 4px;
-        border-radius: 2px;
-    }}
-
-    QSlider#ZoomSlider::add-page:horizontal {{
-        background: {bg_base};
-        border: 1px solid {border_subtle};
-        height: 4px;
-        border-radius: 2px;
+        background: {border_default};
+        height: 2px;
+        border-radius: 1px;
     }}
 
     QSlider#ZoomSlider::handle:horizontal {{
-        background: {text_primary};
+        background: {bg_card};
         border: 2px solid {ink};
-        width: 12px;
-        height: 12px;
+        width: 8px;
+        height: 8px;
         margin: -5px 0;
         border-radius: 6px;
     }}
 
     QSlider#ZoomSlider::handle:horizontal:hover {{
-        background: {on_ink};
-        border-color: {ink_hover};
+        background: {bg_card_hover};
     }}
 
     QSlider#ZoomSlider:focus {{
         background: transparent;
     }}
 
-    QSlider#ZoomSlider:focus::groove:horizontal {{
-        border: {focus_width}px solid {focus_ring};
+    QSlider#ZoomSlider::handle:horizontal:focus {{
+        border-color: {focus_ring};
+        border-width: {focus_width}px;
+        width: {12 - 2 * focus_width}px;
+        height: {12 - 2 * focus_width}px;
     }}
 
-    QSlider#ZoomSlider:focus::handle:horizontal {{
-        background: {ink};
-        border: 2px solid {on_ink};
-        width: 14px;
-        height: 14px;
-        margin: -6px 0;
+    QSlider#ZoomSlider::groove:horizontal:disabled {{
+        background: {border_subtle};
     }}
 
-    QSlider#ZoomSlider:disabled::groove:horizontal,
-    QSlider#ZoomSlider:disabled::sub-page:horizontal,
-    QSlider#ZoomSlider:disabled::add-page:horizontal {{
-        background: {bg_surface};
-        border-color: {border_subtle};
-    }}
-
-    QSlider#ZoomSlider:disabled::handle:horizontal {{
-        background: {border_default};
-        border-color: {border_subtle};
+    QSlider#ZoomSlider::handle:horizontal:disabled {{
+        background: {bg_card};
+        border-color: {mark_disabled};
     }}
 
     QLabel#ZoomValueLabel {{
@@ -2392,27 +2471,38 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#WatermarkSlider::groove:horizontal {{
-        height: 4px;
-        background: {border_subtle};
-        border-radius: 2px;
+        background: {border_default};
+        height: 2px;
+        border-radius: 1px;
     }}
 
     QSlider#WatermarkSlider::handle:horizontal {{
-        background: {ink};
-        border: none;
-        width: 14px;
-        height: 14px;
+        background: {bg_card};
+        border: 2px solid {ink};
+        width: 8px;
+        height: 8px;
         margin: -5px 0;
-        border-radius: 7px;
-    }}
-
-    QSlider#WatermarkSlider::sub-page:horizontal {{
-        background: {ink};
-        border-radius: 2px;
+        border-radius: 6px;
     }}
 
     QSlider#WatermarkSlider:focus {{
         outline: none;
+    }}
+
+    QSlider#WatermarkSlider::handle:horizontal:focus {{
+        border-color: {focus_ring};
+        border-width: {focus_width}px;
+        width: {12 - 2 * focus_width}px;
+        height: {12 - 2 * focus_width}px;
+    }}
+
+    QSlider#WatermarkSlider::groove:horizontal:disabled {{
+        background: {border_subtle};
+    }}
+
+    QSlider#WatermarkSlider::handle:horizontal:disabled {{
+        background: {bg_card};
+        border-color: {mark_disabled};
     }}
 
     /* Card / tile chrome — dynamic properties + :hover/:focus; no per-state setStyleSheet. */
