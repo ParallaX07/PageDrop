@@ -180,8 +180,13 @@ def test_viewer_toolbar_groups_and_page_position(qtbot, viewer_pdf: Path) -> Non
         viewer._page_edit.setText("Page 4 of 3")
         viewer._on_page_edit_submit()
         assert viewer._page_edit.text() == "Page 4 of 3"
-        assert viewer._page_edit.property("invalid") is True
+        assert viewer._page_edit.property("error") is True
         assert "1 to 3" in viewer._page_edit.accessibleDescription()
+
+        viewer._page_edit.setText("2")
+        viewer._on_page_edit_submit()
+        assert viewer._page_edit.property("error") is False
+        assert viewer._page_edit.accessibleDescription() == ""
     finally:
         loader.close()
 

@@ -25,6 +25,7 @@ from pagedrop.ui.organize_tools import (
 )
 from pagedrop.ui.tool_shell import (
     FileDropZone,
+    clear_field_error,
     ToolShellWindow,
     probe_pdf_input,
     show_field_error,
@@ -61,6 +62,10 @@ def test_tool_forms_wrap_and_keep_validation_local(qtbot):
     shell.show()
     assert error.isVisible()
     assert error.text() == "Enter a value."
+    assert field.property("error") is True
+    clear_field_error(field)
+    assert error.isHidden()
+    assert field.property("error") is False
 
 
 def _prime_shell_for_run(

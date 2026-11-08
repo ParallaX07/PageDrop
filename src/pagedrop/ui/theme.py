@@ -634,10 +634,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
     }}
 
-    QComboBox:hover {{
-        border-color: {border_hover};
-    }}
-
     QComboBox:focus {{
         border: {focus_width}px solid {focus_ring};
     }}
@@ -764,6 +760,52 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QTextEdit:focus,
     QTextBrowser:focus {{
         border: {focus_width}px solid {focus_ring};
+    }}
+
+    /* Shared input states. Hover never overrides focus; a read-only
+       QTextBrowser is a display surface, so it only gets the disabled look. */
+    QLineEdit:hover:!focus:enabled,
+    QComboBox:hover:!focus:enabled,
+    QSpinBox:hover:!focus:enabled,
+    QDoubleSpinBox:hover:!focus:enabled,
+    QTextEdit:hover:!focus:enabled,
+    QPlainTextEdit:hover:!focus:enabled {{
+        background-color: {bg_card_hover};
+        border-color: {border_hover};
+    }}
+
+    QTextBrowser:hover:!focus:enabled {{
+        background-color: {bg_card};
+        border-color: {border_default};
+    }}
+
+    QLineEdit:disabled,
+    QComboBox:disabled,
+    QSpinBox:disabled,
+    QDoubleSpinBox:disabled,
+    QTextEdit:disabled,
+    QPlainTextEdit:disabled,
+    QTextBrowser:disabled {{
+        background-color: {bg_surface};
+        color: {disabled_text};
+        border: 1px solid {border_subtle};
+    }}
+
+    /* One dynamic error state, last so a focused field keeps its 2px focus
+       width in the danger colour. */
+    QLineEdit[error="true"],
+    QComboBox[error="true"],
+    QSpinBox[error="true"],
+    QDoubleSpinBox[error="true"],
+    QTextEdit[error="true"],
+    QPlainTextEdit[error="true"],
+    QLineEdit[error="true"]:hover:!focus:enabled,
+    QComboBox[error="true"]:hover:!focus:enabled,
+    QSpinBox[error="true"]:hover:!focus:enabled,
+    QDoubleSpinBox[error="true"]:hover:!focus:enabled,
+    QTextEdit[error="true"]:hover:!focus:enabled,
+    QPlainTextEdit[error="true"]:hover:!focus:enabled {{
+        border-color: {close_tab};
     }}
 
     QGroupBox {{
@@ -1517,10 +1559,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#PdfViewerToolbarGroup {{
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
-    }}
-
-    QLineEdit#PdfViewerPageEdit[invalid="true"] {{
-        border-color: {close_tab};
     }}
 
     QFrame#PdfViewerAnnotRail {{

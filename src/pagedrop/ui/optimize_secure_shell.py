@@ -22,6 +22,7 @@ from pagedrop.core import optimize_secure as ops
 from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.core.pdf_service import encryption_state
 from pagedrop.core.supported_formats import is_pdf_path
+from pagedrop.ui.accessibility import set_field_error_state
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import remember_directory
@@ -234,8 +235,10 @@ def _configure_encrypt(shell: ToolShellWindow) -> None:
         if confirm_pw.text() and confirm_pw.text() != user_pw.text():
             mismatch.setText("Passwords do not match")
             mismatch.show()
+            set_field_error_state(confirm_pw, True)
         else:
             mismatch.hide()
+            set_field_error_state(confirm_pw, False)
 
     user_pw.textChanged.connect(lambda _t: _refresh_strength())
     confirm_pw.textChanged.connect(lambda _t: _refresh_strength())

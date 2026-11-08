@@ -222,6 +222,19 @@ def test_stylesheet_includes_focus_rings_for_controls():
     assert "QRadioButton:focus::indicator" not in sheet
     assert "QCheckBox::indicator:focus" in sheet
     assert "QRadioButton::indicator:focus" in sheet
+    for control in (
+        "QLineEdit",
+        "QComboBox",
+        "QSpinBox",
+        "QDoubleSpinBox",
+        "QTextEdit",
+        "QPlainTextEdit",
+    ):
+        assert f"{control}:hover:!focus:enabled" in sheet
+        assert f"{control}:disabled" in sheet
+        assert f'{control}[error="true"]' in sheet
+    assert "QTextBrowser:disabled" in sheet
+    assert "invalid" not in sheet
 
 
 def test_checkbox_focus_ring_stays_on_indicator(qtbot, isolated_settings):
@@ -2510,3 +2523,119 @@ def test_checked_tool_button_shows_focus_ring(qtbot, themed_app, light):
     assert _inner_border_pixel(host.grab().toImage(), rect) != ring.upper()
     _focus(qtbot, button)
     assert _inner_border_pixel(host.grab().toImage(), rect) == ring.upper()
+
+
+def _input_factories():
+    from PyQt6.QtWidgets import (
+        QComboBox,
+        QDoubleSpinBox,
+        QPlainTextEdit,
+        QSpinBox,
+        QTextEdit,
+    )
+
+    def combo():
+        box = QComboBox()
+        box.addItems(["One", "Two"])
+        return box
+
+    return {
+        "line": QLineEdit,
+        "page-edit": lambda: _named(QLineEdit(), "PdfViewerPageEdit"),
+        "tools-search": lambda: _named(QLineEdit(), "ToolsSearch"),
+        "combo": combo,
+        "spin": QSpinBox,
+        "double-spin": QDoubleSpinBox,
+        "text": QTextEdit,
+        "plain-text": QPlainTextEdit,
+    }
+
+
+def _named(widget, name):
+    widget.setObjectName(name)
+    return widget
+
+
+def _count_colour(widget, colour: str) -> int:
+    """Pixels of *colour* along the widget's frame (outer 3px)."""
+    from PyQt6.QtGui import QColor
+
+    img = widget.window().grab().toImage()
+    target = QColor(colour)
+    rect = widget.geometry()
+    return sum(
+        1
+        for x in range(rect.left(), rect.right() + 1)
+        for y in range(rect.top(), rect.bottom() + 1)
+        if (
+            min(x - rect.left(), rect.right() - x, y - rect.top(), rect.bottom() - y) < 3
+            and img.pixelColor(x, y) == target
+        )
+    )
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+@pytest.mark.parametrize(
+    "kind",
+    ["line", "page-edit", "tools-search", "combo", "spin", "double-spin", "text", "plain-text"],
+)
+def test_error_state_paints_danger_border_and_clears(qtbot, kind, light):
+    from pagedrop.ui.accessibility import set_field_error_state
+    from pagedrop.ui.theme import DARK, LIGHT
+
+    theme = LIGHT if light else DARK
+    app = QApplication.instance()
+    assert app is not None
+    app.setStyleSheet(app_stylesheet(light=light))
+    try:
+        host = QWidget()
+        lay = QVBoxLayout(host)
+        field = _input_factories()[kind]()
+        other = QLineEdit()
+        lay.addWidget(field)
+        lay.addWidget(other)
+        qtbot.addWidget(host)
+        host.resize(320, 200)
+        host.show()
+        qtbot.waitExposed(host)
+
+        assert _count_colour(field, theme.danger) == 0
+
+        set_field_error_state(field, True)
+        qtbot.waitUntil(lambda: _count_colour(field, theme.danger) > 0, timeout=1000)
+
+        # A focused error field keeps both the focus width and the danger colour.
+        field.setFocus()
+        qtbot.waitUntil(field.hasFocus, timeout=1000)
+        focused_danger = _count_colour(field, theme.danger)
+        assert focused_danger > 0
+        assert _count_colour(field, theme.focus) == 0
+
+        other.setFocus()
+        qtbot.waitUntil(other.hasFocus, timeout=1000)
+        set_field_error_state(field, False)
+        qtbot.waitUntil(lambda: _count_colour(field, theme.danger) == 0, timeout=1000)
+
+        field.setFocus()
+        qtbot.waitUntil(field.hasFocus, timeout=1000)
+        assert _count_colour(field, theme.focus) > 0
+    finally:
+        app.setStyleSheet("")
+
+
+def test_set_field_error_state_is_idempotent(qtbot):
+    from pagedrop.ui.accessibility import set_field_error_state
+
+    field = QLineEdit()
+    qtbot.addWidget(field)
+    set_field_error_state(field, False)
+    assert not field.property("error")
+    set_field_error_state(field, True)
+    set_field_error_state(field, True)
+    assert field.property("error") is True
+    set_field_error_state(field, False)
+    assert field.property("error") is False
+    label = QLabel("no rule")
+    qtbot.addWidget(label)
+    set_field_error_state(label, True)
+    assert label.property("error") is True
