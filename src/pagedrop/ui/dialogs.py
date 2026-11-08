@@ -167,11 +167,12 @@ def name_confirm_buttons(
 
     The standard buttons stay in place so ``exec()`` results and Esc handling
     are unchanged; only their text (and optionally the destructive look) change.
+    Each label gets an Alt accelerator on its first letter.
     """
     yes = message.button(QMessageBox.StandardButton.Yes)
     no = message.button(QMessageBox.StandardButton.No)
-    yes.setText(action)
-    no.setText(decline)
+    yes.setText(f"&{action}")
+    no.setText(f"&{decline}")
     if destructive:
         yes.setProperty("destructive", True)
         # The property arrives after the button was styled; restyle it.

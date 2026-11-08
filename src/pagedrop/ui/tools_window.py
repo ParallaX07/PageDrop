@@ -981,6 +981,10 @@ class ToolsWindow(QWidget):
 
         self._category_jump = QComboBox()
         self._category_jump.setObjectName("ToolsCategoryJump")
+        # Labels gain " (collapsed)" after first show; the popup follows the field.
+        self._category_jump.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
         self._category_jump.addItem("Jump to category")
         self._category_jump.addItems(CATEGORIES)
         self._category_jump.setAccessibleName("Jump to category")

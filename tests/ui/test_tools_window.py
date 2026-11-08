@@ -170,6 +170,20 @@ def test_tools_hierarchy_and_category_jump_track_filter_and_collapse(qtbot):
     window.close()
 
 
+def test_category_jump_widens_for_labels_lengthened_after_show(qtbot, isolated_settings):
+    window = ToolsWindow()
+    qtbot.addWidget(window)
+    window.resize(960, 680)
+    window.show()
+    jump = window._category_jump
+
+    longer = "A category label much longer than any shown at first (collapsed)"
+    jump.setItemText(1, longer)
+
+    assert jump.sizeHint().width() >= jump.fontMetrics().horizontalAdvance(longer)
+    window.close()
+
+
 def test_tools_switch_to_two_columns_before_tile_descriptions_compress(qtbot):
     window = ToolsWindow()
     qtbot.addWidget(window)

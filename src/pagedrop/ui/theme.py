@@ -302,13 +302,22 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Ring for a focused item on an ink fill; the focus colour cannot contrast
     # with it, so use the ink label colour.
     selected_focus_ring = on_ink
-    close_tab = t.danger
-    close_pressed_bg = blend(t.danger, t.text, 0.8)
+    # High contrast pulls danger toward the text colour so a danger label
+    # keeps 7:1 on the chrome and both bars; the pressed fill steps further on
+    # so it still reads as pressed next to the hover fill.
+    close_tab = blend(t.danger, t.text, 0.7) if high_contrast else t.danger
+    close_pressed_bg = blend(t.danger, t.text, 0.5 if high_contrast else 0.8)
     # QSS has no opacity: disabled controls are drawn as the enabled colours
     # blended half-way into the chrome they sit on.
     disabled_text = text_muted if high_contrast else blend(t.text, t.chrome, 0.5)
-    primary_disabled_bg = blend(ink, t.chrome, 0.5)
-    primary_disabled_text = blend(on_ink, t.chrome, 0.5)
+    # Colour alone cannot mark "disabled" in high contrast (every label is the
+    # full text colour), so those controls also draw a dashed edge. A disabled
+    # primary drops its blended fill for the outlined treatment there.
+    disabled_border_style = "dashed" if high_contrast else "solid"
+    disabled_tool_border = border_subtle if high_contrast else "transparent"
+    primary_disabled_bg = "transparent" if high_contrast else blend(ink, t.chrome, 0.5)
+    primary_disabled_text = disabled_text if high_contrast else blend(on_ink, t.chrome, 0.5)
+    primary_disabled_border = border_subtle if high_contrast else primary_disabled_bg
     close_hover_bg = blend(t.danger, bg_bar, 0.14)
     close_tab_hover_bg = blend(t.danger, bg_tab_bar, 0.14)
     close_tab_pressed_bg = blend(t.danger, bg_tab_bar, 0.26)
@@ -556,6 +565,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
         color: {disabled_text};
         border-color: {border_subtle};
+        border-style: {disabled_border_style};
     }}
 
     QCheckBox,
@@ -937,7 +947,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolBar QToolButton:disabled {{
         color: {disabled_text};
         background-color: transparent;
-        border-color: transparent;
+        border-color: {disabled_tool_border};
+        border-style: {disabled_border_style};
     }}
 
     QPushButton#ToolbarPrimary,
@@ -975,7 +986,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolBar QToolButton#ToolbarPrimary:disabled {{
         background-color: {primary_disabled_bg};
         color: {primary_disabled_text};
-        border-color: {primary_disabled_bg};
+        border-color: {primary_disabled_border};
+        border-style: {disabled_border_style};
     }}
 
     /* A finished output is the task's primary destination; rerun is quiet. */
@@ -993,11 +1005,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {border_hover};
     }}
 
+    /* Transparent fill: the ordinary ring, not the on-ink one. */
+    QPushButton#ToolbarPrimary[resultAvailable="true"]:focus,
+    QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"]:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
     QPushButton#ToolbarPrimary[resultAvailable="true"]:disabled,
     QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"]:disabled {{
         background-color: transparent;
         color: {disabled_text};
         border-color: {border_subtle};
+        border-style: {disabled_border_style};
     }}
 
     /* Secondary: outlined, same look as the default QPushButton. */
@@ -1031,6 +1050,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolBar QToolButton#ToolbarSecondary:disabled {{
         color: {disabled_text};
         border-color: {border_subtle};
+        border-style: {disabled_border_style};
         background-color: transparent;
     }}
 
@@ -1060,6 +1080,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton[destructive="true"]:disabled {{
         color: {disabled_text};
         border-color: {border_subtle};
+        border-style: {disabled_border_style};
         background-color: transparent;
     }}
 
@@ -1227,16 +1248,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::handle:horizontal {{
-        background: {bg_card};
         border: 2px solid {ink};
         width: 8px;
         height: 8px;
         margin: -5px 0;
         border-radius: 6px;
-    }}
-
-    QSlider#ZoomSlider::handle:horizontal:hover {{
-        background: {bg_card_hover};
     }}
 
     QSlider#ZoomSlider:focus {{
@@ -1756,10 +1772,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText {{
         min-height: 24px;
         padding: 2px 6px;
-        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        background-color: {bg_card};
-        color: {text_primary};
     }}
 
     QFrame#FreeTextFormatBar QLineEdit#FreeTextFormatText:focus {{
@@ -1770,10 +1783,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QFrame#FreeTextFormatBar QDoubleSpinBox#FreeTextFormatSize {{
         min-height: 24px;
         padding: 2px 4px;
-        border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        background-color: {bg_card};
-        color: {text_primary};
     }}
 
     QFrame#FreeTextFormatBar QComboBox#FreeTextFormatFont:focus,
@@ -2477,7 +2487,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#WatermarkSlider::handle:horizontal {{
-        background: {bg_card};
         border: 2px solid {ink};
         width: 8px;
         height: 8px;

@@ -213,6 +213,7 @@ def test_named_confirmations_label_buttons_and_follow_answer(
     result = make_call(parent, overwrite_answer.real)
 
     assert result is (answer == _YES)
-    assert state["labels"] == (action, decline)
+    # Each label carries an Alt accelerator on its first letter.
+    assert state["labels"] == (f"&{action}", f"&{decline}")
     assert state["destructive"] is destructive
     assert state["default"] == ("no" if safe_default else "yes")
