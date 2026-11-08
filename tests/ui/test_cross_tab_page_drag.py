@@ -235,12 +235,13 @@ def test_target_tab_title_shows_dirty_after_drop(
     )
     target_index = main_window._tab_manager.indexOf(target)
     main_window._tab_manager.setCurrentIndex(0)
-    assert "*" not in main_window._tab_manager.tabText(target_index)
+    tab_bar = main_window._tab_manager.tabBar()
+    assert "unsaved" not in tab_bar.accessibleTabName(target_index)
 
     assert _tab_bar_drop(main_window, source, target_index, [0], monkeypatch=monkeypatch)
 
     assert target.is_dirty
-    assert "*" in main_window._tab_manager.tabText(target_index)
+    assert tab_bar.accessibleTabName(target_index).endswith(", unsaved changes")
     assert main_window._tab_manager.currentIndex() == 0
 
 

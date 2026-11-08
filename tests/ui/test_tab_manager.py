@@ -4,11 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QFileDialog, QTabBar, QWidget
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QMouseEvent
+from PyQt6.QtWidgets import QApplication, QFileDialog, QTabBar, QWidget
 
+from pagedrop.ui import settings as app_settings
+from pagedrop.ui.accessibility import refresh_themed_widgets
 from pagedrop.ui.main_window import MainWindow
+from pagedrop.ui.theme import (
+    INDEX_COLOUR_NAMES,
+    SPACE_1,
+    TAB_EDGE_HEIGHT,
+    TAB_UNSAVED_DOT,
+    current_theme,
+    index_qcolor,
+    token_qcolor,
+)
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from tests.conftest import RENDER_TIMEOUT_MS
@@ -724,3 +735,239 @@ def test_chrome_toggle_lives_in_the_window_controls_and_collapses_the_chrome(
     toggle.click()
     assert not main_window.menuBar().isHidden()
     assert not main_window._toolbar.isHidden()
+
+
+def _close_button(window: MainWindow, index: int):
+    bar = window._tab_manager.tabBar()
+    button = bar.tabButton(index, QTabBar.ButtonPosition.RightSide)
+    assert button is not None
+    return button
+
+
+def _close_button_shown(window: MainWindow, index: int) -> bool:
+    bar = window._tab_manager.tabBar()
+    return _close_button(window, index).isVisibleTo(bar)
+
+
+def _hover(widget: QWidget, point: QPoint) -> None:
+    """Deliver a pointer move with no buttons down (QTest.mouseMove is a no-op offscreen)."""
+    event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(point),
+        QPointF(widget.mapToGlobal(point)),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(widget, event)
+
+
+def _show_window(qtbot, window: MainWindow) -> None:
+    window.show()
+    qtbot.waitExposed(window)
+
+
+def _edge_pixel(window: MainWindow, index: int):
+    bar = window._tab_manager.tabBar()
+    rect = bar.tabRect(index)
+    image = bar.grab().toImage()
+    return image.pixelColor(rect.center().x(), TAB_EDGE_HEIGHT // 2)
+
+
+def _three_blank_tabs(window: MainWindow) -> None:
+    window._tab_manager.add_blank_tab()
+    window._tab_manager.add_blank_tab()
+    assert window._tab_manager.count() == 3
+
+
+def _index_name(window: MainWindow, index: int) -> str | None:
+    return _tab_at(window, index).index_colour
+
+
+def test_index_colours_follow_open_order_and_cycle(main_window):
+    manager = main_window._tab_manager
+    for _ in range(6):
+        manager.add_blank_tab()
+    names = [_index_name(main_window, i) for i in range(manager.count())]
+    assert names[:6] == list(INDEX_COLOUR_NAMES)
+    assert names[6] == INDEX_COLOUR_NAMES[0]
+    assert [manager._tab_index_colour(i) for i in range(manager.count())] == names
+
+
+def test_tool_tab_uses_slate_and_does_not_take_a_document_colour(main_window):
+    manager = main_window._tab_manager
+    tool = QWidget()
+    manager.add_page(tool, "Tool")
+    assert manager._tab_index_colour(manager.indexOf(tool)) == "index_slate"
+    fresh = manager.add_blank_tab()
+    # The tool page did not advance the document counter.
+    assert fresh.index_colour == "index_teal"
+
+
+def test_reorder_keeps_colour_with_the_document(main_window):
+    manager = main_window._tab_manager
+    _three_blank_tabs(main_window)
+    moved = _tab_at(main_window, 0)
+    manager.tabBar().moveTab(0, 2)
+    assert manager.indexOf(moved) == 2
+    assert moved.index_colour == "index_clay"
+    assert manager._tab_index_colour(2) == "index_clay"
+    assert [_index_name(main_window, i) for i in range(3)] == [
+        "index_teal",
+        "index_ochre",
+        "index_clay",
+    ]
+
+
+def test_top_edge_paints_the_index_colour_in_both_themes(main_window, qtbot):
+    _show_window(qtbot, main_window)
+    _three_blank_tabs(main_window)
+    manager = main_window._tab_manager
+    manager.setCurrentIndex(0)
+    for light in (True, False):
+        app_settings.set_light_theme(light)
+        refresh_themed_widgets()
+        for index in range(manager.count()):
+            expected = index_qcolor(INDEX_COLOUR_NAMES[index])
+            assert _edge_pixel(main_window, index).name() == expected.name(), (
+                light,
+                index,
+            )
+    # Active and inactive tabs both carry their colour; they differ from each other.
+    assert _edge_pixel(main_window, 0).name() != _edge_pixel(main_window, 1).name()
+
+
+def test_close_button_only_on_active_or_hovered_tab(main_window, qtbot):
+    _show_window(qtbot, main_window)
+    _three_blank_tabs(main_window)
+    manager = main_window._tab_manager
+    bar = manager.tabBar()
+    manager.setCurrentIndex(1)
+    assert [_close_button_shown(main_window, i) for i in range(3)] == [False, True, False]
+
+    _hover(bar, bar.tabRect(2).center())
+    assert _close_button_shown(main_window, 2)
+    assert _close_button_shown(main_window, 1)
+    assert not _close_button_shown(main_window, 0)
+
+    QApplication.sendEvent(bar, QEvent(QEvent.Type.Leave))
+    assert [_close_button_shown(main_window, i) for i in range(3)] == [False, True, False]
+
+    manager.setCurrentIndex(0)
+    assert [_close_button_shown(main_window, i) for i in range(3)] == [True, False, False]
+
+
+def test_hiding_the_close_button_does_not_change_tab_widths(main_window, qtbot):
+    _show_window(qtbot, main_window)
+    _three_blank_tabs(main_window)
+    manager = main_window._tab_manager
+    bar = manager.tabBar()
+    before = [bar.tabRect(i).width() for i in range(3)]
+    manager.setCurrentIndex(2)
+    _hover(bar, bar.tabRect(0).center())
+    assert _close_button_shown(main_window, 0)
+    assert [bar.tabRect(i).width() for i in range(3)] == before
+
+
+def _strongest_pixel(image) -> QColor:
+    pixels = [
+        image.pixelColor(x, y) for x in range(image.width()) for y in range(image.height())
+    ]
+    return max(pixels, key=QColor.alpha)
+
+
+def _close_to(actual: QColor, expected: QColor) -> bool:
+    return all(
+        abs(a - e) <= 3
+        for a, e in (
+            (actual.red(), expected.red()),
+            (actual.green(), expected.green()),
+            (actual.blue(), expected.blue()),
+        )
+    )
+
+
+def test_close_icon_is_neutral_at_rest_and_danger_on_hover(main_window):
+    icon = _close_button(main_window, 0).icon()
+    theme = current_theme()
+    rest = _strongest_pixel(icon.pixmap(14, 14, QIcon.Mode.Normal).toImage())
+    hover = _strongest_pixel(icon.pixmap(14, 14, QIcon.Mode.Active).toImage())
+    assert _close_to(rest, token_qcolor(theme.on_bar_muted))
+    assert _close_to(hover, token_qcolor(theme.danger))
+    assert not _close_to(rest, token_qcolor(theme.danger))
+
+
+def test_hovered_close_button_is_drawn_with_a_danger_icon(main_window, qtbot):
+    _show_window(qtbot, main_window)
+    button = _close_button(main_window, 0)
+
+    def redness() -> int:
+        image = button.grab().toImage()
+        return max(
+            image.pixelColor(x, y).red() - image.pixelColor(x, y).green()
+            for x in range(image.width())
+            for y in range(image.height())
+        )
+
+    # Neutral grey at rest; the hover fill alone is a faint tint, the icon is not.
+    assert redness() < 15
+    button.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, True)
+    button.update()
+    qtbot.waitUntil(lambda: redness() > 50, timeout=2000)
+
+
+def test_close_tab_by_keyboard_after_close_button_is_hidden(
+    main_window, one_page_pdf, five_page_pdf, monkeypatch, qtbot
+):
+    main_window.showMinimized()
+    _open_single(main_window, one_page_pdf, monkeypatch, target="current")
+    _wait_for_tab_loaded(qtbot, _tab_at(main_window, 0))
+    _open_single(main_window, five_page_pdf, monkeypatch, target="new")
+    _wait_for_tab_loaded(qtbot, _tab_at(main_window, 1))
+    main_window._tab_manager.setCurrentIndex(0)
+    assert not _close_button_shown(main_window, 1)
+
+    _trigger_shortcut(main_window, "Ctrl+W")
+    qtbot.waitUntil(lambda: main_window._tab_manager.count() == 1, timeout=5000)
+    assert _tab_at(main_window, 0).pdf_path == str(five_page_pdf)
+
+
+def _dot_pixel(window: MainWindow, index: int):
+    bar = window._tab_manager.tabBar()
+    rect = bar.tabRect(index)
+    button = _close_button(window, index)
+    x = button.geometry().left() - SPACE_1 - TAB_UNSAVED_DOT // 2
+    y = (rect.top() + TAB_EDGE_HEIGHT + rect.bottom()) // 2
+    return bar.grab().toImage().pixelColor(x, y)
+
+
+def test_unsaved_dot_is_painted_only_while_dirty(main_window, five_page_pdf, qtbot):
+    _show_window(qtbot, main_window)
+    main_window._load_pdf(str(five_page_pdf))
+    tab = _tab_at(main_window, 0)
+    _wait_for_tab_loaded(qtbot, tab)
+    manager = main_window._tab_manager
+    ink = token_qcolor(current_theme().on_bar).name()
+
+    assert _dot_pixel(main_window, 0).name() != ink
+    tab.thumbnail_grid.reorder_pages_by_drop([4], 0)
+    qtbot.waitUntil(lambda: tab.is_dirty, timeout=3000)
+    assert _dot_pixel(main_window, 0).name() == ink
+    assert manager.tabBar().accessibleTabName(0).endswith(", unsaved changes")
+    assert "*" not in manager.tabText(0)
+    assert manager.tabText(0) == tab.display_name
+    # The window title and unsaved prompt still read the starred title.
+    assert tab.tab_title == f"{tab.display_name}*"
+
+    assert tab.undo_edit()
+    qtbot.waitUntil(lambda: not tab.is_dirty, timeout=3000)
+    assert _dot_pixel(main_window, 0).name() != ink
+    assert manager.tabBar().accessibleTabName(0) == tab.display_name
+
+
+def test_tool_tab_never_shows_the_unsaved_dot(main_window, qtbot):
+    _show_window(qtbot, main_window)
+    tool = QWidget()
+    main_window._tab_manager.add_page(tool, "Tool")
+    index = main_window._tab_manager.indexOf(tool)
+    assert _dot_pixel(main_window, index).name() != token_qcolor(current_theme().on_bar).name()

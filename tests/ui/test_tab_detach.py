@@ -89,6 +89,39 @@ def test_detach_tab_creates_new_window_with_same_pdf(
     assert detached.windowTitle().endswith("(5 pages)")
 
 
+def test_detached_tab_keeps_its_colour_and_leaves_the_new_counter_alone(
+    one_page_pdf,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.showMinimized()
+
+    source._tab_manager.add_blank_tab()
+    moving = _tab_at(source, 1)
+    source._load_pdf(str(one_page_pdf), tab=moving)
+    _wait_for_tab_loaded(qtbot, moving)
+    assert moving.index_colour == "index_teal"
+
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(1)
+    qtbot.waitUntil(
+        lambda: len(_windows_added(manager, windows_before)) == 1,
+        timeout=5000,
+    )
+    detached = _windows_added(manager, windows_before)[0]
+    qtbot.addWidget(detached)
+
+    assert _tab_at(detached, 0) is moving
+    assert moving.index_colour == "index_teal"
+    assert detached._tab_manager._tab_index_colour(0) == "index_teal"
+    # The adopted tab did not use up a colour: the first new tab starts at clay.
+    fresh = detached._tab_manager.add_blank_tab()
+    assert fresh.index_colour == "index_clay"
+
+
 def test_move_to_new_window_context_menu(
     one_page_pdf,
     qtbot,

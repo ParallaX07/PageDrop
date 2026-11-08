@@ -103,6 +103,19 @@ DARK = Theme(
 )
 
 
+# Document tabs take these in open order; the order is part of the design.
+INDEX_COLOUR_NAMES = (
+    "index_clay",
+    "index_teal",
+    "index_ochre",
+    "index_plum",
+    "index_moss",
+    "index_slate",
+)
+TAB_EDGE_HEIGHT = 4
+TAB_UNSAVED_DOT = 8
+
+
 def current_theme() -> Theme:
     """The chrome theme the user (or the OS) currently selects."""
     from pagedrop.ui.settings import light_theme
@@ -1404,8 +1417,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
         color: {on_bar_muted};
         border: none;
+        border-top: {TAB_EDGE_HEIGHT}px solid transparent;
         border-bottom: 2px solid transparent;
-        padding: {SPACE_2}px {SPACE_3}px {SPACE_2 - 1}px {SPACE_3}px;
+        padding: {SPACE_2 - TAB_EDGE_HEIGHT}px {SPACE_3 + TAB_UNSAVED_DOT + SPACE_1}px {SPACE_2 - 1}px {SPACE_3}px;
         margin-right: 2px;
         min-width: 80px;
         max-width: 220px;
@@ -2697,6 +2711,11 @@ def token_qcolor(hex_color: str, alpha: int = 255) -> "QColor":
     return color
 
 
+def index_qcolor(name: str) -> "QColor":
+    """Index colour token name (``index_clay`` ...) resolved for the current theme."""
+    return token_qcolor(getattr(current_theme(), name))
+
+
 def accent_qcolor(*, alpha: int = 255) -> "QColor":
     """Ink colour for programmatic painting (drag badge, etc.)."""
     return token_qcolor(current_theme().ink, alpha)
@@ -2761,11 +2780,11 @@ def close_tab_hex() -> str:
 
 
 def tab_close_icon(*, color: str | None = None) -> "QIcon":
-    """Red × icon for tab close buttons (Phosphor ``x``, destructive tint)."""
+    """× icon for tab close buttons: neutral at rest, destructive while hovered."""
     from pagedrop.ui import icons
 
-    ink = color if color is not None else close_tab_hex()
-    return icons.icon("x", color=ink)
+    ink = color if color is not None else current_theme().on_bar_muted
+    return icons.icon("x", color=ink, active_color=close_tab_hex())
 
 
 def apply_app_font(app: "QApplication") -> None:

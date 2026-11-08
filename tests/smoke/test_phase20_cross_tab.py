@@ -154,7 +154,10 @@ def test_smoke_cross_tab_copy_cut_save_as_ctrl_tab(
     assert blank.edit_model is not None
     assert blank.edit_model.logical_count() == 2
     blank_index = window._tab_manager.indexOf(blank)
-    assert "*" in window._tab_manager.tabText(blank_index)
+    assert blank.is_dirty
+    assert window._tab_manager.tabBar().accessibleTabName(blank_index).endswith(
+        ", unsaved changes"
+    )
 
     output = tmp_path / "blank_init.pdf"
     monkeypatch.setattr(

@@ -194,7 +194,7 @@ def test_dirty_flag_cleared_after_save(
     assert tab.edit_model is not None
     assert tab.edit_model.save_path == str(output)
     assert tab.tab_title == "saved.pdf"
-    assert "*" not in main_window._tab_manager.tabText(0)
+    assert "unsaved" not in main_window._tab_manager.tabBar().accessibleTabName(0)
 
 
 def test_failed_second_save_keeps_previous_baseline_and_pending_markup(
@@ -296,7 +296,8 @@ def test_drop_init_tab_title_shows_source_filename(
 
     assert blank.original_path == str(five_page_pdf)
     assert blank.tab_title == f"{five_page_pdf.name}*"
-    assert main_window._tab_manager.tabText(blank_idx) == blank.tab_title
+    assert blank.is_dirty
+    assert main_window._tab_manager.tabText(blank_idx) == blank.display_name
 
 
 def test_drop_init_save_as_updates_tab_title_and_stays_editable(

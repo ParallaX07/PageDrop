@@ -51,7 +51,10 @@ def test_rename_unsaved_dirty_tab(main_window, five_page_pdf, monkeypatch, qtbot
     main_window._rename_tab(0)
     assert tab.custom_tab_title == "Working Copy"
     assert tab.tab_title == "Working Copy*"
-    assert main_window._tab_manager.tabText(0) == "Working Copy*"
+    assert main_window._tab_manager.tabText(0) == "Working Copy"
+    assert main_window._tab_manager.tabBar().accessibleTabName(0).endswith(
+        ", unsaved changes"
+    )
 
 
 def test_rename_drop_init_tab(main_window, five_page_pdf, monkeypatch, qtbot):
@@ -72,10 +75,10 @@ def test_rename_drop_init_tab(main_window, five_page_pdf, monkeypatch, qtbot):
     shown = main_window._tab_manager.tabText(blank_idx)
     if "…" in shown:
         shown_prefix, shown_suffix = shown.split("…", 1)
-        assert blank.tab_title.startswith(shown_prefix)
-        assert blank.tab_title.endswith(shown_suffix)
+        assert blank.display_name.startswith(shown_prefix)
+        assert blank.display_name.endswith(shown_suffix)
     else:
-        assert shown == blank.tab_title
+        assert shown == blank.display_name
 
 
 def test_rename_cannot_rename_after_save(
