@@ -194,6 +194,11 @@ def test_stylesheet_includes_focus_rings_for_controls():
     sheet = app_stylesheet()
     assert "QToolBar QToolButton:focus" in sheet
     assert "QToolButton:checked" in sheet
+    assert "QToolButton:checked:focus" in sheet
+    assert "QPushButton:disabled" in sheet
+    assert 'QPushButton[destructive="true"]:pressed' in sheet
+    assert 'QPushButton[destructive="true"]:focus' in sheet
+    assert 'QPushButton[destructive="true"]:disabled' in sheet
     assert "QMenuBar::item:selected" in sheet
     # Menubar ::item:focus highlights every item under Qt — do not use it.
     assert "QMenuBar::item:focus" not in sheet
@@ -625,6 +630,7 @@ def test_toolbar_secondary_is_ghost_not_primary():
         )[0]
         assert "transparent" in secondary
         assert theme.ink not in secondary
+        assert f"color: {theme.text}" in secondary
         primary = sheet.split("QPushButton#ToolbarPrimary,")[1].split(
             "QPushButton#ToolbarPrimary:hover"
         )[0]
@@ -1594,7 +1600,7 @@ def test_focus_rules_use_ring_token_not_accent(mode):
     sheet = re.sub(r"/\*.*?\*/", "", app_stylesheet(**mode), flags=re.S)
     ring = _ring_for(mode["light"])
     # Primary buttons and selected items sit on an ACCENT fill; they use ink instead.
-    allowed_accent = ("ToolbarPrimary", "::handle", "::item:selected:focus")
+    allowed_accent = ("ToolbarPrimary", "::handle", "::item:selected:focus", ":default:focus")
     seen = 0
     for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
         if ":focus" not in selector:
@@ -1939,7 +1945,7 @@ _TNUM = QFont.Tag("tnum")
 
 # (font-size px, font-weight): page title, section title, panel title,
 # body, label, caption.
-_TYPE_SCALE = {(22, 600), (18, 600), (15, 600), (13, 400), (13, 500), (12, 400)}
+_TYPE_SCALE = {(22, 600), (18, 600), (15, 600), (13, 400), (13, 500), (13, 600), (12, 400)}
 
 
 def test_tabular_font_sets_tnum_without_pinning_size():
@@ -2394,3 +2400,113 @@ def test_spin_and_combo_text_stops_before_the_buttons(qtbot, themed_app):
         QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, combo
     )
     assert field.right() + 1 <= arrow.left()
+
+
+def _rule_bodies(sheet: str, selector: str) -> list[str]:
+    return [body for sel, body in _qss_rules(sheet) if selector in [x.strip() for x in sel.split(",")]]
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_secondary_text_and_disabled_text_follow_the_button_spec(light):
+    from pagedrop.ui.theme import blend
+
+    theme = _theme_for(light)
+    sheet = app_stylesheet(light=light)
+    faded = blend(theme.text, theme.chrome, 0.5)
+    assert faded != theme.text
+    for selector in ("QPushButton", "QPushButton#ToolbarSecondary"):
+        (rest,) = _rule_bodies(sheet, selector)
+        assert f"color: {theme.text};" in rest
+        assert "background-color: transparent" in rest
+        (off,) = _rule_bodies(sheet, f"{selector}:disabled")
+        assert f"color: {faded};" in off
+        assert "background-color: transparent" in off
+    for selector in ("QToolButton:disabled", 'QPushButton[destructive="true"]:disabled'):
+        (off,) = _rule_bodies(sheet, selector)
+        assert f"color: {faded};" in off
+    (primary_off,) = _rule_bodies(sheet, "QPushButton#ToolbarPrimary:disabled")
+    assert f"background-color: {blend(theme.ink, theme.chrome, 0.5)};" in primary_off
+    assert f"color: {blend(theme.on_ink, theme.chrome, 0.5)};" in primary_off
+    (primary,) = _rule_bodies(sheet, "QPushButton#ToolbarPrimary")
+    assert "font-weight: 600" in primary
+
+
+def _message_box_with_destructive(qtbot, *, default_destructive: bool):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pagedrop.ui.dialogs import fit_message_box_buttons
+
+    box = QMessageBox()
+    box.setText("Discard changes?")
+    discard = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+    keep = box.addButton("Keep editing", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(discard if default_destructive else keep)
+    fit_message_box_buttons(box)
+    _show(qtbot, box)
+    QApplication.processEvents()
+    return box, discard, keep
+
+
+def _inner_border_pixel(img, rect):
+    """Second pixel in from the left edge: ring only when the border is 2px."""
+    return img.pixelColor(rect.left() + 1, rect.center().y()).name().upper()
+
+
+def _button_rect(box, button):
+    from PyQt6.QtCore import QRect
+
+    return QRect(button.mapTo(box, button.rect().topLeft()), button.size())
+
+
+@pytest.mark.parametrize("default_destructive", [False, True], ids=["safe-default", "danger-default"])
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_destructive_button_keeps_danger_look_in_message_box(
+    qtbot, themed_app, light, default_destructive
+):
+    themed_app(light=light)
+    theme = _theme_for(light)
+    box, discard, keep = _message_box_with_destructive(qtbot, default_destructive=default_destructive)
+    img = box.grab().toImage()
+    danger_rect = _button_rect(box, discard)
+    keep_rect = _button_rect(box, keep)
+    # The label is drawn in danger and the fill is never ink. The default
+    # button is focused, so its border is the ring; judge the interior.
+    inside = danger_rect.adjusted(4, 4, -4, -4)
+    assert _closer_to(img, inside, theme.danger, theme.chrome) >= 20
+    assert _exact_count(img, danger_rect, theme.ink) == 0
+    if not default_destructive:
+        assert _exact_count(img, danger_rect, theme.danger) >= 40
+    # The other button is the ink-filled default only when it is the default.
+    assert (_exact_count(img, keep_rect, theme.ink) > 100) == (not default_destructive)
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_focused_destructive_button_shows_focus_ring(qtbot, themed_app, light):
+    themed_app(light=light)
+    theme = _theme_for(light)
+    ring = _ring_for(light)
+    box, discard, _keep = _message_box_with_destructive(qtbot, default_destructive=False)
+    rect = _button_rect(box, discard)
+    assert _inner_border_pixel(box.grab().toImage(), rect) != ring.upper()
+    _focus(qtbot, discard)
+    img = box.grab().toImage()
+    assert _inner_border_pixel(img, rect) == ring.upper()
+    # The label keeps the danger colour.
+    assert _closer_to(img, rect.adjusted(4, 4, -4, -4), theme.danger, theme.chrome) >= 20
+
+
+@pytest.mark.parametrize("light", [False, True], ids=["dark", "light"])
+def test_checked_tool_button_shows_focus_ring(qtbot, themed_app, light):
+    themed_app(light=light)
+    ring = _ring_for(light)
+    button = QToolButton()
+    button.setText("Grid")
+    button.setCheckable(True)
+    button.setChecked(True)
+    host = _hosted(qtbot, button)
+    button.clearFocus()
+    QApplication.processEvents()
+    rect = button.geometry()
+    assert _inner_border_pixel(host.grab().toImage(), rect) != ring.upper()
+    _focus(qtbot, button)
+    assert _inner_border_pixel(host.grab().toImage(), rect) == ring.upper()

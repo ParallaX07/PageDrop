@@ -303,6 +303,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # with it, so use the ink label colour.
     selected_focus_ring = on_ink
     close_tab = t.danger
+    close_pressed_bg = blend(t.danger, t.text, 0.8)
+    # QSS has no opacity: disabled controls are drawn as the enabled colours
+    # blended half-way into the chrome they sit on.
+    disabled_text = text_muted if high_contrast else blend(t.text, t.chrome, 0.5)
+    primary_disabled_bg = blend(ink, t.chrome, 0.5)
+    primary_disabled_text = blend(on_ink, t.chrome, 0.5)
     close_hover_bg = blend(t.danger, bg_bar, 0.14)
     close_tab_hover_bg = blend(t.danger, bg_tab_bar, 0.14)
     close_tab_pressed_bg = blend(t.danger, bg_tab_bar, 0.26)
@@ -500,7 +506,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton {{
-        background-color: {bg_card};
+        background-color: transparent;
         color: {text_primary};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
@@ -522,7 +528,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton:disabled {{
-        color: {text_muted};
+        background-color: transparent;
+        color: {disabled_text};
         border-color: {border_subtle};
     }}
 
@@ -793,8 +800,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: {SPACE_2}px {SPACE_3}px;
     }}
 
-    /* Viewer chrome uses QToolButton outside QToolBar; keep both in sync.
-       R3: default tools are flat/hairline; filled primary + outline secondary stay. */
+    /* Ghost buttons: viewer chrome uses QToolButton outside QToolBar; keep both in sync. */
     QToolButton,
     QToolBar QToolButton {{
         background-color: transparent;
@@ -835,9 +841,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {ink_hover};
     }}
 
+    QToolButton:checked:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
     QToolButton:disabled,
     QToolBar QToolButton:disabled {{
-        color: {text_muted};
+        color: {disabled_text};
         background-color: transparent;
         border-color: transparent;
     }}
@@ -848,7 +858,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ink};
         color: {on_ink};
         border: 1px solid {ink_pressed};
-        font-weight: 500;
+        font-weight: 600;
         padding: 6px 14px;
     }}
 
@@ -873,10 +883,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton#ToolbarPrimary:disabled,
-    QPushButton#EmptyStateOpenButton:disabled {{
-        background-color: {bg_card_hover};
-        color: {text_muted};
-        border-color: {border_subtle};
+    QPushButton#EmptyStateOpenButton:disabled,
+    QToolBar QToolButton#ToolbarPrimary:disabled {{
+        background-color: {primary_disabled_bg};
+        color: {primary_disabled_text};
+        border-color: {primary_disabled_bg};
     }}
 
     /* A finished output is the task's primary destination; rerun is quiet. */
@@ -894,11 +905,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-color: {border_hover};
     }}
 
-    /* Ghost / outline secondary — quieter than default fill, not accent primary. */
+    QPushButton#ToolbarPrimary[resultAvailable="true"]:disabled,
+    QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"]:disabled {{
+        background-color: transparent;
+        color: {disabled_text};
+        border-color: {border_subtle};
+    }}
+
+    /* Secondary: outlined, same look as the default QPushButton. */
     QPushButton#ToolbarSecondary,
     QToolBar QToolButton#ToolbarSecondary {{
         background-color: transparent;
-        color: {text_muted};
+        color: {text_primary};
         border: 1px solid {border_default};
         font-weight: 500;
     }}
@@ -923,7 +941,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QPushButton#ToolbarSecondary:disabled,
     QToolBar QToolButton#ToolbarSecondary:disabled {{
-        color: {text_muted};
+        color: {disabled_text};
         border-color: {border_subtle};
         background-color: transparent;
     }}
@@ -939,6 +957,22 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {on_ink};
         border-color: {close_tab};
         background-color: {close_tab};
+    }}
+
+    QPushButton[destructive="true"]:pressed {{
+        color: {on_ink};
+        border-color: {close_pressed_bg};
+        background-color: {close_pressed_bg};
+    }}
+
+    QPushButton[destructive="true"]:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
+    QPushButton[destructive="true"]:disabled {{
+        color: {disabled_text};
+        border-color: {border_subtle};
+        background-color: transparent;
     }}
 
     QToolButton#NewTabButton {{
@@ -1385,32 +1419,51 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QMessageBox QPushButton {{
-        background-color: {bg_card};
-        color: {text_primary};
-        border: 1px solid {border_default};
-        border-radius: {RADIUS_CONTROL}px;
         padding: 6px 20px;
-    }}
-
-    QMessageBox QPushButton:hover {{
-        background-color: {bg_card_hover};
-        border-color: {border_hover};
-    }}
-
-    QMessageBox QPushButton:focus {{
-        border: {focus_width}px solid {focus_ring};
     }}
 
     QMessageBox QPushButton:default {{
         background-color: {ink};
         border-color: {ink};
         color: {on_ink};
-        font-weight: 500;
+        font-weight: 600;
     }}
 
     QMessageBox QPushButton:default:hover {{
         background-color: {ink_hover};
         border-color: {ink_hover};
+    }}
+
+    QMessageBox QPushButton:default:pressed {{
+        background-color: {ink_pressed};
+        border-color: {ink_pressed};
+    }}
+
+    QMessageBox QPushButton:default:focus {{
+        border: {focus_width}px solid {selected_focus_ring};
+    }}
+
+    /* A destructive default keeps the danger treatment, not the ink fill. */
+    QMessageBox QPushButton[destructive="true"]:default {{
+        background-color: transparent;
+        border-color: {close_tab};
+        color: {close_tab};
+    }}
+
+    QMessageBox QPushButton[destructive="true"]:default:hover {{
+        background-color: {close_tab};
+        border-color: {close_tab};
+        color: {on_ink};
+    }}
+
+    QMessageBox QPushButton[destructive="true"]:default:pressed {{
+        background-color: {close_pressed_bg};
+        border-color: {close_pressed_bg};
+        color: {on_ink};
+    }}
+
+    QMessageBox QPushButton[destructive="true"]:default:focus {{
+        border: {focus_width}px solid {focus_ring};
     }}
 
     QScrollArea#PagePreviewScroll {{

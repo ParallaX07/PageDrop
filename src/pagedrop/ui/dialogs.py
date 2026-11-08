@@ -150,6 +150,9 @@ def fit_message_box_buttons(message: QMessageBox) -> None:
         button.setMinimumWidth(widest)
         if message.buttonRole(button) == QMessageBox.ButtonRole.DestructiveRole:
             button.setProperty("destructive", True)
+            # The property arrives after the button was styled; restyle it.
+            button.style().unpolish(button)
+            button.style().polish(button)
     message.setMinimumWidth(message.sizeHint().width())
 
 

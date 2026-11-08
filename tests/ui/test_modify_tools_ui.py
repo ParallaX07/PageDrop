@@ -785,13 +785,16 @@ def test_watermark_swatch_ring_follows_theme_change(qtbot, isolated_settings):
         assert other is not None
 
         def count(color: str) -> int:
+            # Border band only: the label is drawn in the text colour, which can
+            # equal the dark focus ring.
             img = swatch.grab().toImage()
             target = QColor(color).rgb()
             return sum(
                 1
                 for y in range(img.height())
                 for x in range(img.width())
-                if img.pixelColor(x, y).rgb() == target
+                if min(x, y, img.width() - 1 - x, img.height() - 1 - y) < 2
+                and img.pixelColor(x, y).rgb() == target
             )
 
         for light, ring, stale in (
