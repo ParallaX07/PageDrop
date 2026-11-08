@@ -1724,6 +1724,23 @@ def test_window_close_keeps_hover_treatment_while_focused(
 
 
 @pytest.mark.parametrize("light", [False, True])
+def test_chrome_buttons_have_a_pressed_state(light):
+    from pagedrop.ui.theme import DARK, LIGHT, blend
+
+    theme = LIGHT if light else DARK
+    sheet = app_stylesheet(light=light)
+
+    def pressed_body(selector: str) -> str:
+        start = sheet.index(selector + ":pressed")
+        return sheet[sheet.index("{", start) : sheet.index("}", start)]
+
+    for name in ("ChromeToggleButton", "WindowMinimize", "WindowMaximize"):
+        assert f"background-color: {theme.line};" in pressed_body(f"QToolButton#{name}")
+    close = blend(theme.danger, theme.text, 0.8)
+    assert f"background-color: {close};" in pressed_body("QToolButton#WindowClose")
+
+
+@pytest.mark.parametrize("light", [False, True])
 @pytest.mark.parametrize(
     ("kind", "name"),
     [

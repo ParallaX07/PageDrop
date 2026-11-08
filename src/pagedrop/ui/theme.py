@@ -437,6 +437,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {close_tab};
     }}
 
+    QToolButton#ChromeToggleButton:pressed,
+    QToolButton#WindowMinimize:pressed,
+    QToolButton#WindowMaximize:pressed {{
+        background-color: {bg_pressed};
+    }}
+
+    QToolButton#WindowClose:pressed {{
+        background-color: {close_pressed_bg};
+        color: {close_tab};
+    }}
+
     QMenu {{
         background-color: {bg_float};
         color: {text_primary};

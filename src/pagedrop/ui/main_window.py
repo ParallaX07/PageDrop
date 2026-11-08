@@ -630,6 +630,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         edit_menu.addAction(a["preferences"])
 
         view_menu = menubar.addMenu("&View")
+        view_menu.addAction(a["preview"])
+        view_menu.addSeparator()
         appearance_menu = view_menu.addMenu("&Appearance")
         for key in ("appearance_system", "appearance_light", "appearance_dark"):
             appearance_menu.addAction(a[key])
@@ -649,6 +651,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             "rotate_cw",
             "duplicate_pages",
             "extract_selected",
+            "extract_selected_to_tab",
+            "extract_selected_to_window",
             "delete_pages",
             None,
             "move_up",

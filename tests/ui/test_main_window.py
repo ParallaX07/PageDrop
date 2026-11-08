@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pagedrop.assets import register_fonts
 from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
 from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, MainWindow
 from pagedrop.ui.window_chrome import TITLE_MAX_WIDTH
@@ -373,6 +374,8 @@ def test_pages_menu_holds_the_page_commands(main_window):
         "rotate_cw",
         "duplicate_pages",
         "extract_selected",
+        "extract_selected_to_tab",
+        "extract_selected_to_window",
         "delete_pages",
         None,
         "move_up",
@@ -420,6 +423,11 @@ def test_responsive_menu_actions_are_the_movable_menus_in_order(main_window):
 
 @pytest.mark.parametrize("width", [MIN_WINDOW_WIDTH, 600, 800, 1200])
 def test_title_label_elides_to_the_text_it_can_draw(main_window, qtbot, width):
+    # The title strip is what the menus leave over, and the menus' width depends
+    # on the font and style sheet. Use the ones the app starts with so the result
+    # does not depend on which earlier test registered the font or styled the app.
+    register_fonts()
+    _style_window(main_window)
     main_window.resize(width, 480)
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
@@ -1731,3 +1739,71 @@ def test_rotate_commands_are_found_by_their_direction_in_the_palette(main_window
     assert actions["rotate_cw"] in ranked_actions(labelled, "clockwise")
     assert ranked_actions(labelled, "rotate left")[0] is actions["rotate_ccw"]
     assert ranked_actions(labelled, "rotate right")[0] is actions["rotate_cw"]
+
+
+def _menu_reachable_actions(window: MainWindow) -> set[int]:
+    """Ids of every action in the menu bar, its submenus and the More overflow."""
+    seen: set[int] = set()
+
+    def walk(actions) -> None:
+        for action in actions:
+            seen.add(id(action))
+            if action.menu() is not None:
+                walk(action.menu().actions())
+
+    walk(window.menuBar().actions())
+    return seen
+
+
+# Labelled actions with no menu entry: each has a shortcut that works with no
+# menu open, and is still in the command palette.
+_SHORTCUT_ONLY_ACTIONS = {
+    "next_tab",
+    "prev_tab",
+    "new_tab",
+    "go_to_page",
+    "reset_zoom",
+}
+
+
+def test_no_registered_action_is_lost_from_menus_and_palette(main_window):
+    from pagedrop.ui.command_palette import collect_actions
+
+    registry = main_window._actions
+    in_menu = _menu_reachable_actions(main_window)
+    in_palette = {id(action) for action in collect_actions(main_window)}
+
+    unlabelled = {key for key, action in registry.items() if not action.text().strip()}
+    # The only label-less action is the viewer's Escape binding.
+    assert unlabelled == {"escape"}
+
+    for key, action in registry.items():
+        if key in unlabelled:
+            continue
+        assert id(action) in in_palette, f"{key} is missing from the command palette"
+        if key in _SHORTCUT_ONLY_ACTIONS:
+            assert id(action) not in in_menu, f"{key} is in a menu: drop it from the exemptions"
+        else:
+            assert id(action) in in_menu, f"{key} is missing from every menu"
+
+    for key in _SHORTCUT_ONLY_ACTIONS:
+        assert not registry[key].shortcut().isEmpty(), f"{key} has no shortcut"
+
+
+def test_view_menu_holds_preview_and_names_the_view_it_leads_to(
+    main_window, five_page_pdf, qtbot
+):
+    view = _top_level_menu(main_window, "View")
+    preview = main_window._actions["preview"]
+    assert view.actions()[0] is preview
+    assert preview.text() == "Preview"
+
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=960)
+    tab.thumbnail_grid.selection_manager.select_single(1)
+    qtbot.waitUntil(preview.isEnabled)
+    preview.trigger()
+    qtbot.waitUntil(tab.is_viewer_mode)
+    assert view.actions()[0].text() == "Back to grid"
+    preview.trigger()
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode())
+    assert view.actions()[0].text() == "Preview"
