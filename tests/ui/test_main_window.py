@@ -1876,3 +1876,332 @@ def test_view_menu_holds_preview_and_names_the_view_it_leads_to(
     preview.trigger()
     qtbot.waitUntil(lambda: not tab.is_viewer_mode())
     assert view.actions()[0].text() == "Preview"
+
+
+# --- editor side panes -------------------------------------------------------
+
+_PANE_KEYS = {
+    "sections": "toggle_sections",
+    "document": "toggle_document_panel",
+}
+
+
+def _pane_action(window, pane: str):
+    return window._actions[_PANE_KEYS[pane]]
+
+
+def _widen(window, qtbot, width: int) -> None:
+    window.resize(width, 680)
+    qtbot.waitUntil(lambda: window._active_tab().width() >= width - 40)
+
+
+def _open_wide_window(main_window, five_page_pdf, qtbot, width: int = 1200):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=width)
+    qtbot.waitUntil(lambda: tab.width() >= width - 40)
+    return tab
+
+
+def test_pane_toggles_have_shortcuts_menu_entries_and_palette_entries(main_window):
+    from pagedrop.ui.command_palette import collect_actions
+
+    view = _top_level_menu(main_window, "View")
+    in_palette = {id(action) for action in collect_actions(main_window)}
+    expected = {
+        "toggle_sections": ("Toggle sections", "Ctrl+Shift+B"),
+        "toggle_document_panel": ("Toggle document panel", "Ctrl+Shift+I"),
+    }
+    for key, (label, shortcut) in expected.items():
+        action = main_window._actions[key]
+        assert action.text().replace("&", "") == label
+        assert action.shortcut().toString() == shortcut
+        assert action.isCheckable()
+        assert action.toolTip()
+        assert action in view.actions()
+        assert id(action) in in_palette
+        assert action.property("commandCategory") == "View"
+
+
+def test_pane_toggles_are_disabled_without_a_document(main_window, five_page_pdf, qtbot):
+    for pane in _PANE_KEYS:
+        assert not _pane_action(main_window, pane).isEnabled()  # blank tab
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    for pane in _PANE_KEYS:
+        assert _pane_action(main_window, pane).isEnabled()
+
+    tool_page = QWidget()
+    tool_page.tool_page_id = "test-tool-panes"
+    tool_page.WINDOW_TITLE = "Test tool"
+    main_window._tab_manager.add_page(tool_page, "Test tool")
+    for pane in _PANE_KEYS:
+        assert not _pane_action(main_window, pane).isEnabled()
+
+    main_window._tab_manager.setCurrentWidget(tab)
+    for pane in _PANE_KEYS:
+        assert _pane_action(main_window, pane).isEnabled()
+
+    tab.close_loader()
+    for pane in _PANE_KEYS:
+        assert not _pane_action(main_window, pane).isEnabled()
+
+
+def test_blank_tab_hides_both_panes_and_loading_shows_them(main_window, five_page_pdf, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    tab = main_window._active_tab()
+    assert not tab.section_index.isVisible()
+    assert not tab.document_panel.isVisible()
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window.resize(1200, 680)
+    qtbot.waitUntil(lambda: tab.width() >= 1100)
+    assert tab.section_index.isVisible()
+    assert tab.document_panel.isVisible()
+
+    tab.close_loader()
+    assert not tab.section_index.isVisible()
+    assert not tab.document_panel.isVisible()
+
+
+def test_toggle_actions_drive_pane_visibility(main_window, five_page_pdf, qtbot):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    for pane, widget in (("sections", tab.section_index), ("document", tab.document_panel)):
+        action = _pane_action(main_window, pane)
+        assert widget.isVisible()
+        assert action.isChecked()
+        action.trigger()
+        assert not widget.isVisible()
+        assert not action.isChecked()
+        action.trigger()
+        assert widget.isVisible()
+        assert action.isChecked()
+
+
+def test_pane_choice_persists_to_a_new_window(main_window, five_page_pdf, qtbot):
+    _open_wide_window(main_window, five_page_pdf, qtbot)
+    _pane_action(main_window, "sections").trigger()
+    _pane_action(main_window, "document").trigger()
+
+    other = MainWindow()
+    qtbot.addWidget(other)
+    try:
+        other._load_pdf(str(five_page_pdf))
+        wait_for_pdf_loaded(qtbot, other)
+        other.resize(1200, 680)
+        other.show()
+        qtbot.waitExposed(other, timeout=5000)
+        tab = other._active_tab()
+        qtbot.waitUntil(lambda: tab.width() >= 1100)
+        assert not tab.section_index.isVisible()
+        assert not tab.document_panel.isVisible()
+        assert not _pane_action(other, "sections").isChecked()
+        assert not _pane_action(other, "document").isChecked()
+    finally:
+        other._temp_manager.cleanup()
+
+
+def test_another_tab_picks_up_the_choice_when_shown(main_window, five_page_pdf, qtbot):
+    first = _open_wide_window(main_window, five_page_pdf, qtbot)
+    main_window._new_blank_tab()
+    second = main_window._active_tab()
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    qtbot.waitUntil(lambda: second.width() >= 1100)
+    assert second.section_index.isVisible()
+
+    _pane_action(main_window, "sections").trigger()
+    assert not second.section_index.isVisible()
+    main_window._tab_manager.setCurrentWidget(first)
+    qtbot.waitUntil(lambda: not first.section_index.isVisible())
+    assert not _pane_action(main_window, "sections").isChecked()
+    assert first.document_panel.isVisible()
+    assert _pane_action(main_window, "document").isChecked()
+
+
+def test_check_state_follows_the_active_tab(main_window, five_page_pdf, qtbot):
+    from pagedrop.ui.pdf_tab import DOCUMENT_PANEL_HIDE_BELOW
+
+    first = _open_wide_window(main_window, five_page_pdf, qtbot)
+    main_window._new_blank_tab()
+    second = main_window._active_tab()
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    main_window.resize(DOCUMENT_PANEL_HIDE_BELOW - 100, 680)
+    qtbot.waitUntil(lambda: second.width() < DOCUMENT_PANEL_HIDE_BELOW)
+    action = _pane_action(main_window, "document")
+    assert not action.isChecked()
+
+    # Only the first tab has the panel turned on despite the narrow width.
+    main_window._tab_manager.setCurrentWidget(first)
+    qtbot.waitUntil(lambda: first.width() < DOCUMENT_PANEL_HIDE_BELOW)
+    assert not action.isChecked()
+    action.trigger()
+    assert first.document_panel.isVisible()
+    assert action.isChecked()
+
+    main_window._tab_manager.setCurrentWidget(second)
+    assert not second.document_panel.isVisible()
+    assert not action.isChecked()
+    main_window._tab_manager.setCurrentWidget(first)
+    assert action.isChecked()
+
+
+def test_remembered_widths_are_restored_and_saved_on_drag(main_window, five_page_pdf, qtbot):
+    from pagedrop.ui.settings import document_panel_width, sections_width
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    splitter = tab.workspace_splitter
+    qtbot.waitUntil(lambda: splitter.sizes()[0] == 176 and splitter.sizes()[2] == 300)
+
+    splitter.moveSplitter(220, 1)
+    assert sections_width(0) == 220
+    assert splitter.sizes()[0] == 220
+    splitter.moveSplitter(splitter.width() - 340, 2)
+    assert document_panel_width(0) == splitter.sizes()[2]
+    assert 330 <= document_panel_width(0) <= 345
+
+    # Hiding and showing again returns to the remembered widths.
+    _pane_action(main_window, "sections").trigger()
+    _pane_action(main_window, "sections").trigger()
+    assert splitter.sizes()[0] == 220
+
+
+def test_dragging_a_pane_closed_counts_as_hiding_it(main_window, five_page_pdf, qtbot):
+    from pagedrop.ui.settings import document_panel_visible, sections_visible
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    splitter = tab.workspace_splitter
+    splitter.moveSplitter(0, 1)
+    assert not sections_visible()
+    assert not _pane_action(main_window, "sections").isChecked()
+    assert not tab.section_index.isVisible()
+    assert document_panel_visible()
+
+    splitter.moveSplitter(splitter.width(), 2)
+    assert not document_panel_visible()
+    assert not _pane_action(main_window, "document").isChecked()
+
+    _pane_action(main_window, "sections").trigger()
+    assert tab.section_index.isVisible()
+    assert splitter.sizes()[0] == 176
+
+
+def test_narrow_tab_collapses_document_panel_then_sections_and_widening_restores(
+    main_window, five_page_pdf, qtbot
+):
+    from pagedrop.ui.pdf_tab import DOCUMENT_PANEL_HIDE_BELOW, SECTIONS_HIDE_BELOW
+    from pagedrop.ui.settings import document_panel_visible, sections_visible
+
+    assert SECTIONS_HIDE_BELOW < DOCUMENT_PANEL_HIDE_BELOW
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    assert tab.section_index.isVisible() and tab.document_panel.isVisible()
+
+    main_window.resize(DOCUMENT_PANEL_HIDE_BELOW - 100, 680)
+    qtbot.waitUntil(lambda: tab.width() < DOCUMENT_PANEL_HIDE_BELOW)
+    assert not tab.document_panel.isVisible()
+    assert tab.section_index.isVisible()
+
+    main_window.resize(SECTIONS_HIDE_BELOW - 60, 680)
+    qtbot.waitUntil(lambda: tab.width() < SECTIONS_HIDE_BELOW)
+    assert not tab.section_index.isVisible()
+    assert not _pane_action(main_window, "sections").isChecked()
+
+    # The narrow collapse never touched the remembered choice.
+    assert sections_visible() and document_panel_visible()
+
+    main_window.resize(1200, 680)
+    qtbot.waitUntil(lambda: tab.section_index.isVisible() and tab.document_panel.isVisible())
+    assert _pane_action(main_window, "sections").isChecked()
+    assert _pane_action(main_window, "document").isChecked()
+
+
+def test_toggling_a_pane_on_while_narrow_is_honoured_until_the_width_crosses_again(
+    main_window, five_page_pdf, qtbot
+):
+    from pagedrop.ui.pdf_tab import DOCUMENT_PANEL_HIDE_BELOW
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    main_window.resize(DOCUMENT_PANEL_HIDE_BELOW - 100, 680)
+    qtbot.waitUntil(lambda: not tab.document_panel.isVisible())
+
+    action = _pane_action(main_window, "document")
+    assert not action.isChecked()
+    action.trigger()
+    assert tab.document_panel.isVisible()
+    assert action.isChecked()
+
+    # Resizing within the same side of the threshold keeps it.
+    main_window.resize(DOCUMENT_PANEL_HIDE_BELOW - 140, 680)
+    qtbot.waitUntil(lambda: tab.width() < DOCUMENT_PANEL_HIDE_BELOW - 100)
+    assert tab.document_panel.isVisible()
+
+    # Crossing the threshold and coming back applies the rule again.
+    main_window.resize(1200, 680)
+    qtbot.waitUntil(lambda: tab.width() >= DOCUMENT_PANEL_HIDE_BELOW)
+    main_window.resize(DOCUMENT_PANEL_HIDE_BELOW - 100, 680)
+    qtbot.waitUntil(lambda: not tab.document_panel.isVisible())
+
+
+def test_toggling_a_pane_off_while_narrow_hides_it_for_good(main_window, five_page_pdf, qtbot):
+    from pagedrop.ui.pdf_tab import DOCUMENT_PANEL_HIDE_BELOW
+    from pagedrop.ui.settings import document_panel_visible
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    main_window.resize(DOCUMENT_PANEL_HIDE_BELOW - 100, 680)
+    qtbot.waitUntil(lambda: not tab.document_panel.isVisible())
+    action = _pane_action(main_window, "document")
+    action.trigger()
+    action.trigger()
+    assert not tab.document_panel.isVisible()
+    assert not document_panel_visible()
+    main_window.resize(1200, 680)
+    qtbot.waitUntil(lambda: tab.width() >= DOCUMENT_PANEL_HIDE_BELOW)
+    assert not tab.document_panel.isVisible()
+
+
+def test_side_panes_do_not_raise_the_compact_floor_even_when_forced_on(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(lambda: main_window.width() == MIN_WINDOW_WIDTH)
+    _pane_action(main_window, "sections").trigger()
+    if not tab.section_index.isVisible():
+        _pane_action(main_window, "sections").trigger()
+    _pane_action(main_window, "document").trigger()
+    if not tab.document_panel.isVisible():
+        _pane_action(main_window, "document").trigger()
+    assert tab.section_index.isVisible() and tab.document_panel.isVisible()
+    assert main_window.minimumSizeHint().width() <= MIN_WINDOW_WIDTH
+    assert main_window.width() == MIN_WINDOW_WIDTH
+
+
+def test_tab_order_runs_sections_then_grid_then_document(main_window, five_page_pdf, qtbot):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+
+    def chain(start):
+        seen, widget = [], start
+        while True:
+            widget = widget.nextInFocusChain()
+            if widget is start or widget in seen:
+                return seen
+            if widget.isVisibleTo(tab) and widget.focusPolicy() & Qt.FocusPolicy.TabFocus:
+                seen.append(widget)
+
+    sections = tab.section_index.focusProxy()
+    document = tab.document_panel.focusProxy()
+    order = chain(sections)
+    assert order.index(tab.thumbnail_grid) < order.index(document)
+
+    tab.show_preview_at(0)
+    qtbot.waitUntil(tab.is_viewer_mode)
+    order = chain(sections)
+    assert tab.thumbnail_grid not in order
+    viewer_positions = [i for i, w in enumerate(order) if tab.preview_widget.isAncestorOf(w) or w is tab.preview_widget]
+    assert viewer_positions, "viewer takes focus between the panes"
+    assert max(viewer_positions) < order.index(document)
+
+    tab.close_preview()
+    _pane_action(main_window, "document").trigger()
+    assert document not in chain(sections)

@@ -21,6 +21,10 @@ KEY_WINDOW_GEOMETRY = "window/geometry"
 KEY_LIGHT_THEME = "view/light_theme"
 KEY_APPEARANCE = "view/appearance"
 KEY_CHROME_VISIBLE = "view/chrome_visible"
+KEY_SECTIONS_VISIBLE = "view/sections_visible"
+KEY_SECTIONS_WIDTH = "view/sections_width"
+KEY_DOCUMENT_PANEL_VISIBLE = "view/document_panel_visible"
+KEY_DOCUMENT_PANEL_WIDTH = "view/document_panel_width"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_VIEWER_PANEL_STATE = "view/viewer_panel_state"
@@ -323,6 +327,50 @@ def chrome_visible() -> bool:
 
 def set_chrome_visible(visible: bool) -> None:
     _settings().setValue(KEY_CHROME_VISIBLE, bool(visible))
+
+
+def sections_visible() -> bool:
+    """Show the Sections pane beside a document (default: True)."""
+    return _settings().value(KEY_SECTIONS_VISIBLE, True, type=bool)
+
+
+def set_sections_visible(visible: bool) -> None:
+    _settings().setValue(KEY_SECTIONS_VISIBLE, bool(visible))
+
+
+def sections_width(default: int) -> int:
+    """Remembered Sections pane width in pixels, or *default* when unset or invalid."""
+    return _int_setting(KEY_SECTIONS_WIDTH, default)
+
+
+def set_sections_width(width: int) -> None:
+    _settings().setValue(KEY_SECTIONS_WIDTH, int(width))
+
+
+def document_panel_visible() -> bool:
+    """Show the Document panel beside a document (default: True)."""
+    return _settings().value(KEY_DOCUMENT_PANEL_VISIBLE, True, type=bool)
+
+
+def set_document_panel_visible(visible: bool) -> None:
+    _settings().setValue(KEY_DOCUMENT_PANEL_VISIBLE, bool(visible))
+
+
+def document_panel_width(default: int) -> int:
+    """Remembered Document panel width in pixels, or *default* when unset or invalid."""
+    return _int_setting(KEY_DOCUMENT_PANEL_WIDTH, default)
+
+
+def set_document_panel_width(width: int) -> None:
+    _settings().setValue(KEY_DOCUMENT_PANEL_WIDTH, int(width))
+
+
+def _int_setting(key: str, default: int) -> int:
+    try:
+        value = int(_settings().value(key, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def thumbnail_quality() -> ThumbnailQuality:

@@ -143,3 +143,139 @@ def test_rows_are_reachable_by_keyboard(qtbot, five_page_pdf: Path):
     qtbot.keyClick(view, Qt.Key.Key_Down)
     qtbot.keyClick(view, Qt.Key.Key_Down)
     assert view.currentRow() == 2
+
+
+# --- inside a real tab ---------------------------------------------------------
+
+
+def _open_tab(window, qtbot, path: Path):
+    from tests.conftest import wait_for_pdf_loaded
+
+    window._load_pdf(str(path))
+    wait_for_pdf_loaded(qtbot, window)
+    return window._active_tab()
+
+
+def test_tab_panel_shows_the_loaded_file(main_window, qtbot, five_page_pdf: Path):
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    facts = tab.document_panel.facts()
+    assert facts["Pages"] == "5"
+    assert facts["Size"] == _expected_size(five_page_pdf)
+    assert facts["Location"] == str(five_page_pdf.parent)
+    assert facts["Selection"] == "None"
+
+
+def test_pages_follow_the_logical_count_through_edits(main_window, qtbot, five_page_pdf: Path, monkeypatch):
+    monkeypatch.setattr("pagedrop.ui.pdf_tab.confirm_delete_pages", lambda *a, **k: True)
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    panel = tab.document_panel
+    grid = tab.thumbnail_grid
+
+    grid.selection_manager.set_selection({0, 1})
+    assert tab.delete_selected_pages()
+    assert panel.facts()["Pages"] == "3"
+    assert tab.loader.page_count == 5  # the raw count is not what is shown
+
+    assert tab.undo_edit()
+    assert panel.facts()["Pages"] == "5"
+
+    grid.selection_manager.set_selection({2})
+    assert tab.duplicate_selected_pages() == 1
+    assert panel.facts()["Pages"] == "6"
+
+    assert tab.undo_edit()
+    assert panel.facts()["Pages"] == "5"
+    assert tab.redo_edit()
+    assert panel.facts()["Pages"] == "6"
+
+
+def test_selection_row_follows_the_grid(main_window, qtbot, five_page_pdf: Path):
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    panel = tab.document_panel
+    tab.thumbnail_grid.selection_manager.set_selection({0, 2})
+    assert panel.facts()["Selection"] == "2 of 5 pages"
+    tab.thumbnail_grid.selection_manager.set_selection(set())
+    assert panel.facts()["Selection"] == "None"
+
+
+def test_selection_total_uses_the_logical_count_after_a_delete(
+    main_window, qtbot, five_page_pdf: Path, monkeypatch
+):
+    monkeypatch.setattr("pagedrop.ui.pdf_tab.confirm_delete_pages", lambda *a, **k: True)
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    tab.thumbnail_grid.selection_manager.set_selection({0, 1})
+    assert tab.delete_selected_pages()
+    tab.thumbnail_grid.selection_manager.set_selection({0})
+    assert tab.document_panel.facts()["Selection"] == "1 of 3 pages"
+
+
+def test_opening_another_document_resets_the_panel(
+    main_window, qtbot, five_page_pdf: Path, bookmarked_pdf: Path
+):
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    tab.thumbnail_grid.selection_manager.set_selection({0, 1})
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    facts = tab.document_panel.facts()
+    assert facts["Pages"] == "8"
+    assert facts["Selection"] == "None"
+    assert facts["Location"] == str(bookmarked_pdf.parent)
+
+
+def test_location_follows_save_as_to_a_new_path(
+    main_window, qtbot, five_page_pdf: Path, tmp_path: Path, monkeypatch
+):
+    from PyQt6.QtWidgets import QFileDialog
+
+    from tests.conftest import file_sha256
+
+    monkeypatch.setattr("pagedrop.ui.pdf_tab.confirm_delete_pages", lambda *a, **k: True)
+    source_hash = file_sha256(five_page_pdf)
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    tab.thumbnail_grid.selection_manager.set_selection({0})
+    assert tab.delete_selected_pages()
+    target_dir = tmp_path / "elsewhere"
+    target_dir.mkdir()
+    output = target_dir / "saved.pdf"
+    assert output != five_page_pdf
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(output), "PDF Files (*.pdf)")
+    )
+
+    assert main_window._save_as(tab) is True
+    qtbot.waitUntil(lambda: tab not in main_window._editor_busy, timeout=15_000)
+
+    assert output.is_file()
+    assert file_sha256(five_page_pdf) == source_hash
+    facts = tab.document_panel.facts()
+    assert facts["Location"] == str(target_dir)
+    assert facts["Size"] == _expected_size(output)
+    assert facts["Pages"] == "4"
+
+
+def test_tabs_without_a_real_file_show_no_location(
+    main_window, qtbot, five_page_pdf: Path, tmp_path: Path
+):
+    from pagedrop.core.pdf_editor import PageRef
+
+    main_window.show()
+    blank = main_window._tab_manager.add_blank_tab()
+    blank.init_from_page_refs([PageRef(str(five_page_pdf), 0), PageRef(str(five_page_pdf), 1)])
+    facts = blank.document_panel.facts()
+    assert facts["Pages"] == "2"
+    assert facts["Location"] == NOT_SAVED_TEXT
+    assert facts["Size"] == NOT_SAVED_TEXT
+
+
+def test_staged_temp_file_is_never_shown_as_the_location(main_window, qtbot, five_page_pdf: Path):
+    import shutil
+
+    staged = Path(main_window._temp_manager.get_dir()) / "staged.pdf"
+    shutil.copyfile(five_page_pdf, staged)
+    tab = _open_tab(main_window, qtbot, staged)
+    assert tab.document_panel.facts()["Location"] == NOT_SAVED_TEXT
+
+
+def test_closing_the_document_clears_the_panel(main_window, qtbot, five_page_pdf: Path):
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    tab.close_loader()
+    assert tab.document_panel.status_text() == EMPTY_TEXT

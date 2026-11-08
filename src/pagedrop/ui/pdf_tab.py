@@ -3,11 +3,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QResizeEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QToolBar,
     QVBoxLayout,
@@ -24,8 +27,20 @@ from pagedrop.core.pdf_loader import (
 )
 from pagedrop.core.pdf_service import invalidate_doc_cache
 from pagedrop.ui.dialogs import confirm_delete_pages
+from pagedrop.ui.document_panel import DocumentPanel
 from pagedrop.ui.pdf_viewer import PdfViewerWidget
-from pagedrop.ui.settings import thumbnail_quality
+from pagedrop.ui.section_index import SectionIndex
+from pagedrop.ui.settings import (
+    document_panel_visible,
+    document_panel_width,
+    sections_visible,
+    sections_width,
+    set_document_panel_visible,
+    set_document_panel_width,
+    set_sections_visible,
+    set_sections_width,
+    thumbnail_quality,
+)
 from pagedrop.ui.recovery import RecoveryError, read_draft, write_draft
 from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
@@ -39,6 +54,45 @@ LOADER_CACHE_IDLE_MAX = 0
 # Suggest smaller thumbnails when both thresholds are met — never silent-cap quality.
 QUALITY_GUIDANCE_MIN_PAGES = 60
 QUALITY_GUIDANCE_MIN_ZOOM_PX = DEFAULT_THUMBNAIL_WIDTH * 2
+
+# Side panes of the editor. The grid keeps at least GRID_MIN_ROOM pixels: the
+# Document panel gives way first, then the Sections pane.
+SECTIONS_DEFAULT_WIDTH = 176
+DOCUMENT_PANEL_DEFAULT_WIDTH = 300
+GRID_MIN_ROOM = 400
+SECTIONS_HIDE_BELOW = SECTIONS_DEFAULT_WIDTH + GRID_MIN_ROOM
+DOCUMENT_PANEL_HIDE_BELOW = SECTIONS_DEFAULT_WIDTH + DOCUMENT_PANEL_DEFAULT_WIDTH + GRID_MIN_ROOM
+SIDE_PANE_MIN_WIDTH = 120
+SIDE_PANE_MAX_WIDTH = 600
+SPLITTER_HANDLE_WIDTH = 5
+
+PANE_SECTIONS = "sections"
+PANE_DOCUMENT = "document"
+
+
+class _PaneSpec(NamedTuple):
+    slot: int  # position in the splitter
+    default_width: int
+    hide_below: int
+    get_visible: Callable[[], bool]
+    set_visible: Callable[[bool], None]
+    get_width: Callable[[int], int]
+    set_width: Callable[[int], None]
+
+
+_PANES = {
+    PANE_SECTIONS: _PaneSpec(
+        0, SECTIONS_DEFAULT_WIDTH, SECTIONS_HIDE_BELOW,
+        sections_visible, set_sections_visible, sections_width, set_sections_width,
+    ),
+    PANE_DOCUMENT: _PaneSpec(
+        2, DOCUMENT_PANEL_DEFAULT_WIDTH, DOCUMENT_PANEL_HIDE_BELOW,
+        document_panel_visible, set_document_panel_visible,
+        document_panel_width, set_document_panel_width,
+    ),
+}
+
+_UNSET = object()
 
 
 def sanitize_tab_title_stem(title: str) -> str:
@@ -57,6 +111,8 @@ class PdfTab(QWidget):
     dirty_changed = pyqtSignal(bool)
     tab_title_changed = pyqtSignal()
     recovery_failed = pyqtSignal(str)
+    # A side pane was shown or hidden, or the tab became blank or got a document.
+    workspace_panes_changed = pyqtSignal()
 
     def __init__(
         self,
@@ -89,11 +145,23 @@ class PdfTab(QWidget):
             recovery_dir / f"{uuid4().hex}.json" if recovery_dir is not None else None
         )
         self._recovery_error_reported = False
+        # Remembered preference per pane (app-wide), whether the tab is currently
+        # narrower than the pane's threshold, and whether the user turned the pane
+        # on anyway while it was.
+        self._pane_pref = {name: spec.get_visible() for name, spec in _PANES.items()}
+        self._narrow = dict.fromkeys(_PANES, False)
+        self._forced = dict.fromkeys(_PANES, False)
+        self._applying_panes = False
+        self._last_pane_state: tuple[bool, bool, bool] | None = None
+        self._outline_paths: frozenset[str] | None = None
+        self._panel_path: object = _UNSET
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        self._section_index = SectionIndex()
+        self._section_index.section_activated.connect(self._on_section_activated)
         self._content_stack = QStackedWidget()
         self._content_stack.setObjectName("TabContentStack")
 
@@ -110,6 +178,7 @@ class PdfTab(QWidget):
         )
         self._thumbnail_grid.pages_reordered.connect(self._on_pages_reordered)
         self._thumbnail_grid.pages_inserted.connect(self._on_pages_inserted)
+        self._thumbnail_grid.selection_changed.connect(self._on_grid_selection_changed)
         # Preview / Enter / double-click opens the full viewer.
         self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
@@ -122,7 +191,34 @@ class PdfTab(QWidget):
 
         self._content_stack.addWidget(self._thumbnail_grid)
         self._content_stack.addWidget(self._preview_widget)
-        layout.addWidget(self._content_stack)
+
+        self._document_panel = DocumentPanel()
+        # Side panes give way before the window floor does.
+        for pane in (self._section_index, self._document_panel):
+            pane.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setObjectName("WorkspaceSplitter")
+        self._splitter.setHandleWidth(SPLITTER_HANDLE_WIDTH)
+        self._splitter.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._splitter.addWidget(self._section_index)
+        self._splitter.addWidget(self._content_stack)
+        self._splitter.addWidget(self._document_panel)
+        self._splitter.setCollapsible(0, True)
+        self._splitter.setCollapsible(1, False)
+        self._splitter.setCollapsible(2, True)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setStretchFactor(2, 0)
+        self._splitter.splitterMoved.connect(self._on_splitter_moved)
+        layout.addWidget(self._splitter)
+
+        # Sections list, then the grid or viewer, then the document list.
+        QWidget.setTabOrder(self._section_index, self._thumbnail_grid)
+        QWidget.setTabOrder(self._thumbnail_grid, self._preview_widget)
+        QWidget.setTabOrder(self._preview_widget, self._document_panel)
+        self._apply_panes()
 
     @property
     def thumbnail_grid(self) -> ThumbnailGrid:
@@ -140,6 +236,166 @@ class PdfTab(QWidget):
     @property
     def content_stack(self) -> QStackedWidget:
         return self._content_stack
+
+    @property
+    def section_index(self) -> SectionIndex:
+        return self._section_index
+
+    @property
+    def document_panel(self) -> DocumentPanel:
+        return self._document_panel
+
+    @property
+    def workspace_splitter(self) -> QSplitter:
+        return self._splitter
+
+    def workspace_pane_visible(self, pane: str) -> bool:
+        """Whether *pane* (``PANE_SECTIONS`` or ``PANE_DOCUMENT``) is showing."""
+        return self._pane_wanted(pane)
+
+    def set_workspace_pane_visible(self, pane: str, visible: bool) -> None:
+        """Turn *pane* on or off for every tab; a pane turned on stays on while narrow."""
+        if self._edit_model is None:
+            return
+        self._pane_pref[pane] = visible
+        _PANES[pane].set_visible(visible)
+        self._forced[pane] = visible and self._narrow[pane]
+        self._apply_panes()
+
+    def _pane_widget(self, pane: str) -> QWidget:
+        return self._section_index if pane == PANE_SECTIONS else self._document_panel
+
+    def _pane_wanted(self, pane: str) -> bool:
+        return (
+            self._edit_model is not None
+            and self._pane_pref[pane]
+            and (not self._narrow[pane] or self._forced[pane])
+        )
+
+    def _apply_panes(self, *, resize: bool = False) -> None:
+        if self._applying_panes:
+            return
+        self._applying_panes = True
+        try:
+            width = self.width()
+            for pane, spec in _PANES.items():
+                narrow = width < spec.hide_below
+                if narrow != self._narrow[pane]:
+                    self._narrow[pane] = narrow
+                    self._forced[pane] = False
+            changed = resize
+            for pane in _PANES:
+                widget = self._pane_widget(pane)
+                wanted = self._pane_wanted(pane)
+                if widget.isHidden() == wanted:
+                    widget.setVisible(wanted)
+                    changed = True
+            if changed:
+                self._size_splitter()
+        finally:
+            self._applying_panes = False
+        state = (
+            self._edit_model is None,
+            self._pane_wanted(PANE_SECTIONS),
+            self._pane_wanted(PANE_DOCUMENT),
+        )
+        if state != self._last_pane_state:
+            self._last_pane_state = state
+            self.workspace_panes_changed.emit()
+
+    def _size_splitter(self) -> None:
+        sizes = [0, 0, 0]
+        for pane, spec in _PANES.items():
+            if self._pane_wanted(pane):
+                width = spec.get_width(spec.default_width)
+                sizes[spec.slot] = max(SIDE_PANE_MIN_WIDTH, min(SIDE_PANE_MAX_WIDTH, width))
+        handles = sum(1 for size in sizes if size) * SPLITTER_HANDLE_WIDTH
+        sizes[1] = max(self.width() - sizes[0] - sizes[2] - handles, 0)
+        self._splitter.setSizes(sizes)
+
+    def _on_splitter_moved(self, _pos: int, _index: int) -> None:
+        if self._applying_panes:
+            return
+        sizes = self._splitter.sizes()
+        for pane, spec in _PANES.items():
+            if not self._pane_wanted(pane):
+                continue
+            if sizes[spec.slot] <= 0:
+                # Dragged fully closed counts as hiding it.
+                self.set_workspace_pane_visible(pane, False)
+            else:
+                spec.set_width(sizes[spec.slot])
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        # Preferences are app-wide: pick up what another tab changed.
+        self._pane_pref = {name: spec.get_visible() for name, spec in _PANES.items()}
+        self._section_index.set_index_colour(self.index_colour or "index_slate")
+        self._apply_panes(resize=True)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._apply_panes()
+
+    def _document_path(self) -> str | None:
+        """The document's own file, or None when it only lives in temporary staging."""
+        model = self._edit_model
+        if model is None:
+            return None
+        if model.save_path:
+            return model.save_path
+        if self._drop_initialized:
+            return None
+        path = model.original_path
+        try:
+            if Path(path).resolve().is_relative_to(self._temp_manager.get_dir().resolve()):
+                return None
+        except OSError:
+            return None
+        return path
+
+    def _refresh_workspace_panes(self) -> None:
+        """Bring both side panes in line with the edit model."""
+        model = self._edit_model
+        if model is None:
+            self._outline_paths = None
+            self._panel_path = _UNSET
+            self._section_index.clear()
+            self._document_panel.clear()
+            self._apply_panes()
+            return
+        count = model.logical_count()
+        paths = frozenset(model.current_reference_paths())
+        if paths != self._outline_paths:
+            self._outline_paths = paths
+            self._section_index.set_index_colour(self.index_colour or "index_slate")
+            self._section_index.load(sorted(paths), self._credentials.snapshot() or None)
+        self._section_index.refresh(model.iter_pages())
+        path = self._document_path()
+        if self._panel_path is _UNSET or path != self._panel_path:
+            self._panel_path = path
+            self._document_panel.set_document(count, path)
+        else:
+            self._document_panel.set_page_count(count)
+        self._document_panel.set_selection(
+            len(self._thumbnail_grid.selection_manager.selection), count
+        )
+        self._apply_panes()
+
+    def _on_grid_selection_changed(self, selection: set[int]) -> None:
+        if self._edit_model is not None:
+            self._document_panel.set_selection(
+                len(selection), self._edit_model.logical_count()
+            )
+
+    def _on_section_activated(self, index: int) -> None:
+        model = self._edit_model
+        if model is None or not 0 <= index < model.logical_count():
+            return
+        if self.is_viewer_mode():
+            self._preview_widget.go_to_page(index)
+        else:
+            self._thumbnail_grid.scroll_to_page(index)
 
     def attach_context_toolbar(self, toolbar: QToolBar) -> None:
         """Place the window-owned editor toolbar directly above this tab's content."""
@@ -449,6 +705,8 @@ class PdfTab(QWidget):
                 self._thumbnail_grid.clear()
                 self._close_loader_cache()
             self._edit_model = None
+            self._outline_paths = None
+            self._panel_path = _UNSET
             self._pdf_path = None
             self._custom_tab_title = None
             self._quality_guidance_shown = False
@@ -653,6 +911,7 @@ class PdfTab(QWidget):
             self._dirty = False
             self.dirty_changed.emit(False)
         self._preview_widget.set_model(None, None)
+        self._refresh_workspace_panes()
         self._clear_recovery()
         self.pdf_closed.emit()
 
@@ -711,6 +970,7 @@ class PdfTab(QWidget):
             self.dirty_changed.emit(dirty)
         self._sync_recovery()
         self._evict_idle_loaders()
+        self._refresh_workspace_panes()
 
     def _sync_recovery(self) -> None:
         if self._recovery_path is None:

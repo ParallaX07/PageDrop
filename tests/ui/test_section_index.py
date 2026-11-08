@@ -507,3 +507,190 @@ def test_current_row_is_dropped_when_its_section_disappears(qtbot, bookmarked_pd
     widget.refresh(model.iter_pages())
     assert _titles(widget) == ["Introduction", "Results"]
     assert view.currentItem() is None or view.currentItem().text() != "Method"
+
+
+# --- inside a real tab ---------------------------------------------------------
+
+
+def _open_tab(window, qtbot, path: Path):
+    window._load_pdf(str(path))
+    from tests.conftest import wait_for_pdf_loaded
+
+    wait_for_pdf_loaded(qtbot, window)
+    tab = window._active_tab()
+    tab.section_index.set_index_colour("index_slate")
+    return tab
+
+
+def _rows(tab) -> list[tuple[str, str]]:
+    view = _list(tab.section_index)
+    return [(view.item(i).text(), view.item(i).data(VALUE_ROLE)) for i in range(view.count())]
+
+
+def _wait_for_rows(qtbot, tab, count: int = 3) -> None:
+    qtbot.waitUntil(lambda: tab.section_index.row_count() == count, timeout=10_000)
+
+
+def test_tab_lists_sections_after_load(main_window, qtbot, bookmarked_pdf: Path):
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    assert _rows(tab) == [("Introduction", "1–2"), ("Method", "3–5"), ("Results", "6–8")]
+
+
+def test_tab_without_bookmarks_shows_the_quiet_line(main_window, qtbot, five_page_pdf: Path):
+    tab = _open_tab(main_window, qtbot, five_page_pdf)
+    qtbot.waitUntil(lambda: tab.section_index.status_text() == EMPTY_TEXT, timeout=10_000)
+    assert tab.section_index.row_count() == 0
+
+
+def test_reordering_through_the_tab_remaps_sections(main_window, qtbot, bookmarked_pdf: Path):
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    tab.thumbnail_grid.selection_manager.set_selection({0, 1})
+    assert tab.move_selected_pages_down()
+    # Introduction moved down one place, which split Method: it shows its first page only.
+    assert _rows(tab) == [("Introduction", "2–3"), ("Method", "1"), ("Results", "6–8")]
+
+
+def test_delete_undo_and_redo_update_the_labels(main_window, qtbot, bookmarked_pdf: Path, monkeypatch):
+    monkeypatch.setattr("pagedrop.ui.pdf_tab.confirm_delete_pages", lambda *a, **k: True)
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    original = _rows(tab)
+
+    tab.thumbnail_grid.selection_manager.select_single(0)
+    assert tab.delete_selected_pages()
+    deleted = [("Introduction", "1"), ("Method", "2–4"), ("Results", "5–7")]
+    assert _rows(tab) == deleted
+
+    assert tab.undo_edit()
+    assert _rows(tab) == original
+    assert tab.redo_edit()
+    assert _rows(tab) == deleted
+
+
+def test_outline_is_read_again_only_when_the_source_set_changes(
+    main_window, qtbot, bookmarked_pdf: Path, five_page_pdf: Path, monkeypatch
+):
+    from pagedrop.core.pdf_editor import PageRef
+
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    loads: list[list] = []
+    real_load = tab.section_index.load
+    monkeypatch.setattr(
+        tab.section_index, "load", lambda paths, pw=None: (loads.append(list(paths)), real_load(paths, pw))
+    )
+
+    tab.thumbnail_grid.selection_manager.set_selection({0})
+    tab.rotate_selected_pages(90)
+    assert tab.move_selected_pages_down()
+    assert loads == []
+
+    tab.edit_model.insert_pages(0, [PageRef(str(five_page_pdf), 0)])
+    tab._sync_dirty_from_model()
+    assert len(loads) == 1
+    assert sorted(loads[0]) == sorted([str(bookmarked_pdf), str(five_page_pdf)])
+    _wait_for_rows(qtbot, tab)
+
+
+def test_activating_a_section_moves_focus_without_changing_the_selection(
+    main_window, qtbot, bookmarked_pdf: Path
+):
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    grid = tab.thumbnail_grid
+    grid.selection_manager.set_selection({1})
+    view = _list(tab.section_index)
+
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    qtbot.mouseClick(
+        view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualItemRect(view.item(2)).center()
+    )
+    assert grid._focused_index == 5
+    assert grid.selection_manager.selection == {1}
+
+    qtbot.mouseClick(
+        view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualItemRect(view.item(1)).center()
+    )
+    assert grid._focused_index == 2
+    assert grid.selection_manager.selection == {1}
+
+
+def test_activating_a_section_in_the_viewer_goes_to_that_page(main_window, qtbot, bookmarked_pdf: Path):
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    tab.show_preview_at(0)
+    qtbot.waitUntil(tab.is_viewer_mode)
+    calls: list[int] = []
+    real = tab.preview_widget.go_to_page
+    tab.preview_widget.go_to_page = lambda index, **kw: (calls.append(index), real(index, **kw))[1]
+
+    view = _list(tab.section_index)
+    qtbot.mouseClick(
+        view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualItemRect(view.item(2)).center()
+    )
+    assert calls == [5]
+    assert tab.preview_widget.current_page == 5
+
+
+def test_out_of_range_section_page_is_ignored(main_window, qtbot, bookmarked_pdf: Path):
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    grid = tab.thumbnail_grid
+    focused = grid._focused_index
+    tab.section_index.section_activated.emit(99)
+    tab.section_index.section_activated.emit(-1)
+    assert grid._focused_index == focused
+
+
+def test_closing_the_document_empties_the_pane(main_window, qtbot, bookmarked_pdf: Path):
+    tab = _open_tab(main_window, qtbot, bookmarked_pdf)
+    _wait_for_rows(qtbot, tab)
+    tab.close_loader()
+    assert tab.section_index.row_count() == 0
+    assert tab.section_index.status_text() == ""
+
+
+def test_password_protected_document_still_lists_its_sections(
+    main_window, qtbot, tmp_path: Path, monkeypatch
+):
+    import fitz
+
+    from pagedrop.ui.settings import settings_file_path
+    from tests.conftest import wait_for_pdf_loaded
+
+    locked = tmp_path / "locked.pdf"
+    doc = fitz.open()
+    try:
+        for _ in range(4):
+            doc.new_page(width=200, height=200)
+        doc.set_toc([[1, "Opening", 1], [1, "Closing", 3]])
+        doc.save(
+            str(locked),
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            user_pw="hunter2",
+            owner_pw="owner",
+        )
+    finally:
+        doc.close()
+    asked: list[str] = []
+
+    def answer(filename: str, incorrect: bool = False) -> str:
+        asked.append(filename)
+        return "hunter2"
+
+    monkeypatch.setattr(main_window, "_prompt_pdf_password", answer)
+    main_window._load_pdf(str(locked))
+    wait_for_pdf_loaded(qtbot, main_window)
+    tab = main_window._active_tab()
+
+    qtbot.waitUntil(lambda: tab.section_index.row_count() == 2, timeout=10_000)
+    assert tab.section_index.status_text() != FAILED_TEXT
+    assert _rows(tab) == [("Opening", "1–2"), ("Closing", "3–4")]
+    assert asked == ["locked.pdf"]
+    # The password lives in memory only.
+    ini = Path(settings_file_path())
+    assert not ini.exists() or b"hunter2" not in ini.read_bytes()

@@ -79,13 +79,14 @@ from pagedrop.ui.onboarding import (
     TipsOverlay,
     show_context_hint,
 )
-from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.pdf_tab import PANE_DOCUMENT, PANE_SECTIONS, PdfTab
 from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
 from pagedrop.ui.accessibility import apply_appearance
 from pagedrop.ui import icons, native_frame
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
+    document_panel_visible,
     has_seen_tips,
     last_directory,
     appearance,
@@ -94,6 +95,7 @@ from pagedrop.ui.settings import (
     remember_directory,
     remember_recent_file,
     save_window_geometry,
+    sections_visible,
     settings_file_path,
     set_thumbnail_quality,
     set_thumbnail_zoom,
@@ -321,6 +323,30 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             tip="Show or hide the menu and toolbar (Ctrl+Shift+H)",
             add_to_window=True,
         )
+        self._pane_actions = {
+            PANE_SECTIONS: actions.register(
+                "toggle_sections",
+                "Toggle &sections",
+                slot=lambda visible: self._on_pane_toggled(PANE_SECTIONS, visible),
+                shortcut="Ctrl+Shift+B",
+                checkable=True,
+                checked=sections_visible(),
+                tip="Show or hide the sections list (Ctrl+Shift+B)",
+                enabled=False,
+                add_to_window=True,
+            ),
+            PANE_DOCUMENT: actions.register(
+                "toggle_document_panel",
+                "Toggle &document panel",
+                slot=lambda visible: self._on_pane_toggled(PANE_DOCUMENT, visible),
+                shortcut="Ctrl+Shift+I",
+                checkable=True,
+                checked=document_panel_visible(),
+                tip="Show or hide the document panel (Ctrl+Shift+I)",
+                enabled=False,
+                add_to_window=True,
+            ),
+        }
         self._quality_action_group = QActionGroup(self)
         self._quality_action_group.setExclusive(True)
         current_quality = thumbnail_quality()
@@ -560,7 +586,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             },
             "View": {
                 "appearance_system", "appearance_light", "appearance_dark",
-                "chrome_visible", "quality_low", "quality_medium",
+                "chrome_visible", "toggle_sections", "toggle_document_panel",
+                "quality_low", "quality_medium",
                 "quality_high", "command_palette", "reset_zoom",
             },
             "Tools": {"merge", "create_pdf", "tools"},
@@ -636,6 +663,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         for key in ("appearance_system", "appearance_light", "appearance_dark"):
             appearance_menu.addAction(a[key])
         view_menu.addAction(a["chrome_visible"])
+        view_menu.addAction(a["toggle_sections"])
+        view_menu.addAction(a["toggle_document_panel"])
         quality_menu = view_menu.addMenu("Thumbnail &quality")
         for key in ("quality_low", "quality_medium", "quality_high"):
             quality_menu.addAction(a[key])
@@ -1107,6 +1136,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         grid.bind_open_action(self._actions["open"])
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
+        tab.workspace_panes_changed.connect(self._on_workspace_panes_changed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
@@ -1217,6 +1247,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
+            (tab.workspace_panes_changed, self._on_workspace_panes_changed),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
             (preview.render_error, self._on_preview_render_error),
@@ -1387,8 +1418,34 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             tab.close_preview()
         self._sync_toolbar_from_active_tab()
 
+    def _on_pane_toggled(self, pane: str, visible: bool) -> None:
+        tab = self._active_tab()
+        if tab is not None:
+            tab.set_workspace_pane_visible(pane, visible)
+
+    def _on_workspace_panes_changed(self) -> None:
+        if self.sender() is self._active_tab():
+            self._sync_pane_actions()
+
+    def _sync_pane_actions(self) -> None:
+        """Enable the pane toggles for a document and show its real pane state."""
+        tab = self._active_tab()
+        has_document = tab is not None and not tab.is_blank
+        for pane, action in self._pane_actions.items():
+            action.setEnabled(has_document)
+            if tab is None:
+                continue
+            checked = tab.workspace_pane_visible(pane) if has_document else (
+                sections_visible() if pane == PANE_SECTIONS else document_panel_visible()
+            )
+            if action.isChecked() != checked:
+                action.blockSignals(True)
+                action.setChecked(checked)
+                action.blockSignals(False)
+
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
+        self._sync_pane_actions()
         self._set_toolbar_host(tab)
         if tab is None:
             self._reset_toolbar_for_tool_page()

@@ -1414,6 +1414,16 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_BADGE}px;
     }}
 
+    /* The handle is only a grab area: the panes already draw the one rule. */
+    QSplitter#WorkspaceSplitter {{
+        background-color: {bg_grid};
+    }}
+
+    QSplitter#WorkspaceSplitter::handle {{
+        background: transparent;
+        border: none;
+    }}
+
     /* Side panes of the editor: chrome surface, one rule against the grid. */
     QWidget#SectionIndex,
     QWidget#DocumentPanel {{

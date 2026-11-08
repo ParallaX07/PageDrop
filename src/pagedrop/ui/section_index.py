@@ -126,6 +126,7 @@ class SectionIndex(QWidget):
         self._list.setAccessibleName("Sections")
         self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocusProxy(self._list)
         self._list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.setItemDelegate(ListRowDelegate(self._list))

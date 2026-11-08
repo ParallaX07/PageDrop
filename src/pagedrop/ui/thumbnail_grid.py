@@ -1962,6 +1962,16 @@ class ThumbnailGrid(QScrollArea):
         self._set_focused_index(valid[0])
         self._scroll_to_focused_card()
 
+    def scroll_to_page(self, index: int) -> None:
+        """Move keyboard focus to page *index* and scroll it into view.
+
+        The selection is left as it is.
+        """
+        if not 0 <= index < len(self._cards):
+            return
+        self._set_focused_index(index)
+        self._scroll_to_focused_card()
+
     def _page_overlay_visible(self) -> bool:
         return self._thumbnail_width_px >= PAGE_NUMBER_OVERLAY_MIN_WIDTH
 

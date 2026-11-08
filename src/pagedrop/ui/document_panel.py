@@ -46,6 +46,7 @@ class DocumentPanel(QWidget):
         self._list.setAccessibleName("Document")
         self._list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocusProxy(self._list)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.setItemDelegate(ListRowDelegate(self._list, elide_value=True))
         self._rows: dict[str, QListWidgetItem] = {}
