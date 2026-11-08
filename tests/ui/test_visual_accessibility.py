@@ -1258,13 +1258,15 @@ def test_r8_light_hc_parity_freeze(isolated_settings):
     assert STATUS_WARNING_LIGHT in warning_block
     assert STATUS_WARNING not in warning_block
 
-    # Light toast / list status ink sits on raised and chrome surfaces, never
-    # on the canvas, and must hold AA there.
+    # Light toast / list status ink must hold AA on every light surface it can
+    # sit on.
     for fg, bg in (
         (STATUS_SUCCESS_LIGHT, LIGHT.raised),
         (STATUS_SUCCESS_LIGHT, LIGHT.chrome),
+        (STATUS_SUCCESS_LIGHT, LIGHT.canvas),
         (STATUS_WARNING_LIGHT, LIGHT.raised),
         (STATUS_WARNING_LIGHT, LIGHT.chrome),
+        (STATUS_WARNING_LIGHT, LIGHT.canvas),
         (TEXT_MUTED_LIGHT, BG_GRID_LIGHT),
     ):
         assert contrast_ratio(fg, bg) >= 4.5
