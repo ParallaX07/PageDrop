@@ -13,6 +13,7 @@ PageDrop is free software under **AGPL-3.0-or-later**. Anyone may use, study, mo
 | Qt (in free PyQt6 wheels) | **LGPL-3.0** (typical) |
 | PyMuPDF | **AGPL-3.0** (Artifex) |
 | openpyxl, et-xmlfile, Pillow, pywin32 | Bundled codecs and Office COM support; see [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) |
+| Public Sans (bundled font) | SIL OFL 1.1; text in `THIRD_PARTY_NOTICES.md` and beside the font files |
 
 A permissive licence is not possible: the free PyQt6 (GPLv3) and PyMuPDF (AGPL) wheels make every PageDrop build an AGPL-covered combined work. The only obligations fall on people who distribute PageDrop, or host a modified build: they must pass the same freedom on, with source.
 
@@ -52,6 +53,6 @@ When shipping LGPL Qt from free PyQt6 wheels, each binary release should:
 uv run python scripts/check_packaging.py
 ```
 
-Asserts that `LICENSE`, `licenses/GPL-3.0.txt`, `licenses/LGPL-3.0.txt` and `THIRD_PARTY_NOTICES.md` exist and are shipped by `pagedrop.spec`, `windows.iss` and the AppImage script; that the notices state PyQt6 as GPLv3 (not LGPL), cover each bundled codec and carry the written offer; that `docs/licensing.md`, `README.md`, About and the release-notes template state AGPL-3.0-or-later and the matching tag link; and that any built `dist/pagedrop/` contains the licence files and the codecs' `dist-info` licences.
+Asserts that `LICENSE`, `licenses/GPL-3.0.txt`, `licenses/LGPL-3.0.txt` and `THIRD_PARTY_NOTICES.md` exist and are shipped by `pagedrop.spec`, `windows.iss` and the AppImage script; that the notices state PyQt6 as GPLv3 (not LGPL), cover each bundled codec and the bundled font and carry the written offer; that `docs/licensing.md`, `README.md`, About and the release-notes template state AGPL-3.0-or-later and the matching tag link; and that any built `dist/pagedrop/` contains the licence files, the codecs' `dist-info` licences, and the font files with `OFL.txt`.
 
 See also [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) and [Building](building.md).

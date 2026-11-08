@@ -716,7 +716,7 @@ def test_watermark_selection_chrome_uses_accent_token(isolated_settings):
 
 
 def test_r2_fonts_and_spacing_tokens():
-    """R2: Windows-first fonts unchanged; spacing scale feeds toolbar/grid chrome."""
+    """Bundled UI font stack leads with Public Sans; spacing scale feeds toolbar/grid chrome."""
     from pagedrop.ui.theme import (
         CARD_PADDING,
         FONT_MONO,
@@ -726,12 +726,10 @@ def test_r2_fonts_and_spacing_tokens():
         SPACE_4,
     )
 
-    assert FONT_UI.startswith('"Segoe UI Variable"')
-    assert "Segoe UI" in FONT_UI
+    assert FONT_UI == '"Public Sans", "Segoe UI", "Noto Sans", sans-serif'
     assert FONT_MONO.startswith('"Cascadia Mono"')
-    # R2: do not expand for Linux-friendly product faces.
+    # Do not expand beyond the bundled face and its fallbacks.
     assert "Ubuntu" not in FONT_UI
-    assert "Noto" not in FONT_UI
     assert "SF Pro" not in FONT_UI
 
     assert CARD_PADDING == SPACE_4 == 16

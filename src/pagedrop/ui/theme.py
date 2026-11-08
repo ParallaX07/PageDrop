@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PyQt6.QtGui import QColor, QIcon
+    from PyQt6.QtWidgets import QApplication
 
 @dataclass(frozen=True)
 class Theme:
@@ -223,7 +224,9 @@ RADIUS_SURFACE = 6
 RADIUS_CARD = RADIUS_SURFACE
 RADIUS_BADGE = 3
 
-FONT_UI = '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
+# Bundled Public Sans leads; later families cover scripts it lacks (CJK, etc.).
+FONT_UI_FAMILIES = ("Public Sans", "Segoe UI", "Noto Sans")
+FONT_UI = ", ".join(f'"{name}"' for name in FONT_UI_FAMILIES) + ", sans-serif"
 FONT_MONO = '"Cascadia Mono", "Consolas", monospace'
 
 # Spacing scale (4px steps) — toolbar / grid / empty-state rhythm
@@ -2468,3 +2471,14 @@ def tab_close_icon(*, color: str | None = None) -> "QIcon":
 
     ink = color if color is not None else close_tab_hex()
     return icons.icon("x", color=ink)
+
+
+def apply_app_font(app: "QApplication") -> None:
+    """Make the UI family stack the application font, keeping its point size.
+
+    Families missing on this machine are skipped by Qt, so this is safe when
+    the bundled font failed to register.
+    """
+    font = app.font()
+    font.setFamilies(list(FONT_UI_FAMILIES))
+    app.setFont(font)

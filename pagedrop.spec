@@ -18,6 +18,8 @@ datas: list[tuple[str, str]] = [
     (str(ASSETS / "logo.svg"), "pagedrop/assets"),
     # Phosphor toolbar SVGs (R4) — must resolve via importlib.resources when frozen.
     (str(ASSETS / "icons"), "pagedrop/assets/icons"),
+    # Public Sans (SIL OFL) with its licence text.
+    (str(ASSETS / "fonts"), "pagedrop/assets/fonts"),
     # Licence notices must ship beside the onedir exe.
     (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
     (str(ROOT / "LICENSE"), "."),

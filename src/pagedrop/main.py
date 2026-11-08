@@ -80,8 +80,9 @@ def main() -> int:
     from PyQt6.QtCore import QEvent, QTimer
     from PyQt6.QtWidgets import QApplication
 
-    from pagedrop.assets import app_icon
+    from pagedrop.assets import app_icon, register_fonts
     from pagedrop.ui.accessibility import install_accessibility
+    from pagedrop.ui.theme import apply_app_font
     from pagedrop.ui.window_manager import WindowManager
     from pagedrop.utils.update_windows import UpdateMutex, WindowsUpdateError
 
@@ -92,6 +93,8 @@ def main() -> int:
     app.setApplicationVersion(_app_version())
     app.setQuitOnLastWindowClosed(False)
     app.setStyle("Fusion")
+    register_fonts()
+    apply_app_font(app)
     install_accessibility(app)
     from pagedrop.ui.settings import apply_optional_settings_to_capabilities
 
