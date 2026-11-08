@@ -28,7 +28,7 @@ from pagedrop.core.supported_formats import is_pdf_path
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import prompt_discard_file_list, prompt_pdf_password
 from pagedrop.ui import icons
-from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
+from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running, gui_fitz_call
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
@@ -76,7 +76,7 @@ class MergeWindow(JobChromeMixin, QWidget):
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("MergeWindow")
-        self.setMinimumSize(640, 480)
+        self.setMinimumSize(480, 320)
 
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(0, 0, 0, 0)
@@ -310,7 +310,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         filename = Path(path).name
         password = self._credentials.get(path)
         try:
-            loader = PdfLoader(path, password=password)
+            loader = gui_fitz_call(PdfLoader, path, password=password)
         except PdfEmptyError:
             QMessageBox.warning(
                 self,
@@ -433,7 +433,7 @@ class MergeWindow(JobChromeMixin, QWidget):
     @staticmethod
     def _page_count(path: str, *, password: str | None = None) -> int:
         # Locked probe (O17-c); long-lived Merge preview loader stays separate.
-        return pdf_page_count(path, password=password)
+        return gui_fitz_call(pdf_page_count, path, password=password)
 
     def _add_paths(self, paths: list[str]) -> None:
         accepted: list[str] = []

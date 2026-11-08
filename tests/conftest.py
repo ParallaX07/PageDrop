@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
+import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +22,12 @@ if TYPE_CHECKING:
 
 # Headless Qt on CI/Linux; harmless on Windows when supported.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if sys.platform == "win32":
+    # Offscreen Qt reads fonts from Qt's own fonts folder, which Windows wheels
+    # lack; without real fonts every glyph is a wide box and layouts overflow.
+    os.environ.setdefault(
+        "QT_QPA_FONTDIR", str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts")
+    )
 os.environ["PAGEDROP_TESTING"] = "1"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +41,29 @@ RENDER_POOL_DRAIN_MS = 2000
 def file_sha256(path: Path | str) -> str:
     """Return the hex SHA-256 of a file, for source-unchanged assertions."""
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+@contextlib.contextmanager
+def hold_fitz_lock():
+    """Hold ``FITZ_LOCK`` from a helper thread; yields until the block ends."""
+    from pagedrop.core.thread_policy import FITZ_LOCK
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold() -> None:
+        with FITZ_LOCK:
+            held.set()
+            release.wait(15)
+
+    thread = threading.Thread(target=hold, daemon=True)
+    thread.start()
+    try:
+        assert held.wait(5)
+        yield
+    finally:
+        release.set()
+        thread.join(5)
 
 
 class OverwriteAnswer:
@@ -86,6 +118,12 @@ def unsaved_answer(monkeypatch):
     return fake
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _fusion_style(qapp):
+    """Match the app's style so widget metrics agree across platforms."""
+    qapp.setStyle("Fusion")
+
+
 def _install_nonblocking_qt() -> None:
     """Patch modal Qt APIs before any widgets exist.
 
@@ -133,6 +171,16 @@ def wait_for_pdf_loaded(qtbot: QtBot, window, *, timeout: int = RENDER_TIMEOUT_M
     )
 
 
+def wait_for_compare_render(
+    qtbot: QtBot, window, *, timeout: int = RENDER_TIMEOUT_MS
+) -> None:
+    """Wait until a CompareWindow's requested pane render has landed."""
+    qtbot.waitUntil(
+        lambda: window._render_landed and not window._render_timer.isActive(),
+        timeout=timeout,
+    )
+
+
 def load_pdf_in_active_tab(window, path: str) -> None:
     """Load a PDF into the active tab (test helper)."""
     window._load_pdf(str(path))
@@ -168,6 +216,16 @@ def isolated_settings(tmp_path, monkeypatch):
 
     monkeypatch.setattr("pagedrop.ui.settings._settings", _settings)
     return tmp_path
+
+
+@pytest.fixture
+def capability_registry(isolated_settings):
+    """Hand back the process-wide capability registry, restored after the test."""
+    from pagedrop.core import capabilities
+    from pagedrop.ui.settings import apply_optional_settings_to_capabilities
+
+    yield capabilities
+    apply_optional_settings_to_capabilities()
 
 
 @pytest.fixture(autouse=True)

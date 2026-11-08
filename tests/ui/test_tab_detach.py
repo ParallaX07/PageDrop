@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QDrag
+
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
 from tests.conftest import RENDER_TIMEOUT_MS
@@ -111,3 +116,80 @@ def test_move_to_new_window_context_menu(
 
     detached = _windows_added(manager, windows_before)[0]
     assert _tab_at(detached, 0).pdf_path == str(one_page_pdf)
+
+
+def _detached_tab_with_source_closed_later(qtbot, qapp, pdf_path, *, register=True):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    if register:
+        qtbot.addWidget(source)
+    source.showMinimized()
+    tab = _tab_at(source, 0)
+    source._load_pdf(str(pdf_path), tab=tab)
+    _wait_for_tab_loaded(qtbot, tab)
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(lambda: len(manager.windows) == len(windows_before) + 1)
+    detached = _windows_added(manager, windows_before)[0]
+    if register:
+        qtbot.addWidget(detached)
+    return source, detached, tab
+
+
+def _drag_first_page(qtbot, tab: PdfTab, monkeypatch) -> list[Path]:
+    dropped: list[Path] = []
+
+    def fake_exec(drag, *args, **kwargs):
+        dropped.extend(Path(url.toLocalFile()) for url in drag.mimeData().urls())
+        return Qt.DropAction.IgnoreAction
+
+    monkeypatch.setattr(QDrag, "exec", fake_exec)
+    grid = tab.thumbnail_grid
+    grid.selection_manager.select_single(0)
+    card = grid._cards[0]
+    qtbot.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(card, pos=QPoint(200, 200))
+    return dropped
+
+
+def test_detached_tab_uses_the_new_windows_temp_manager(
+    five_page_pdf, qtbot, qapp
+):
+    source, detached, tab = _detached_tab_with_source_closed_later(
+        qtbot, qapp, five_page_pdf
+    )
+
+    assert source._temp_manager is not detached._temp_manager
+    assert tab._temp_manager is detached._temp_manager
+    assert tab.thumbnail_grid._temp_manager is detached._temp_manager
+    assert tab.thumbnail_grid._cards
+    assert all(
+        card._temp_manager is detached._temp_manager
+        for card in tab.thumbnail_grid._cards
+    )
+
+
+def test_drag_after_source_window_closes_lives_in_new_windows_root(
+    five_page_pdf, qtbot, qapp, monkeypatch
+):
+    # Both windows are closed (and freed) by the test itself.
+    source, detached, tab = _detached_tab_with_source_closed_later(
+        qtbot, qapp, five_page_pdf, register=False
+    )
+    source_root = source._temp_manager.get_dir()
+    new_root = detached._temp_manager.get_dir()
+    source.close()
+    assert not source_root.exists()
+
+    # Cards created after the move (a reload) belong to the new window too.
+    tab.thumbnail_grid.reload_from_model()
+    dropped = _drag_first_page(qtbot, tab, monkeypatch)
+
+    assert len(dropped) == 1
+    assert dropped[0].is_file()
+    assert new_root in dropped[0].parents
+    assert not source_root.exists()
+
+    detached.close()
+    assert not dropped[0].exists()
+    assert not new_root.exists()

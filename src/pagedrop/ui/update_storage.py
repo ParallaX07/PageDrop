@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -14,6 +16,7 @@ from pagedrop.utils.update_checker import ReleaseInfo, UpdateStorageError
 
 _INSTALLER_RE = re.compile(r"^PageDrop-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-Setup\.exe$")
 _EXPIRY = timedelta(days=7)
+_LOG = logging.getLogger("pagedrop")
 
 
 class UpdateStorage:
@@ -28,12 +31,23 @@ class UpdateStorage:
         if self.root.is_symlink():
             raise UpdateStorageError("Update storage directory must not be a link")
         self.root.mkdir(parents=True, exist_ok=True)
-        self.session_dir = self.root / uuid.uuid4().hex
-        self.session_dir.mkdir()
-        self._lock = QLockFile(str(self.session_dir / ".active.lock"))
-        self._lock.setStaleLockTime(0)
-        if not self._lock.tryLock(0):
+        for _attempt in range(3):
+            # Another process may lock or remove the new folder before we lock it.
+            session = self.root / uuid.uuid4().hex
+            try:
+                session.mkdir()
+                lock = QLockFile(str(session / ".active.lock"))
+                lock.setStaleLockTime(0)
+                if lock.tryLock(0):
+                    break
+            except OSError:
+                pass
+            with contextlib.suppress(OSError):
+                session.rmdir()
+        else:
             raise UpdateStorageError("Could not reserve update storage")
+        self.session_dir = session
+        self._lock = lock
         self.cleanup()
 
     def destination(self, release: ReleaseInfo) -> Path:
@@ -41,21 +55,48 @@ class UpdateStorage:
 
     def reusable_installer(self, release: ReleaseInfo) -> Path | None:
         candidate = self.destination(release)
-        if not self._owned_file(candidate):
-            return None
-        if candidate.stat().st_size != release.installer_size:
-            candidate.unlink()
-            return None
-        with candidate.open("rb") as source:
-            digest = hashlib.file_digest(source, "sha256").hexdigest()
-        if digest == release.expected_sha256:
-            return candidate
-        candidate.unlink()
+        if self._owned_file(candidate):
+            return candidate if self._verified(candidate, release) else None
+        with contextlib.closing(self._inactive_sessions()) as sessions:
+            for session in sessions:
+                older = session / release.installer_name
+                if older.is_symlink() or not older.is_file():
+                    continue
+                try:
+                    if not self._verified(older, release):
+                        continue
+                except OSError:  # Unreadable leftover from another session.
+                    continue
+                try:
+                    older.rename(candidate)
+                except OSError:
+                    return None
+                return candidate
         return None
 
     def cleanup(self, *, now: datetime | None = None) -> None:
         """Remove only inactive, expired installers and inactive partial files."""
         cutoff = (now or datetime.now(UTC)).timestamp() - _EXPIRY.total_seconds()
+        with contextlib.closing(self._inactive_sessions()) as sessions:
+            for session in sessions:
+                try:
+                    children = list(session.iterdir())
+                except OSError:
+                    _LOG.warning("Could not list update cache folder %s", session, exc_info=True)
+                    continue
+                for child in children:
+                    try:
+                        if child.is_symlink() or not child.is_file():
+                            continue
+                        if child.name.endswith(".part") and _INSTALLER_RE.fullmatch(child.name[:-5]):
+                            child.unlink(missing_ok=True)
+                        elif _INSTALLER_RE.fullmatch(child.name) and child.stat().st_mtime < cutoff:
+                            child.unlink(missing_ok=True)
+                    except OSError:  # Best effort: a locked leftover must not block downloads.
+                        _LOG.warning("Could not clean update cache file %s", child, exc_info=True)
+
+    def _inactive_sessions(self):
+        """Yield each other session with its lock held; drop it afterwards if empty."""
         for session in self.root.iterdir():
             if session == self.session_dir or session.is_symlink() or not session.is_dir():
                 continue
@@ -64,15 +105,23 @@ class UpdateStorage:
             if not lock.tryLock(0):
                 continue
             try:
-                for child in session.iterdir():
-                    if child.is_symlink() or not child.is_file():
-                        continue
-                    if child.name.endswith(".part") and _INSTALLER_RE.fullmatch(child.name[:-5]):
-                        child.unlink(missing_ok=True)
-                    elif _INSTALLER_RE.fullmatch(child.name) and child.stat().st_mtime < cutoff:
-                        child.unlink(missing_ok=True)
+                yield session
             finally:
                 lock.unlock()
+                try:
+                    session.rmdir()  # Fails, and keeps the folder, unless it is empty.
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _verified(candidate: Path, release: ReleaseInfo) -> bool:
+        """Check size and SHA-256; delete the file when they do not match."""
+        if candidate.stat().st_size == release.installer_size:
+            with candidate.open("rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() == release.expected_sha256:
+                    return True
+        candidate.unlink()
+        return False
 
     def close(self) -> None:
         self._lock.unlock()

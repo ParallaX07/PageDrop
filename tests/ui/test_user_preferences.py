@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea
+from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea, QWidget
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -11,7 +13,7 @@ from pagedrop.ui.command_palette import (
     collect_actions,
     fuzzy_match,
 )
-from pagedrop.ui.preferences_dialog import PreferencesDialog
+from pagedrop.ui.preferences_dialog import PreferencesDialog, open_preferences
 from pagedrop.ui import settings as settings_mod
 from pagedrop.ui.settings import (
     KEY_CONFIRM_CLOSE_DIRTY,
@@ -129,6 +131,139 @@ def test_preferences_exposes_automatic_update_checks(qtbot, isolated_settings):
     checkbox.setChecked(False)
     dialog._on_accept()
     assert settings_mod.automatic_update_checks_enabled() is False
+
+
+def _fake_soffice(tmp_path, name="soffice"):
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+def _registry_matches_saved(caps) -> bool:
+    return (
+        caps.configured_soffice_path() == (settings_mod.office_soffice_path() or None)
+        and caps.configured_office_backend() == settings_mod.office_preferred_backend()
+        and caps.configured_tessdata_path() == (settings_mod.tessdata_path() or None)
+    )
+
+
+def _type_unsaved_values(dialog, tmp_path):
+    soffice = _fake_soffice(tmp_path)
+    tess = str(tmp_path / "tess")
+    dialog._soffice.setText(soffice)
+    dialog._backend.setCurrentIndex(dialog._backend.findData("libreoffice"))
+    dialog._tessdata.setText(tess)
+    return soffice, tess
+
+
+def test_recheck_then_cancel_keeps_saved_values_and_registry(
+    qtbot, capability_registry, tmp_path
+):
+    settings_mod.set_office_soffice_path("/saved/soffice")
+    settings_mod.set_office_preferred_backend("com")
+    settings_mod.set_tessdata_path("/saved/tess")
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    soffice, tess = _type_unsaved_values(dialog, tmp_path)
+
+    dialog._on_recheck()
+    assert capability_registry.configured_soffice_path() == soffice
+
+    dialog.reject()
+
+    assert settings_mod.office_soffice_path() == "/saved/soffice"
+    assert settings_mod.office_preferred_backend() == "com"
+    assert settings_mod.tessdata_path() == "/saved/tess"
+    assert _registry_matches_saved(capability_registry)
+
+
+def test_closing_preferences_window_restores_registry(
+    qtbot, capability_registry, tmp_path
+):
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+    soffice, _ = _type_unsaved_values(dialog, tmp_path)
+    dialog._on_recheck()
+    assert capability_registry.configured_soffice_path() == soffice
+
+    dialog.close()
+
+    assert settings_mod.office_soffice_path() == ""
+    assert _registry_matches_saved(capability_registry)
+    assert capability_registry.configured_soffice_path() is None
+
+
+def test_recheck_probes_unsaved_values_and_shows_them(
+    qtbot, capability_registry, tmp_path, monkeypatch
+):
+    settings_mod.set_office_soffice_path("/saved/soffice")
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    soffice, tess = _type_unsaved_values(dialog, tmp_path)
+    seen: list[tuple] = []
+
+    def fake_probe_all(*, refresh=False):
+        seen.append(
+            (
+                capability_registry.configured_soffice_path(),
+                capability_registry.configured_office_backend(),
+                capability_registry.configured_tessdata_path(),
+            )
+        )
+        return {}
+
+    monkeypatch.setattr("pagedrop.ui.preferences_dialog.probe_all", fake_probe_all)
+
+    dialog._on_recheck()
+
+    assert seen == [(soffice, "libreoffice", tess)]
+    assert soffice in dialog._backend_detail.text()
+    assert "/saved/soffice" not in dialog._backend_detail.text()
+    assert settings_mod.office_soffice_path() == "/saved/soffice"
+
+
+def test_recheck_then_ok_saves_typed_values(qtbot, capability_registry, tmp_path):
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    soffice, tess = _type_unsaved_values(dialog, tmp_path)
+
+    dialog._on_recheck()
+    assert settings_mod.office_soffice_path() == ""
+    dialog._on_accept()
+
+    assert settings_mod.office_soffice_path() == soffice
+    assert settings_mod.office_preferred_backend() == "libreoffice"
+    assert settings_mod.tessdata_path() == tess
+    assert _registry_matches_saved(capability_registry)
+
+
+def test_last_successful_check_is_shown_in_local_time(qtbot, isolated_settings):
+    import os
+    import time
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is not available")
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Tokyo"
+    time.tzset()
+    try:
+        settings_mod.set_last_successful_check_utc(
+            datetime(2026, 9, 8, 15, 30, tzinfo=UTC)
+        )
+        dialog = PreferencesDialog()
+        qtbot.addWidget(dialog)
+        text = dialog._update_status.text()
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
+
+    assert "2026-09-09 00:30" in text
+    assert "UTC" not in text
 
 
 def test_fuzzy_match_substring_and_subsequence():
@@ -290,3 +425,86 @@ def test_command_palette_shortcut_registered(main_window):
     assert main_window._command_palette_action.shortcut() == QKeySequence(
         "Ctrl+Shift+P"
     )
+
+
+def test_open_preferences_releases_dialog_and_coordinator_connections(
+    qtbot, isolated_settings, monkeypatch
+):
+    class Coordinator(QObject):
+        check_failed = pyqtSignal()
+        check_succeeded = pyqtSignal()
+        last_error = ""
+
+    coordinator = Coordinator()
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    connected_during_exec: list[int] = []
+
+    def fake_exec(self) -> int:
+        connected_during_exec.append(coordinator.receivers(coordinator.check_failed))
+        return 0
+
+    monkeypatch.setattr(PreferencesDialog, "exec", fake_exec)
+
+    for _ in range(3):
+        dialog = open_preferences(parent, coordinator=coordinator)
+        assert connected_during_exec[-1] > 0
+        assert dialog.windowTitle() == "Preferences"  # still readable after exec
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert parent.findChildren(PreferencesDialog) == []
+    assert coordinator.receivers(coordinator.check_failed) == 0
+    assert coordinator.receivers(coordinator.check_succeeded) == 0
+
+
+def _stub_color_scheme(monkeypatch, scheme):
+    from PyQt6.QtGui import QGuiApplication
+
+    class Hints:
+        @staticmethod
+        def colorScheme():  # noqa: N802
+            return scheme
+
+    monkeypatch.setattr(QGuiApplication, "styleHints", staticmethod(lambda: Hints))
+
+
+@pytest.mark.parametrize(
+    ("scheme", "expected"),
+    [
+        (Qt.ColorScheme.Light, True),
+        (Qt.ColorScheme.Dark, False),
+        (Qt.ColorScheme.Unknown, False),
+    ],
+)
+def test_light_theme_follows_the_os_scheme_until_chosen(
+    qtbot, isolated_settings, monkeypatch, scheme, expected
+):
+    _stub_color_scheme(monkeypatch, scheme)
+    assert light_theme() is expected
+    # Reading never stores a choice.
+    assert not settings_mod._settings().contains(settings_mod.KEY_LIGHT_THEME)
+
+
+def test_explicit_light_theme_choice_beats_the_os_scheme(
+    qtbot, isolated_settings, monkeypatch
+):
+    _stub_color_scheme(monkeypatch, Qt.ColorScheme.Light)
+    set_light_theme(False)
+    assert light_theme() is False
+    _stub_color_scheme(monkeypatch, Qt.ColorScheme.Dark)
+    set_light_theme(True)
+    assert light_theme() is True
+
+
+def test_light_theme_menu_action_starts_in_step_with_the_os_scheme(
+    qtbot, isolated_settings, monkeypatch
+):
+    from pagedrop.ui.main_window import MainWindow
+
+    _stub_color_scheme(monkeypatch, Qt.ColorScheme.Light)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    try:
+        assert window._light_theme_action.isChecked()
+    finally:
+        window._temp_manager.cleanup()

@@ -1,8 +1,8 @@
 ; PageDrop — Windows installer (Inno Setup 6+)
 ;
 ; Prerequisites:
-;   uv sync --group dev
-;   uv run --with pillow python scripts/generate_icons.py   ; if app-icon.ico missing
+;   uv sync --group dev --group codecs --group office
+;   uv run python scripts/generate_icons.py   ; if app-icon.ico missing
 ;   uv run pyinstaller --noconfirm pagedrop.spec            ; dist/pagedrop/pagedrop.exe
 ;
 ; Build installer (version from pyproject.toml via /DAppVersion=…):
@@ -58,6 +58,7 @@ Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cr
 ; Licence texts from repo root (also in onedir datas; keep explicit install copies)
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from pagedrop.core.jobs.errors import OutputExistsError
+from pagedrop.core.pdf_service import invalidate_doc_cache
 from pagedrop.utils.temp_manager import TempManager
 
 
@@ -35,6 +36,8 @@ class JobStaging:
         """Atomically replace *destination* with a validated staged file."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        # A cached fitz handle on the old result blocks the replace on Windows.
+        invalidate_doc_cache(str(destination))
         try:
             os.replace(staged, destination)
         except OSError as exc:
@@ -90,14 +93,16 @@ class JobStaging:
         """Remove staged files and the job directory (cancel / fail)."""
         self._temp_manager.cleanup_paths(list(self._staged))
         self._staged.clear()
-        if self._job_dir.exists():
-            for child in self._job_dir.iterdir():
-                if child.is_file():
-                    child.unlink(missing_ok=True)
-            try:
+        try:
+            if self._job_dir.exists():
+                for child in self._job_dir.iterdir():
+                    if child.is_file():
+                        child.unlink(missing_ok=True)
                 self._job_dir.rmdir()
-            except OSError:
-                pass
+        except OSError:
+            pass
+        finally:
+            self._temp_manager.unpin_dir(self._job_dir)
 
 
 def _file_identity_from_fd(fd: int) -> tuple[int, int]:

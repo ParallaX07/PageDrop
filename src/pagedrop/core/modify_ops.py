@@ -18,9 +18,11 @@ from typing import Literal, Sequence
 import fitz
 
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel as _check_cancel
+from pagedrop.core.jobs.errors import JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
 from pagedrop.core.native_conversions import batch_output_paths
 from pagedrop.core.pdf_loader import open_pdf
+from pagedrop.core.thread_policy import FITZ_LOCK, yield_fitz_lock
 
 CropMode = Literal["cropbox", "rebuild"]
 WatermarkKind = Literal["text", "image"]
@@ -881,6 +883,50 @@ def remove_blank_pages(
         doc.close()
 
 
+class ColorEffectError(JobError):
+    """Raised when MuPDF fails while applying a colour effect to a page."""
+
+
+def _color_page(
+    effect: str,
+    doc: fitz.Document,
+    out: fitz.Document | None,
+    index: int,
+    background_rgb: tuple[float, float, float],
+    matrix: fitz.Matrix,
+) -> None:
+    """Apply *effect* to page *index*. Caller holds FITZ_LOCK.
+
+    Page, shape and pixmap objects are released here, under the lock, even when
+    a MuPDF call fails.
+    """
+    page = shape = pix = new_page = None
+    failure: str | None = None
+    try:
+        page = doc[index]
+        if effect == "greyscale":
+            page.recolor(1)
+        elif effect == "background":
+            shape = page.new_shape()
+            shape.draw_rect(page.rect)
+            shape.finish(color=None, fill=background_rgb, fill_opacity=1.0)
+            shape.commit(overlay=False)
+        else:
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            pix.invert_irect(pix.irect)
+            new_page = out.new_page(width=page.rect.width, height=page.rect.height)
+            try:
+                new_page.insert_image(new_page.rect, pixmap=pix)
+            except Exception as exc:  # noqa: BLE001 — surfaced as ColorEffectError below
+                failure = str(exc)
+    finally:
+        page = shape = pix = new_page = None
+    if failure is not None:
+        # Raised outside the except block so the failed call's traceback, which
+        # would pin the pixmap, is already released under the lock.
+        raise ColorEffectError(f"Colour effect failed on page {index + 1}: {failure}")
+
+
 def apply_color_effect(
     source_pdf: str,
     output_path: str,
@@ -896,48 +942,39 @@ def apply_color_effect(
     ``greyscale`` uses ``Page.recolor(1)`` and keeps vectors.
     ``invert`` rebuilds each page from an inverted pixmap (vector text lost).
     ``background`` draws a filled rect under content (vector-safe).
+
+    Takes ``FITZ_LOCK`` per page (and for open / save / close) so interactive
+    rendering can run between pages; cancel is checked outside the lock.
     """
     reject_source_overwrite(output_path, source_pdf)
     if dpi < 36 or dpi > 600:
         raise ValueError("dpi must be between 36 and 600")
-    doc = open_pdf(source_pdf, password=password)
+    if effect not in ("greyscale", "background", "invert"):
+        raise ValueError(f"Unknown color effect: {effect!r}")
+    matrix = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+    doc: fitz.Document | None = None
+    out: fitz.Document | None = None
     try:
-        if effect == "greyscale":
-            for page in doc:
-                _check_cancel(cancel)
-                page.recolor(1)
-            _save(doc, output_path)
-            return
-
-        if effect == "background":
-            r, g, b = background_rgb
-            for page in doc:
-                _check_cancel(cancel)
-                shape = page.new_shape()
-                shape.draw_rect(page.rect)
-                shape.finish(color=None, fill=(r, g, b), fill_opacity=1.0)
-                shape.commit(overlay=False)
-            _save(doc, output_path)
-            return
-
-        if effect != "invert":
-            raise ValueError(f"Unknown color effect: {effect!r}")
-
-        # Raster invert: rebuild each page from pixmap (documented vector loss).
-        out = fitz.open()
-        try:
-            mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
-            for page in doc:
-                _check_cancel(cancel)
-                pix = page.get_pixmap(matrix=mat, alpha=False)
-                pix.invert_irect(pix.irect)
-                new_page = out.new_page(width=page.rect.width, height=page.rect.height)
-                new_page.insert_image(new_page.rect, pixmap=pix)
-            _save(out, output_path)
-        finally:
-            out.close()
+        with FITZ_LOCK:
+            doc = open_pdf(source_pdf, password=password)
+            count = doc.page_count
+            if effect == "invert":
+                # Raster invert rebuilds each page from a pixmap (documented vector loss).
+                out = fitz.open()
+        for index in range(count):
+            _check_cancel(cancel)
+            with FITZ_LOCK:
+                _color_page(effect, doc, out, index, background_rgb, matrix)
+            yield_fitz_lock()
+        with FITZ_LOCK:
+            _save(out if out is not None else doc, output_path)
     finally:
-        doc.close()
+        with FITZ_LOCK:
+            if out is not None:
+                out.close()
+            if doc is not None:
+                doc.close()
+            doc = out = None
 
 
 # Documented warning for UI copy when raster effects are selected.

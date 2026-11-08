@@ -6,7 +6,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QStackedWidget, QToolBar, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QSizePolicy,
+    QStackedWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from pagedrop.core.jobs.credentials import RuntimeCredentials
 from pagedrop.core.markup import MarkupSession
@@ -105,6 +111,11 @@ class PdfTab(QWidget):
         self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
         self._preview_widget.markup_changed.connect(self._on_markup_changed)
+        # The stack sizes itself from every page, hidden ones included. Let the
+        # viewer's side panels give way instead of setting the window's floor.
+        self._preview_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored
+        )
 
         self._content_stack.addWidget(self._thumbnail_grid)
         self._content_stack.addWidget(self._preview_widget)
@@ -406,14 +417,21 @@ class PdfTab(QWidget):
             if entry.annotation is not None
         )
 
+    def set_temp_manager(self, temp_manager: TempManager) -> None:
+        """Move this tab's temp files to another window's manager (tab move)."""
+        self._temp_manager = temp_manager
+        self._thumbnail_grid.set_temp_manager(temp_manager)
+
     def get_loader(self, path: str) -> PdfLoader:
         """Return a cached loader for *path* (UI / main thread only)."""
-        if path not in self._loader_cache:
-            self._loader_cache[path] = PdfLoader(
-                path, password=self._credentials.get(path)
-            )
+        cached = self._loader_cache.get(path)
+        if cached is not None:
+            return cached
+        loader = self._loader_cache[path] = PdfLoader(
+            path, password=self._credentials.get(path)
+        )
         self._evict_idle_loaders(keep={path})
-        return self._loader_cache[path]
+        return loader
 
     def load_pdf(
         self, path: str, password: str | None = None

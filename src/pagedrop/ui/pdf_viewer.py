@@ -1497,6 +1497,50 @@ class _ViewerScrollArea(QScrollArea):
         super().wheelEvent(event)
 
 
+class _ToolbarScrollArea(QScrollArea):
+    """Frameless one-row scroll area as tall as its bar, plus the scroll bar when needed.
+
+    The height comes from the area and its own widget alone, so nothing outside
+    them has to stay alive for the layout to ask for it.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def setWidget(self, widget: QWidget | None) -> None:  # noqa: N802
+        super().setWidget(widget)
+        if widget is not None:
+            widget.installEventFilter(self)
+
+    def _fitted_height(self) -> int:
+        bar = self.widget()
+        if bar is None:
+            return 0
+        height = bar.sizeHint().height()
+        if bar.minimumSizeHint().width() > self.maximumViewportSize().width():
+            height += self.horizontalScrollBar().sizeHint().height()
+        return height
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(super().sizeHint().width(), self._fitted_height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(super().minimumSizeHint().width(), self._fitted_height())
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.widget() and event.type() == QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.updateGeometry()
+
+
 class PdfViewerWidget(QWidget):
     """Virtualized continuous / single / spread PDF viewer."""
 
@@ -1562,7 +1606,10 @@ class PdfViewerWidget(QWidget):
         root.setSpacing(0)
 
         self._toolbar = self._build_toolbar()
-        root.addWidget(self._toolbar)
+        # The bar scrolls sideways instead of setting the viewer's minimum width.
+        self._toolbar_scroll = _ToolbarScrollArea()
+        self._toolbar_scroll.setWidget(self._toolbar)
+        root.addWidget(self._toolbar_scroll)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._side = self._build_side_panel()
@@ -1597,6 +1644,7 @@ class PdfViewerWidget(QWidget):
         self._hint = QLabel()
         self._hint.setObjectName("PdfViewerHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setWordWrap(True)
         center_layout.addWidget(self._hint)
         self._update_markup_hint()
 
@@ -2387,7 +2435,17 @@ class PdfViewerWidget(QWidget):
         flatten_btn.clicked.connect(self._on_flatten_forms)
         tools_layout.addWidget(flatten_btn)
         tools_layout.addStretch(1)
-        outer.addWidget(self._annot_tools_host, stretch=1)
+        # The tool list scrolls when the rail is shorter than it.
+        self._annot_tools_scroll = QScrollArea()
+        self._annot_tools_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._annot_tools_scroll.setWidgetResizable(True)
+        self._annot_tools_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._annot_tools_scroll.setWidget(self._annot_tools_host)
+        self._annot_tools_scroll.viewport().setAutoFillBackground(False)
+        self._annot_tools_host.setAutoFillBackground(False)
+        outer.addWidget(self._annot_tools_scroll, stretch=1)
 
         self._annot_expand_btn = QToolButton()
         self._annot_expand_btn.setObjectName("PdfViewerAnnotExpand")
@@ -2407,7 +2465,7 @@ class PdfViewerWidget(QWidget):
         )
         self._annot_rail_collapsed = collapsed
         collapsed = self._annot_rail_collapsed
-        self._annot_tools_host.setVisible(not collapsed)
+        self._annot_tools_scroll.setVisible(not collapsed)
         self._annot_rail_title.setVisible(not collapsed)
         self._annot_collapse_btn.setVisible(not collapsed)
         self._annot_expand_btn.setVisible(collapsed)
@@ -3876,8 +3934,12 @@ class PdfViewerWidget(QWidget):
                 QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
-            if reply == QMessageBox.StandardButton.Open:
-                QDesktopServices.openUrl(url)
+            if reply == QMessageBox.StandardButton.Open and not QDesktopServices.openUrl(url):
+                QMessageBox.warning(
+                    self,
+                    "Open link",
+                    f"PageDrop could not open this link:\n\n{link.uri}",
+                )
 
     def _extract_selected_attachment(self) -> None:
         if self._model is None:

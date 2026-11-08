@@ -20,11 +20,13 @@ from pagedrop.core.jobs import (
     OutputExistsError,
     SerializedJobRunner,
     SourceOverwriteError,
+    RuntimeCredentials,
     preflight_pdf_inputs,
 )
 from pagedrop.core.capabilities import AbsenceReason
 from pagedrop.core.jobs.staging import JobStaging
 from pagedrop.core.pdf_editor import PageRef
+from pagedrop.core.pdf_loader import PdfCorruptError, PdfEmptyError
 from pagedrop.core.pdf_service import FITZ_LOCK, render_ref_png
 from pagedrop.utils.temp_manager import TempManager
 from tests.conftest import file_sha256
@@ -276,6 +278,59 @@ def test_protected_pdf_uses_runtime_credential_without_persisting_it(
 
     after_keys = set(ui_settings._settings().allKeys())
     assert after_keys == before_keys
+
+
+def test_preflight_fills_callers_empty_credentials_in_place(tmp_path: Path) -> None:
+    from pagedrop.core.pdf_service import invalidate_doc_cache, page_count
+
+    enc = tmp_path / "locked.pdf"
+    _encrypted_pdf(enc, password="secret")
+    invalidate_doc_cache()
+    try:
+        creds = RuntimeCredentials()
+        result = preflight_pdf_inputs(
+            [enc], prompt=lambda _f, _i: "secret", credentials=creds
+        )
+        assert result is creds
+        assert creds.get(enc) == "secret"
+
+        # An unlocked cached open must not let a later preflight skip the prompt.
+        assert page_count(str(enc), password="secret") == 1
+        prompts: list[str] = []
+
+        def prompt(filename: str, _incorrect: bool) -> str | None:
+            prompts.append(filename)
+            return "secret"
+
+        again = preflight_pdf_inputs([enc], prompt=prompt)
+        assert prompts == ["locked.pdf"]
+        assert again.get(enc) == "secret"
+    finally:
+        invalidate_doc_cache()
+
+
+def test_runner_passes_callers_empty_credentials_to_context(tmp_path: Path) -> None:
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    creds = RuntimeCredentials()
+    seen: list[RuntimeCredentials] = []
+
+    def handler(ctx: JobContext) -> Path:
+        seen.append(ctx.credentials)
+        return _copy_handler(ctx)
+
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("copy", handler)
+        runner.run(
+            JobSpec.create("copy", inputs=[src], output=tmp_path / "out.pdf"),
+            credentials=creds,
+        )
+    finally:
+        temp.cleanup()
+    assert seen == [creds]
+    assert seen[0] is creds
 
 
 def test_preflight_cancel_aborts_cleanly(tmp_path: Path) -> None:
@@ -818,5 +873,166 @@ def test_extra_output_sharing_the_primary_destination_is_rejected(tmp_path: Path
                 JobSpec.create("two", inputs=[src], output=tmp_path / "out.pdf")
             )
         assert not (tmp_path / "out.pdf").exists()
+    finally:
+        temp.cleanup()
+
+
+# --- Outputs are reopened and validated before promotion --------------------
+
+_ZERO_PAGE_PDF = (
+    b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n"
+)
+
+
+def _writes(data: bytes):
+    def handler(ctx: JobContext) -> Path:
+        ctx.staged_output.write_bytes(data)
+        return ctx.staged_output
+
+    return handler
+
+
+def _run_writer(tmp_path: Path, handler, out_name: str) -> Path:
+    src = tmp_path / "in.pdf"
+    if not src.exists():
+        _write_pdf(src)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("write", handler)
+        try:
+            return runner.run(
+                JobSpec.create("write", inputs=[src], output=tmp_path / out_name)
+            )
+        finally:
+            assert not any(temp.get_dir().glob("job_*")), "staging left behind"
+    finally:
+        temp.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("data", "error"),
+    [
+        (b"%PDF-1.4 truncated nonsense", PdfCorruptError),
+        (b"", PdfCorruptError),
+        (_ZERO_PAGE_PDF, PdfEmptyError),
+    ],
+    ids=["corrupt", "empty-file", "zero-pages"],
+)
+def test_unusable_pdf_output_fails_and_is_never_promoted(
+    tmp_path: Path, data: bytes, error: type[Exception]
+) -> None:
+    _write_pdf(tmp_path / "in.pdf")
+    src_hash = file_sha256(tmp_path / "in.pdf")
+    with pytest.raises(error) as exc:
+        _run_writer(tmp_path, _writes(data), "out.PDF")
+    assert str(exc.value) == "The tool produced an unreadable PDF: out.PDF"
+    assert "job_" not in str(exc.value) and str(tmp_path) not in str(exc.value)
+    assert exc.value.__cause__ is not None
+    assert not (tmp_path / "out.PDF").exists()
+    assert file_sha256(tmp_path / "in.pdf") == src_hash
+
+
+def test_unusable_extra_pdf_output_blocks_the_whole_job(tmp_path: Path) -> None:
+    extra = tmp_path / "extra.pdf"
+
+    def handler(ctx: JobContext) -> Path:
+        _write_pdf(ctx.staged_output)
+        staged_extra = ctx.staging.stage_file("extra.pdf")
+        staged_extra.write_bytes(b"not a pdf")
+        ctx.extra_outputs.append((staged_extra, extra))
+        return ctx.staged_output
+
+    with pytest.raises(PdfCorruptError) as exc:
+        _run_writer(tmp_path, handler, "out.pdf")
+    assert str(exc.value) == "The tool produced an unreadable PDF: extra.pdf"
+    assert not (tmp_path / "out.pdf").exists()
+    assert not extra.exists()
+
+
+@pytest.mark.parametrize("name", ["out.docx", "out.csv", "out.png", "out.zip", "out.txt"])
+def test_non_pdf_outputs_are_promoted_without_pdf_validation(
+    tmp_path: Path, name: str
+) -> None:
+    result = _run_writer(tmp_path, _writes(b"not a pdf at all"), name)
+    assert result.read_bytes() == b"not a pdf at all"
+
+
+def test_password_protected_pdf_output_is_promoted(tmp_path: Path) -> None:
+    def handler(ctx: JobContext) -> Path:
+        _encrypted_pdf(ctx.staged_output)
+        return ctx.staged_output
+
+    result = _run_writer(tmp_path, handler, "locked.pdf")
+    with fitz.open(str(result)) as doc:
+        assert doc.needs_pass
+
+
+# --- Job dir is released on every path; cancel wins over a validation wait ---
+
+
+def test_successful_job_releases_its_pin_and_removes_leftovers(tmp_path: Path) -> None:
+    def handler(ctx: JobContext) -> Path:
+        _write_pdf(ctx.staged_output)
+        (ctx.staging.job_dir / "scratch.bin").write_bytes(b"x" * 1000)
+        return ctx.staged_output
+
+    src = tmp_path / "in.pdf"
+    _write_pdf(src)
+    temp = TempManager()
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("write", handler)
+        runner.run(JobSpec.create("write", inputs=[src], output=tmp_path / "out.pdf"))
+        assert temp._pinned == set()
+        assert not any(temp.get_dir().glob("job_*"))
+    finally:
+        temp.cleanup()
+
+
+def test_cancel_during_the_validation_wait_promotes_nothing(tmp_path: Path) -> None:
+    from pagedrop.core.jobs import runner as runner_module
+    from tests.conftest import hold_fitz_lock
+
+    src = tmp_path / "in.pdf"
+    out = tmp_path / "out.pdf"
+    _write_pdf(src)
+    source_hash = file_sha256(src)
+    token = CancelToken()
+    validating = threading.Event()
+    real_validate = runner_module.validate_pdf_output
+
+    def signalling_validate(path: Path, label: str | None = None) -> None:
+        validating.set()
+        real_validate(path, label)  # blocks on FITZ_LOCK held by the test
+
+    temp = TempManager()
+    outcome: list[BaseException | Path] = []
+    try:
+        runner = SerializedJobRunner(temp)
+        runner.register("copy", _copy_handler, holds_fitz=False)
+
+        def run() -> None:
+            try:
+                outcome.append(
+                    runner.run(JobSpec.create("copy", inputs=[src], output=out), cancel=token)
+                )
+            except BaseException as exc:  # noqa: BLE001 — captured for the assertion
+                outcome.append(exc)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(runner_module, "validate_pdf_output", signalling_validate)
+            with hold_fitz_lock():
+                thread = threading.Thread(target=run)
+                thread.start()
+                assert validating.wait(10)
+                token.cancel()
+            thread.join(10)
+        assert len(outcome) == 1 and isinstance(outcome[0], JobCancelledError)
+        assert not out.exists()
+        assert file_sha256(src) == source_hash
+        assert temp._pinned == set()
+        assert not any(temp.get_dir().glob("job_*"))
     finally:
         temp.cleanup()

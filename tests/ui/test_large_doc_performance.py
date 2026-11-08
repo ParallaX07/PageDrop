@@ -13,11 +13,14 @@ from pagedrop.core import pdf_service
 from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.core.pdf_service import doc_cache_size, invalidate_doc_cache
+from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.pdf_viewer import PdfViewerWidget, ViewerLayout
 from pagedrop.ui.thumbnail_grid import (
     RETAIN_WINDOW_ROWS,
     ThumbnailGrid,
 )
+from pagedrop.utils.temp_manager import TempManager
+from tests.conftest import wait_for_grid_loaded
 
 
 def _blank_pdf(path: Path, page_count: int) -> None:
@@ -35,6 +38,47 @@ def large_pdf(tmp_path: Path) -> Path:
     path = tmp_path / "large_800.pdf"
     _blank_pdf(path, 800)
     return path
+
+
+@pytest.fixture(scope="module")
+def huge_pdf(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("huge") / "huge_3000.pdf"
+    _blank_pdf(path, 3000)
+    return path
+
+
+def test_tab_loader_lookup_does_not_scan_pages_per_call(
+    qtbot, huge_pdf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cache-hit ``get_loader`` and opening the viewer must not walk every page.
+
+    The viewer asks for a loader once per page; each call used to rebuild the
+    model's reference-path set, making viewer open quadratic in page count.
+    """
+    tab = PdfTab(TempManager())
+    qtbot.addWidget(tab)
+    tab.load_pdf(str(huge_pdf))
+    wait_for_grid_loaded(qtbot, tab.thumbnail_grid, timeout=120000)
+    model = tab.edit_model
+    assert model is not None and model.logical_count() == 3000
+
+    calls = {"n": 0}
+    real = PdfEditModel.current_reference_paths
+
+    def counting(self: PdfEditModel) -> set[str]:
+        calls["n"] += 1
+        return real(self)
+
+    monkeypatch.setattr(PdfEditModel, "current_reference_paths", counting)
+
+    for _ in range(model.logical_count()):
+        tab.get_loader(str(huge_pdf))
+    assert calls["n"] == 0
+
+    tab.show_preview_at(0)
+    viewer = tab._preview_widget
+    assert len(viewer._page_sizes) == 3000
+    assert calls["n"] <= 5
 
 
 def test_viewer_set_model_avoids_per_page_opens(
@@ -490,4 +534,27 @@ def test_zoom_defers_offscreen_layout(qtbot, large_pdf: Path, monkeypatch) -> No
     assert 200 in grid._pending_layout_indices
     assert off._card_width == grid._card_width
     assert off.width() == old_width
+    loader.close()
+
+
+def test_finished_batches_release_worker_signals(qtbot, tmp_path: Path) -> None:
+    """Completed render batches must not accumulate Signals objects."""
+    pdf = tmp_path / "small.pdf"
+    _blank_pdf(pdf, 3)
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    grid.resize(500, 400)
+    grid.show()
+    qtbot.waitExposed(grid, timeout=5000)
+    loader = PdfLoader(str(pdf))
+    grid.load_pdf(loader)
+    wait_for_grid_loaded(qtbot, grid)
+
+    for _ in range(12):
+        grid._page_render_width = [0] * len(grid._page_render_width)
+        grid._start_rendering(silent=True)
+        wait_for_grid_loaded(qtbot, grid)
+        assert all(w > 0 for w in grid._page_render_width)
+
+    qtbot.waitUntil(lambda: len(grid._worker_signals) <= 2, timeout=5000)
     loader.close()

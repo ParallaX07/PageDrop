@@ -148,3 +148,34 @@ def test_preview_ctrl_zero_fits_width(qtbot, five_page_pdf):
     assert preview.render_width_px == preview._fit_render_width()
 
     loader.close()
+
+
+def test_select_pages_is_in_edit_menu_and_grid_context_menu(
+    main_window, five_page_pdf, qtbot, monkeypatch
+):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QMenu
+
+    edit_menu = next(
+        a.menu() for a in main_window.menuBar().actions()
+        if a.text().replace("&", "") == "Edit"
+    )
+    page_jump = main_window._actions["page_jump"]
+    assert page_jump in edit_menu.actions()
+    assert not page_jump.shortcuts()
+
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    captured: list[QMenu] = []
+    monkeypatch.setattr(QMenu, "exec", lambda menu, _pos: captured.append(menu))
+    main_window._thumbnail_grid._show_context_menu(QPoint())
+    assert page_jump in captured[0].actions()
+
+    def fill_and_accept(dialog: QDialog) -> int:
+        dialog.findChild(QLineEdit, "SelectPagesInput").setText("2-3")
+        dialog.findChild(QPushButton, "SelectPagesConfirm").click()
+        return dialog.result()
+
+    monkeypatch.setattr(QDialog, "exec", fill_and_accept)
+    next(a for a in captured[0].actions() if a is page_jump).trigger()
+    assert main_window._thumbnail_grid.selection_manager.selection == {1, 2}

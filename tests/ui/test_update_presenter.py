@@ -3,11 +3,12 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QUrl
 from PyQt6.QtWidgets import QTextBrowser, QWidget
 
+from pagedrop.ui import settings
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
-from pagedrop.ui.update_presenter import UpdatePresenter
+from pagedrop.ui.update_presenter import UpdateDialog, UpdatePresenter
 from pagedrop.ui.update_messages import update_error_message
 from pagedrop.utils.update_checker import (
     RateLimitedError, ReleaseInfo, ReleaseDataError, ReleaseNotFoundError,
@@ -30,7 +31,6 @@ def presenter(qapp, qtbot, isolated_settings):
     result = UpdatePresenter(manager)
     yield result
     manager.update_coordinator.stop()
-    qapp.removeEventFilter(result)
     if result.dialog:
         result.dialog.close()
     result.deleteLater()
@@ -80,10 +80,10 @@ def test_available_offer_displays_release_notes(presenter):
     c._set_state(UpdateState.AVAILABLE)
     presenter._show_offer(presenter._manager.primary)
     assert "Download update" in labels(presenter)
-    assert presenter.dialog.notes.toPlainText() == "plain notes"
+    assert presenter.dialog.notes.toPlainText() == "<b>plain notes</b>"
 
 
-def test_offer_renders_markdown_in_a_roomy_release_notes_browser(presenter):
+def test_offer_shows_release_notes_as_plain_text_in_a_roomy_browser(presenter):
     c = presenter._coordinator
     c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1,
                              "# What's changed\n\n* **Polished** [release notes](https://example.com)", "a" * 64)
@@ -96,9 +96,90 @@ def test_offer_renders_markdown_in_a_roomy_release_notes_browser(presenter):
     assert dialog.minimumSize().height() >= 480
     assert dialog.notes.maximumHeight() > 160
     assert dialog.layout().stretch(dialog.layout().indexOf(dialog.notes)) == 1
-    html = dialog.notes.document().toHtml()
-    assert "<h1" in html
-    assert 'href="https://example.com"' in html
+    assert dialog.notes.toPlainText() == c.release.notes
+    assert "<h1" not in dialog.notes.toHtml()
+
+
+def test_release_notes_never_become_links(presenter, monkeypatch):
+    import pagedrop.ui.update_presenter as module
+    opened = []
+    monkeypatch.setattr(module.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+    notes = '<a href="file:///etc/passwd">x</a>\n\n[x](file:///etc/passwd)'
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, notes, "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._show_offer(presenter._manager.primary)
+    browser = presenter.dialog.notes
+
+    assert browser.toPlainText() == notes
+    assert "<a href" not in browser.toHtml()
+    assert not browser.openLinks()
+    assert not browser.openExternalLinks()
+    browser.anchorClicked.emit(QUrl("file:///etc/passwd"))
+    assert opened == []
+    assert browser.toPlainText() == notes
+
+
+def test_focus_changes_only_schedule_a_presentation_when_an_offer_is_pending(presenter, monkeypatch):
+    import pagedrop.ui.update_presenter as module
+    scheduled = []
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda *args: scheduled.append(args))
+
+    presenter._schedule_pending_offer(None, presenter._manager.primary)
+    assert scheduled == []
+    presenter._pending_offer = True
+    presenter._schedule_pending_offer(None, presenter._manager.primary)
+    assert len(scheduled) == 1
+
+
+def test_pending_offer_is_presented_once_the_app_signals_focus_changed(presenter, qapp, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._pending_offer = True
+    blocked = [True]
+    presenter._can_interrupt = lambda: not blocked[0]
+    presenter._present_pending_offer()
+    assert presenter.dialog is None
+
+    blocked[0] = False
+    qapp.focusChanged.emit(None, presenter._manager.primary)
+    qtbot.waitUntil(lambda: presenter.dialog is not None)
+    assert not presenter._pending_offer
+    assert not presenter._retry_timer.isActive()
+
+
+def test_pending_offer_is_retried_by_timer_when_no_signal_fires(presenter, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    presenter._retry_timer.setInterval(10)
+    blocked = [True]
+    presenter._can_interrupt = lambda: not blocked[0]
+    c.release_available.emit(c._release)
+    assert presenter._pending_offer
+    assert presenter._retry_timer.isActive()
+
+    blocked[0] = False
+    qtbot.waitUntil(lambda: presenter.dialog is not None)
+    assert not presenter._retry_timer.isActive()
+
+
+def test_suppressed_pending_offer_stops_polling_and_resumes_on_focus_signal(presenter, qapp, qtbot):
+    c = presenter._coordinator
+    c._release = ReleaseInfo("1.2.3", "v1.2.3", "name", "url", 1, "", "a" * 64)
+    c._set_state(UpdateState.AVAILABLE)
+    settings.set_update_remind_after_utc(datetime.now(UTC) + timedelta(days=1))
+    c.release_available.emit(c._release)
+    assert presenter._pending_offer
+    assert not presenter._retry_timer.isActive()
+    assert presenter.dialog is None
+
+    settings.set_update_remind_after_utc(datetime.now(UTC) - timedelta(seconds=1))
+    presenter._can_interrupt = lambda: False
+    qapp.focusChanged.emit(None, presenter._manager.primary)
+    qtbot.waitUntil(lambda: presenter._retry_timer.isActive())
+    assert presenter._pending_offer
 
 
 def test_offer_actions_are_centered_and_fit(presenter, qtbot):
@@ -128,7 +209,7 @@ def test_manual_check_refreshes_an_available_release(presenter, qtbot):
         presenter.check_manually(presenter._manager.primary)
 
     assert c.release == refreshed
-    assert presenter.dialog.notes.toPlainText() == "Current notes"
+    assert presenter.dialog.notes.toPlainText() == "# Current notes"
 
 
 def test_download_progress_keeps_cancel_button_and_cancellation_state(presenter):
@@ -209,3 +290,33 @@ def test_storage_failure_is_visible_and_leaves_offer(presenter, monkeypatch):
     assert "Try again" in labels(presenter)
     presenter.show_installation_error(update_error_message(UpdateLaunchCancelledError()))
     assert {"Try again", "Open releases page", "Close"} <= set(labels(presenter))
+
+
+def test_closed_update_dialog_is_deleted_and_recreated(presenter):
+    parent = presenter._manager.primary
+    for _ in range(3):
+        presenter.check_manually(parent)
+        assert presenter.dialog is not None
+        presenter.dialog.reject()
+        assert presenter.dialog is None
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert parent.findChildren(UpdateDialog) == []
+
+
+def test_window_closed_reparents_live_dialog_and_ignores_closed_one(presenter):
+    primary = presenter._manager.primary
+    other = QWidget()
+    presenter._manager.windows.append(other)
+    presenter.check_manually(other)
+    dialog = presenter.dialog
+    assert dialog.parentWidget() is other
+    assert dialog.isWindow()
+
+    presenter.window_closed(other)
+    assert dialog.parentWidget() is primary
+    assert dialog.isWindow()
+
+    dialog.reject()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    presenter.window_closed(primary)  # must not touch the deleted dialog
+    assert presenter.dialog is None

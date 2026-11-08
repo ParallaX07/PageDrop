@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtGui import QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QFileDialog, QTabBar, QWidget
 
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from tests.conftest import RENDER_TIMEOUT_MS
 from tests.fixtures.generate_fixtures import generate_n_page
 
@@ -545,6 +546,45 @@ def test_detach_blank_tab_to_new_window(qtbot, qapp):
     )
 
 
+def test_rebinding_open_action_drops_the_previous_one(qtbot) -> None:
+    grid = ThumbnailGrid()
+    qtbot.addWidget(grid)
+    first, second = QAction("Open", grid), QAction("Open file", grid)
+    hits: list[str] = []
+    first.triggered.connect(lambda: hits.append("first"))
+    second.triggered.connect(lambda: hits.append("second"))
+
+    grid.bind_open_action(first)
+    grid.bind_open_action(second)
+    grid.bind_open_action(second)  # same action twice must not double-connect
+    grid._empty_open_button.click()
+    assert hits == ["second"]
+
+    first.setText("Changed")  # no longer projected onto the button
+    assert grid._empty_open_button.text() == "Open file"
+
+
+def test_detached_blank_tab_opens_files_in_its_new_window(qtbot, qapp, monkeypatch):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(0)
+    qtbot.waitUntil(lambda: len(manager.windows) > len(windows_before), timeout=5000)
+    detached = _windows_added(manager, windows_before)[0]
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileNames",
+        lambda *args, **kwargs: ([], ""),
+    )
+    source._actions["open"].triggered.connect(lambda: opened.append("source"))
+    detached._actions["open"].triggered.connect(lambda: opened.append("detached"))
+    _tab_at(detached, 0).thumbnail_grid._empty_open_button.click()
+    assert opened == ["detached"]
+
+
 def test_detach_dirty_tab_keeps_dirty_flag(
     five_page_pdf,
     qtbot,
@@ -599,3 +639,64 @@ def test_detach_tab_in_preview_mode(
     detached_tab = _tab_at(detached, 0)
     assert detached_tab.is_preview_visible()
     assert detached_tab.preview_widget.current_page == 2
+
+
+def test_open_tabs_button_shares_one_corner_with_new_tab_and_chrome_toggle(
+    main_window, qtbot
+):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QToolButton, QWidget
+
+    manager = main_window._tab_manager
+    corner = manager.cornerWidget(Qt.Corner.TopRightCorner)
+    assert corner.objectName() == "TabCorner"
+    assert manager.cornerWidget(Qt.Corner.TopLeftCorner) is None
+    new_tab = corner.findChild(QToolButton, "NewTabButton")
+    toggle = corner.findChild(QToolButton, "ChromeToggleButton")
+    assert new_tab is main_window._tab_manager.findChild(QToolButton, "NewTabButton")
+    assert toggle is main_window._chrome_toggle_btn
+    assert manager._open_tabs_button.parent() is corner
+
+    for title in ("One", "Two", "Three", "Four"):
+        assert manager.add_blank_tab().set_custom_tab_title(title)
+    main_window.setMinimumWidth(360)
+    main_window.resize(360, 500)
+    main_window.show()
+    qtbot.waitUntil(lambda: manager._open_tabs_button.isVisible(), timeout=3000)
+
+    def buttons_laid_out():
+        rects = [
+            b.geometry()
+            for b in (manager._open_tabs_button, new_tab, toggle)
+            if b.isVisible()
+        ]
+        return (
+            len(rects) == 3
+            and all(corner.rect().contains(r) for r in rects)
+            and not any(
+                a.intersects(b) for i, a in enumerate(rects) for b in rects[i + 1 :]
+            )
+        )
+
+    qtbot.waitUntil(buttons_laid_out, timeout=3000)
+    # The corner is where the tab strip ends: the tab bar does not run under it.
+    assert manager.tabBar().geometry().right() < corner.geometry().left()
+    assert corner.geometry().right() <= manager.rect().right()
+
+    manager._populate_open_tabs_menu()
+    assert [a.text() for a in manager._open_tabs_menu.actions()][-4:] == [
+        "One",
+        "Two",
+        "Three",
+        "Four",
+    ]
+
+    # Hiding the button shrinks the corner without leaving a gap or overlap.
+    main_window.resize(1200, 500)
+    qtbot.waitUntil(lambda: manager._open_tabs_button.isHidden(), timeout=3000)
+    qtbot.waitUntil(
+        lambda: new_tab.geometry().left() == 0
+        and toggle.geometry().left() > new_tab.geometry().right(),
+        timeout=3000,
+    )
+    assert isinstance(corner, QWidget)

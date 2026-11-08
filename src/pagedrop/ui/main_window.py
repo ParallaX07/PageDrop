@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import copy
+import ctypes
+import math
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, QEventLoop, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QEventLoop, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QCursor,
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
+    QWindow,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -26,9 +31,12 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
+    QStyle,
     QToolBar,
     QToolButton,
     QWIDGETSIZE_MAX,
@@ -68,6 +76,7 @@ from pagedrop.ui.dialogs import (
 from pagedrop.ui.keyboard_nav import (
     enable_toolbar_keyboard_navigation,
     set_content_tab_order,
+    text_input_has_focus,
 )
 from pagedrop.ui.onboarding import (
     KeyboardShortcutsDialog,
@@ -77,7 +86,7 @@ from pagedrop.ui.onboarding import (
 from pagedrop.ui.pdf_tab import PdfTab
 from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
 from pagedrop.ui.accessibility import refresh_themed_widgets
-from pagedrop.ui import icons
+from pagedrop.ui import icons, native_frame
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
@@ -126,6 +135,41 @@ from pagedrop.utils.diagnostics import log_failure
 
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
+RESIZE_MARGIN = 6
+MIN_WINDOW_WIDTH = 480
+MIN_WINDOW_HEIGHT = 320
+COMPACT_STATUS_WIDTH = 640
+
+
+def resize_edges_at(pos, size, margin: int = RESIZE_MARGIN) -> Qt.Edge:
+    """Return the window edges (corners are two flags) a point lies within."""
+    edges = Qt.Edge(0)
+    if pos.x() < margin:
+        edges |= Qt.Edge.LeftEdge
+    elif pos.x() >= size.width() - margin:
+        edges |= Qt.Edge.RightEdge
+    if pos.y() < margin:
+        edges |= Qt.Edge.TopEdge
+    elif pos.y() >= size.height() - margin:
+        edges |= Qt.Edge.BottomEdge
+    return edges
+
+
+def cursor_for_edges(edges: Qt.Edge) -> Qt.CursorShape | None:
+    """Return the resize cursor for an edge set, or None when it is empty."""
+    left = bool(edges & Qt.Edge.LeftEdge)
+    right = bool(edges & Qt.Edge.RightEdge)
+    top = bool(edges & Qt.Edge.TopEdge)
+    bottom = bool(edges & Qt.Edge.BottomEdge)
+    if (left and top) or (right and bottom):
+        return Qt.CursorShape.SizeFDiagCursor
+    if (right and top) or (left and bottom):
+        return Qt.CursorShape.SizeBDiagCursor
+    if left or right:
+        return Qt.CursorShape.SizeHorCursor
+    if top or bottom:
+        return Qt.CursorShape.SizeVerCursor
+    return None
 
 
 class MainWindow(QMainWindow):
@@ -147,8 +191,8 @@ class MainWindow(QMainWindow):
         self._tools_window: ToolsWindow | None = None
         self._tool_pages: dict[str, QWidget] = {}
         self._tool_shells: dict[str, QWidget] = {}
-        self._previous_tab_index: int | None = None
-        self._last_tab_index: int = 0
+        self._previous_tab: QWidget | None = None
+        self._last_tab: QWidget | None = None
         self._pending_move_undo: Callable[[], bool] | None = None
         self._pending_selection: set[int] | None = None
         self._last_selection_toolbar_snap: tuple | None = None
@@ -161,6 +205,14 @@ class MainWindow(QMainWindow):
         self._transient_status_timer.setSingleShot(True)
         self._transient_status_timer.timeout.connect(self._restore_active_status)
         self._updating_responsive_shell = False
+        self._title_press_pos: QPoint | None = None
+        self._window_drag_offset: QPoint | None = None
+        self._edge_cursor_active = False
+        self._edge_resize: tuple[Qt.Edge, QPoint, QRect] | None = None
+        self._native_frame_checked = False
+        self._native_frame_failed = False
+        self._native_event_error_logged = False
+        self._key_filter_widget: QWidget | None = None
 
         self.setWindowTitle(self.APP_TITLE)
         # Offscreen Qt has no window manager and does not support custom chrome.
@@ -170,9 +222,10 @@ class MainWindow(QMainWindow):
             QApplication.instance().aboutToQuit.connect(self.deleteLater)
         else:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.setMinimumSize(720, 480)
+        self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.resize(960, 680)
 
+        self._tab_order_applied = False
         self._build_actions()
         self._build_menu()
         self._build_toolbar()
@@ -181,7 +234,7 @@ class MainWindow(QMainWindow):
         self._set_chrome_visible(chrome_visible(), persist=False)
         refresh_cb = self._refresh_action_icons
         icons.register_refresh(refresh_cb)
-        QApplication.instance().installEventFilter(self)
+        self._install_scoped_event_filters()
         self._persistent_status("Ready")
         self._sync_toolbar_from_active_tab()
         self._tips_overlay = TipsOverlay(self)
@@ -542,8 +595,23 @@ class MainWindow(QMainWindow):
         a["extract_selected"].setIcon(icons.icon("export"))
         self._set_toolbar_primary()
 
+    def menuBar(self) -> QMenuBar:  # noqa: N802
+        # The menu bar lives inside the title bar; the base implementation
+        # would install a second, empty menu bar over it.
+        return self._menu_bar
+
     def _build_menu(self) -> None:
-        menubar = self.menuBar()
+        title_bar = QWidget(self)
+        title_bar.setObjectName("WindowTitleBar")
+        title_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(0)
+        menubar = QMenuBar(title_bar)
+        # The title bar's layout, not the menu items, decides this width.
+        menubar.setSizePolicy(QSizePolicy.Policy.Ignored, menubar.sizePolicy().verticalPolicy())
+        self._menu_bar = menubar
+        self._title_bar = title_bar
         a = self._actions
 
         file_menu = menubar.addMenu("&File")
@@ -561,6 +629,10 @@ class MainWindow(QMainWindow):
         edit_menu = menubar.addMenu("&Edit")
         edit_menu.addAction(a["undo"])
         edit_menu.addAction(a["redo"])
+        edit_menu.addSeparator()
+        edit_menu.addAction(a["select_all"])
+        edit_menu.addAction(a["deselect_all"])
+        edit_menu.addAction(a["page_jump"])
         edit_menu.addSeparator()
         edit_menu.addAction(a["preferences"])
 
@@ -614,7 +686,7 @@ class MainWindow(QMainWindow):
         ):
             self._install_menu_focus_restore(menu)
 
-        window_controls = QWidget(menubar)
+        window_controls = QWidget(title_bar)
         window_controls.setObjectName("WindowControls")
         layout = QHBoxLayout(window_controls)
         layout.setContentsMargins(8, 0, 4, 0)
@@ -633,14 +705,19 @@ class MainWindow(QMainWindow):
             button.setText(text)
             button.setToolTip(label)
             button.setAccessibleName(label)
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             button.clicked.connect(slot)
             layout.addWidget(button)
             if name == "WindowMaximize":
                 self._maximize_button = button
-        menubar.setCornerWidget(window_controls, Qt.Corner.TopRightCorner)
-        self._menu_bar = menubar
+        self._window_control_buttons = tuple(
+            window_controls.findChildren(QToolButton)
+        )
+        title_layout.addWidget(menubar, 1)
+        title_layout.addWidget(window_controls, 0, Qt.AlignmentFlag.AlignRight)
+        self.setMenuWidget(title_bar)
         self._window_controls = window_controls
-        self._title_drag_widgets = (window_controls, self._title_label)
+        self._title_drag_widgets = (title_bar, window_controls, self._title_label)
         QTimer.singleShot(0, self._update_responsive_shell)
 
     def _build_toolbar(self) -> None:
@@ -657,14 +734,14 @@ class MainWindow(QMainWindow):
         # toolbar safely. It is intentionally zero-width, not document chrome.
         self._toolbar_layout_anchor = QWidget(toolbar)
         self._toolbar_layout_anchor.setFixedWidth(0)
-        toolbar.addWidget(self._toolbar_layout_anchor)
+        self._toolbar_anchor_action = toolbar.addWidget(self._toolbar_layout_anchor)
         toolbar.addAction(a["save_as"])
-        toolbar.addSeparator()
+        separators = [toolbar.addSeparator()]
         self._selection_toolbar_label = QLabel()
         self._selection_toolbar_label.setObjectName("ToolbarSelectionCount")
         self._selection_toolbar_label.setFixedWidth(130)
         self._selection_toolbar_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        toolbar.addWidget(self._selection_toolbar_label)
+        self._selection_toolbar_action = toolbar.addWidget(self._selection_toolbar_label)
         toolbar.addAction(a["select_all"])
         toolbar.addAction(a["deselect_all"])
         toolbar.addAction(a["duplicate_pages"])
@@ -673,13 +750,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(a["move_up"])
         toolbar.addAction(a["move_down"])
         toolbar.addAction(a["extract_selected"])
-        toolbar.addSeparator()
+        separators.append(toolbar.addSeparator())
         toolbar.addAction(a["delete_pages"])
-        for action in (a["rotate_cw"], a["rotate_ccw"]):
-            button = toolbar.widgetForAction(action)
-            if button is not None:
-                button.setAccessibleName(action.text())
-        toolbar.addSeparator()
+        separators.append(toolbar.addSeparator())
 
         self._zoom_controls = ZoomControls(
             min_width=MIN_THUMBNAIL_WIDTH,
@@ -703,8 +776,38 @@ class MainWindow(QMainWindow):
         self._toolbar_overflow_menu = QMenu(self._toolbar_overflow)
         self._install_menu_focus_restore(self._toolbar_overflow_menu)
         self._toolbar_overflow.setMenu(self._toolbar_overflow_menu)
-        toolbar.addWidget(self._toolbar_overflow)
+        self._toolbar_overflow_action = toolbar.addWidget(self._toolbar_overflow)
 
+        # Toolbar order, the separators this toolbar alone owns, and the page
+        # commands that give way to More (last to go first) when the bar is narrow.
+        self._toolbar_order = tuple(toolbar.actions())
+        self._toolbar_separators = tuple(separators)
+        self._toolbar_displaceable = tuple(
+            a[key]
+            for key in (
+                "select_all",
+                "deselect_all",
+                "duplicate_pages",
+                "rotate_cw",
+                "rotate_ccw",
+                "move_up",
+                "move_down",
+                "extract_selected",
+                "delete_pages",
+            )
+        )
+        self._toolbar_hint_widths: dict[QAction, int] = {}
+        self._fitting_toolbar = False
+        self._style_toolbar_buttons()
+
+    def _style_toolbar_buttons(self) -> None:
+        """Apply per-button presentation; run again for any re-created button."""
+        toolbar = self._toolbar
+        a = self._actions
+        for action in (a["rotate_cw"], a["rotate_ccw"]):
+            button = toolbar.widgetForAction(action)
+            if button is not None:
+                button.setAccessibleName(action.text())
         for action in (a["open"], a["save_as"], a["extract_selected"]):
             button = toolbar.widgetForAction(action)
             if isinstance(button, QToolButton):
@@ -712,7 +815,6 @@ class MainWindow(QMainWindow):
         preview_button = toolbar.widgetForAction(a["preview"])
         if isinstance(preview_button, QToolButton):
             preview_button.setText("Pages / Preview")
-
         enable_toolbar_keyboard_navigation(toolbar)
 
     def _build_central_widget(self) -> None:
@@ -733,24 +835,17 @@ class MainWindow(QMainWindow):
         )
         self._tab_manager.tab_rename_requested.connect(self._rename_tab)
 
-        self._chrome_toggle_btn = QToolButton()
-        self._chrome_toggle_btn.setObjectName("ChromeToggleButton")
-        self._chrome_toggle_btn.clicked.connect(self._toggle_chrome_visible)
-        self._tab_manager.setCornerWidget(
-            self._chrome_toggle_btn,
-            Qt.Corner.TopLeftCorner,
-        )
-
         new_tab_button = QToolButton()
         new_tab_button.setObjectName("NewTabButton")
         new_tab_button.setText("+")
         new_tab_button.setToolTip("New tab (Ctrl+T)")
         new_tab_button.setAccessibleName("New tab")
         new_tab_button.clicked.connect(self._new_blank_tab)
-        self._tab_manager.setCornerWidget(
-            new_tab_button,
-            Qt.Corner.TopRightCorner,
-        )
+        self._chrome_toggle_btn = QToolButton()
+        self._chrome_toggle_btn.setObjectName("ChromeToggleButton")
+        self._chrome_toggle_btn.clicked.connect(self._toggle_chrome_visible)
+        self._tab_manager.add_corner_widget(new_tab_button)
+        self._tab_manager.add_corner_widget(self._chrome_toggle_btn)
 
         if self._initial_tab is not None:
             self._adopt_tab(self._initial_tab)
@@ -766,12 +861,42 @@ class MainWindow(QMainWindow):
         self._editor_busy: dict[PdfTab, tuple[BusyOverlay, CancelToken]] = {}
         self._close_discarded: set[PdfTab] = set()
         self._close_waiting = False
-        self._last_tab_index = self._tab_manager.currentIndex()
+        self._last_tab = self._tab_manager.currentWidget()
+        self._apply_tab_order()
+        self._tab_manager.currentChanged.connect(self._on_tab_order_stale)
+
+    def _on_tab_order_stale(self, _index: int) -> None:
+        self._apply_tab_order()
+
+    def _apply_tab_order(self) -> None:
         set_content_tab_order(
             self._toolbar,
             self._tab_manager,
             status_bar=self.statusBar(),
+            status_controls=(
+                self._move_undo_button,
+                *self._zoom_controls.focus_widgets(),
+                # Last, so a newly activated window never lands on Minimize.
+                *self._window_control_buttons,
+            ),
         )
+
+    def showEvent(self, event) -> None:  # noqa: ANN001, N802
+        super().showEvent(event)
+        self._attach_window_handle_filter()
+        # Toolbar widgets only report visible once shown, so build the chain then.
+        if not self._tab_order_applied:
+            self._tab_order_applied = True
+            self._apply_tab_order()
+        if not self._native_frame_checked:
+            self._native_frame_checked = True
+            if self._uses_native_frame():
+                try:
+                    native_frame.apply_frame_styles(int(self.winId()))
+                except (OSError, ctypes.ArgumentError) as exc:
+                    # The window still shows; edge resizing falls back to Qt's.
+                    self._native_frame_failed = True
+                    log_failure("Apply native window frame", exc)
 
     def _status_page(self) -> QWidget | None:
         return self._tab_manager.currentWidget()
@@ -964,6 +1089,7 @@ class MainWindow(QMainWindow):
         )
         grid.pages_reordered.connect(self._on_pages_reordered)
         grid.page_transfer_failed.connect(self._on_page_transfer_failed)
+        grid.pages_copied_not_moved.connect(self._on_pages_copied_not_moved)
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
         grid.bind_page_actions(
@@ -974,6 +1100,7 @@ class MainWindow(QMainWindow):
                 self._rotate_ccw_action,
             ),
             (self._delete_pages_action,),
+            (self._page_jump_action,),
             (
                 self._extract_selected_action,
                 self._extract_selected_to_tab_action,
@@ -1085,6 +1212,7 @@ class MainWindow(QMainWindow):
             ),
             (grid.pages_reordered, self._on_pages_reordered),
             (grid.page_transfer_failed, self._on_page_transfer_failed),
+            (grid.pages_copied_not_moved, self._on_pages_copied_not_moved),
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
@@ -1137,6 +1265,10 @@ class MainWindow(QMainWindow):
         self._window_manager.open_new_window()
 
     def _adopt_tab(self, tab: PdfTab) -> None:
+        # The source window deletes its temp root on close; this tab's drags
+        # and exports must live under ours.
+        if tab._temp_manager is not self._temp_manager:
+            tab.set_temp_manager(self._temp_manager)
         preserve_preview = tab.is_preview_visible()
         preview_page = tab.preview_widget.current_page if preserve_preview else None
         source_window = None
@@ -1200,60 +1332,33 @@ class MainWindow(QMainWindow):
     def _on_tab_index_changed(self, index: int) -> None:
         if index < 0:
             return
-        count = self._tab_manager.count()
-        if count <= 1:
-            self._previous_tab_index = None
-            self._last_tab_index = index
+        current = self._tab_manager.widget(index)
+        if self._tab_manager.count() <= 1:
+            self._previous_tab = None
+            self._last_tab = current
             return
-        if self._last_tab_index < 0:
-            self._last_tab_index = index
+        if self._last_tab is None:
+            self._last_tab = current
             return
-        if self._last_tab_index != index:
-            self._previous_tab_index = self._last_tab_index
-        self._last_tab_index = index
+        if self._last_tab is not current:
+            self._previous_tab = self._last_tab
+        self._last_tab = current
         self._sync_toolbar_from_active_tab()
 
-    @staticmethod
-    def _remap_tab_index_after_close(
-        closed_index: int,
-        tab_index: int | None,
-    ) -> int | None:
-        if tab_index is None:
-            return None
-        if tab_index == closed_index:
-            return None
-        if tab_index > closed_index:
-            return tab_index - 1
-        return tab_index
-
     def _on_tab_closed(self, closed_index: int) -> None:
-        self._previous_tab_index = self._remap_tab_index_after_close(
-            closed_index,
-            self._previous_tab_index,
-        )
-        if self._last_tab_index == closed_index:
-            self._last_tab_index = -1
-        else:
-            remapped = self._remap_tab_index_after_close(
-                closed_index,
-                self._last_tab_index,
-            )
-            if remapped is not None:
-                self._last_tab_index = remapped
+        # Emitted before the tab leaves the manager (close or move to another window).
+        closed = self._tab_manager.widget(closed_index)
+        if closed is not None and closed is self._previous_tab:
+            self._previous_tab = None
+        if closed is not None and closed is self._last_tab:
+            self._last_tab = None
         self._update_close_tab_action()
 
     def _switch_to_next_tab(self) -> None:
-        count = self._tab_manager.count()
-        if count <= 1:
+        if self._tab_manager.count() <= 1 or self._previous_tab is None:
             return
-        current = self._tab_manager.currentIndex()
-        previous = self._previous_tab_index
-        if (
-            previous is None
-            or previous == current
-            or previous < 0
-            or previous >= count
-        ):
+        previous = self._tab_manager.indexOf(self._previous_tab)
+        if previous < 0 or previous == self._tab_manager.currentIndex():
             return
         self._tab_manager.setCurrentIndex(previous)
 
@@ -1341,7 +1446,7 @@ class MainWindow(QMainWindow):
         self._selection_toolbar_label.setText(visible)
         self._selection_toolbar_label.setToolTip(accessible if has_selection else "")
         self._selection_toolbar_label.setAccessibleName(accessible)
-        self._selection_toolbar_label.setVisible(True)
+        self._selection_toolbar_label.setVisible(self._selection_toolbar_action.isVisible())
         for action in (
             self._duplicate_pages_action,
             self._rotate_cw_action,
@@ -1359,14 +1464,148 @@ class MainWindow(QMainWindow):
         self._set_toolbar_primary()
 
     def _sync_toolbar_overflow(self, has_selection: bool) -> None:
-        """Project only page commands without a direct toolbar presentation."""
+        """Project page commands that have no room on the toolbar into More."""
         menu = self._toolbar_overflow_menu
         menu.clear()
+        static: list[QAction] = []
         if self._export_all_action.isEnabled():
-            menu.addAction(self._export_all_action)
+            static.append(self._export_all_action)
         if has_selection and self._move_to_action.isEnabled():
-            menu.addAction(self._move_to_action)
-        self._toolbar_overflow.setVisible(bool(menu.actions()))
+            static.append(self._move_to_action)
+        displaced = self._fit_toolbar(bool(static))
+        menu.addActions(displaced)
+        if displaced and static:
+            menu.addSeparator()
+        menu.addActions(static)
+        shown = bool(menu.actions())
+        self._toolbar_overflow_action.setVisible(shown)
+        self._toolbar_overflow.setVisible(shown)
+
+    def _fit_toolbar(self, static_overflow: bool) -> list[QAction]:
+        """Trim the toolbar to its width; return the page actions that left it.
+
+        The selection label goes first, then page actions from the right. Qt's
+        own extension button is only reachable by mouse, so the bar must never
+        overflow. Displaced actions stay visible (menus and shortcuts share
+        them); they just stop being toolbar buttons until there is room again.
+        """
+        toolbar = self._toolbar
+        tab = self._active_tab()
+        order = self._toolbar_order
+        if self._fitting_toolbar:
+            return []
+        if not toolbar.isVisible() or tab is None or tab.is_blank:
+            self._apply_toolbar_members(set(order))
+            return []
+        measured = self._toolbar_hint_widths
+        for action in order:
+            widget = toolbar.widgetForAction(action)
+            if widget is not None:
+                measured[action] = max(0, widget.sizeHint().width())
+        if any(a not in measured and a not in self._toolbar_separators for a in order):
+            # Not measured while present (e.g. after a font change): measure all.
+            self._apply_toolbar_members(set(order))
+            return self._fit_toolbar(static_overflow)
+
+        removed: set[QAction] = set()
+        displaced: list[QAction] = []
+        candidates = [self._selection_toolbar_action, *reversed(self._toolbar_displaceable)]
+        while True:
+            members = self._toolbar_members(removed, bool(displaced) or static_overflow)
+            if self._toolbar_width_for(members) <= toolbar.width() or not candidates:
+                break
+            action = candidates.pop(0)
+            removed.add(action)
+            if action is not self._selection_toolbar_action:
+                displaced.insert(0, action)
+        self._apply_toolbar_members(members)
+        return displaced
+
+    def _toolbar_members(self, removed: set[QAction], more_needed: bool) -> set[QAction]:
+        """Toolbar actions left after *removed*, with no stranded separators."""
+        separators = set(self._toolbar_separators)
+        more = self._toolbar_overflow_action
+        items = [
+            a
+            for a in self._toolbar_order
+            if a not in removed and (a is not more or more_needed)
+        ]
+        members: set[QAction] = set()
+        have_item = False
+        for index, action in enumerate(items):
+            if action not in separators:
+                members.add(action)
+                have_item = True
+            elif have_item and any(a not in separators for a in items[index + 1 :]):
+                members.add(action)
+                have_item = False
+        return members
+
+    def _toolbar_width_for(self, members: set[QAction]) -> int:
+        style = self._toolbar.style()
+        metric = QStyle.PixelMetric
+        gap = style.pixelMetric(metric.PM_ToolBarItemSpacing, None, self._toolbar)
+        margin = 2 * (
+            style.pixelMetric(metric.PM_ToolBarFrameWidth, None, self._toolbar)
+            + style.pixelMetric(metric.PM_ToolBarItemMargin, None, self._toolbar)
+        )
+        separator = style.pixelMetric(
+            metric.PM_ToolBarSeparatorExtent, None, self._toolbar
+        )
+        widths = [
+            separator if a in self._toolbar_separators else self._toolbar_hint_widths[a]
+            for a in self._toolbar_order
+            if a in members
+        ]
+        return margin + sum(widths) + gap * max(0, len(widths) - 1)
+
+    def _apply_toolbar_members(self, members: set[QAction]) -> None:
+        """Make the toolbar hold exactly *members*, in toolbar order."""
+        toolbar = self._toolbar
+        own = {
+            *self._toolbar_separators,
+            self._selection_toolbar_action,
+            self._toolbar_overflow_action,
+            self._toolbar_anchor_action,
+        }
+        order = self._toolbar_order
+        focus = QApplication.focusWidget()
+        focus_lost = False
+        rebuilt = False
+        self._fitting_toolbar = True
+        try:
+            for index, action in enumerate(order):
+                want = action in members
+                if action in own:
+                    action.setVisible(want)
+                elif want and action not in toolbar.actions():
+                    present = toolbar.actions()
+                    toolbar.insertAction(
+                        next((b for b in order[index + 1 :] if b in present), None),
+                        action,
+                    )
+                    rebuilt = True
+                elif not want and action in toolbar.actions():
+                    widget = toolbar.widgetForAction(action)
+                    focus_lost = focus_lost or (
+                        widget is not None and widget is focus
+                    )
+                    toolbar.removeAction(action)
+                    rebuilt = True
+            if rebuilt:
+                self._style_toolbar_buttons()
+                if self._tab_order_applied:
+                    self._apply_tab_order()
+                if focus_lost:
+                    self._toolbar_overflow.setFocus(Qt.FocusReason.OtherFocusReason)
+        finally:
+            self._fitting_toolbar = False
+
+    def _refit_toolbar(self) -> None:
+        tab = self._active_tab()
+        if tab is None or tab.is_blank or self._fitting_toolbar:
+            return
+        self._sync_toolbar_overflow(bool(tab.thumbnail_grid.selection_manager.selection))
 
     def _install_menu_focus_restore(self, menu: QMenu) -> None:
         """Return keyboard focus to the control that opened a transient menu."""
@@ -2110,8 +2349,10 @@ class MainWindow(QMainWindow):
         self._set_chrome_visible(visible)
 
     def _set_chrome_visible(self, visible: bool, *, persist: bool = True) -> None:
-        self.menuBar().setVisible(visible)
+        # The title bar and its window controls stay; only the menus go.
+        self._menu_bar.setVisible(visible)
         self._toolbar.setVisible(visible)
+        QTimer.singleShot(0, self._update_responsive_shell)
         action = getattr(self, "_chrome_visible_action", None)
         if action is not None and action.isChecked() != visible:
             action.blockSignals(True)
@@ -2178,14 +2419,28 @@ class MainWindow(QMainWindow):
         self._tips_overlay.show_tips()
 
     def _show_keyboard_shortcuts(self) -> None:
-        KeyboardShortcutsDialog(self).exec()
+        KeyboardShortcutsDialog(self._actions.values(), self).exec()
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About PageDrop",
-            f"PageDrop version {QApplication.instance().applicationVersion()}",
+        version = QApplication.instance().applicationVersion()
+        repo = "https://github.com/ParallaX07/PageDrop"
+        box = QMessageBox(self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.setWindowTitle("About PageDrop")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(
+            f"<p>PageDrop version {version}</p>"
+            "<p>Copyright (C) PageDrop contributors</p>"
+            "<p>PageDrop is free software under AGPL-3.0-or-later. "
+            "This program comes with ABSOLUTELY NO WARRANTY.</p>"
+            f'<p><a href="{repo}/blob/v{version}/LICENSE">Read the licence</a></p>'
+            f'<p>Source: <a href="{repo}/tree/v{version}">{repo}/tree/v{version}</a></p>'
         )
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        icon = self.windowIcon()
+        if not icon.isNull():
+            box.setIconPixmap(icon.pixmap(64, 64))
+        box.exec()
 
     def _open_preferences(self) -> None:
         from pagedrop.ui.preferences_dialog import open_preferences
@@ -2203,35 +2458,295 @@ class MainWindow(QMainWindow):
             return
         self._window_manager.update_presenter.check_manually(self)
 
+    def _uses_native_frame(self) -> bool:
+        """True where Windows supplies resize, snap and the caption for this window."""
+        return (
+            native_frame.IS_WINDOWS
+            and bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint)
+            and not self._native_frame_failed
+        )
+
+    def _uses_qt_edge_resize(self) -> bool:
+        """True where Qt must provide edge resizing for the frameless window."""
+        return (
+            bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint)
+            and (sys.platform != "win32" or self._native_frame_failed)
+            and not self.isMaximized()
+            and not self.isFullScreen()
+            and QApplication.activeModalWidget() is None
+        )
+
+    def nativeEvent(self, eventType, message):  # noqa: ANN001, ANN201, N802
+        if not self._uses_native_frame() or bytes(eventType) != b"windows_generic_MSG":
+            return super().nativeEvent(eventType, message)
+        try:
+            handled, result = self._handle_native_message(
+                native_frame.read_message(int(message))
+            )
+        except (OSError, ctypes.ArgumentError) as exc:
+            # An exception escaping a Qt virtual is fatal; log once and let
+            # Windows' default handling carry on.
+            if not self._native_event_error_logged:
+                self._native_event_error_logged = True
+                log_failure("Handle native window message", exc)
+            handled, result = False, 0
+        if handled:
+            return True, result
+        return super().nativeEvent(eventType, message)
+
+    def _handle_native_message(self, msg) -> tuple[bool, int]:  # noqa: ANN001
+        kind = msg.message
+        hwnd = int(msg.hwnd or 0)
+        if kind == native_frame.WM_NCCALCSIZE:
+            # Whole window is client area. Maximized, Windows places the window
+            # past the screen edge by the frame thickness, so pull it back in.
+            # wParam false passes a bare RECT instead of NCCALCSIZE_PARAMS and
+            # needs the same adjustment, which calc_size_rect resolves.
+            if msg.lParam and native_frame.is_zoomed(hwnd) and not self.isFullScreen():
+                thickness_x, thickness_y = native_frame.resize_frame_thickness(hwnd)
+                native_frame.inset_rect(
+                    native_frame.calc_size_rect(msg.wParam, msg.lParam),
+                    thickness_x,
+                    thickness_y,
+                )
+            return True, 0
+        if kind == native_frame.WM_NCHITTEST:
+            return True, self._native_hit_test(hwnd, msg.lParam)
+        button = self._maximize_button
+        if (
+            kind in (native_frame.WM_NCLBUTTONDOWN, native_frame.WM_NCLBUTTONDBLCLK)
+            and msg.wParam == native_frame.HTMAXBUTTON
+        ):
+            # The window class has CS_DBLCLKS, so the second press of a fast
+            # double-click arrives as a double-click message, not a press.
+            button.setDown(True)
+            return True, 0
+        if kind == native_frame.WM_NCLBUTTONUP and msg.wParam == native_frame.HTMAXBUTTON:
+            # Swallow the release even without a matching press so Windows does
+            # not maximize on its own.
+            pressed = button.isDown()
+            button.setDown(False)
+            if pressed:
+                self._toggle_maximized()
+            return True, 0
+        # Hover tracking leaves these unhandled: Windows' default handling of
+        # them is what shows the Snap Layouts flyout over the maximize button.
+        if kind == native_frame.WM_NCMOUSEMOVE:
+            self._set_native_maximize_hover(msg.wParam == native_frame.HTMAXBUTTON, hwnd)
+        elif kind == native_frame.WM_NCMOUSELEAVE:
+            self._set_native_maximize_hover(False, hwnd)
+        return False, 0
+
+    def _native_hit_test(self, hwnd: int, lparam: int) -> int:
+        origin_x, origin_y = native_frame.client_origin(hwnd)
+        screen_x, screen_y = native_frame.lparam_point(lparam)
+        ratio = self.devicePixelRatioF()
+        point = QPoint(
+            math.floor((screen_x - origin_x) / ratio),
+            math.floor((screen_y - origin_y) / ratio),
+        )
+        if not (self.isMaximized() or self.isFullScreen()):
+            code = native_frame.hit_test_for_edges(resize_edges_at(point, self.size()))
+            if code:
+                return code
+        button = self._maximize_button
+        if button.isVisible() and QRect(button.mapTo(self, QPoint(0, 0)), button.size()).contains(point):
+            return native_frame.HTMAXBUTTON
+        if self._is_title_area_at(point):
+            return native_frame.HTCAPTION
+        return native_frame.HTCLIENT
+
+    def _is_title_area_at(self, point: QPoint) -> bool:
+        """True over blank title bar space, the title text or blank menu bar space."""
+        child = self.childAt(point)
+        if child is None:
+            return False
+        if child in self._title_drag_widgets:
+            return True
+        return child is self._menu_bar and self._menu_bar.actionAt(child.mapFrom(self, point)) is None
+
+    def _set_native_maximize_hover(self, hover: bool, hwnd: int) -> None:
+        button = self._maximize_button
+        if not hover:
+            button.setDown(False)
+        if bool(button.property("nativeHover")) == hover:
+            return
+        if hover:
+            native_frame.track_nonclient_leave(hwnd)
+        button.setProperty("nativeHover", hover)
+        style = button.style()
+        style.unpolish(button)
+        style.polish(button)
+
+    def _set_edge_cursor(self, shape: Qt.CursorShape | None) -> None:
+        """Keep at most one override cursor pushed on behalf of edge resizing."""
+        if shape is None:
+            if self._edge_cursor_active:
+                self._edge_cursor_active = False
+                QApplication.restoreOverrideCursor()
+        elif self._edge_cursor_active:
+            QApplication.changeOverrideCursor(QCursor(shape))
+        else:
+            self._edge_cursor_active = True
+            QApplication.setOverrideCursor(QCursor(shape))
+
+    def _clear_edge_state(self) -> None:
+        self._edge_resize = None
+        self._set_edge_cursor(None)
+
+    def _start_edge_resize(self, edges: Qt.Edge, global_pos: QPoint) -> None:
+        handle = self.windowHandle()
+        if handle is not None and handle.startSystemResize(edges):
+            return
+        self._edge_resize = (edges, global_pos, self.geometry())
+
+    def _apply_edge_resize(self, global_pos: QPoint) -> None:
+        edges, start, base = self._edge_resize
+        delta = global_pos - start
+        minimum = self.minimumSize()
+        x, y, width, height = base.x(), base.y(), base.width(), base.height()
+        if edges & Qt.Edge.LeftEdge:
+            width = max(minimum.width(), base.width() - delta.x())
+            x = base.x() + base.width() - width
+        elif edges & Qt.Edge.RightEdge:
+            width = max(minimum.width(), base.width() + delta.x())
+        if edges & Qt.Edge.TopEdge:
+            height = max(minimum.height(), base.height() - delta.y())
+            y = base.y() + base.height() - height
+        elif edges & Qt.Edge.BottomEdge:
+            height = max(minimum.height(), base.height() + delta.y())
+        self.setGeometry(x, y, width, height)
+
+    def _handle_edge_resize_event(self, event) -> bool:
+        kind = event.type()
+        if kind == QEvent.Type.Leave:
+            if self._edge_resize is None:
+                self._set_edge_cursor(None)
+            return False
+        if not isinstance(event, QMouseEvent):
+            return False
+        if self._edge_resize is not None:
+            if kind == QEvent.Type.MouseMove:
+                self._apply_edge_resize(event.globalPosition().toPoint())
+                return True
+            if kind == QEvent.Type.MouseButtonRelease:
+                self._clear_edge_state()
+                return True
+            return False
+        if not self._uses_qt_edge_resize():
+            self._set_edge_cursor(None)
+            return False
+        edges = resize_edges_at(event.position().toPoint(), self.size())
+        if kind == QEvent.Type.MouseMove and not event.buttons():
+            self._set_edge_cursor(cursor_for_edges(edges))
+        elif (
+            kind == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+            and edges
+        ):
+            self._start_edge_resize(edges, event.globalPosition().toPoint())
+            return True
+        return False
+
+    def _install_scoped_event_filters(self) -> None:
+        """Watch only the widgets and the window handle this window cares about."""
+        self._chrome_filter_targets = (
+            self,
+            self._toolbar,
+            self._menu_bar,
+            *self._title_drag_widgets,
+        )
+        for target in self._chrome_filter_targets:
+            target.installEventFilter(self)
+        self._attach_window_handle_filter()
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
+
+    def _attach_window_handle_filter(self) -> None:
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.installEventFilter(self)
+
+    def _on_focus_changed(self, _old, new) -> None:
+        """Page shortcuts are filtered on the focused widget of this window only."""
+        self._remove_key_filter()
+        if (
+            isinstance(new, QWidget)
+            and new.window() is self
+            and new not in self._chrome_filter_targets
+        ):
+            new.installEventFilter(self)
+            self._key_filter_widget = new
+
+    def _remove_key_filter(self) -> None:
+        widget, self._key_filter_widget = self._key_filter_widget, None
+        if widget is not None:
+            try:
+                widget.removeEventFilter(self)
+            except RuntimeError:  # the widget was already destroyed
+                pass
+
     def eventFilter(self, obj, event) -> bool:
+        if obj is getattr(self, "_toolbar", None):
+            if event.type() == QEvent.Type.Resize:
+                # Filters run before the layout, so the bar lays out already fitted.
+                self._refit_toolbar()
+            elif event.type() == QEvent.Type.Show:
+                QTimer.singleShot(0, self._refit_toolbar)
+        if isinstance(obj, QWindow):
+            if self._handle_edge_resize_event(event):
+                return True
+        elif obj is self:
+            if event.type() == QEvent.Type.WindowDeactivate:
+                self._clear_edge_state()
+            elif event.type() == QEvent.Type.WinIdChange:
+                self._attach_window_handle_filter()
         is_title_area = obj in getattr(self, "_title_drag_widgets", ())
         if obj is getattr(self, "_menu_bar", None) and isinstance(event, QMouseEvent):
-            is_title_area = self._menu_bar.actionAt(event.position().toPoint()) is None
+            dragging = (
+                self._title_press_pos is not None or self._window_drag_offset is not None
+            )
+            is_title_area = (
+                dragging or self._menu_bar.actionAt(event.position().toPoint()) is None
+            )
         if is_title_area and isinstance(event, QMouseEvent):
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() != Qt.MouseButton.LeftButton:
-                    return super().eventFilter(obj, event)
-                system_move = (
-                    self.windowHandle() is not None
-                    and self.windowHandle().startSystemMove()
-                )
-                if not system_move:
-                    self._window_drag_offset = (
-                        event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                    )
+            kind = event.type()
+            left = event.button() == Qt.MouseButton.LeftButton
+            if kind == QEvent.Type.MouseButtonPress and left:
+                # The move starts once the pointer travels, so a double-click
+                # is never swallowed by a system move grab.
+                self._title_press_pos = event.globalPosition().toPoint()
+                self._window_drag_offset = None
                 return True
-            if event.type() == QEvent.Type.MouseMove:
-                offset = getattr(self, "_window_drag_offset", None)
-                if offset is not None:
-                    self.move(event.globalPosition().toPoint() - offset)
+            if kind == QEvent.Type.MouseButtonDblClick and left:
+                self._title_press_pos = None
+                self._window_drag_offset = None
+                self._toggle_maximized()
+                return True
+            if kind == QEvent.Type.MouseMove:
+                pos = event.globalPosition().toPoint()
+                if self._window_drag_offset is not None:
+                    self.move(pos - self._window_drag_offset)
                     return True
-            if event.type() == QEvent.Type.MouseButtonRelease:
+                press = self._title_press_pos
+                if press is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                    if (pos - press).manhattanLength() >= QApplication.startDragDistance():
+                        self._title_press_pos = None
+                        handle = self.windowHandle()
+                        if handle is None or not handle.startSystemMove():
+                            self._window_drag_offset = press - self.frameGeometry().topLeft()
+                            self.move(pos - self._window_drag_offset)
+                    return True
+            if kind == QEvent.Type.MouseButtonRelease:
+                self._title_press_pos = None
                 self._window_drag_offset = None
                 return True
         if (
             event.type() != QEvent.Type.KeyPress
             or not isinstance(event, QKeyEvent)
             or QApplication.activeModalWidget() is not None
+            or not isinstance(obj, QWidget)
+            or obj.window() is not self
+            or text_input_has_focus()
         ):
             return super().eventFilter(obj, event)
 
@@ -2296,17 +2811,8 @@ class MainWindow(QMainWindow):
         try:
             # Start with no title reservation: filename identity gives way before
             # any destination moves. Geometry, rather than text-width guesses,
-            # accounts for the active font, display scale, and corner controls.
-            self._title_label.setFixedWidth(0)
-            self._window_controls.setMinimumWidth(0)
-            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
-            self._window_controls.layout().invalidate()
-            self._window_controls.setFixedWidth(
-                self._window_controls.layout().sizeHint().width()
-            )
-            self._menu_bar.setCornerWidget(
-                self._window_controls, Qt.Corner.TopRightCorner
-            )
+            # accounts for the active font, display scale, and title controls.
+            self._fit_window_controls(0)
             self._flush_menu_layout()
             direct = list(self._responsive_menu_actions)
             overflowed: list[QAction] = []
@@ -2318,25 +2824,22 @@ class MainWindow(QMainWindow):
                 self._relocate_application_actions(direct, overflowed)
                 self._flush_menu_layout()
 
-            title_width = min(180, max(0, self._menu_action_slack()))
-            self._title_label.setFixedWidth(title_width)
-            # The corner widget was sized while the title reservation was zero.
-            # Refresh it before painting so the label cannot spill into controls.
-            self._window_controls.setMinimumWidth(0)
-            self._window_controls.setMaximumWidth(QWIDGETSIZE_MAX)
-            self._window_controls.layout().invalidate()
-            self._window_controls.setFixedWidth(
-                self._window_controls.layout().sizeHint().width()
-            )
-            self._menu_bar.setCornerWidget(
-                self._window_controls, Qt.Corner.TopRightCorner
-            )
-            self._window_controls.updateGeometry()
+            # With the menu hidden the title has the whole strip to itself.
+            room = 180 if self._menu_bar.isHidden() else self._menu_action_slack()
+            self._fit_window_controls(min(180, max(0, room)))
             self._flush_menu_layout()
             self._sync_custom_title()
         finally:
             self._updating_responsive_shell = False
         self._update_thumbnail_zoom_host()
+
+    def _fit_window_controls(self, title_width: int) -> None:
+        self._title_label.setFixedWidth(title_width)
+        controls = self._window_controls
+        controls.setMinimumWidth(0)
+        controls.setMaximumWidth(QWIDGETSIZE_MAX)
+        controls.layout().invalidate()
+        controls.setFixedWidth(controls.layout().sizeHint().width())
 
     def _relocate_application_actions(
         self, direct: list[QAction], overflowed: list[QAction]
@@ -2353,6 +2856,8 @@ class MainWindow(QMainWindow):
             self._application_overflow_menu.addAction(action)
 
     def _flush_menu_layout(self) -> None:
+        self._title_bar.layout().invalidate()
+        self._title_bar.layout().activate()
         self._menu_bar.updateGeometry()
         # Refresh only this layout; pumping the application here can dispatch
         # timers/deletions while Qt is still applying a stylesheet or resizing.
@@ -2367,15 +2872,14 @@ class MainWindow(QMainWindow):
             (self._menu_bar.actionGeometry(action).right() + 1 for action in actions),
             default=0,
         )
-        # QMenuBar may not have repositioned its corner widget after a font or
-        # title-width change. Budget its assigned width in menu-bar coordinates;
-        # the window width and the corner's sizeHint can both overstate the room.
-        menu_right = self._menu_bar.contentsRect().right() + 1
-        if not self.isVisible():
-            # Before first show, QMainWindow has not laid out the menu bar yet.
-            menu_right = self.contentsRect().right() + 1
-        controls_left = menu_right - self._window_controls.width()
-        return controls_left - right
+        # The menu bar takes whatever the title bar leaves beside the controls.
+        # Before first show (or while hidden) nothing has been laid out, so
+        # budget from the window width instead.
+        if self.isVisible() and not self._menu_bar.isHidden():
+            menu_right = self._menu_bar.contentsRect().right() + 1
+        else:
+            menu_right = self.contentsRect().width() - self._window_controls.width()
+        return menu_right - right
 
     def _menu_actions_fit(self) -> bool:
         return self._menu_action_slack() >= 0
@@ -2387,6 +2891,9 @@ class MainWindow(QMainWindow):
         visible = tab is not None and tab.loader is not None and not tab.is_preview_visible()
         self._thumbnail_zoom_host.setVisible(visible)
         self._zoom_controls.set_slider_visible(self.width() > 800)
+        # The buttons and px readout say what the cluster is; the caption goes
+        # first so the status message keeps its room in a narrow window.
+        self._thumbnail_zoom_label.setVisible(self.width() > COMPACT_STATUS_WIDTH)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -2403,7 +2910,10 @@ class MainWindow(QMainWindow):
                 button.setToolTip("Restore window" if maximized else "Maximize window")
                 button.setAccessibleName(button.toolTip())
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            # Button widths are remeasured the next time the toolbar is fitted.
+            getattr(self, "_toolbar_hint_widths", {}).clear()
             QTimer.singleShot(0, self._update_responsive_shell)
+            QTimer.singleShot(0, self._refit_toolbar)
         super().changeEvent(event)
 
     def _extract_selected_to_folder(self) -> None:
@@ -2571,6 +3081,9 @@ class MainWindow(QMainWindow):
             page, "WINDOW_TITLE", "Tool"
         )
         self._tool_pages[page_id] = page
+        # The explicit floor is for a top-level window; hosted, it would set the
+        # tab stack's (and so this window's) minimum size.
+        page.setMinimumSize(0, 0)
         # PAGE_ID string literals match MergeWindow / ConvertWindow / ToolsWindow.
         if page_id == "tools":
             self._tools_window = page  # type: ignore[assignment]
@@ -2703,6 +3216,30 @@ class MainWindow(QMainWindow):
             tab.set_zoom_level(thumbnail_zoom())
             self._load_pdf(path, tab=tab)
         self._tab_manager.setCurrentIndex(self._tab_manager.count() - 1)
+
+    def open_command_line_paths(self, paths: list[str]) -> None:
+        """Open PDFs named on the command line; report any that cannot be opened."""
+        good: list[str] = []
+        problems: list[str] = []
+        for path in paths:
+            file = Path(path)
+            if not file.is_file():
+                problems.append(f"{file.name or path}: file not found")
+            elif file.suffix.lower() != ".pdf":
+                problems.append(f"{file.name}: not a PDF file")
+            else:
+                good.append(path)
+        if problems:
+            message = "Could not open " + "; ".join(problems)
+            self._transient_status(message)
+            self._show_toast(message, kind="error")
+        if not good:
+            return
+        remember_directory(good[0])
+        active = self._active_tab()
+        if active is None:
+            active = self._tab_manager.add_blank_tab()
+        self._open_paths_as_tabs(good, first_tab=active if active.is_blank else None)
 
     def _populate_open_recent_menu(self) -> None:
         menu = self._open_recent_menu
@@ -3284,15 +3821,28 @@ class MainWindow(QMainWindow):
         self._transient_status(f"{verb} {count} {noun}{suffix}")
         self._sync_toolbar_from_active_tab()
 
+    def _on_pages_copied_not_moved(self, count: int) -> None:
+        if not self._grid_belongs_to_window(self.sender()):
+            return
+        noun = "page" if count == 1 else "pages"
+        message = (
+            f"Copied {count} {noun}, not moved: the source is in another "
+            "PageDrop process"
+        )
+        self._transient_status(message, page=self._sender_tab())
+        self._show_toast(message, kind="info")
+        self._sync_toolbar_from_active_tab()
+
     def _on_page_transfer_failed(self, message: str) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        if not self._grid_belongs_to_window(self.sender()):
             return
         QMessageBox.warning(self, "Page transfer", message)
-        self._transient_status(message)
+        self._transient_status(message, page=self._sender_tab())
 
     def _on_pdf_drop_failed(self, exc: object) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        if not self._grid_belongs_to_window(self.sender()):
             return
+        tab = self._sender_tab()
         if isinstance(exc, PdfEmptyError):
             QMessageBox.warning(
                 self,
@@ -3311,18 +3861,17 @@ class MainWindow(QMainWindow):
                 "Insert PDF",
                 f"Could not insert PDF:\n{exc}",
             )
-        self._persistent_status("Ready")
+        self._persistent_status("Ready", page=tab)
 
     def _on_rendering_error(self, message: str) -> None:
-        if not self._grid_belongs_to_active_tab(self.sender()):
+        # One notice per loaded document; the grid keeps rendering other pages.
+        if not self._grid_belongs_to_window(self.sender()):
             return
-        self._progress_bar.hide()
-        QMessageBox.critical(
-            self,
-            "Render thumbnails",
-            f"Could not render thumbnails:\n{message}",
+        self._show_toast("Some thumbnails could not be rendered", kind="error")
+        self._transient_status(
+            f"Some thumbnails could not be rendered: {message}",
+            page=self._sender_tab(),
         )
-        self._transient_status("Rendering failed")
 
     def _on_preview_render_error(self, message: str) -> None:
         tab = self._active_tab()
@@ -3418,7 +3967,12 @@ class MainWindow(QMainWindow):
                 "Drag selected pages to a folder to export them as PDF files.",
             )
 
+    def hideEvent(self, event) -> None:  # noqa: ANN001, N802
+        self._clear_edge_state()
+        super().hideEvent(event)
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._clear_edge_state()
         if self._window_manager is not None:
             if self._window_manager.preparing_installation:
                 event.ignore()
@@ -3435,7 +3989,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
-        QApplication.instance().removeEventFilter(self)
+        self._remove_key_filter()
+        try:
+            QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
+        except TypeError:  # already disconnected by an earlier close attempt
+            pass
         for index in range(self._tab_manager.count()):
             widget = self._tab_manager.widget(index)
             if isinstance(widget, PdfTab):
@@ -3444,8 +4002,10 @@ class MainWindow(QMainWindow):
         if self._should_persist_geometry():
             save_window_geometry(self.saveGeometry())
         super().closeEvent(event)
-        if event.isAccepted() and self._window_manager is not None:
-            self._window_manager.notify_window_closed(self)
+        if event.isAccepted():
+            icons.unregister_refresh(self._refresh_action_icons)
+            if self._window_manager is not None:
+                self._window_manager.notify_window_closed(self)
 
     def _confirm_window_close(self) -> bool:
         """Resolve unsaved edits, then running tool jobs; False aborts or defers the close."""

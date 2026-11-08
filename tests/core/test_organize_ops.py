@@ -1643,3 +1643,56 @@ def test_compare_text_diff_cancel_mid_page(tmp_path, monkeypatch):
     assert checks["n"] >= 2
     assert file_sha256(a) == hash_a
     assert file_sha256(b) == hash_b
+
+
+# --- Second-open failure must not leak the first document ---------------------
+
+
+def _track_opens(monkeypatch: pytest.MonkeyPatch, *, fail_on: int) -> list[fitz.Document]:
+    opened: list[fitz.Document] = []
+    real = pdf_tools.open_pdf
+
+    def tracking(path: str, password: str | None = None) -> fitz.Document:
+        if len(opened) + 1 == fail_on:
+            raise PdfCorruptError(f"cannot open {path}")
+        doc = real(path, password=password)
+        opened.append(doc)
+        return doc
+
+    monkeypatch.setattr(pdf_tools, "open_pdf", tracking)
+    return opened
+
+
+def test_alternate_pdfs_closes_first_doc_when_second_open_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    a = _make_text_pdf(tmp_path / "a.pdf", page_texts=["A1"])
+    b = _make_text_pdf(tmp_path / "b.pdf", page_texts=["B1"])
+    opened = _track_opens(monkeypatch, fail_on=2)
+    with pytest.raises(PdfCorruptError):
+        pdf_tools.alternate_pdfs(str(a), str(b), str(tmp_path / "out.pdf"))
+    assert len(opened) == 1 and opened[0].is_closed
+
+
+def test_heatmap_closes_both_docs_when_the_output_folder_cannot_be_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    a = _make_text_pdf(tmp_path / "a.pdf", page_texts=["A1"])
+    b = _make_text_pdf(tmp_path / "b.pdf", page_texts=["B1"])
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a folder")
+    opened = _track_opens(monkeypatch, fail_on=3)
+    with pytest.raises(OSError):
+        pdf_tools.compare_pdfs_heatmap(str(a), str(b), blocker / "heatmap.pdf")
+    assert len(opened) == 2 and all(doc.is_closed for doc in opened)
+
+
+def test_heatmap_closes_first_doc_when_second_open_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    a = _make_text_pdf(tmp_path / "a.pdf", page_texts=["A1"])
+    b = _make_text_pdf(tmp_path / "b.pdf", page_texts=["B1"])
+    opened = _track_opens(monkeypatch, fail_on=2)
+    with pytest.raises(PdfCorruptError):
+        pdf_tools.compare_pdfs_heatmap(str(a), str(b), tmp_path / "heatmap.pdf")
+    assert len(opened) == 1 and opened[0].is_closed

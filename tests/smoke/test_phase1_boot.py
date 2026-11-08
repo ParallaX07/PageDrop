@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+
+import pytest
 
 
 def test_imports():
@@ -40,7 +43,7 @@ for name in (
     )
 
 
-def test_cli_entry_point():
+def test_cli_entry_point(tmp_path):
     """Entry point starts Qt and exits cleanly when the window is closed."""
     code = """
 import os
@@ -64,15 +67,116 @@ def _auto_close_show(self):
 MainWindow.show = _auto_close_show
 sys.exit(main())
 """
+    data = tmp_path / "data"
+    data.mkdir()
+    # Keep the real profile untouched: logs and settings go under tmp_path.
+    env = {
+        **os.environ,
+        "XDG_DATA_HOME": str(data),
+        "LOCALAPPDATA": str(data),
+        "HOME": str(data),
+        "USERPROFILE": str(data),
+    }
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=30,
         check=False,
+        env=env,
     )
     assert result.returncode == 0, (
         f"CLI entry point failed (code {result.returncode})\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert "Starting PageDrop version=" in result.stderr
+    if sys.platform.startswith("linux"):
+        log = data / "PageDrop" / "PageDrop" / "logs" / "pagedrop.log"
+        assert "Starting PageDrop version=" in log.read_text(encoding="utf-8")
+
+
+def test_compress_worker_flag_dispatches_without_creating_a_qapplication(monkeypatch):
+    """The compress child runs headless: flag stripped, no Qt application built."""
+    from PyQt6 import QtWidgets
+
+    from pagedrop import main as main_module
+    from pagedrop.core import optimize_secure
+    from pagedrop.utils import diagnostics
+
+    flag = optimize_secure.COMPRESS_WORKER_FLAG
+    received: list[list[str]] = []
+
+    class Forbidden:
+        instance = staticmethod(QtWidgets.QApplication.instance)  # pytest-qt calls it
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise AssertionError("QApplication must not be created for the compress worker")
+
+    monkeypatch.setattr(diagnostics, "configure_terminal_logging", lambda: None)
+    monkeypatch.setattr(diagnostics, "log_startup", lambda **_kw: None)
+    monkeypatch.setattr(QtWidgets, "QApplication", Forbidden)
+    monkeypatch.setattr(
+        optimize_secure, "main", lambda argv: received.append(list(argv)) or 7
+    )
+    monkeypatch.setattr(sys, "argv", ["pagedrop", flag, "--compress-json"])
+
+    assert main_module.main() == 7
+    assert received == [["--compress-json"]]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux library path")
+def test_main_restores_the_library_path_before_dispatching_worker_flags(monkeypatch):
+    """Frozen Linux: the worker flag sees the original path, not the bundled one."""
+    from pagedrop import main as main_module
+    from pagedrop.core import optimize_secure
+    from pagedrop.utils import diagnostics
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(diagnostics, "configure_terminal_logging", lambda: None)
+    monkeypatch.setattr(diagnostics, "log_startup", lambda **_kw: None)
+    monkeypatch.setattr(
+        optimize_secure, "main", lambda _argv: seen.append(os.environ.get("LD_LIBRARY_PATH")) or 0
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        sys, "argv", ["pagedrop", optimize_secure.COMPRESS_WORKER_FLAG, "--compress-json"]
+    )
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundle/_internal:/usr/lib/x")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/x")
+
+    assert main_module.main() == 0
+    assert seen == ["/usr/lib/x"]
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["--pagedrop-redact-verify", "--pagedrop-compress-worker"],
+)
+def test_module_run_exits_with_the_helper_status(flag):
+    """A helper started as ``python -m pagedrop.main`` reports failure to its parent."""
+    result = subprocess.run(
+        [sys.executable, "-m", "pagedrop.main", flag],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    assert result.returncode == 1, result.stderr
+    assert "Usage:" in result.stderr
+
+
+def test_command_line_paths_drop_options_and_blanks():
+    from pagedrop.main import command_line_paths
+
+    args = [
+        "--pagedrop-office-com-worker",
+        "a.pdf",
+        "",
+        "--pagedrop-redact-verify",
+        "-platform",
+        "/tmp/b.pdf",
+        "--pagedrop-compress-worker",
+    ]
+    assert command_line_paths(args) == ["a.pdf", "/tmp/b.pdf"]
+    assert command_line_paths([]) == []

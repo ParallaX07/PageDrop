@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 import pytest
 
+from pagedrop.core import pdf_service
 from pagedrop.core.jobs import JobSpec, SourceOverwriteError
+from pagedrop.core.pdf_editor import PdfEditModel
 from pagedrop.ui.organize_tools import (
     ORGANIZE_TOOL_IDS,
     editor_pdf_context,
@@ -52,6 +56,41 @@ def test_split_prefills_from_tab_selection(main_window, five_page_pdf, qtbot):
     assert ctx is not None
     assert Path(ctx.path).resolve() == five_page_pdf.resolve()
     assert ctx.range_prefill == "2-3,5"
+
+
+def test_editor_context_reports_logical_count_without_fitz_lock(five_page_pdf) -> None:
+    """The probe runs on the GUI thread: logical count, no ``FITZ_LOCK`` wait."""
+    model = PdfEditModel(str(five_page_pdf), 5)
+    model.remove_pages([0, 1])
+    tab = SimpleNamespace(edit_model=model, thumbnail_grid=None)
+    editor = SimpleNamespace(_active_tab=lambda: tab)
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def _hold_lock() -> None:
+        with pdf_service.FITZ_LOCK:
+            held.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=_hold_lock, daemon=True)
+    result: list = []
+    # Run off the test thread so a regression times out instead of hanging.
+    prober = threading.Thread(
+        target=lambda: result.append(editor_pdf_context(editor)), daemon=True
+    )
+    holder.start()
+    try:
+        assert held.wait(5)
+        prober.start()
+        prober.join(3)
+        assert not prober.is_alive(), "editor_pdf_context blocked on FITZ_LOCK"
+    finally:
+        release.set()
+        holder.join(5)
+        prober.join(5)
+    assert result and result[0] is not None
+    assert result[0].page_count == 3
 
 
 def test_reverse_job_via_tools_runner_never_overwrites_source(tmp_path: Path):

@@ -17,7 +17,7 @@ main.py → WindowManager → MainWindow(s)
 ```
 
 - **`WindowManager`** owns multi-window lifetime and cross-window page transfer
-- **`ui/`** owns widgets, menus, shortcuts, toasts, and job chrome
+- **`ui/`** owns widgets, menus, shortcuts, toasts, and job chrome. The main window is frameless: a title bar holds the menu bar and window controls (they stay when the menu bar and toolbar are hidden), Qt supplies edge resizing, and on Windows `native_frame.py` keeps the native frame for resize and snap. `main.py` passes command-line PDF paths to `MainWindow.open_command_line_paths` once the window shows and any crash-recovery prompt has finished. The minimum size is 480 × 320; the toolbar overflows into **More** and hosted tool pages scroll
 - **`core/`** owns PDF open/edit/write/merge/extract and tool job handlers
 - Optional backends (Office COM, LibreOffice, OCR data, codecs) live behind a soft **capability registry** so missing extras never break startup
 
@@ -40,7 +40,7 @@ Pending annotations, page-scoped form creation, and redactions retain a `PageRef
 
 ## Drag and drop
 
-Outbound page drag uses `QDrag` with `file://` URLs so Explorer, Finder, and other file managers accept drops as real files. Internal transfers use app mime types (page indices, page refs, merge-file order) defined in `core/drag_mime.py`. Cross-window drop copies by default; Shift+drop moves.
+Outbound page drag uses `QDrag` with `file://` URLs so Explorer, Finder, and other file managers accept drops as real files. Internal transfers use app mime types (page indices, page refs, merge-file order) defined in `core/drag_mime.py`. Cross-window drop copies by default; Shift+drop moves when the source is a window of the same PageDrop process. A drop from another PageDrop process always copies (Shift is ignored) and the app says so; the tab bar rejects drops from another process with a message, and the page grid accepts them. Files made for an outbound drag stay in the session temp folder after the drag returns, because the drop target may read them later; closing the window removes them, and the temp quota evicts the oldest first.
 
 Inbound drops (PDF onto the grid, images onto Create PDF, files onto tool shells) go through the same tab/grid hosts so behaviour matches the menu-driven paths.
 
@@ -50,7 +50,7 @@ Batch Tools and editor Save As work through a **serialized job runner** (`Serial
 
 Optional engines are probed via `core/capabilities.py`. Probes soft-fail; the UI can configure / recheck without crashing the app. Core thumbnail / edit / merge / Create PDF must remain usable when optional backends are absent.
 
-External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel kills only owned process trees and cleans partial staging outputs.
+External converters (Office COM helper, LibreOffice) run in isolated subprocesses with timeouts. Cancel and timeout kill only owned process trees and clean partial staging outputs. For Office COM, the helper reports the PID of the Office app it launched, and that app is also killed on cancel, timeout, or a helper crash; an Office app the user started is never touched.
 
 Redaction rewrites to a new path, then a fresh interpreter re-opens the output and verifies it; a failed or cancelled verification deletes the output. Checks are scoped to what was redacted. For each region the text under its rectangle (characters whose centre lies inside it, since glyphs the rectangle only clips are kept by MuPDF) must be empty and none of its secrets may be found inside it, so the same words elsewhere on the page or in the document do not fail the save. Caller-supplied extra strings are still required to be absent everywhere, including the raw file bytes. A region's own secrets of four or more characters are also scanned in the raw bytes, unless the same text sat outside every region before redaction. Image-only regions (scanned pages) record pixel digests of the images they touch, skipping images whose covered pixels are a single colour (blanking those changes nothing), and the output page must keep no more copies of each digest than the regions left untouched; digests are used because the garbage-collecting save renumbers and recompresses image objects. The verifier runs outside `FITZ_LOCK` as an owned process: cancel or timeout kills its process tree, and cancel also removes the output.
 
@@ -82,13 +82,29 @@ classified.
 
 ## PyMuPDF concurrency
 
-PyMuPDF is not safe for concurrent multithreaded use — even separate `Document` instances share MuPDF caches. PageDrop serializes in-process fitz work through a process-wide lock in `core/pdf_service.py` (`FITZ_LOCK`). Viewer thumbnails, previews, and fitz-backed job handlers take that lock (or call helpers that do). Workers open documents by path inside `run()`, close before returning, and never receive a live loader document from the UI thread.
+PyMuPDF is not safe for concurrent multithreaded use — even separate `Document` instances share MuPDF caches. PageDrop serializes in-process fitz work through a process-wide lock defined in `core/thread_policy.py` (`FITZ_LOCK`, re-exported by `core/pdf_service.py`). Viewer thumbnails, previews, and fitz-backed job handlers take that lock (or call helpers that do). Workers open documents by path inside `run()`, close before returning, and never receive a live loader document from the UI thread.
+
+Password preflight stays on the UI thread (its prompts are modal and credentials stay UI-side). When a running job holds the lock, the tool shows "Waiting for running job…" and retries from a timer with short timed acquires, so the event loop keeps running and Cancel works; the lock is held only through the probes and is released before any dialog.
+
+Tool-page probes that run directly on the UI thread (page counts, metadata and bookmark reads) wait for the lock with short timed acquires while pumping events other than user input, so the window keeps painting instead of freezing behind a running job; the same pumped wait re-takes the lock after a password prompt, where Cancel also works. Editor open, viewer layout and drag-out still wait on the lock directly and can pause the window while a job holds it.
+
+Long page-by-page jobs (OCR, colour effects) take the lock per page, with a short pause after each release so a waiting UI thread gets a turn, and never across the whole run. Lossy compress cannot be split per page, so it runs in an owned child process (`--pagedrop-compress-worker` when frozen) with the password sent over stdin; cancel or timeout kills its process tree.
 
 UI render pools stay at max thread count 1 and still share the same lock across windows. Raising pool size does not make MuPDF safer.
 
 ## Result UX
 
 Tool pages use the same order: title and purpose, input, options, one valid execution action, then progress or result. A selected shell input contracts to a filename summary with **Change file** access. Status, toast, and result surface serve different jobs: the persistent result summary exposes a selectable filename and destination, while Preview / Open / Show in folder remain explicit choices (`result_actions`), never an automatic tab open. Recoverable tool errors also remain beside Run after transient feedback ends.
+
+## Logs and crash reports
+
+`utils/diagnostics.py` logs to stderr and to a rotating file, `logs/pagedrop.log` inside the per-user app data folder (the same folder Qt calls the app local data location, worked out without Qt because logging starts before the application exists). The file keeps 1 MiB per file and three older copies. Packaged builds have no console, so the file is the only record. If a second copy of PageDrop holds the file open and a rollover cannot rename it, the log keeps appending instead of dropping records or older copies: it grows past its limit until the rename works, and rotates then. If the file cannot be opened, PageDrop starts anyway and says so on stderr.
+
+Helper processes (Office conversion, redaction verification, secure compression) are started with a `--pagedrop-` flag and stay out of the log: they create no folder or file, and their stdout stays clean for the JSON the parent reads. On a build without a console, native crash tracebacks go to `logs/native-crash.log`, a separate file so it never blocks rotation of the main log.
+
+Both log outputs mask the value after password-like keys (`password`, `token`, `secret`, `pfx`, `certificate` and similar) as `***`. Errors whose message can contain document text, such as a failed redaction check, are marked `log_detail_sensitive`; the log records only the error type and that details were withheld, even when such an error is the cause of another. The interface still shows the full message.
+
+An unhandled error on the main thread also opens one plain dialog that names the log file and never shows the error text. It appears once per crash site, so a paint handler that fails on every repaint cannot trap the user in dialogs. The limit: errors on worker threads, or before the `QApplication` exists, are only logged.
 
 ## Windows updates
 
@@ -109,21 +125,29 @@ The Qt-independent service in `utils/update_checker.py` fetches the public
 best-effort fetches the matching public GitHub release body for current display
 notes. It validates schema version 1, the strict numeric version, positive installer
 size, SHA-256, and string notes within a 1 MiB UTF-8 response. A failed or malformed
-live-notes response falls back to the manifest notes and never affects installer trust.
-Additive fields are ignored. Installer names and URLs are derived locally;
+live-notes response falls back to the manifest notes and never affects installer trust. The update dialog shows the notes as plain
+text: nothing in them becomes a link, so a release body cannot offer a
+clickable address. Additive fields are ignored. Installer names and URLs are derived locally;
 the digest comes from the manifest, avoiding a separate checksum request.
 Trusted HTTPS redirects, exact size, and SHA-256 are verified before atomically
 promoting downloaded bytes. HTTPS plus SHA-256
 detects corrupt or mismatched release assets; it is not independent publisher
 authentication if the release account is compromised.
 
-On supported packaged Windows builds, automatic checking starts five seconds
+The updater is supported only in a frozen (packaged) Windows build. A source run
+on Windows, or any other platform, shows a message and the releases page instead
+of checking.
+
+On supported builds, automatic checking starts five seconds
 after launch when due, then runs 24 hours after a successful check. Failures wait
 at least one hour and retain any longer GitHub rate-limit deadline. Settings use
 UTC values under `updates/`; malformed or implausibly future values cannot create
 a request loop. Manual checks bypass the daily, reminder, and skip suppression
 and ordinary failure backoff, but still honour a separately persisted
-`server_retry_after_utc` deadline. Server throttling without a valid deadline
+`server_retry_after_utc` deadline. A server deadline more than 48 hours ahead is
+treated as implausible and cut back to 48 hours from the moment it is read. The
+cut-back value is saved, so a bad stored date ends at that fixed time instead of
+moving forward with the clock. Server throttling without a valid deadline
 uses one minute; automatic failures retain their one-hour backoff in
 `retry_after_utc`. The legacy retry value is automatic-only, so an old API
 cooldown cannot block manual manifest checks. The first failed check schedules
@@ -133,8 +157,13 @@ scheduled checks, never a download already approved by the user.
 
 `UpdateStorage` uses the Qt application-local `updates/` directory and gives each
 process a locked session subdirectory. It revalidates a cached installer before
-reuse, removes only recognised inactive updater files, and expires inactive
-verified installers after seven days. It never uses PDF paths or the shared PDF
+reuse. When the current session has none, it looks in sessions no process is
+using: a verified installer for the same release is moved into the current
+session instead of being downloaded again, and one that fails verification is
+deleted. Cleanup removes only recognised inactive updater files, expires inactive
+verified installers after seven days, and deletes an inactive session folder once
+it is empty. A folder holding anything the updater does not recognise is left
+alone. It never uses PDF paths or the shared PDF
 temporary-file lifecycle. Storage is created lazily for an approved download;
 storage failures cannot prevent application startup. Failed cache verification
 removes the owned invalid installer and offers another download.

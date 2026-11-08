@@ -422,7 +422,6 @@ def test_closing_editor_with_tools_tab_quits(
 ):
     manager = WindowManager(qapp)
     editor = manager.open_new_window()
-    qtbot.addWidget(editor)
     tab = editor._tab_manager.widget(0)
     assert isinstance(tab, PdfTab)
     tab.load_pdf(str(five_page_pdf))

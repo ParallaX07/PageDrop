@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -16,7 +17,14 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDrag, QFont, QMouseEvent, QPainter, QPixmap, QResizeEvent
+from PyQt6.QtGui import (
+    QDrag,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPixmap,
+    QResizeEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -68,6 +76,7 @@ class PageCard(BaseFileCard):
         self._selection_manager: SelectionManager | None = None
         self._temp_manager: TempManager | None = None
         self._is_skeleton = True
+        self._failed = False
         self._page_overlay_wanted = False
         self._size_provider: Callable[[], tuple[int, int]] | None = None
         self._size_cached: tuple[int, int] | None = None
@@ -159,8 +168,36 @@ class PageCard(BaseFileCard):
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         self._is_skeleton = False
         self.clear_skeleton_pulse()
+        self._reset_failed()
         super().set_thumbnail(pixmap)
         self._sync_page_overlay_visibility()
+
+    def set_failed(self) -> None:
+        """Static placeholder for a page that could not be rendered (no pulse)."""
+        self._source_pixmap = None
+        self._thumbnail_label.clear()
+        self._is_skeleton = False
+        self._failed = True
+        self.clear_skeleton_pulse()
+        self._thumbnail_label.setText("Page unavailable")
+        self._set_failed_style(True)
+        self._sync_page_overlay_visibility()
+        self._sync_accessible()
+
+    def _reset_failed(self) -> None:
+        if not self._failed:
+            return
+        self._failed = False
+        self._thumbnail_label.clear()
+        self._set_failed_style(False)
+        self._sync_accessible()
+
+    def _set_failed_style(self, failed: bool) -> None:
+        # Colour comes from the app stylesheet so theme switches restyle it.
+        self._thumbnail_label.setProperty("failed", failed)
+        style = self._thumbnail_label.style()
+        style.unpolish(self._thumbnail_label)
+        style.polish(self._thumbnail_label)
 
     def set_selected(self, selected: bool) -> None:
         super().set_selected(selected)
@@ -186,6 +223,7 @@ class PageCard(BaseFileCard):
         if self._source_pixmap is None and self._is_skeleton:
             return False
         had_pixmap = self._source_pixmap is not None
+        self._reset_failed()
         self._source_pixmap = None
         self._thumbnail_label.clear()
         self._is_skeleton = True
@@ -276,6 +314,8 @@ class PageCard(BaseFileCard):
         page_num = self.page_index + 1
         self.setAccessibleName(f"Page {page_num}")
         selected = "Selected · " if self._selected else ""
+        if self._failed:
+            selected += "Page unavailable · "
         if self._size_cached is not None:
             width_mm, height_mm = self._size_cached
             self.setAccessibleDescription(
@@ -453,6 +493,7 @@ class PageCard(BaseFileCard):
                 passwords=self._source_passwords(),
             )
         except (PdfPasswordRequiredError, PdfPasswordError) as exc:
+            self._temp_manager.remove_dir(output_dir)
             QMessageBox.critical(
                 self.window(),
                 "Extract pages",
@@ -460,6 +501,7 @@ class PageCard(BaseFileCard):
             )
             return
         except OSError as exc:
+            self._temp_manager.remove_dir(output_dir)
             QMessageBox.critical(
                 self.window(),
                 "Extract pages",
@@ -467,6 +509,7 @@ class PageCard(BaseFileCard):
             )
             return
         except Exception as exc:
+            self._temp_manager.remove_dir(output_dir)
             QMessageBox.critical(
                 self.window(),
                 "Extract pages",
@@ -508,7 +551,13 @@ class PageCard(BaseFileCard):
                 drag.exec(Qt.DropAction.CopyAction)
         finally:
             QApplication.restoreOverrideCursor()
-            self._temp_manager.cleanup_paths(temp_paths)
+            # A drop inside the app carries the pages as refs and indices, so the
+            # extracted files are done with. With no target, a file manager may
+            # still read the file:// URLs after exec() returns: keep them for
+            # window-close cleanup and the quota to evict.
+            # A platform drag may already have freed the QDrag: no target then.
+            if not sip.isdeleted(drag) and drag.target() is not None:
+                self._temp_manager.cleanup_paths(temp_paths)
             restore = getattr(window, "_restore_document_status", None)
             if callable(restore):
                 restore()

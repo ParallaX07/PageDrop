@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
 import fitz
-from PyQt6.QtCore import QObject, QSize, Qt, QRectF, QRunnable, QThreadPool, pyqtSignal
+from PyQt6.QtCore import (
+    QObject,
+    QRectF,
+    QRunnable,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
+    QCloseEvent,
     QColor,
+    QImage,
     QPainter,
     QPixmap,
     QResizeEvent,
@@ -46,16 +58,23 @@ from pagedrop.core.jobs import (
 from pagedrop.core.pdf_editor import PageRef
 from pagedrop.core.pdf_loader import MAX_RENDER_WIDTH_PX, PdfLoadError
 from pagedrop.core.pdf_service import page_geometry, render_ref_png
+from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.core.pdf_tools import (
     COMPARE_MAX_RENDER_WIDTH_PX,
     CompareChange,
     CompareReport,
 )
 from pagedrop.ui.dialogs import prompt_pdf_password
-from pagedrop.ui.job_chrome import JobChromeMixin, explain_busy_running
+from pagedrop.ui.job_chrome import (
+    JobChromeMixin,
+    explain_busy_running,
+    fitz_lock_released,
+    run_with_fitz_lock,
+)
 from pagedrop.ui.keyboard_nav import enable_toolbar_keyboard_navigation
+from pagedrop.ui.pdf_viewer import RENDER_DEBOUNCE_MS
 from pagedrop.ui.tool_shell import run_tool_job
-from pagedrop.ui.tool_page import StatusFooter
+from pagedrop.ui.tool_page import StatusFooter, scrollable_page_body
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
     CLOSE_TAB,
@@ -126,6 +145,69 @@ class _CompareTextWorker(QRunnable):
             self.signals.succeeded.emit(report)
 
 
+_COMPARE_RENDER_SIGNAL_REFS: list[QObject] = []
+_COMPARE_RENDER_POOL: QThreadPool | None = None
+
+
+def _compare_render_pool() -> QThreadPool:
+    global _COMPARE_RENDER_POOL
+    if _COMPARE_RENDER_POOL is None:
+        _COMPARE_RENDER_POOL = QThreadPool()
+        _COMPARE_RENDER_POOL.setMaxThreadCount(1)
+        _COMPARE_RENDER_POOL.setObjectName("PageDropCompareRenderPool")
+    return _COMPARE_RENDER_POOL
+
+
+# One pane's render: (image, displayed page rect, rotation matrix) or an error message.
+_PaneRender = tuple[QImage, fitz.Rect, fitz.Matrix] | str
+
+
+class _CompareRenderWorker(QRunnable):
+    """Render both compare panes off the UI thread; stale requests skip work."""
+
+    class Signals(QObject):
+        finished = pyqtSignal(int, object, object)  # generation, pane A, pane B
+
+    def __init__(
+        self,
+        paths: tuple[str | None, str | None],
+        page_index: int,
+        width_px: int,
+        passwords: dict[str, str],
+        generation: int,
+        is_stale: Callable[[int], bool],
+    ) -> None:
+        super().__init__()
+        ensure_no_fitz_document(*paths, what="CompareRenderWorker")
+        self.signals = self.Signals()
+        self._paths = paths
+        self._page_index = page_index
+        self._width_px = width_px
+        self._passwords = passwords
+        self._generation = generation
+        self._is_stale = is_stale
+        self.setAutoDelete(True)
+
+    def run(self) -> None:
+        results: list[_PaneRender | None] = []
+        for path in self._paths:
+            if path is None or self._is_stale(self._generation):
+                results.append(None)
+                continue
+            try:
+                results.append(
+                    _render_page_image(
+                        path,
+                        self._page_index,
+                        self._width_px,
+                        passwords=self._passwords,
+                    )
+                )
+            except Exception as exc:
+                results.append(str(exc))
+        self.signals.finished.emit(self._generation, *results)
+
+
 def _pick_pdf(parent: QWidget, title: str, initial: str = "") -> str | None:
     start = str(Path(initial).parent) if initial else last_directory()
     path, _ = QFileDialog.getOpenFileName(
@@ -180,26 +262,27 @@ def prompt_compare_export_options(
     return ("split" if split.isChecked() else "alternating", summary.isChecked(), revisions.isChecked())
 
 
-def _render_page_pixmap(
+def _render_page_image(
     path: str,
     page_index: int,
     width_px: int,
     *,
     passwords: dict[str, str] | None = None,
-) -> tuple[QPixmap, fitz.Rect, fitz.Matrix]:
+) -> tuple[QImage, fitz.Rect, fitz.Matrix]:
     """Render one compare pane via ``pdf_service`` (holds ``FITZ_LOCK``).
 
-    Returns the pixmap, the displayed page rect and the matrix that maps
-    unrotated (text-diff) coordinates onto it.
+    Returns an image (safe to build off the UI thread; the caller makes the
+    pixmap), the displayed page rect and the matrix that maps unrotated
+    (text-diff) coordinates onto it.
     """
     target = max(1, min(int(width_px), COMPARE_MAX_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX))
     password = RuntimeCredentials.lookup(passwords, path)
     geom = page_geometry(path, page_index, password=password)
     png = render_ref_png(PageRef(path, page_index), target, passwords=passwords)
-    qpix = QPixmap()
-    if not qpix.loadFromData(png):
+    image = QImage.fromData(png)
+    if image.isNull():
         raise PdfLoadError(f"Could not decode page render for {Path(path).name}")
-    return qpix, fitz.Rect(0, 0, *geom.visual_size), geom.rotation_matrix
+    return image, fitz.Rect(0, 0, *geom.visual_size), geom.rotation_matrix
 
 
 class _PathBrowseRow(QWidget):
@@ -346,7 +429,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._status = StatusFooter()
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("CompareWindow")
-        self.setMinimumSize(960, 640)
+        self.setMinimumSize(480, 320)
 
         self._report: CompareReport | None = None
         self._path_a = ""
@@ -360,6 +443,14 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._credentials = RuntimeCredentials()
         self._input_revision = 0
         self._render_suppressed = False
+        self._render_generation = 0
+        self._render_key: tuple | None = None  # latest requested / in-flight / landed
+        self._render_landed = False
+        self._render_after: Callable[[], None] | None = None
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(RENDER_DEBOUNCE_MS)
+        self._render_timer.timeout.connect(self._start_render)
 
         self._init_job_chrome_state()
         self._build_ui()
@@ -402,8 +493,13 @@ class CompareWindow(JobChromeMixin, QWidget):
             self._export_act.setEnabled(has_report)
             self._heatmap_act.setEnabled(has_report)
 
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._cancel_render()
+        super().closeEvent(event)
+
     def begin_job(self, message: str = "Working…") -> CancelToken:
         self._render_suppressed = True
+        self._cancel_render(keep_landed=True)
         return super().begin_job(message)
 
     def end_job(self, **kwargs) -> None:
@@ -417,6 +513,7 @@ class CompareWindow(JobChromeMixin, QWidget):
 
     def _invalidate_compare(self, *, cancel: bool = True) -> None:
         self._input_revision += 1
+        self._cancel_render()
         if cancel and self._comparing and self._cancel_token is not None:
             self._cancel_token.cancel()
         self._report = None
@@ -440,7 +537,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._pane_b.set_content(empty, empty_rect, [])
 
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        root = QVBoxLayout(scrollable_page_body(self))
         root.setContentsMargins(12, 12, 12, 8)
         root.setSpacing(8)
 
@@ -625,74 +722,92 @@ class CompareWindow(JobChromeMixin, QWidget):
         revision = self._input_revision
         self._comparing = True
         token = self.begin_job("Comparing…")
-        try:
-            self._credentials = preflight_pdf_inputs(
+
+        def probe() -> RuntimeCredentials:
+            return preflight_pdf_inputs(
                 [path_a, path_b],
-                prompt=lambda name, incorrect: prompt_pdf_password(
-                    self, name, incorrect=incorrect
+                prompt=fitz_lock_released(
+                    lambda name, incorrect: prompt_pdf_password(
+                        self, name, incorrect=incorrect
+                    ),
+                    token,
                 ),
                 credentials=self._credentials,
                 cancel=token,
             )
-        except JobCancelledError:
-            self._comparing = False
-            self.end_job(status="Cancelled", toast="Compare cancelled", toast_kind="info")
-            return
-        except PdfLoadError as exc:
-            self._comparing = False
-            self.end_job(error=str(exc), toast="Compare failed", toast_kind="error")
-            return
 
-        worker = _CompareTextWorker(
-            path_a, path_b, token, self._credentials.snapshot()
-        )
-        signals = worker.signals
-        _COMPARE_TEXT_SIGNAL_REFS.append(signals)
-
-        def _drop_ref() -> None:
-            try:
-                _COMPARE_TEXT_SIGNAL_REFS.remove(signals)
-            except ValueError:
-                pass
-
-        def _on_ok(report: object) -> None:
-            _drop_ref()
-            self._comparing = False
-            if not isinstance(report, CompareReport):
-                self.end_job(error="Compare failed", toast="Compare failed", toast_kind="error")
-                return
-            if (
-                revision != self._input_revision
-                or path_a != self._row_a.text()
-                or path_b != self._row_b.text()
-            ):
+        def preflighted(credentials: object, error: Exception | None) -> None:
+            if isinstance(error, JobCancelledError):
+                self._comparing = False
                 self.end_job(
-                    status="Files changed; compare again",
-                    toast="Compare result discarded",
-                    toast_kind="info",
+                    status="Cancelled", toast="Compare cancelled", toast_kind="info"
                 )
                 return
-            self.end_job()
-            self._apply_compare_report(path_a, path_b, report)
+            if isinstance(error, PdfLoadError):
+                self._comparing = False
+                self.end_job(error=str(error), toast="Compare failed", toast_kind="error")
+                return
+            if error is not None:
+                raise error
+            self._credentials = credentials
+            start_worker()
 
-        def _on_cancelled() -> None:
-            _drop_ref()
-            self._comparing = False
-            self.end_job(status="Cancelled", toast="Compare cancelled", toast_kind="info")
+        def start_worker() -> None:
+            worker = _CompareTextWorker(
+                path_a, path_b, token, self._credentials.snapshot()
+            )
+            signals = worker.signals
+            _COMPARE_TEXT_SIGNAL_REFS.append(signals)
 
-        def _on_failed(message: str) -> None:
-            _drop_ref()
-            self._comparing = False
-            self.end_job(error=message, toast="Compare failed", toast_kind="error")
+            def _drop_ref() -> None:
+                try:
+                    _COMPARE_TEXT_SIGNAL_REFS.remove(signals)
+                except ValueError:
+                    pass
 
-        signals.succeeded.connect(_on_ok)
-        signals.cancelled.connect(_on_cancelled)
-        signals.failed.connect(_on_failed)
-        _compare_text_pool().start(worker)
+            def _on_ok(report: object) -> None:
+                _drop_ref()
+                self._comparing = False
+                if not isinstance(report, CompareReport):
+                    self.end_job(error="Compare failed", toast="Compare failed", toast_kind="error")
+                    return
+                if (
+                    revision != self._input_revision
+                    or path_a != self._row_a.text()
+                    or path_b != self._row_b.text()
+                ):
+                    self.end_job(
+                        status="Files changed; compare again",
+                        toast="Compare result discarded",
+                        toast_kind="info",
+                    )
+                    return
+                self.end_job()
+                self._apply_compare_report(path_a, path_b, report)
+
+            def _on_cancelled() -> None:
+                _drop_ref()
+                self._comparing = False
+                self.end_job(status="Cancelled", toast="Compare cancelled", toast_kind="info")
+
+            def _on_failed(message: str) -> None:
+                _drop_ref()
+                self._comparing = False
+                self.end_job(error=message, toast="Compare failed", toast_kind="error")
+
+            signals.succeeded.connect(_on_ok)
+            signals.cancelled.connect(_on_cancelled)
+            signals.failed.connect(_on_failed)
+            _compare_text_pool().start(worker)
+
+        run_with_fitz_lock(
+            self, token, message="Comparing…", probe=probe, done=preflighted
+        )
 
     def _apply_compare_report(
         self, path_a: str, path_b: str, report: CompareReport
     ) -> None:
+        self._cancel_render()
         self._path_a = path_a
         self._path_b = path_b
         self._report = report
@@ -769,10 +884,11 @@ class CompareWindow(JobChromeMixin, QWidget):
         page = change.page_a if change.page_a is not None else change.page_b
         if page is not None:
             self._page_index = int(page)
-        self._render_pages()
-        self._scroll_to_change(change)
+        self._render_pages(after=lambda: self._scroll_to_change(change))
 
     def _scroll_to_change(self, change: CompareChange) -> None:
+        if self._selected_change is not change:
+            return
         rects = change.rects_a or change.rects_b
         if not rects:
             return
@@ -806,8 +922,12 @@ class CompareWindow(JobChromeMixin, QWidget):
             self._render_pages()
 
     def _target_width(self) -> int:
-        # Fit one pane's viewport width.
-        avail = max(200, self._pane_a.scroll.viewport().width() - 16)
+        # Fit one pane's frame-inset width, which does not change when the
+        # vertical bar shows or hides, so a render cannot shift the width and
+        # re-trigger itself. The bar's width is always reserved.
+        scroll = self._pane_a.scroll
+        reserve = max(16, scroll.verticalScrollBar().sizeHint().width() + 2)
+        avail = max(200, scroll.contentsRect().width() - reserve)
         return max(120, int(avail * self._zoom))
 
     def _highlights_for_page(
@@ -831,7 +951,20 @@ class CompareWindow(JobChromeMixin, QWidget):
                     out.append((rect, color))
         return out
 
-    def _render_pages(self) -> None:
+    def _cancel_render(self, *, keep_landed: bool = False) -> None:
+        """Drop pending and in-flight renders; results of older requests are ignored."""
+        self._render_generation += 1
+        self._render_timer.stop()
+        self._render_after = None
+        if not (keep_landed and self._render_landed):
+            self._render_key = None
+            self._render_landed = False
+
+    def _render_pages(self, after: Callable[[], None] | None = None) -> None:
+        """Request a pane render; pixel work is debounced and runs on a worker.
+
+        ``after`` runs once the pane content for the current request has landed.
+        """
         if (
             self._report is None
             or not self._path_a
@@ -839,65 +972,122 @@ class CompareWindow(JobChromeMixin, QWidget):
             or self._render_suppressed
         ):
             return
-        width = self._target_width()
         total = max(self._report.page_count_a, self._report.page_count_b, 1)
         self._page_label.setText(f"Page {self._page_index + 1} / {total}")
         self._prev_act.setEnabled(self._page_index > 0)
         self._next_act.setEnabled(self._page_index < total - 1)
 
-        empty = QPixmap()
-        empty_rect = fitz.Rect(0, 0, 200, 260)
-        errors: list[str] = []
-        passwords = self._credentials.snapshot()
+        if after is not None:
+            self._render_after = after
+        key = self._render_key_now()
+        if key == self._render_key:
+            if self._render_landed:
+                self._run_render_after()
+            return
+        self._render_key = key
+        self._render_landed = False
+        self._render_generation += 1
+        self._render_timer.start()
 
-        if self._page_index < self._report.page_count_a:
+    def _render_key_now(self) -> tuple:
+        return (self._path_a, self._path_b, self._page_index, self._target_width())
+
+    def _run_render_after(self) -> None:
+        after, self._render_after = self._render_after, None
+        if after is not None:
+            after()
+
+    def _start_render(self) -> None:
+        if self._report is None or self._render_suppressed:
+            return
+        self._render_key = self._render_key_now()
+        generation = self._render_generation
+        count_a, count_b = self._report.page_count_a, self._report.page_count_b
+        worker = _CompareRenderWorker(
+            (
+                self._path_a if self._page_index < count_a else None,
+                self._path_b if self._page_index < count_b else None,
+            ),
+            self._page_index,
+            self._target_width(),
+            self._credentials.snapshot(),
+            generation,
+            lambda g: g != self._render_generation,
+        )
+        signals = worker.signals
+        _COMPARE_RENDER_SIGNAL_REFS.append(signals)
+
+        def _drop_ref(*_args: object) -> None:
             try:
-                pix_a, rect_a, to_visual_a = _render_page_pixmap(
-                    self._path_a,
-                    self._page_index,
-                    width,
-                    passwords=passwords,
-                )
-            except Exception as exc:
-                pix_a, rect_a, to_visual_a = empty, empty_rect, None
-                errors.append(f"Original: {exc}")
-            hl_a = self._highlights_for_page("a", self._page_index)
-            self._pane_a.set_content(pix_a, rect_a, hl_a, to_visual_a)
-            self._pane_a.set_notice(
-                "No extractable text on this page"
-                if self._page_index in self._report.textless_pages_a
-                else None
-            )
-        else:
-            self._pane_a.set_content(empty, empty_rect, [])
-            self._pane_a.set_notice("No corresponding page")
+                _COMPARE_RENDER_SIGNAL_REFS.remove(signals)
+            except ValueError:
+                pass
 
-        if self._page_index < self._report.page_count_b:
-            try:
-                pix_b, rect_b, to_visual_b = _render_page_pixmap(
-                    self._path_b,
-                    self._page_index,
-                    width,
-                    passwords=passwords,
-                )
-            except Exception as exc:
-                pix_b, rect_b, to_visual_b = empty, empty_rect, None
-                errors.append(f"Revised: {exc}")
-            hl_b = self._highlights_for_page("b", self._page_index)
-            self._pane_b.set_content(pix_b, rect_b, hl_b, to_visual_b)
-            self._pane_b.set_notice(
-                "No extractable text on this page"
-                if self._page_index in self._report.textless_pages_b
-                else None
-            )
-        else:
-            self._pane_b.set_content(empty, empty_rect, [])
-            self._pane_b.set_notice("No corresponding page")
+        signals.finished.connect(_drop_ref)
+        signals.finished.connect(self._on_render_done)
+        _compare_render_pool().start(worker)
 
+    def _on_render_done(
+        self,
+        generation: int,
+        result_a: _PaneRender | None,
+        result_b: _PaneRender | None,
+    ) -> None:
+        if generation != self._render_generation or self._report is None:
+            return
+        report = self._report
+        errors = [
+            error
+            for error in (
+                self._apply_pane_render(
+                    "Original", self._pane_a, "a", result_a,
+                    report.page_count_a, report.textless_pages_a,
+                ),
+                self._apply_pane_render(
+                    "Revised", self._pane_b, "b", result_b,
+                    report.page_count_b, report.textless_pages_b,
+                ),
+            )
+            if error
+        ]
+        self._render_landed = True
         if errors:
             detail = "; ".join(errors)
             self.statusBar().showMessage(f"Could not render page: {detail}")
             self._toast.show_toast("Could not render compare page", kind="error")
+        self._run_render_after()
+
+    def _apply_pane_render(
+        self,
+        label: str,
+        pane: _ComparePane,
+        side: str,
+        result: _PaneRender | None,
+        page_count: int,
+        textless_pages: tuple[int, ...],
+    ) -> str | None:
+        empty = QPixmap()
+        empty_rect = fitz.Rect(0, 0, 200, 260)
+        if self._page_index >= page_count:
+            pane.set_content(empty, empty_rect, [])
+            pane.set_notice("No corresponding page")
+            return None
+        error: str | None = None
+        if isinstance(result, tuple):
+            image, rect, to_visual = result
+            pixmap = QPixmap.fromImage(image)
+        else:
+            pixmap, rect, to_visual = empty, empty_rect, None
+            error = f"{label}: {result}"
+        pane.set_content(
+            pixmap, rect, self._highlights_for_page(side, self._page_index), to_visual
+        )
+        pane.set_notice(
+            "No extractable text on this page"
+            if self._page_index in textless_pages
+            else None
+        )
+        return error
 
     def _save_export_path(self, title: str, suggested: str) -> str | None:
         path, _ = QFileDialog.getSaveFileName(

@@ -573,6 +573,83 @@ def test_remove_annotations_and_color_effects(tmp_path: Path) -> None:
     assert ops.RASTER_EFFECT_WARNING
 
 
+@pytest.mark.parametrize("effect", ["greyscale", "background", "invert"])
+def test_color_effect_cancel_mid_loop_writes_nothing(
+    tmp_path: Path, monkeypatch, effect: str
+) -> None:
+    from pagedrop.core.jobs import CancelToken, JobCancelledError
+
+    src = _make_pdf(tmp_path / "src.pdf", text="body", pages=6)
+    src_hash = file_sha256(src)
+    out = tmp_path / "effect.pdf"
+    token = CancelToken()
+    checks = {"n": 0}
+    real_check = ops._check_cancel
+
+    def counting_check(cancel):
+        checks["n"] += 1
+        if checks["n"] >= 3:
+            token.cancel()
+        real_check(cancel)
+
+    monkeypatch.setattr(ops, "_check_cancel", counting_check)
+    with pytest.raises(JobCancelledError):
+        ops.apply_color_effect(str(src), str(out), effect=effect, dpi=36, cancel=token)
+    assert checks["n"] == 3
+    assert not out.exists()
+    assert file_sha256(src) == src_hash
+
+
+def test_invert_failure_releases_pixmap_before_the_error_leaves_the_lock(
+    tmp_path: Path, monkeypatch
+) -> None:
+    src = _make_pdf(tmp_path / "src.pdf")
+    src_hash = file_sha256(src)
+
+    def failing_insert_image(self, rect, pixmap=None, **kwargs):
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(fitz.Page, "insert_image", failing_insert_image)
+    doc = fitz.open(str(src))
+    out = fitz.open()
+    try:
+        with pytest.raises(ops.ColorEffectError, match="page 1: insert failed") as info:
+            ops._color_page("invert", doc, out, 0, (1.0, 1.0, 1.0), fitz.Matrix(1, 1))
+        pinned = []
+        seen: set[int] = set()
+        pending = [info.value]
+        while pending:
+            exc = pending.pop()
+            if exc is None or id(exc) in seen:
+                continue
+            seen.add(id(exc))
+            pending += [exc.__context__, exc.__cause__]
+            tb = exc.__traceback__
+            while tb is not None:
+                pinned += [
+                    (tb.tb_frame.f_code.co_name, name)
+                    for name, value in tb.tb_frame.f_locals.items()
+                    if isinstance(value, fitz.Pixmap)
+                ]
+                tb = tb.tb_next
+        assert pinned == []
+    finally:
+        out.close()
+        doc.close()
+    assert file_sha256(src) == src_hash
+
+
+def test_color_effect_rejects_source_path_and_unknown_effect(tmp_path: Path) -> None:
+    src = _make_pdf(tmp_path / "src.pdf")
+    src_hash = file_sha256(src)
+    with pytest.raises(SourceOverwriteError):
+        ops.apply_color_effect(str(src), str(src), effect="greyscale")
+    with pytest.raises(ValueError, match="Unknown color effect"):
+        ops.apply_color_effect(str(src), str(tmp_path / "x.pdf"), effect="sepia")  # type: ignore[arg-type]
+    assert file_sha256(src) == src_hash
+    assert not (tmp_path / "x.pdf").exists()
+
+
 def test_watermark_cancel_mid_loop_cleans_staged(tmp_path: Path, monkeypatch) -> None:
     """Cancel during watermark page loop must not promote and must scrub staging."""
     from pagedrop.core.jobs import CancelToken, JobCancelledError, JobSpec, SerializedJobRunner

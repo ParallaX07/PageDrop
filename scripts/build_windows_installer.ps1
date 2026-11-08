@@ -54,7 +54,7 @@ Write-Host "PageDrop version: $Version"
 $Ico = Join-Path $Root "src\pagedrop\assets\app-icon.ico"
 if (-not (Test-Path -LiteralPath $Ico)) {
     Write-Host "Generating app-icon.ico..."
-    & uv run --with pillow python scripts/generate_icons.py
+    & uv run python scripts/generate_icons.py
     if ($LASTEXITCODE -ne 0) {
         throw "Icon generation failed with exit code $LASTEXITCODE"
     }
@@ -62,7 +62,7 @@ if (-not (Test-Path -LiteralPath $Ico)) {
 
 if (-not $SkipBuild) {
     Write-Host "Building PyInstaller onedir..."
-    & uv sync --locked --group dev
+    & uv sync --locked --group dev --group codecs --group office
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency sync failed with exit code $LASTEXITCODE"
     }

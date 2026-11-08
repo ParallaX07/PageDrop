@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/pagedrop/assets/logo.png" alt="PageDrop logo — documents dropping into a folder" width="128">
+  <img src="src/pagedrop/assets/logo.svg" alt="PageDrop logo — documents dropping into a folder" width="128">
 </p>
 
 # PageDrop
@@ -36,7 +36,7 @@ Drag a PDF from your file manager onto the thumbnail grid, and its pages insert 
 
 ## Download
 
-> Optional features: Office conversion needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
+> Optional features: The Windows build includes Office COM support, but Office conversion still needs Microsoft Office or LibreOffice installed separately. OCR may need language data (tessdata).
 
 **Windows (GitHub Releases)**, no Python required:
 
@@ -54,8 +54,8 @@ supports the published zsync updates. macOS binaries aren't published yet.
 
 ## Quick start
 
-1. **Open a PDF**: File → Open PDF (`Ctrl+O`), or the toolbar Open button. Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab.
-2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or use **Select pages** in the Pages menu for a range like `1-5`.
+1. **Open a PDF**: File → Open PDF (`Ctrl+O`), the toolbar Open button, or name files on the command line (`pagedrop file.pdf`). Password-protected PDFs prompt for a password. Select multiple files to open each in its own tab.
+2. **Select pages**: click one, Ctrl+click to toggle, Shift+click for a range, Ctrl+A for all. Jump with **Ctrl+G**, or use **Select pages** (Edit menu or grid context menu) for a range like `1-5`.
 3. **Drag to a folder**: drag selected thumbnails into your file manager. Each page becomes its own PDF; PageDrop explains this on your first selection.
 4. **Edit across PDFs**: reorder, delete, duplicate (`Ctrl+D`), or rotate. Drop another PDF onto the grid to insert pages. Drag between windows; hold Shift to move instead of copy. Undo with `Ctrl+Z`. Then File → Save As.
 5. **Merge, Create PDF, or Tools**: Merge and Create PDF open as editor tabs. **Tools** (`Ctrl+Shift+O`) is the searchable hub for organize, convert, modify, optimize, and secure jobs.
@@ -82,7 +82,7 @@ Full walkthrough: [docs/user-guide.md](docs/user-guide.md).
 ### Multi-window workflows
 
 - New windows, tear-off tabs, or File → New Window
-- Drag pages between windows to copy; Shift+drop to move
+- Drag pages between windows to copy; Shift+drop to move (pages dragged in from another PageDrop process are always copied, and PageDrop says so)
 
 ### Merge PDFs and Create PDF
 
@@ -95,7 +95,7 @@ Searchable catalogue (`Ctrl+Shift+O`) for organize, convert, modify, optimize, a
 
 ### Preferences and accessibility
 
-Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available.
+Light theme (the first run follows the OS light or dark scheme), thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available. The window shrinks to 480 × 320, and Ctrl+Shift+H hides the menus and toolbar while the title bar and window controls stay.
 
 ## Keyboard shortcuts
 
@@ -108,6 +108,7 @@ Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platfo
 | Close tab | Ctrl+W |
 | Previous tab (MRU) / cycle backward | Ctrl+Tab / Ctrl+Shift+Tab |
 | Select all pages | Ctrl+A |
+| Hide / show menu and toolbar | Ctrl+Shift+H |
 | Clear selection | Escape |
 | Delete selected pages | Delete |
 | Duplicate selected pages | Ctrl+D |
@@ -123,13 +124,13 @@ Light theme, thumbnail quality, confirm-before-delete, reduce motion, and platfo
 | Keyboard shortcuts | Ctrl+/ |
 | Back to grid / list (in preview) | Escape |
 
-Ctrl+Tab toggles the most recently used previous tab. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab). Cross-window: drop copies; Shift+drop moves.
+Ctrl+Tab toggles the most recently used previous tab. Tools uses **Ctrl+Shift+O** so it does not steal **Ctrl+T** (New tab). Cross-window: drop copies; Shift+drop moves (from another PageDrop process it always copies, and says so).
 
 More detail: [docs/user-guide.md](docs/user-guide.md).
 
 ## Run from source
 
-**Requirements:** Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+**Requirements:** Python 3.11+, PyQt6 6.10 or later (installed by `uv sync`), and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/ParallaX07/PageDrop.git
@@ -167,4 +168,6 @@ Windows installer and packaging checklist: [docs/building.md](docs/building.md).
 
 ## License
 
-PageDrop is licensed under the GNU Affero General Public License v3.0 or later — see [`LICENSE`](LICENSE). Source and build instructions for every published binary are available in the corresponding source release. See [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+PageDrop is free software under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [`LICENSE`](LICENSE). Anyone may use, study, modify, fork, self-host and redistribute it at no cost. A permissive licence is not possible, because the free PyQt6 (GPLv3) and PyMuPDF (AGPL) wheels make every build an AGPL combined work. The only obligations fall on people who distribute PageDrop, or host a modified build: they must pass the same licence on, with the corresponding source, licence texts and notices.
+
+Source and build instructions for every published binary are in the matching source release tag. Licence texts are in [`licenses/`](licenses/). See [docs/licensing.md](docs/licensing.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), which includes a written offer for corresponding source.

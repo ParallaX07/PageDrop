@@ -20,17 +20,17 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.core import pdf_tools
-from pagedrop.core.jobs import JobCancelledError, preflight_pdf_inputs
-from pagedrop.core.pdf_service import page_count as pdf_page_count
-from pagedrop.ui.dialogs import prompt_pdf_password
-from pagedrop.ui.organize_tools import editor_pdf_context
+from pagedrop.ui.job_chrome import gui_fitz_call
+from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
     clear_field_error,
+    probe_pdf_input,
     run_tool_job,
     show_field_error,
+    source_still_loaded,
 )
 from pagedrop.utils.page_jump import parse_page_ranges
 
@@ -186,11 +186,16 @@ def _configure_split(shell: ToolShellWindow, ctx: EditorPdfContext | None) -> No
             show_field_error(folder, "Choose an output folder.")
             return
         try:
-            page_count = pdf_page_count(source)
+            probed = probe_pdf_input(shell, source)
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
             )
+            return
+        if probed is None:
+            return
+        page_count = probed[0]
+        if not source_still_loaded(shell, source):
             return
         parsed = parse_page_ranges(ranges_text, page_count)
         if not parsed:
@@ -541,6 +546,7 @@ def _configure_zip(shell: ToolShellWindow) -> None:
             inputs=paths,
             output=output,
             progress_message="Creating ZIP…",
+            check_passwords=False,
         )
 
     shell.set_run_handler(on_run)
@@ -567,11 +573,18 @@ def _configure_metadata(shell: ToolShellWindow) -> None:
         if not paths or not Path(paths[0]).is_file():
             return
         try:
-            meta = pdf_tools.metadata_get(paths[0])
+            probed = probe_pdf_input(shell, paths[0])
+            if probed is None:
+                return
+            meta = gui_fitz_call(
+                pdf_tools.metadata_get, paths[0], password=probed[1].get(paths[0])
+            )
         except Exception as exc:
             QMessageBox.warning(
                 shell, shell.WINDOW_TITLE, f"Could not read metadata:\n{exc}"
             )
+            return
+        if not source_still_loaded(shell, paths[0], notify=False):
             return
         for key, edit in fields.items():
             edit.setText(str(meta.get(key) or ""))
@@ -679,23 +692,21 @@ def _configure_attachments(shell: ToolShellWindow) -> None:
 
         if current == "extract":
             try:
-                creds = preflight_pdf_inputs(
-                    [source],
-                    prompt=lambda name, incorrect: prompt_pdf_password(
-                        shell, name, incorrect=incorrect
-                    ),
-                )
-            except JobCancelledError:
-                return
+                probed = probe_pdf_input(shell, source)
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
                 return
+            if probed is None:
+                return
+            creds = probed[1]
             try:
-                attachments = pdf_tools.attachments_list(
-                    source, password=creds.get(source)
+                attachments = gui_fitz_call(
+                    pdf_tools.attachments_list, source, password=creds.get(source)
                 )
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, str(exc))
+                return
+            if not source_still_loaded(shell, source):
                 return
             if not attachments:
                 QMessageBox.warning(
@@ -829,8 +840,10 @@ def open_organize_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | N
             # Prefill first slot only; user adds the rest.
             existing = shell.drop_zone.paths()
             if not existing:
+                adopt_context_credentials(shell, ctx)
                 shell.drop_zone.set_paths([ctx.path])
         else:
+            adopt_context_credentials(shell, ctx)
             shell.drop_zone.set_paths([ctx.path])
 
     present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")

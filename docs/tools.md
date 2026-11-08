@@ -8,6 +8,8 @@ Typical flow: drop zone → options → Run → cancelable progress → a persis
 
 PageDrop does **not** auto-open job results into PDF editor tabs. You choose Preview, Open, or Show in folder when you want them.
 
+Password-protected PDFs work in every tool that takes a PDF. A tool page asks for the password once, whether that happens when you drop the file or when you press **Run**, and reuses it for later runs on the same page. A wrong password asks again and says it was incorrect. The password is held in memory only; it is never written to a job, a setting, or a result. ZIP PDFs packs the files as they are and never asks.
+
 Coming-soon tiles stay hidden until you enable **Show upcoming** in the hub.
 
 ## Catalogue
@@ -49,6 +51,12 @@ Create PDF, Convert to PDF, Export from PDF, Office to PDF, PDF to Word, OCR, ex
 
 Optional backends (Office COM, LibreOffice, tessdata, openpyxl, and related codecs) show clearly when missing. Core thumbnail editing, Merge, and Create PDF still work without them.
 
+The `codecs` dependency group adds openpyxl (PDF to Excel, Excel to PDF) and Pillow (image codecs). A plain `uv sync` installs it. An install without the group still starts, and a tool that needs a missing package names it (for example openpyxl) instead of failing silently. The Windows installer includes openpyxl, Pillow and the pywin32 support for Office COM; Microsoft Office itself is still a separate install.
+
+PDF to Word converts a temporary decrypted copy of a password-protected PDF, because LibreOffice cannot open one. The copy is deleted when the job ends, whether it succeeds, fails, or is cancelled; your original is never changed.
+
+When Word or Excel documents are converted through Microsoft Office, a document that has a password fails with a clear message. PageDrop does not retry it in LibreOffice, and does not show an Office password dialog.
+
 ### Modify
 
 Crop, watermark, header & footer, page numbers, Bates, bookmarks/TOC, annotations, blank pages, color effects.
@@ -56,6 +64,8 @@ Crop, watermark, header & footer, page numbers, Bates, bookmarks/TOC, annotation
 ### Optimize / Secure
 
 Compress, repair, encrypt, decrypt, sanitize.
+
+Encrypt, compress, repair, and sanitize accept a password-protected source and ask for its password once. Decrypt writes an unlocked copy of a PDF that needs a password to open. A PDF that opens without a password but has an owner password only restricts printing or editing; Decrypt reports that and writes nothing, rather than removing the restrictions.
 
 ## Optional backends
 
@@ -67,4 +77,4 @@ Office conversions name the engine in status. If a COM run fails, fallback to an
 
 ## Cancel and cleanup
 
-Cancel immediately changes the progress state to **Cancelling…** until the worker finishes. It stops the owned job and, for helper processes (Office / LibreOffice), kills only the owned process trees. Partial outputs under temp staging are removed; promoted results stay where you saved them. Recoverable errors remain beside **Run** as well as appearing in a dialog and notification.
+Cancel immediately changes the progress state to **Cancelling…** until the worker finishes. It stops the owned job and, for helper processes (Office / LibreOffice), kills only the owned process trees. For Office COM that includes the Office app the helper launched, also on timeout or a helper crash; Office windows you opened yourself are never touched. Partial outputs under temp staging are removed; promoted results stay where you saved them. Recoverable errors remain beside **Run** as well as appearing in a dialog and notification.

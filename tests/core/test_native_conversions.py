@@ -8,8 +8,13 @@ from pathlib import Path
 import fitz
 import pytest
 
+try:
+    import openpyxl
+except ImportError:  # The optional codecs group is not installed.
+    openpyxl = None
+
 from pagedrop.core import native_conversions as nc
-from pagedrop.core.capabilities import OPENPYXL, clear_cache
+from pagedrop.core.capabilities import OPENPYXL, PILLOW, clear_cache, probe_all
 from pagedrop.core.jobs.errors import BackendUnavailableError, SourceOverwriteError
 from pagedrop.core.supported_formats import (
     EXPORT_FROM_PDF_FORMATS,
@@ -21,6 +26,8 @@ from pagedrop.core.supported_formats import (
     is_supported_image,
 )
 from tests.conftest import file_sha256
+
+needs_openpyxl = pytest.mark.skipif(openpyxl is None, reason="openpyxl (codecs group) not installed")
 
 
 def _make_text_pdf(path: Path, texts: list[str]) -> Path:
@@ -235,10 +242,11 @@ def test_xlsx_to_pdf_requires_openpyxl_when_absent(tmp_path, monkeypatch):
     with pytest.raises(BackendUnavailableError) as exc:
         nc.import_to_pdf(xlsx, out)
     assert exc.value.capability_id == OPENPYXL
+    assert "openpyxl" in str(exc.value)
 
 
+@needs_openpyxl
 def test_xlsx_to_pdf_contains_known_cells(tmp_path):
-    openpyxl = pytest.importorskip("openpyxl")
     clear_cache()
     xlsx = tmp_path / "book.xlsx"
     out = tmp_path / "book.pdf"
@@ -256,6 +264,62 @@ def test_xlsx_to_pdf_contains_known_cells(tmp_path):
     finally:
         doc.close()
     assert file_sha256(xlsx) == before
+
+
+@needs_openpyxl
+def test_pdf_to_xlsx_writes_known_cells_and_leaves_source_alone(tmp_path):
+    clear_cache()
+    source = _make_table_pdf(tmp_path / "table.pdf")
+    out = tmp_path / "table.xlsx"
+    before = file_sha256(source)
+    written = nc.export_pdf(source, out, format_id="xlsx")
+    assert written == [out]
+    assert out != source
+    assert file_sha256(source) == before
+    workbook = openpyxl.load_workbook(out, read_only=True, data_only=True)
+    try:
+        cells = {
+            str(cell) for row in workbook["Tables"].iter_rows(values_only=True) for cell in row
+        }
+    finally:
+        workbook.close()
+    assert {"Name", "Age", "Ada", "36", "Bob", "41"} <= cells
+
+
+def test_missing_codecs_are_named_while_core_export_still_works(tmp_path, monkeypatch):
+    """Without openpyxl and Pillow the error names the package; probes and PNG export survive."""
+    import importlib
+
+    real_import = importlib.import_module
+
+    def absent(name, package=None):
+        if name in {"openpyxl", "PIL"}:
+            raise ModuleNotFoundError(f"No module named {name!r}")
+        return real_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", absent)
+    clear_cache()
+    try:
+        statuses = probe_all(refresh=True)
+        assert statuses[OPENPYXL].available is False
+        assert statuses[PILLOW].available is False
+        assert "openpyxl" in statuses[OPENPYXL].detail
+
+        source = _make_table_pdf(tmp_path / "table.pdf")
+        before = file_sha256(source)
+        with pytest.raises(BackendUnavailableError, match="openpyxl") as exc:
+            nc.export_pdf(source, tmp_path / "table.xlsx", format_id="xlsx")
+        assert exc.value.capability_id == OPENPYXL
+        assert not (tmp_path / "table.xlsx").exists()
+
+        png = tmp_path / "page.png"
+        written = nc.export_pdf(source, png, format_id="png")
+        assert written and written[0].stat().st_size > 0
+        assert written[0] != source
+        assert file_sha256(source) == before
+    finally:
+        monkeypatch.undo()
+        clear_cache()
 
 
 def test_csv_to_pdf_rejects_too_many_columns(tmp_path):

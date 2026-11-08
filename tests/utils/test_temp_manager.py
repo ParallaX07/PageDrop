@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -31,6 +32,49 @@ def test_pid_alive_self_and_bogus():
     assert _pid_alive(0) is False
     # Unlikely to be a live PID; must return False without raising / signaling.
     assert _pid_alive(2_147_000_000) is False
+
+
+def _fake_win32(monkeypatch, *, handle, exit_code=None, last_error=0):
+    """Install a fake kernel32 on a pretend Windows platform."""
+    import ctypes
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    def get_exit_code(_handle, ref):
+        ref._obj.value = exit_code
+        return 1
+
+    kernel32 = SimpleNamespace(
+        OpenProcess=MagicMock(return_value=handle),
+        GetExitCodeProcess=MagicMock(side_effect=get_exit_code),
+        CloseHandle=MagicMock(return_value=1),
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel32), raising=False)
+    monkeypatch.setattr(ctypes, "GetLastError", lambda: last_error, raising=False)
+    return kernel32
+
+
+def test_pid_alive_windows_running_process(monkeypatch):
+    k32 = _fake_win32(monkeypatch, handle=0x1234, exit_code=259)
+    assert _pid_alive(4321) is True
+    k32.CloseHandle.assert_called_once()
+
+
+def test_pid_alive_windows_exited_process_with_open_handle(monkeypatch):
+    k32 = _fake_win32(monkeypatch, handle=0x1234, exit_code=1)
+    assert _pid_alive(4321) is False
+    k32.CloseHandle.assert_called_once()
+
+
+def test_pid_alive_windows_access_denied_counts_as_alive(monkeypatch):
+    _fake_win32(monkeypatch, handle=0, last_error=5)
+    assert _pid_alive(4321) is True
+
+
+def test_pid_alive_windows_open_failure_is_dead(monkeypatch):
+    _fake_win32(monkeypatch, handle=0, last_error=87)
+    assert _pid_alive(4321) is False
 
 
 def test_creates_prefixed_dir():
@@ -150,6 +194,7 @@ def test_enforce_max_size_evicts_oldest_job_dirs():
     try:
         old_job = tm.create_job_dir()
         (old_job / "old.pdf").write_bytes(b"x" * 80)
+        tm.unpin_dir(old_job)  # finished job: evictable
 
         new_job = tm.create_job_dir()
         (new_job / "new.pdf").write_bytes(b"y" * 80)
@@ -166,6 +211,7 @@ def test_enforce_max_size_evicts_oldest_across_drag_and_job():
     try:
         old_job = tm.create_job_dir()
         (old_job / "old.pdf").write_bytes(b"x" * 80)
+        tm.unpin_dir(old_job)  # finished job: evictable
 
         drag = tm.create_drag_dir()
         (drag / "drag.pdf").write_bytes(b"y" * 80)
@@ -303,3 +349,125 @@ def test_init_preserves_claimed_backend_temps():
         release_backend_temp(lo)
         for path in (office, lo):
             shutil.rmtree(path, ignore_errors=True)
+
+
+def _run_with_timeout(fn, timeout: float = 5.0) -> bool:
+    """Run *fn* in a daemon thread; True if it returned within *timeout*."""
+    worker = threading.Thread(target=fn, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return not worker.is_alive()
+
+
+def test_enforce_max_size_returns_when_candidate_cannot_be_removed(monkeypatch):
+    tm = TempManager(max_bytes=100)
+    try:
+        for _ in range(2):
+            stuck = tm.create_drag_dir()
+            (stuck / "big.pdf").write_bytes(b"x" * 80)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(shutil, "rmtree", lambda *args, **kwargs: None)
+            assert _run_with_timeout(tm._enforce_max_size)
+            assert _run_with_timeout(tm.create_drag_dir)
+    finally:
+        tm.cleanup()
+
+
+def test_pinned_job_dir_survives_eviction_until_unpinned():
+    tm = TempManager(max_bytes=100)
+    try:
+        live = tm.create_job_dir()
+        (live / "output.pdf").write_bytes(b"x" * 200)
+
+        newest = tm.create_job_dir()
+        assert newest.exists()  # a dir is never evicted by its own creation
+        assert live.exists()
+
+        tm.unpin_dir(live)
+        tm.create_drag_dir()
+        assert not live.exists()
+        assert newest.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_remove_dir_is_best_effort_and_unpins():
+    tm = TempManager()
+    try:
+        job = tm.create_job_dir()
+        (job / "partial.pdf").write_bytes(b"x")
+        tm.remove_dir(job)
+        assert not job.exists()
+        tm.remove_dir(job)  # already gone: no error
+    finally:
+        tm.cleanup()
+
+
+def test_cleanup_paths_tolerates_missing_files_and_unlink_errors(monkeypatch):
+    tm = TempManager()
+    try:
+        drag_dir = tm.create_drag_dir()
+        missing = drag_dir / "missing.pdf"
+        tm.cleanup_paths([missing])
+        assert not drag_dir.exists()
+
+        drag_dir = tm.create_drag_dir()
+        stuck = drag_dir / "stuck.pdf"
+        stuck.write_bytes(b"x")
+
+        def deny(self, *args, **kwargs):
+            raise PermissionError("in use")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "unlink", deny)
+            tm.cleanup_paths([stuck])
+        assert stuck.exists()
+    finally:
+        tm.cleanup()
+
+
+def test_concurrent_creates_get_distinct_dirs():
+    tm = TempManager()
+    created: list[Path] = []
+
+    def make_many() -> None:
+        for _ in range(25):
+            created.append(tm.create_drag_dir())
+            created.append(tm.create_job_dir())
+
+    try:
+        threads = [threading.Thread(target=make_many) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert len(created) == 200
+        assert len(set(created)) == 200
+    finally:
+        tm.cleanup()
+
+
+def test_dir_size_ignores_a_file_that_vanishes_mid_walk(monkeypatch):
+    tm = TempManager(max_bytes=100)
+    try:
+        job = tm.create_job_dir()
+        (job / "gone.bin").write_bytes(b"x" * 50)
+        (job / "kept.bin").write_bytes(b"x" * 30)
+        real_stat = Path.stat
+        real_is_file = Path.is_file
+
+        def flaky_stat(self, *args, **kwargs):
+            if self.name == "gone.bin":
+                raise FileNotFoundError(self.name)
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", flaky_stat)
+        monkeypatch.setattr(
+            Path, "is_file", lambda self: self.name == "gone.bin" or real_is_file(self)
+        )
+        assert tm._dir_size() >= 30
+        tm.create_drag_dir()  # runs the quota check; must not raise
+    finally:
+        monkeypatch.undo()
+        tm.cleanup()

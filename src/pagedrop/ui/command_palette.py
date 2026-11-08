@@ -199,12 +199,12 @@ class CommandPalette(QDialog):
     def keyPressEvent(self, event) -> None:  # noqa: ANN001
         key = event.key()
         if key in (Qt.Key.Key_Down, Qt.Key.Key_Up) and self._list.count():
-            row = self._list.currentRow()
-            if key == Qt.Key.Key_Down:
-                row = min(row + 1, self._list.count() - 1)
-            else:
-                row = max(row - 1, 0)
-            self._list.setCurrentRow(row)
+            step = 1 if key == Qt.Key.Key_Down else -1
+            row = self._list.currentRow() + step
+            while 0 <= row < len(self._item_actions) and self._item_actions[row] is None:
+                row += step
+            if 0 <= row < len(self._item_actions):
+                self._list.setCurrentRow(row)
             event.accept()
             return
         if key == Qt.Key.Key_Escape:

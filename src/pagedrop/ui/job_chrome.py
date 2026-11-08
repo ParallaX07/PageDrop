@@ -10,9 +10,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtCore import QEventLoop, QObject, QTimer
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
 
-from pagedrop.core.jobs import CancelToken, SerializedJobRunner
+from pagedrop.core.jobs import CancelToken, JobCancelledError, SerializedJobRunner
+from pagedrop.core.thread_policy import FITZ_LOCK
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
 from pagedrop.ui.dialogs import prompt_cancel_running_job
 from pagedrop.ui.result_actions import (
@@ -21,10 +23,141 @@ from pagedrop.ui.result_actions import (
     preview_pdf,
     show_in_folder,
 )
+
+
 def _progress_message(message: str) -> str:
     if message.endswith("…"):
         return message
     return f"{message.rstrip('.')}…"
+
+
+_LOCK_WAIT_MESSAGE = "Waiting for running job…"
+_LOCK_FIRST_TRY_S = 0.05
+_LOCK_TICK_MS = 50
+# Timed (not non-blocking): per-page jobs free FITZ_LOCK for ~1 ms between
+# pages, which only a thread already sleeping in acquire can catch.
+_LOCK_TICK_ACQUIRE_S = 0.02
+
+
+class _LockNotHeldError(JobCancelledError):
+    """Cancelled while re-taking ``FITZ_LOCK``; the GUI thread does not hold it."""
+
+
+def _acquire_pumped(
+    flags: QEventLoop.ProcessEventsFlag, token: CancelToken | None = None
+) -> None:
+    """Take ``FITZ_LOCK`` on the GUI thread, pumping events while a job holds it.
+
+    The uncontended path pumps nothing. Cancelling *token* during the wait
+    raises ``_LockNotHeldError`` without holding the lock.
+    """
+    while not FITZ_LOCK.acquire(timeout=_LOCK_TICK_ACQUIRE_S):
+        if token is not None and token.is_cancelled():
+            raise _LockNotHeldError("Job cancelled")
+        QApplication.processEvents(flags)
+
+
+def gui_fitz_call(fn: Callable, *args, **kwargs):
+    """Run a GUI-thread PDF probe under ``FITZ_LOCK`` without freezing the window.
+
+    While a job holds the lock, painting, timers and window-system events keep
+    running but user input is not processed, so nothing can re-enter the
+    caller. Exceptions from *fn* propagate unchanged. Never open a modal inside
+    *fn*; keep prompts and retry loops outside the call.
+    """
+    _acquire_pumped(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        FITZ_LOCK.release()
+
+
+def fitz_lock_released(fn: Callable, token: CancelToken | None = None):
+    """Wrap a modal callback so the GUI thread's ``FITZ_LOCK`` is free while it runs.
+
+    The lock is re-taken afterwards with an event-pumping wait (all events, so
+    the busy overlay's Cancel works). Cancelling *token* during that wait raises
+    ``JobCancelledError`` without the lock held.
+    """
+
+    def wrapper(*args, **kwargs):
+        FITZ_LOCK.release()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _acquire_pumped(QEventLoop.ProcessEventsFlag.AllEvents, token)
+
+    return wrapper
+
+
+def run_with_fitz_lock(
+    host,
+    token: CancelToken,
+    *,
+    message: str,
+    probe: Callable[[], object],
+    done: Callable[[object, Exception | None], None],
+) -> None:
+    """Run GUI-thread PDF *probe* under ``FITZ_LOCK`` without freezing the window.
+
+    Takes the lock with a short timed acquire; if a job holds it, shows
+    "Waiting for running job…" and retries from a timer so the event loop keeps
+    running. *probe* runs with the lock held (wrap modal dialogs it opens in
+    ``fitz_lock_released``). The lock is released before ``done(result, error)``
+    runs, so ``done`` may open dialogs. Cancelling *token* during the wait calls
+    ``done(None, JobCancelledError)``.
+    """
+
+    def finish() -> None:
+        result: object = None
+        error: Exception | None = None
+        held = True
+        try:
+            result = probe()
+        except _LockNotHeldError as exc:
+            held = False
+            error = exc
+        except Exception as exc:
+            error = exc
+        finally:
+            if held:
+                FITZ_LOCK.release()
+        done(result, error)
+
+    if FITZ_LOCK.acquire(timeout=_LOCK_FIRST_TRY_S):
+        finish()
+        return
+
+    host.set_job_progress(0.0, _LOCK_WAIT_MESSAGE)
+    timer = QTimer(host if isinstance(host, QObject) else None)
+    timer.setInterval(_LOCK_TICK_MS)
+
+    def current() -> bool:
+        # Closing the host ends the job itself; a stale tick must not end it twice.
+        running = getattr(host, "is_job_running", None)
+        if callable(running) and not running():
+            return False
+        return getattr(host, "_cancel_token", token) is token
+
+    def tick() -> None:
+        if token.is_cancelled():
+            timer.stop()
+            timer.deleteLater()
+            if current():
+                done(None, JobCancelledError("Job cancelled"))
+            return
+        if not FITZ_LOCK.acquire(timeout=_LOCK_TICK_ACQUIRE_S):
+            return
+        timer.stop()
+        timer.deleteLater()
+        if not current():
+            FITZ_LOCK.release()
+            return
+        host.set_job_progress(0.0, message)
+        finish()
+
+    timer.timeout.connect(tick)
+    timer.start()
 
 
 def explain_busy_running(

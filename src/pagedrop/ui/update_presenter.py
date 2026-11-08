@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from PyQt6.QtCore import QEvent, QObject, QTimer, QUrl, Qt
+from PyQt6.QtCore import QObject, QTimer, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
@@ -21,6 +21,7 @@ from pagedrop.ui import settings
 from pagedrop.ui.update_checker import UpdateCoordinator, UpdateState
 from pagedrop.utils.update_checker import REPOSITORY, ReleaseInfo
 
+_OFFER_RETRY_MS = 1000
 _RELEASE_PAGE = QUrl(f"https://github.com/{REPOSITORY}/releases")
 
 
@@ -45,7 +46,8 @@ class UpdateDialog(QDialog):
         self.notes.setObjectName("UpdateReleaseNotes")
         self.notes.setReadOnly(True)
         self.notes.setAccessibleName("Release notes")
-        self.notes.setOpenExternalLinks(True)
+        self.notes.setOpenLinks(False)
+        self.notes.setOpenExternalLinks(False)
         layout.addWidget(self.notes, 1)
         self.progress = QProgressBar()
         self.progress.setObjectName("UpdateDownloadProgress")
@@ -59,7 +61,7 @@ class UpdateDialog(QDialog):
     def show_message(self, message: str, *, notes: str = "") -> None:
         self._cancelling_download = False
         self.message.setText(message)
-        self.notes.setMarkdown(notes)
+        self.notes.setPlainText(notes)
         self.notes.setVisible(bool(notes))
         self.progress.hide()
         self._clear_buttons()
@@ -155,8 +157,14 @@ class UpdatePresenter(QObject):
         self._dialog: UpdateDialog | None = None
         self._manual = False
         self._pending_offer = False
+        # Signals cover focus and window changes. Job and preview changes emit nothing
+        # app-wide, so a slow timer retries while an offer waits.
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setInterval(_OFFER_RETRY_MS)
+        self._retry_timer.timeout.connect(self._present_pending_offer)
         app = QApplication.instance()
-        app.installEventFilter(self)
+        app.focusChanged.connect(self._schedule_pending_offer)
+        app.focusWindowChanged.connect(self._schedule_pending_offer)
         self._coordinator.release_available.connect(self._on_release_available)
         self._coordinator.check_succeeded.connect(self._on_check_succeeded)
         self._coordinator.check_failed.connect(self._on_check_failed)
@@ -208,20 +216,20 @@ class UpdatePresenter(QObject):
 
     def window_closed(self, window) -> None:
         if self._dialog is not None and self._dialog.parentWidget() is window:
-            self._dialog.setParent(self._presenter_window())
+            self._dialog.setParent(self._presenter_window(), self._dialog.windowFlags())
             self._dialog.show()
         self._present_pending_offer()
 
-    def eventFilter(self, obj, event) -> bool:
-        if event.type() in {QEvent.Type.FocusIn, QEvent.Type.FocusOut, QEvent.Type.WindowActivate, QEvent.Type.Hide, QEvent.Type.Show}:
+    def _schedule_pending_offer(self, *_args) -> None:
+        if self._pending_offer:
             QTimer.singleShot(0, self._present_pending_offer)
-        return super().eventFilter(obj, event)
 
     def _on_release_available(self, release: ReleaseInfo) -> None:
         if self._manual:
             self._show_offer(self._presenter_window())
         else:
             self._pending_offer = True
+            self._retry_timer.start()
             self._present_pending_offer()
 
     def _on_check_succeeded(self, release: object) -> None:
@@ -252,12 +260,19 @@ class UpdatePresenter(QObject):
             self._dialog.message.setText("Update download canceled. " + self._dialog.message.text())
 
     def _present_pending_offer(self) -> None:
-        if not self._pending_offer or not self._can_interrupt():
+        if not self._pending_offer:
             return
         release = self._coordinator.release
         if release is None or self._suppressed(release):
+            # Skipped or snoozed: stop polling; focus signals retry once it lapses.
+            self._retry_timer.stop()
+            return
+        if not self._can_interrupt():
+            if not self._retry_timer.isActive():
+                self._retry_timer.start()
             return
         self._pending_offer = False
+        self._retry_timer.stop()
         self._show_offer(self._presenter_window())
 
     def _suppressed(self, release: ReleaseInfo) -> bool:
@@ -283,12 +298,17 @@ class UpdatePresenter(QObject):
         active = QApplication.activeWindow()
         return active if active in self._manager.windows else self._manager.primary
 
+    def _on_dialog_finished(self, _result: int) -> None:
+        dialog, self._dialog = self._dialog, None
+        if dialog is not None:
+            dialog.deleteLater()
+
     def _ensure_dialog(self, parent) -> UpdateDialog:
         if self._dialog is None:
             self._dialog = UpdateDialog(parent, self._coordinator, self._manager)
-            self._dialog.finished.connect(lambda _: setattr(self, "_dialog", None))
+            self._dialog.finished.connect(self._on_dialog_finished)
         elif self._dialog.parentWidget() is not parent and parent is not None:
-            self._dialog.setParent(parent)
+            self._dialog.setParent(parent, self._dialog.windowFlags())
         self._dialog.show()
         self._dialog.raise_()
         self._dialog.activateWindow()

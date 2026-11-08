@@ -2,18 +2,21 @@
 
 Spawns :mod:`pagedrop.helpers.office_com_worker` in a dedicated process with
 JSON stdin/stdout IPC. Timeout and cancel kill **only** the owned helper
-process tree (never an arbitrary WINWORD/EXCEL/POWERPNT the user started).
+process tree plus the one Office app the helper reports having launched (never
+an arbitrary WINWORD/EXCEL/POWERPNT the user started).
 """
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
-import time
+import tempfile
 from pathlib import Path
 from typing import Callable
 
-from pagedrop.core.backends.process_tree import kill_process_tree, popen_owned
+from pagedrop.core.backends.process_tree import kill_process_tree, run_owned
 from pagedrop.core.capabilities import OFFICE_COM, probe
 from pagedrop.core.jobs.cancel import CancelToken
 from pagedrop.core.jobs.errors import (
@@ -21,12 +24,10 @@ from pagedrop.core.jobs.errors import (
     JobCancelledError,
     JobError,
 )
+from pagedrop.utils.temp_manager import claim_backend_temp, release_backend_temp
 
 # Default wall-clock budget for one conversion (large decks / slow disks).
 DEFAULT_TIMEOUT_SEC = 300.0
-
-# Poll interval while waiting on the helper (cancel responsiveness).
-_POLL_SEC = 0.1
 
 
 class OfficeComConversionError(JobError):
@@ -84,55 +85,44 @@ def convert_via_com(
         )
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    request = {"input": str(src), "output": str(dst)}
+    pid_dir = claim_backend_temp(Path(tempfile.mkdtemp(prefix="pagedrop_com_")))
+    pid_file = pid_dir / "office.pid"
+    request = {"input": str(src), "output": str(dst), "pid_file": str(pid_file)}
     if on_progress is not None:
         on_progress("Converting with Microsoft Office…")
 
-    proc = popen_owned(worker_argv())
-    owned_pid = proc.pid
-    stdout_data = ""
-    stderr_data = ""
+    worker_pid = 0
     try:
-        assert proc.stdin is not None
-        proc.stdin.write(json.dumps(request, ensure_ascii=False))
-        proc.stdin.close()
-
-        deadline = time.monotonic() + max(0.1, float(timeout_sec))
-        while proc.poll() is None:
-            if cancel is not None and cancel.is_cancelled():
-                kill_process_tree(owned_pid)
-                proc.wait(timeout=5)
-                raise JobCancelledError("Office COM conversion cancelled")
-            if time.monotonic() >= deadline:
-                kill_process_tree(owned_pid)
-                proc.wait(timeout=5)
-                raise OfficeComConversionError(
-                    f"Office COM conversion timed out after {timeout_sec:.0f}s",
-                    code="timeout",
-                )
-            time.sleep(_POLL_SEC)
-
-        stdout_data = proc.stdout.read() if proc.stdout else ""
-        stderr_data = proc.stderr.read() if proc.stderr else ""
+        result = run_owned(
+            worker_argv(),
+            input=json.dumps(request),
+            timeout=max(0.1, float(timeout_sec)),
+            cancel=cancel,
+        )
+        worker_pid = result.pid
+        if result.cancelled or result.timed_out:
+            _kill_reported_office(pid_file, worker_pid)
+        if result.cancelled:
+            raise JobCancelledError("Office COM conversion cancelled")
+        if result.timed_out:
+            raise OfficeComConversionError(
+                f"Office COM conversion timed out after {timeout_sec:.0f}s",
+                code="timeout",
+            )
+        response = _parse_response(result.stdout, result.stderr, result.returncode)
+        if response.get("code") == "worker_crash" and not response.get("ok"):
+            # The worker died (or broke) without a clean answer; the Office app
+            # it launched may still be running.
+            _kill_reported_office(pid_file, worker_pid)
     except (JobCancelledError, OfficeComConversionError):
         raise
-    except Exception:
-        kill_process_tree(owned_pid)
-        try:
-            proc.wait(timeout=5)
-        except Exception:  # noqa: BLE001
-            pass
+    except BaseException:
+        _kill_reported_office(pid_file, worker_pid)
         raise
     finally:
-        # Reap if still alive (belt-and-braces — should already be dead).
-        if proc.poll() is None:
-            kill_process_tree(owned_pid)
-            try:
-                proc.wait(timeout=5)
-            except Exception:  # noqa: BLE001
-                pass
+        release_backend_temp(pid_dir)
+        shutil.rmtree(pid_dir, ignore_errors=True)
 
-    response = _parse_response(stdout_data, stderr_data, proc.returncode)
     if not response.get("ok"):
         raise OfficeComConversionError(
             str(response.get("error") or "Office COM conversion failed"),
@@ -145,6 +135,21 @@ def convert_via_com(
             code="empty_output",
         )
     return out
+
+
+def _kill_reported_office(pid_file: Path, worker_pid: int) -> None:
+    """Kill the Office app the worker reported it started (best effort).
+
+    The worker writes the PID of the app it launched into *pid_file*. It is
+    killed only if it is a positive int that is neither this process nor the
+    worker; no file (lookup failed or never reached) means nothing to do.
+    """
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    if pid > 0 and pid not in (os.getpid(), worker_pid):
+        kill_process_tree(pid)
 
 
 def _parse_response(

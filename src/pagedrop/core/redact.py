@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import json
 import math
-import subprocess
 import sys
-import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import fitz
 
-from pagedrop.core.backends.process_tree import kill_process_tree, popen_owned
+from pagedrop.core.backends.process_tree import frozen_child_env, run_owned
 from pagedrop.core.jobs.cancel import CancelToken, check_cancel
 from pagedrop.core.jobs.errors import JobCancelledError, JobError
 from pagedrop.core.jobs.paths import reject_source_overwrite
@@ -48,6 +46,9 @@ class RedactionError(JobError):
 
 class RedactionVerifyError(JobError):
     """Raised when post-redaction verification fails (output must not be kept)."""
+
+    # The message embeds redacted text; log files must not keep it.
+    log_detail_sensitive = True
 
     def __init__(self, message: str, *, failures: Sequence[str] = ()) -> None:
         self.failures = tuple(failures)
@@ -524,41 +525,26 @@ def verify_redacted_pdf_fresh_process(
     }
     check_cancel(cancel)
     try:
-        proc = popen_owned(verify_argv())
+        result = run_owned(
+            verify_argv(),
+            input=json.dumps(payload),
+            timeout=timeout,
+            cancel=cancel,
+            env=frozen_child_env(),
+        )
     except OSError as exc:
         return RedactionVerifyReport(
             failures=[f"could not start fresh-process verifier: {exc}"]
         )
-    deadline = time.monotonic() + timeout
-    pending_input: str | None = json.dumps(payload)
-    try:
-        while True:
-            check_cancel(cancel)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(proc.args, timeout)
-            try:
-                stdout, stderr = proc.communicate(pending_input, timeout=min(0.1, remaining))
-                break
-            except subprocess.TimeoutExpired:
-                pending_input = None
-    except (JobCancelledError, subprocess.TimeoutExpired) as exc:
-        kill_process_tree(proc.pid)
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        if isinstance(exc, JobCancelledError):
-            raise
+    if result.cancelled:
+        raise JobCancelledError("Job cancelled")
+    if result.timed_out:
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier timed out after {timeout:.0f}s"]
         )
-    except BaseException:
-        kill_process_tree(proc.pid)
-        raise
-    if proc.returncode not in (0, 2):
-        detail = (stderr or stdout or "").strip() or f"exit {proc.returncode}"
+    stdout, stderr = result.stdout, result.stderr
+    if result.returncode not in (0, 2):
+        detail = (stderr or stdout or "").strip() or f"exit {result.returncode}"
         return RedactionVerifyReport(
             failures=[f"fresh-process verifier crashed: {detail}"]
         )
@@ -784,20 +770,35 @@ def redact_edit_model(
 
 
 def _cli_verify() -> int:
-    """Read verify payload from stdin; print JSON report; exit 0/2."""
-    payload = json.loads(sys.stdin.read() or "{}")
-    report = inspect_redaction_result(
-        payload["path"],
-        absent_text=payload.get("absent_text") or (),
-        password=payload.get("password"),
-        expect_no_redact_annots=bool(payload.get("expect_no_redact_annots", True)),
-        expect_empty_metadata=bool(payload.get("expect_empty_metadata", False)),
-        expect_no_attachments=bool(payload.get("expect_no_attachments", False)),
-        forbidden_image_xrefs=payload.get("forbidden_image_xrefs") or (),
-        regions=payload.get("regions") or (),
-        raw_scan_text=payload.get("raw_scan_text") or (),
-        forbidden_image_digests=payload.get("forbidden_image_digests") or None,
-    )
+    """Read verify payload from stdin; print JSON report; exit 0/2.
+
+    Any failure to read the request or inspect the file is reported as a failed
+    verification (exit 2) instead of a traceback, so the parent fails closed and
+    a windowed build never blocks on an error dialog.
+    """
+    password: str | None = None
+    try:
+        payload = json.loads((sys.stdin.read() if sys.stdin is not None else "") or "{}")
+        path = payload["path"]
+        password = payload.get("password")
+        report = inspect_redaction_result(
+            path,
+            absent_text=payload.get("absent_text") or (),
+            password=password,
+            expect_no_redact_annots=bool(payload.get("expect_no_redact_annots", True)),
+            expect_empty_metadata=bool(payload.get("expect_empty_metadata", False)),
+            expect_no_attachments=bool(payload.get("expect_no_attachments", False)),
+            forbidden_image_xrefs=payload.get("forbidden_image_xrefs") or (),
+            regions=payload.get("regions") or (),
+            raw_scan_text=payload.get("raw_scan_text") or (),
+            forbidden_image_digests=payload.get("forbidden_image_digests") or None,
+        )
+    except Exception as exc:  # noqa: BLE001 — reported to the parent as a failed verification
+        detail = f"{type(exc).__name__}: {exc}"
+        if password:
+            detail = detail.replace(password, "…")
+        print(json.dumps({"failures": [f"verifier could not check the file: {detail}"]}))
+        return 2
     print(json.dumps({"failures": report.failures}))
     return 0 if report.ok else 2
 

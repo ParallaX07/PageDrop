@@ -904,7 +904,7 @@ class ToolsWindow(QWidget):
 
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setObjectName("ToolsWindow")
-        self.setMinimumSize(560, 420)
+        self.setMinimumSize(480, 320)
 
         self._nav_filter = _TileArrowNavFilter(self)
         self._build_ui()

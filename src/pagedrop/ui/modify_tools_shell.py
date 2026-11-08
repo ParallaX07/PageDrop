@@ -42,18 +42,20 @@ from pagedrop.core.modify_ops import (
     get_bookmarks,
 )
 from pagedrop.core.native_conversions import batch_output_paths
-from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
-from pagedrop.core.pdf_service import page_count as pdf_page_count
 from pagedrop.core.supported_formats import is_pdf_path
-from pagedrop.ui.dialogs import confirm_remove_blank_pages, prompt_pdf_password
-from pagedrop.ui.organize_tools import editor_pdf_context
+from pagedrop.ui.accessibility import contrast_ratio
+from pagedrop.ui.dialogs import confirm_remove_blank_pages
+from pagedrop.ui.job_chrome import gui_fitz_call
+from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
     _TOOL_JOB_SIGNAL_REFS,
     _tool_job_pool,
+    probe_pdf_input,
     run_tool_job,
+    source_still_loaded,
 )
 from pagedrop.utils.page_jump import parse_page_ranges
 if TYPE_CHECKING:
@@ -205,6 +207,17 @@ def _configure_crop(shell: ToolShellWindow) -> None:
         )
 
     shell.set_run_handler(on_run)
+
+
+def _color_swatch_style(fill: str) -> str:
+    """Inline QSS for a colour swatch button: its fill and a readable label.
+
+    Only the per-swatch properties live here. The border and the keyboard focus
+    ring come from the app sheet (the swatch is a ``ToolbarSecondary`` button),
+    so a theme change restyles them like any other control.
+    """
+    ink = max(("#000000", "#FFFFFF"), key=lambda c: contrast_ratio(c, fill))
+    return f"QPushButton {{ background-color: {fill}; color: {ink}; }}"
 
 
 def _set_form_row_visible(form: QFormLayout, field: QWidget, visible: bool) -> None:
@@ -381,10 +394,9 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
 
     def _set_color_btn(rgb: list[float]) -> None:
         r, g, b = (int(c * 255) for c in rgb)
-        color_btn.setStyleSheet(
-            f"background-color: rgb({r},{g},{b}); border: 1px solid palette(mid);"
-        )
-        color_btn.setText(f"#{r:02X}{g:02X}{b:02X}")
+        fill = f"#{r:02X}{g:02X}{b:02X}"
+        color_btn.setStyleSheet(_color_swatch_style(fill))
+        color_btn.setText(fill)
 
     def pick_color() -> None:
         initial = QColor(
@@ -706,28 +718,21 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
             _update_page_label()
             return
         source = paths[0]
-        filename = Path(source).name
-        password: str | None = None
-        while True:
-            try:
-                count = pdf_page_count(source, password=password)
-                break
-            except PdfPasswordRequiredError:
-                password = prompt_pdf_password(shell, filename)
-                if password is None:
-                    shell.drop_zone.clear()
-                    return
-            except PdfPasswordError:
-                password = prompt_pdf_password(shell, filename, incorrect=True)
-                if password is None:
-                    shell.drop_zone.clear()
-                    return
-            except Exception as exc:
-                QMessageBox.warning(
-                    shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
-                )
-                shell.drop_zone.clear()
-                return
+        try:
+            probed = probe_pdf_input(shell, source)
+        except Exception as exc:
+            QMessageBox.warning(
+                shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
+            )
+            shell.drop_zone.clear()
+            return
+        if probed is None:
+            shell.drop_zone.clear()
+            return
+        count, creds = probed
+        if not source_still_loaded(shell, source, notify=False):
+            return
+        password = creds.get(source)
         _page_count["n"] = count
         name = Path(source).name
         file_meta.setText(f"{name}  ·  {count} page{'s' if count != 1 else ''}")
@@ -786,9 +791,14 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
         page_count = _page_count["n"]
         if page_count <= 0:
             try:
-                page_count = pdf_page_count(source)
+                probed = probe_pdf_input(shell, source)
             except Exception as exc:
                 QMessageBox.warning(shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}")
+                return
+            if probed is None:
+                return
+            page_count = probed[0]
+            if not source_still_loaded(shell, source):
                 return
 
         raw_range = page_range.text().strip().casefold()
@@ -1067,9 +1077,17 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
             status.setText("Drop a PDF to inspect existing bookmarks.")
             return
         try:
-            marks = get_bookmarks(paths[0])
+            probed = probe_pdf_input(shell, paths[0])
+            if probed is None:
+                status.setText("Password needed to read bookmarks.")
+                return
+            marks = gui_fitz_call(
+                get_bookmarks, paths[0], password=probed[1].get(paths[0])
+            )
         except Exception as exc:
             status.setText(f"Could not read bookmarks: {exc}")
+            return
+        if not source_still_loaded(shell, paths[0], notify=False):
             return
         if not marks:
             status.setText("No bookmarks in this PDF.")
@@ -1098,7 +1116,15 @@ def _configure_bookmarks(shell: ToolShellWindow) -> None:
             opts["bookmarks"] = rows
         elif act == "toc_page":
             try:
-                if not get_bookmarks(source):
+                probed = probe_pdf_input(shell, source)
+                if probed is None:
+                    return
+                no_bookmarks = not gui_fitz_call(
+                    get_bookmarks, source, password=probed[1].get(source)
+                )
+                if not source_still_loaded(shell, source):
+                    return
+                if no_bookmarks:
                     QMessageBox.warning(
                         shell,
                         shell.WINDOW_TITLE,
@@ -1185,10 +1211,12 @@ class _BlankDetectWorker(QRunnable):
         *,
         ink_threshold: float,
         cancel: CancelToken,
+        password: str | None = None,
     ) -> None:
         super().__init__()
         self.signals = self.Signals()
         self._source = source
+        self._password = password
         self._ink_threshold = ink_threshold
         self._cancel = cancel
         self.setAutoDelete(True)
@@ -1198,6 +1226,7 @@ class _BlankDetectWorker(QRunnable):
             report = detect_blank_pages(
                 self._source,
                 ink_threshold=self._ink_threshold,
+                password=self._password,
                 cancel=self._cancel,
             )
         except JobCancelledError:
@@ -1235,8 +1264,24 @@ def _configure_blank_pages(shell: ToolShellWindow) -> None:
             return
         source = paths[0]
         ink = threshold.value()
+        try:
+            probed = probe_pdf_input(shell, source)
+        except Exception as exc:
+            QMessageBox.warning(
+                shell, shell.WINDOW_TITLE, f"Could not open PDF:\n{exc}"
+            )
+            return
+        if probed is None:
+            return
+        if not source_still_loaded(shell, source):
+            return
         token = shell.begin_job("Detecting blank pages…")
-        worker = _BlankDetectWorker(source, ink_threshold=ink, cancel=token)
+        worker = _BlankDetectWorker(
+            source,
+            ink_threshold=ink,
+            cancel=token,
+            password=probed[1].get(source),
+        )
         signals = worker.signals
         _TOOL_JOB_SIGNAL_REFS.append(signals)
 
@@ -1429,6 +1474,7 @@ def open_modify_shell(tools: ToolsWindow, tool_id: str) -> ToolShellWindow | Non
         shell.set_editor(tools.editor)
 
     if ctx is not None and Path(ctx.path).is_file():
+        adopt_context_credentials(shell, ctx)
         shell.drop_zone.set_paths([ctx.path])
 
     present_tool_page(tools.editor, shell, page_id=f"tool:{tool_id}")

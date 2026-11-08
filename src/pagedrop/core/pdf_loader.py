@@ -4,6 +4,8 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
+from pagedrop.core.thread_policy import FITZ_LOCK
+
 
 class PdfLoadError(Exception):
     """Base class for PDF loading failures."""
@@ -74,6 +76,26 @@ def open_pdf(path: str, password: str | None = None) -> fitz.Document:
         raise
 
 
+def validate_pdf_output(path: str | Path, label: str | None = None) -> None:
+    """Reopen a PDF this app just wrote; raise a ``PdfLoadError`` if unusable.
+
+    A password-protected output (the encrypt tool) is accepted: it opened as a
+    PDF, and without the password its pages cannot be counted. Takes
+    ``FITZ_LOCK`` only for the open and close. With *label* (the destination
+    file name) the error names that instead of the path being checked, and the
+    original error is chained.
+    """
+    with FITZ_LOCK:
+        try:
+            open_pdf(str(path)).close()
+        except PdfPasswordRequiredError:
+            return
+        except PdfLoadError as exc:
+            if label is None:
+                raise
+            raise type(exc)(f"The tool produced an unreadable PDF: {label}") from exc
+
+
 class PdfLoader:
     # ponytail: tab-owned long-lived Document for editor geometry / sync UI.
     # Distinct from pdf_service's short TTL path→doc cache (interactive render).
@@ -82,28 +104,34 @@ class PdfLoader:
     # (O10 process service / single-owner cache) — do not invent a third cache.
     def __init__(self, path: str, password: str | None = None) -> None:
         self.path = path
-        self.doc = open_pdf(path, password)
+        with FITZ_LOCK:
+            self.doc = open_pdf(path, password)
         self._size_cache: dict[tuple[int, int], tuple[int, int]] = {}
         self._pt_size_cache: dict[int, tuple[float, float, int]] = {}
 
     @property
     def page_count(self) -> int:
-        return len(self.doc)
+        with FITZ_LOCK:
+            return len(self.doc)
 
     def render_page(
         self, page_index: int, width_px: int = 160, *, rotation: int = 0
     ) -> bytes:
         """Render page to PNG bytes at target width."""
-        return render_page_png(
-            self.doc, page_index, width_px=width_px, rotation=rotation
-        )
+        with FITZ_LOCK:
+            return render_page_png(
+                self.doc, page_index, width_px=width_px, rotation=rotation
+            )
 
     def _page_geom(self, page_index: int) -> tuple[float, float, int]:
+        # A cache hit touches no MuPDF state, so it must not wait on the lock.
         cached = self._pt_size_cache.get(page_index)
-        if cached is None:
+        if cached is not None:
+            return cached
+        with FITZ_LOCK:
             cached = unrotated_page_geom(self.doc[page_index])
             self._pt_size_cache[page_index] = cached
-        return cached
+            return cached
 
     def page_size_pt(self, page_index: int) -> tuple[float, float]:
         """Unrotated page size in points (before the page's own /Rotate)."""
@@ -118,17 +146,19 @@ class PdfLoader:
         """Return (width_mm, height_mm) for a page, rounded to nearest mm."""
         key = (page_index, rotation % 360)
         cached = self._size_cache.get(key)
-        if cached is None:
+        if cached is not None:
+            return cached
+        with FITZ_LOCK:
             cached = page_size_mm(self.doc, page_index, rotation=rotation)
             self._size_cache[key] = cached
-        return cached
-
+            return cached
 
     def close(self) -> None:
-        if getattr(self, "_closed", False):
-            return
-        self.doc.close()
-        self._closed = True
+        with FITZ_LOCK:
+            if getattr(self, "_closed", False):
+                return
+            self.doc.close()
+            self._closed = True
 
 
 MAX_RENDER_DPI = 150  # documented legacy; width cap is the real safety limit

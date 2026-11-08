@@ -8,11 +8,14 @@ MuPDF global caches. Concurrent fitz from Qt threads can crash or corrupt.
 
 Rules:
 
-1. Never pass a live ``fitz.Document`` (or ``PdfLoader.doc``) into a worker.
+1. Every in-process PyMuPDF call holds ``FITZ_LOCK``.
+2. Never pass a live ``fitz.Document`` (or ``PdfLoader.doc``) into a worker.
    Workers open by path inside ``run()`` and close before returning.
-2. ``PdfTab._loader_cache`` is **main-thread only**. UI code may use it for
-   page counts / sizes; render and write workers must not.
-3. Do not add new concurrent fitz paths on ``QThreadPool`` without a process
+3. ``PdfTab._loader_cache`` is **main-thread only**; render and write workers
+   must not touch it. ``PdfLoader`` methods take ``FITZ_LOCK`` themselves, and
+   UI code reading other fitz data (metadata, bookmarks) goes through
+   ``pdf_service.call``. No rule permits unlocked PyMuPDF.
+4. Do not add new concurrent fitz paths on ``QThreadPool`` without a process
    boundary. Prefer ``multiprocessing`` (per-process opens) or a single
    serialized PDF service process.
 
@@ -32,6 +35,9 @@ Current state
 - **job runner:** ``pagedrop.core.jobs.SerializedJobRunner`` — fitz handlers
   take ``pdf_service.FITZ_LOCK`` (``holds_fitz=True``); Office / LibreOffice
   waits register ``holds_fitz=False`` and lock only around brief fitz validate.
+  Long page loops (OCR, colour effects) also register ``holds_fitz=False`` and
+  lock per page, calling ``yield_fitz_lock`` after each release; lossy compress
+  runs in an owned child process and only its lossless path locks in-process.
   Stage/promote via ``TempManager``, paths only; never share fitz docs with
   ad-hoc UI pools.
 - **viewer / UI pools:** ``pdf_service`` helpers or ``with FITZ_LOCK`` around
@@ -40,7 +46,27 @@ Current state
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
+
+# Process-wide gate for in-process PyMuPDF. Lives here (imports nothing from
+# pdf_service / pdf_loader) so every core module can take it without a cycle;
+# ``pdf_service.FITZ_LOCK`` is this same object. Must stay re-entrant.
+FITZ_LOCK = threading.RLock()
+
+# CPython's RLock is not fair: a thread that releases and straight away
+# re-acquires usually wins over a sleeping waiter (such as the GUI thread).
+_LOCK_YIELD_S = 0.001
+
+
+def yield_fitz_lock() -> None:
+    """Pause briefly after releasing ``FITZ_LOCK`` between pages of a long job.
+
+    Call it outside the ``with FITZ_LOCK`` block so a waiting thread can take
+    the lock before the job re-acquires it for the next page.
+    """
+    time.sleep(_LOCK_YIELD_S)
 
 # Current QRunnable / pool sites that call fitz (audit).
 # Each pool is maxThreadCount=1 and serializes via pdf_service.FITZ_LOCK
@@ -83,8 +109,12 @@ WORKER_AUDIT: tuple[tuple[str, str], ...] = (
         "ui/compare_window.py — compare_pdf_text_diff under FITZ_LOCK; pool max 1",
     ),
     (
+        "_CompareRenderWorker",
+        "ui/compare_window.py — pdf_service pane render under FITZ_LOCK; pool max 1",
+    ),
+    (
         "CompareWindow",
-        "ui/compare_window.py — pdf_service pane render on GUI; text-diff via _CompareTextWorker",
+        "ui/compare_window.py — pdf_service pane render via _CompareRenderWorker; text-diff via _CompareTextWorker",
     ),
     (
         "_BlankDetectWorker",

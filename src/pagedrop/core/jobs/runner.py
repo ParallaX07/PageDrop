@@ -5,7 +5,8 @@ Handlers open documents by path inside the handler (see ``thread_policy``).
 Fitz-using handlers take the shared ``FITZ_LOCK`` around the handler body so
 tool jobs serialize with the viewer PDF service. Handlers that only wait on
 external converters (Office COM / LibreOffice) register with
-``holds_fitz=False`` so subprocess waits never stall interactive fitz work.
+``holds_fitz=False`` so subprocess waits never stall interactive fitz work;
+so do handlers that take the lock themselves per page or step.
 Long-term upgrade: dedicated PDF service process (multiprocessing) for
 fitz-heavy handlers — same stage/promote/cancel API.
 """
@@ -24,6 +25,7 @@ from pagedrop.core.jobs.errors import JobError, OutputExistsError
 from pagedrop.core.jobs.paths import ensure_output_destination, reject_source_overwrite
 from pagedrop.core.jobs.spec import JobSpec, ProgressCallback, _noop_progress
 from pagedrop.core.jobs.staging import JobStaging
+from pagedrop.core.pdf_loader import validate_pdf_output
 from pagedrop.core.pdf_service import FITZ_LOCK
 from pagedrop.core.thread_policy import ensure_no_fitz_document
 from pagedrop.utils.diagnostics import log_failure
@@ -137,8 +139,9 @@ class SerializedJobRunner:
         """Register *handler* for *job_type*.
 
         *holds_fitz* (default True): wrap the handler in ``FITZ_LOCK``. Pass
-        False for Office / LibreOffice / other long external waits; those
-        handlers must lock only around any brief fitz validate/open/close.
+        False for Office / LibreOffice / other long external waits and for
+        long page loops; those handlers must lock only around each fitz
+        open/page/save/close (objects included).
         """
         self._handlers[job_type] = _HandlerEntry(handler, holds_fitz=holds_fitz)
 
@@ -175,7 +178,7 @@ class SerializedJobRunner:
 
         token = cancel or CancelToken()
         report = progress or _noop_progress
-        creds = credentials or RuntimeCredentials()
+        creds = credentials if credentials is not None else RuntimeCredentials()
         runtime_secrets = dict(secrets or {})
         staging = JobStaging(self._temp_manager)
         staged = staging.stage_file(Path(spec.output).name)
@@ -209,10 +212,14 @@ class SerializedJobRunner:
                 result_staged = Path(entry.handler(ctx))
                 token.check()
             _validate_destinations(spec, ctx.extra_outputs)
+            pairs = [(result_staged, Path(spec.output)), *ctx.extra_outputs]
+            for staged_path, destination in pairs:
+                if destination.suffix.lower() == ".pdf":
+                    validate_pdf_output(staged_path, destination.name)
+            # Validation can wait on FITZ_LOCK; a cancel during that wait must win.
+            token.check()
             report(0.95, "Promoting output…")
-            promoted = _promote_all(
-                staging, [(result_staged, Path(spec.output)), *ctx.extra_outputs]
-            )
+            promoted = _promote_all(staging, pairs)
             report(1.0, "Done")
             return promoted
         except Exception as exc:
@@ -223,15 +230,12 @@ class SerializedJobRunner:
                 inputs=", ".join(map(str, spec.inputs)),
                 output=spec.output,
             )
-            staging.cleanup()
             raise
         finally:
             runtime_secrets.clear()
             with self._active_lock:
                 if self._active_cancel is token:
                     self._active_cancel = None
-            if staging.job_dir.exists():
-                try:
-                    staging.job_dir.rmdir()
-                except OSError:
-                    pass
+            # Success too: promoted results live at their destinations, so
+            # leftovers go and the job dir is released for eviction.
+            staging.cleanup()

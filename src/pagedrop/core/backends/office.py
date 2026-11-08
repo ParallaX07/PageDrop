@@ -379,6 +379,11 @@ def _is_processing_failure(exc: BaseException) -> bool:
 
     if isinstance(exc, (JobCancelledError, BackendUnavailableError)):
         return False
+    if (
+        isinstance(exc, office_com.OfficeComConversionError)
+        and exc.code == "password_protected"
+    ):
+        return False
     return isinstance(
         exc,
         (office_com.OfficeComConversionError, libreoffice.LibreOfficeConversionError, OSError),

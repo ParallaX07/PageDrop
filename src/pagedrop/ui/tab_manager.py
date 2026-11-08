@@ -12,9 +12,20 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
 )
-from PyQt6.QtWidgets import QMenu, QTabBar, QTabWidget, QToolButton, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QMenu,
+    QTabBar,
+    QTabWidget,
+    QToolButton,
+    QWidget,
+)
 
-from pagedrop.core.drag_mime import PAGE_TRANSFER_MIME, decode_page_refs
+from pagedrop.core.drag_mime import (
+    PAGE_TRANSFER_MIME,
+    PageTransferPayloadError,
+    decode_page_refs,
+)
 from pagedrop.core.pdf_loader import PdfLoadError
 from pagedrop.ui import icons
 from pagedrop.ui.pdf_tab import PdfTab
@@ -195,8 +206,13 @@ class DetachableTabBar(QTabBar):
             event.ignore()
             return
 
+        target_grid = target_widget.thumbnail_grid
         source_grid = ThumbnailGrid._grid_for_widget(event.source())
         if source_grid is None:
+            target_grid.page_transfer_failed.emit(
+                "Could not transfer pages: tabs can't accept drops from "
+                "another PageDrop process. Drop on the page grid instead."
+            )
             event.ignore()
             return
 
@@ -208,13 +224,19 @@ class DetachableTabBar(QTabBar):
             event.ignore()
             return
 
-        refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        try:
+            refs = decode_page_refs(mime.data(PAGE_TRANSFER_MIME))
+        except PageTransferPayloadError:
+            target_grid.page_transfer_failed.emit(
+                "Could not transfer pages: the dropped data was not valid."
+            )
+            event.ignore()
+            return
         if not refs:
             event.ignore()
             return
 
         move = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        target_grid = target_widget.thumbnail_grid
         try:
             if target_grid.handle_tab_bar_page_drop(
                 refs,
@@ -292,7 +314,12 @@ class TabManager(QTabWidget):
         self._detachable_tab_bar.tab_rename_requested.connect(
             self.tab_rename_requested.emit
         )
-        self._open_tabs_button = QToolButton(self)
+        self._tab_corner = QWidget(self)
+        self._tab_corner.setObjectName("TabCorner")
+        corner_layout = QHBoxLayout(self._tab_corner)
+        corner_layout.setContentsMargins(0, 0, 0, 0)
+        corner_layout.setSpacing(4)
+        self._open_tabs_button = QToolButton(self._tab_corner)
         self._open_tabs_button.setObjectName("OpenTabsButton")
         self._open_tabs_button.setText("Open tabs")
         self._open_tabs_button.setToolTip("Show open tabs")
@@ -303,7 +330,8 @@ class TabManager(QTabWidget):
         self._open_tabs_menu = QMenu(self._open_tabs_button)
         self._open_tabs_menu.aboutToShow.connect(self._populate_open_tabs_menu)
         self._open_tabs_button.setMenu(self._open_tabs_menu)
-        self.setCornerWidget(self._open_tabs_button, Qt.Corner.TopRightCorner)
+        corner_layout.addWidget(self._open_tabs_button)
+        self.setCornerWidget(self._tab_corner, Qt.Corner.TopRightCorner)
         self._open_tabs_button.hide()
 
         self.tabCloseRequested.connect(self.close_tab)
@@ -311,6 +339,10 @@ class TabManager(QTabWidget):
 
         refresh_cb = self._refresh_close_icons
         icons.register_refresh(refresh_cb)
+
+    def add_corner_widget(self, widget: QWidget) -> None:
+        """Place a control in the tab strip's right-hand corner."""
+        self._tab_corner.layout().addWidget(widget)
 
     @property
     def detachable_tab_bar(self) -> DetachableTabBar:

@@ -6,10 +6,10 @@ use an x86_64 AppImage.
 
 ## Build the executable
 
-Install dev dependencies (includes PyInstaller), then build:
+Install dev dependencies (includes PyInstaller) and the `codecs` group, then build. A Windows build also needs the `office` group (pywin32 for Office COM); the build includes openpyxl, Pillow and, on Windows, the pywin32 modules and DLLs, and `scripts/check_packaging.py` fails if the bundle lacks them.
 
 ```bash
-uv sync --group dev
+uv sync --group dev --group codecs        # Windows: add --group office
 make build-exe
 ```
 
@@ -30,6 +30,8 @@ Windows builds go through the installer below. Linux builds can be wrapped in an
 AppImage with `make build-appimage` after building the onedir bundle; the script
 pins and verifies its AppImage tooling and emits a matching `.zsync` file and
 SHA-256 checksum.
+
+On a frozen Linux build, PyInstaller's bootloader points `LD_LIBRARY_PATH` at the bundle. The app restores the original value (or removes the variable) at startup so programs it launches, such as LibreOffice and `xdg-open`, don't load the bundled libraries. The running process keeps its own libraries, and PageDrop's own helper processes get the bundle path back.
 
 ## Smoke the build
 
@@ -58,6 +60,8 @@ $env:PAGEDROP_EXE = ".\dist\pagedrop\pagedrop.exe"
 uv run pytest tests/smoke/ -v -k executable
 ```
 
+Besides the launch check, these tests run the binary with its helper re-entry flags (redaction verifier, lossy compressor, Office COM worker) and check each reply. Run them with `-k frozen` to select only the probes. The Linux CI job runs the same steps. One probe is Windows only: it confirms the Office COM worker finds the bundled pywin32. It sends a junk `.docx`, so it may start Word briefly on a machine with Office.
+
 ## Release test gate
 
 Full pytest suite plus executable smoke (set `PAGEDROP_EXE` if the binary is not at the default path):
@@ -84,7 +88,7 @@ then build the Inno Setup installer ([Inno Setup 6+](https://jrsoftware.org/isin
 with `iscc` on PATH or `$env:ISCC`):
 
 ```powershell
-uv run --with pillow python scripts/generate_icons.py   # or: make generate-icons
+uv run python scripts/generate_icons.py   # or: make generate-icons
 .\scripts\build_windows_installer.ps1                   # or: make build-installer
 # reuse existing dist: .\scripts\build_windows_installer.ps1 -SkipBuild
 uv run python scripts/check_packaging.py
@@ -140,7 +144,7 @@ cannot advertise the mutex to the installer.
 Before a tagged binary package:
 
 1. Run `make test-release` (or equivalent full suite + executable smoke)
-2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, icons, `QtPrintSupport`, installer identity, and updater mutex contract
+2. Run `uv run python scripts/check_packaging.py` — asserts onedir spec/Inno layout, notices, licence texts, icons, `QtPrintSupport`, installer identity, and updater mutex contract
 3. Run `make build-appimage` on Linux and smoke-test the resulting AppImage
 4. Confirm release notes / About / installer materials match the redistribution policy in [Licensing](licensing.md)
 5. Confirm Qt LGPL obligations (licence texts + source/offer) for that release

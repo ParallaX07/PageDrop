@@ -92,3 +92,20 @@ def test_drag_move_near_bottom_updates_indicator(qtbot, five_page_pdf):
     assert grid._drop_indicator.isVisible()
 
     grid._stop_drag_autoscroll()
+
+
+def test_application_filter_is_installed_only_while_a_drag_is_over_the_grid(
+    qapp, qtbot, five_page_pdf, monkeypatch
+):
+    grid = _load_tall_grid(qtbot, five_page_pdf)
+    installed, removed = [], []
+    install, remove = qapp.installEventFilter, qapp.removeEventFilter
+    monkeypatch.setattr(qapp, "installEventFilter", lambda f: (installed.append(f), install(f)))
+    monkeypatch.setattr(qapp, "removeEventFilter", lambda f: (removed.append(f), remove(f)))
+
+    assert installed == []
+    grid._start_drag_autoscroll_tracking()
+    grid._start_drag_autoscroll_tracking()
+    assert installed == [grid]
+    grid._stop_drag_autoscroll()
+    assert removed == [grid]

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QGuiApplication, QPalette
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
 from pagedrop.ui import settings as app_settings
 from pagedrop.ui.theme import app_stylesheet, relative_luminance
-
-# WCAG relative-luminance contrast; system HC themes are typically well above this.
-_PALETTE_HIGH_CONTRAST_RATIO = 7.0
 
 
 def contrast_ratio(hex_fg: str, hex_bg: str) -> float:
@@ -18,10 +15,6 @@ def contrast_ratio(hex_fg: str, hex_bg: str) -> float:
     lighter = max(relative_luminance(hex_fg), relative_luminance(hex_bg))
     darker = min(relative_luminance(hex_fg), relative_luminance(hex_bg))
     return (lighter + 0.05) / (darker + 0.05)
-
-
-def _qcolor_hex(color) -> str:
-    return f"#{color.red():02X}{color.green():02X}{color.blue():02X}"
 
 
 def _accessibility_hints():
@@ -33,23 +26,11 @@ def _accessibility_hints():
 
 
 def prefers_high_contrast() -> bool:
-    """True when the platform asks for high contrast (Qt ≥ 6.10) or palette implies it."""
+    """True when the platform's contrast preference is High (Qt >= 6.10)."""
     hints = _accessibility_hints()
-    if hints is not None:
-        pref = getattr(hints, "contrastPreference", None)
-        if callable(pref):
-            try:
-                return pref() == Qt.ContrastPreference.HighContrast
-            except AttributeError:
-                pass
-    return _palette_suggests_high_contrast()
-
-
-def _palette_suggests_high_contrast() -> bool:
-    pal = QGuiApplication.palette()
-    fg = pal.color(QPalette.ColorRole.WindowText)
-    bg = pal.color(QPalette.ColorRole.Window)
-    return contrast_ratio(_qcolor_hex(fg), _qcolor_hex(bg)) >= _PALETTE_HIGH_CONTRAST_RATIO
+    if hints is None:
+        return False
+    return hints.contrastPreference() == Qt.ContrastPreference.HighContrast
 
 
 def prefers_reduce_motion() -> bool:
@@ -95,29 +76,24 @@ def refresh_themed_widgets(app: QApplication | None = None) -> None:
 
     refresh_icons()
 
-class _AccessibilityWatcher(QObject):
-    """Re-apply chrome when the system palette changes (Qt < 6.10 fallback path)."""
-
-    def eventFilter(self, obj, event) -> bool:  # noqa: ANN001
-        if event.type() == QEvent.Type.ApplicationPaletteChange:
-            apply_app_stylesheet()
-        return False
-
-
 def install_accessibility(app: QApplication) -> None:
-    """Apply theme for current prefs and watch for contrast / palette changes."""
+    """Apply theme for current prefs and re-apply it when the platform appearance changes."""
     apply_app_stylesheet(app)
 
-    hints = _accessibility_hints()
-    if hints is not None:
-        # PyQt6 currently exposes this as a plain method, not a bound signal.
-        # Connect when the binding provides .connect; else palette watcher covers it.
-        changed = getattr(hints, "contrastPreferenceChanged", None)
-        connect = getattr(changed, "connect", None)
-        if callable(connect):
-            connect(lambda *_: apply_app_stylesheet(app))
+    if app.property("_pagedrop_a11y_watcher") is not None:
+        return
+    app.setProperty("_pagedrop_a11y_watcher", True)
+    # PyQt6 exposes contrastPreferenceChanged as a plain method, not a signal, so a
+    # color scheme change and re-activation pick up a platform contrast change.
+    applied = {"high_contrast": prefers_high_contrast()}
 
-    if app.property("_pagedrop_a11y_watcher") is None:
-        watcher = _AccessibilityWatcher(app)
-        app.installEventFilter(watcher)
-        app.setProperty("_pagedrop_a11y_watcher", watcher)
+    def reapply() -> None:
+        applied["high_contrast"] = prefers_high_contrast()
+        apply_app_stylesheet(app)
+
+    def on_state(state: Qt.ApplicationState) -> None:
+        if state == Qt.ApplicationState.ApplicationActive and prefers_high_contrast() != applied["high_contrast"]:
+            reapply()
+
+    QGuiApplication.styleHints().colorSchemeChanged.connect(lambda *_: reapply())
+    app.applicationStateChanged.connect(on_state)
