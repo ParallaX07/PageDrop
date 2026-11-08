@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QFileInfo, QPoint, QRectF, QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QFileInfo, QPoint, QRect, QRectF, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QPainterPath,
@@ -46,6 +46,19 @@ from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.utils.temp_manager import TempManager
 
 
+class _DragMarks(QWidget):
+    """Transparent layer over the bar; paints the dragged tab's stripe and dot."""
+
+    def __init__(self, bar: QTabBar) -> None:
+        super().__init__(bar)
+        self._bar = bar
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def paintEvent(self, event) -> None:
+        self._bar._paint_dragged_tab_marks(self)
+
+
 class DetachableTabBar(QTabBar):
     """Tab bar that supports in-bar reorder (``setMovable``) and tear-off to a new window."""
 
@@ -65,10 +78,13 @@ class DetachableTabBar(QTabBar):
         self._pre_hint_tooltip = ""
         self._drop_highlight_index = -1
         self._hover_index = -1
+        # Qt draws a dragged tab in a private child from a pixmap of its own.
+        self._moving_tab: QWidget | None = None
+        self._marks = _DragMarks(self)
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
         self.currentChanged.connect(lambda _index: self.sync_close_buttons())
-        self.tabMoved.connect(lambda *_: self._set_hover_index(-1))
+        self.tabMoved.connect(self._on_tab_moved)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_tab_context_menu)
 
@@ -99,6 +115,69 @@ class DetachableTabBar(QTabBar):
                 self._detach_armed = False
                 self.unsetCursor()
         super().mouseMoveEvent(event)
+        if self._drag_tab_index >= 0:
+            self._watch_moving_tab()
+
+    def _on_tab_moved(self, from_index: int, to_index: int) -> None:
+        self._set_hover_index(-1)
+        # Dragging over a neighbour swaps the pair; the pressed tab follows.
+        if self._drag_tab_index == from_index:
+            self._drag_tab_index = to_index
+        elif self._drag_tab_index == to_index:
+            self._drag_tab_index = from_index
+
+    def _watch_moving_tab(self) -> None:
+        """Find Qt's dragged-tab child and lay a marks layer over it."""
+        if self._moving_tab is not None:
+            return
+        for child in self.children():
+            if type(child) is QWidget and child.isVisible():
+                self._moving_tab = child
+                child.installEventFilter(self)
+                child.destroyed.connect(self._forget_moving_tab)
+                self._marks.setGeometry(self.rect())
+                self._marks.raise_()
+                self._marks.show()
+                return
+
+    def _forget_moving_tab(self) -> None:
+        self._moving_tab = None
+
+    def _dragging_index(self) -> int:
+        """The dragged tab (the pressed tab is current), or -1 when none is moving."""
+        if self._moving_tab is not None and self._moving_tab.isVisible():
+            return self.currentIndex()
+        return -1
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._moving_tab and event.type() in (
+            QEvent.Type.Move,
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+        ):
+            self._marks.update()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._marks.setGeometry(self.rect())
+
+    def _paint_dragged_tab_marks(self, target: QWidget) -> None:
+        """Draw the stripe and dot on the tab Qt is dragging (it paints a bare pixmap)."""
+        moving = self._moving_tab
+        index = self._dragging_index()
+        slot = self.tabRect(index)
+        if moving is None or index < 0 or not slot.isValid():
+            return
+        # The pixmap spans the tab plus the style's tab overlap on both sides.
+        overlap = (moving.width() - slot.width()) // 2
+        rect = QRect(moving.x() + overlap, moving.y(), slot.width(), slot.height())
+        painter = QPainter(target)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        self._paint_index_edge(painter, index, rect)
+        self._paint_unsaved_dot(painter, index, rect)
+        painter.end()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if (
@@ -108,6 +187,8 @@ class DetachableTabBar(QTabBar):
         ):
             index = self._drag_tab_index
             self._reset_drag_state()
+            # Let Qt end its drag so the dragged-tab pixmap does not outlive the tab.
+            super().mouseReleaseEvent(event)
             self.tab_detach_requested.emit(index)
             event.accept()
             return
@@ -349,9 +430,10 @@ class DetachableTabBar(QTabBar):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
+        dragging = self._dragging_index()
         for index in range(self.count()):
             rect = self.tabRect(index)
-            if rect.isValid():
+            if rect.isValid() and index != dragging:
                 self._paint_index_edge(painter, index, rect)
                 self._paint_unsaved_dot(painter, index, rect)
         painter.end()
@@ -400,14 +482,14 @@ class TabManager(QTabWidget):
         self._next_index_colour = 0
         self.setObjectName("TabManager")
         self.setDocumentMode(True)
-        self.setMovable(True)
         self.setUsesScrollButtons(True)
         self.setElideMode(Qt.TextElideMode.ElideRight)
 
         self._detachable_tab_bar = DetachableTabBar(self)
         self.setTabBar(self._detachable_tab_bar)
-        # setTabBar replaces the bar and drops tabsClosable — apply after.
+        # setTabBar replaces the bar and drops tabsClosable and movable — apply after.
         self.setTabsClosable(True)
+        self.setMovable(True)
         self._detachable_tab_bar.tab_detach_requested.connect(
             self.tab_detach_requested.emit
         )

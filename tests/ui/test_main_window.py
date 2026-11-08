@@ -456,13 +456,25 @@ def test_title_label_shows_a_short_title_in_full(main_window, qtbot):
     assert label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
 
 
-def test_title_row_is_at_least_34px_without_raising_the_window_floor(main_window, qtbot):
+def test_title_row_is_34px_at_the_default_font_and_grows_with_a_larger_one(
+    main_window, qtbot
+):
+    # The row is what the menu bar needs, so measure it with the font and style
+    # sheet the app starts with.
+    register_fonts()
+    _style_window(main_window)
     main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
     main_window.show()
     qtbot.waitExposed(main_window, timeout=5000)
     assert main_window._title_bar.minimumHeight() == 34
-    assert main_window._title_bar.height() >= 34
+    assert main_window._menu_bar.sizeHint().height() <= 34
+    assert main_window._title_bar.height() == 34
     assert main_window.minimumSize() == QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+
+    from pagedrop.ui.theme import app_stylesheet
+
+    main_window.setStyleSheet(app_stylesheet(light=True) + "QMenuBar { font-size: 28px; }")
+    qtbot.waitUntil(lambda: main_window._title_bar.height() > 34, timeout=3000)
 
 
 def test_title_does_not_overlap_window_controls(main_window, qtbot):
@@ -581,6 +593,38 @@ def test_tool_page_never_inherits_pdf_status_or_chrome(main_window, five_page_pd
     assert not main_window._selection_toolbar_label.isVisible()
     assert main_window.windowTitle() == "PageDrop: Test tool"
     assert main_window.statusBar().currentMessage() != pdf_status
+
+
+def test_pages_menu_and_preview_are_disabled_on_a_tool_page_and_follow_the_pdf_again(
+    main_window, five_page_pdf, qtbot
+):
+    main_window._load_pdf(str(five_page_pdf))
+    wait_for_pdf_loaded(qtbot, main_window)
+    pdf_tab = main_window._active_tab()
+    pdf_tab.thumbnail_grid.selection_manager.select_single(2)
+    qtbot.waitUntil(lambda: main_window._actions["delete_pages"].isEnabled())
+    page_actions = [
+        action
+        for action in _top_level_menu(main_window, "Pages").actions()
+        if not action.isSeparator()
+    ]
+    commands = [main_window._actions["preview"], *page_actions]
+    assert all(action.isEnabled() for action in commands)
+
+    tool_page = QWidget()
+    tool_page.tool_page_id = "test-tool-actions"
+    main_window._tab_manager.add_page(tool_page, "Test tool")
+    assert main_window._active_tab() is None
+    assert [action.text() for action in commands if action.isEnabled()] == []
+
+    main_window._tab_manager.setCurrentWidget(pdf_tab)
+    assert all(action.isEnabled() for action in commands)
+    pdf_tab.thumbnail_grid.selection_manager.set_selection(set())
+    qtbot.waitUntil(lambda: not main_window._actions["delete_pages"].isEnabled())
+    assert main_window._actions["preview"].isEnabled()
+    assert main_window._actions["select_all"].isEnabled()
+    assert not main_window._actions["deselect_all"].isEnabled()
+    assert not main_window._actions["rotate_cw"].isEnabled()
 
 
 def test_undo_labels_and_viewer_guidance_follow_current_history(
@@ -1501,13 +1545,38 @@ def _command_bar_state(window: MainWindow):
     return on_bar, more
 
 
+def _refit_changes_nothing(window: MainWindow) -> bool:
+    """True once the bar is fitted and laid out: a fresh refit changes nothing."""
+
+    def state():
+        return (
+            frozenset(window._toolbar_icon_only),
+            frozenset(
+                action
+                for action in window._toolbar_overflow_menu.actions()
+                if not action.isSeparator()
+            ),
+        )
+
+    before = state()
+    window._refit_toolbar()
+    toolbar = window._toolbar
+    toolbar.layout().activate()
+    laid_out = all(
+        toolbar.widgetForAction(action).isVisible()
+        for action in toolbar.actions()
+        if action.isVisible() and toolbar.widgetForAction(action) is not None
+    )
+    return state() == before and laid_out and _toolbar_fits(window)
+
+
 def _settle_at(qtbot, window: MainWindow, width: int) -> None:
     window.resize(width, 680)
     qtbot.waitUntil(
         lambda: abs(window._toolbar.width() - width) < 10 and _toolbar_fits(window)
     )
-    # One more turn so a deferred refit has run before the state is read.
-    qtbot.wait(20)
+    # A deferred refit may still be queued; wait until it has nothing to change.
+    qtbot.waitUntil(lambda: _refit_changes_nothing(window))
 
 
 def test_narrow_bar_drops_labels_from_the_right_before_using_more(
@@ -1642,7 +1711,7 @@ def test_all_labels_show_at_1280_with_the_app_style_sheet(main_window, five_page
     _style_window(main_window)
     _open_loaded_window(main_window, five_page_pdf, qtbot, width=1280)
     qtbot.waitUntil(lambda: abs(main_window._toolbar.width() - 1280) < 10 and _toolbar_fits(main_window))
-    qtbot.wait(20)
+    qtbot.waitUntil(lambda: _refit_changes_nothing(main_window))
     on_bar, more = _command_bar_state(main_window)
     assert [key for key, _icon_only in on_bar] == _DROPPABLE_LABELS
     assert not [key for key, icon_only in on_bar if icon_only]
@@ -1696,7 +1765,7 @@ def test_selection_cell_leaves_the_bar_last_and_only_below_the_floor(
     qtbot.waitUntil(
         lambda: main_window.size().width() == MIN_WINDOW_WIDTH and _toolbar_fits(main_window)
     )
-    qtbot.wait(20)
+    qtbot.waitUntil(lambda: _refit_changes_nothing(main_window))
     toolbar = main_window._toolbar
     actions = main_window._actions
     label = main_window._selection_toolbar_label

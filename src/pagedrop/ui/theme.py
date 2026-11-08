@@ -2858,8 +2858,13 @@ def close_tab_hex() -> str:
 def tab_close_icon(*, color: str | None = None) -> "QIcon":
     """× icon for tab close buttons: neutral at rest, destructive while hovered."""
     from pagedrop.ui import icons
+    from pagedrop.ui.accessibility import prefers_high_contrast
 
-    ink = color if color is not None else current_theme().on_bar_muted
+    theme = current_theme()
+    if color is not None:
+        ink = color
+    else:
+        ink = theme.text if prefers_high_contrast() else theme.on_bar_muted
     return icons.icon("x", color=ink, active_color=close_tab_hex())
 
 

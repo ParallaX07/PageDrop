@@ -870,6 +870,130 @@ def test_hiding_the_close_button_does_not_change_tab_widths(main_window, qtbot):
     assert [bar.tabRect(i).width() for i in range(3)] == before
 
 
+def _mouse(bar, kind, point, *, buttons=Qt.MouseButton.LeftButton, global_pos=None) -> None:
+    """Deliver a real mouse event to the bar (QTest.mouseMove is a no-op offscreen)."""
+    button = (
+        Qt.MouseButton.LeftButton
+        if kind != QEvent.Type.MouseMove
+        else Qt.MouseButton.NoButton
+    )
+    if kind == QEvent.Type.MouseButtonRelease:
+        buttons = Qt.MouseButton.NoButton
+    event = QMouseEvent(
+        kind,
+        QPointF(point),
+        QPointF(global_pos if global_pos is not None else bar.mapToGlobal(point)),
+        button,
+        buttons,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(bar, event)
+
+
+def _drag_start(bar, index: int) -> QPoint:
+    start = bar.tabRect(index).center()
+    _mouse(bar, QEvent.Type.MouseButtonPress, start)
+    return start
+
+
+def _move_dragged(bar, start: QPoint, dx: int) -> None:
+    _mouse(bar, QEvent.Type.MouseMove, start + QPoint(dx, 0))
+    QApplication.processEvents()  # Qt positions the dragged tab on the next pass
+
+
+def _drag_across_slot(bar, start: QPoint, first: int, width: int) -> int:
+    """Step the pointer in small moves until it is a tab's width from the press."""
+    dx = first
+    while dx < width:
+        _move_dragged(bar, start, dx)
+        dx += 15
+    return dx - 15
+
+
+def test_tabs_are_movable(main_window):
+    manager = main_window._tab_manager
+    assert manager.isMovable()
+    assert manager.tabBar().isMovable()
+
+
+def test_dragging_a_tab_with_the_mouse_reorders_it(main_window, qtbot):
+    _show_window(qtbot, main_window)
+    _three_blank_tabs(main_window)
+    manager = main_window._tab_manager
+    bar = manager.tabBar()
+    first = _tab_at(main_window, 0)
+    colours = [_index_name(main_window, i) for i in range(3)]
+
+    start = _drag_start(bar, 0)
+    last = _drag_across_slot(bar, start, 5, bar.tabRect(0).width())
+    _mouse(bar, QEvent.Type.MouseButtonRelease, start + QPoint(last, 0))
+
+    qtbot.waitUntil(lambda: manager.indexOf(first) == 1, timeout=3000)
+    assert [_index_name(main_window, i) for i in range(3)] == [
+        colours[1],
+        colours[0],
+        colours[2],
+    ]
+
+
+def test_dragged_tab_carries_its_stripe_and_dot_and_leaves_none_behind(
+    main_window, five_page_pdf, qtbot
+):
+    _show_window(qtbot, main_window)
+    main_window._load_pdf(str(five_page_pdf))
+    dragged = _tab_at(main_window, 0)
+    _wait_for_tab_loaded(qtbot, dragged)
+    main_window._tab_manager.add_blank_tab()
+    main_window._tab_manager.add_blank_tab()
+    assert main_window._tab_manager.count() == 3
+    dragged.thumbnail_grid.reorder_pages_by_drop([4], 0)
+    qtbot.waitUntil(lambda: dragged.is_dirty, timeout=3000)
+    manager = main_window._tab_manager
+    bar = manager.tabBar()
+    manager.setCurrentIndex(0)
+    dragged_colour = index_qcolor(dragged.index_colour).name()
+    ink = token_qcolor(current_theme().on_bar).name()
+    slot = bar.tabRect(0)
+    button = _close_button(main_window, 0)
+    dot_y = (slot.top() + TAB_EDGE_HEIGHT + slot.bottom()) // 2
+    dot_offset = button.geometry().left() - SPACE_1 - TAB_UNSAVED_DOT // 2
+
+    start = _drag_start(bar, 0)
+    for dx in (5, 20, 40):  # past the drag distance, not yet over the next tab
+        _move_dragged(bar, start, dx)
+    moving = bar._moving_tab
+    assert moving is not None and moving.isVisible()
+    shift = moving.x() + (moving.width() - slot.width()) // 2 - slot.x()
+    assert shift > 20
+
+    image = bar.grab().toImage()
+    middle = slot.center().x() + shift
+    assert image.pixelColor(middle, TAB_EDGE_HEIGHT // 2).name() == dragged_colour
+    assert image.pixelColor(dot_offset + shift, dot_y).name() == ink
+    # Neither mark stays behind at the empty slot the tab left.
+    assert image.pixelColor(slot.left() + 4, TAB_EDGE_HEIGHT // 2).name() != dragged_colour
+    assert image.pixelColor(dot_offset, dot_y).name() != ink
+
+    # Over the next tab: the order changes mid-drag.
+    last = _drag_across_slot(bar, start, 55, slot.width())
+    qtbot.waitUntil(lambda: manager.indexOf(dragged) == 1, timeout=3000)
+    image = bar.grab().toImage()
+    assert image.pixelColor(bar.tabRect(1).center().x() + 30, 1).name() == dragged_colour
+    assert image.pixelColor(slot.center().x(), 1).name() == index_qcolor(
+        _tab_at(main_window, 0).index_colour
+    ).name()
+
+    _mouse(bar, QEvent.Type.MouseButtonRelease, start + QPoint(last, 0))
+    qtbot.waitUntil(lambda: not moving.isVisible(), timeout=3000)
+    image = bar.grab().toImage()
+    for index in range(manager.count()):
+        expected = index_qcolor(_tab_at(main_window, index).index_colour).name()
+        assert image.pixelColor(bar.tabRect(index).center().x(), 1).name() == expected
+    dot_x = _close_button(main_window, 1).geometry().left() - SPACE_1 - TAB_UNSAVED_DOT // 2
+    assert image.pixelColor(dot_x, dot_y).name() == ink
+    assert image.pixelColor(dot_offset, dot_y).name() != ink
+
+
 def _strongest_pixel(image) -> QColor:
     pixels = [
         image.pixelColor(x, y) for x in range(image.width()) for y in range(image.height())
@@ -896,6 +1020,19 @@ def test_close_icon_is_neutral_at_rest_and_danger_on_hover(main_window):
     assert _close_to(rest, token_qcolor(theme.on_bar_muted))
     assert _close_to(hover, token_qcolor(theme.danger))
     assert not _close_to(rest, token_qcolor(theme.danger))
+
+
+def test_close_icon_uses_the_text_colour_at_rest_in_high_contrast(main_window, monkeypatch):
+    from pagedrop.ui import accessibility
+
+    monkeypatch.setattr(accessibility, "prefers_high_contrast", lambda: True)
+    main_window._tab_manager._refresh_close_icons()
+    theme = current_theme()
+    rest = _strongest_pixel(
+        _close_button(main_window, 0).icon().pixmap(14, 14, QIcon.Mode.Normal).toImage()
+    )
+    assert _close_to(rest, token_qcolor(theme.text))
+    assert not _close_to(rest, token_qcolor(theme.on_bar_muted))
 
 
 def test_hovered_close_button_is_drawn_with_a_danger_icon(main_window, qtbot):

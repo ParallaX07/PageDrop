@@ -1720,7 +1720,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._update_window_title()
         self._progress_bar.hide()
         self._move_undo_widget.hide()
-        self._update_thumbnail_zoom_host()
+        # No document here: the preview, selection and page commands do nothing.
+        self._preview_action.setEnabled(False)
+        self._update_preview_mode_ui()
         self._persistent_status("Ready")
 
     def _update_save_as_action(self) -> None:
