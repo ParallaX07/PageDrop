@@ -20,3 +20,4 @@ installer/Output/
 .claude/settings.local.json
 .claude
 .agents
+/DESIGN.md
