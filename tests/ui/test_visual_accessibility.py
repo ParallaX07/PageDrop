@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QEnterEvent
+from PyQt6.QtGui import QEnterEvent, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
     QLineEdit,
+    QLabel,
     QListWidget,
     QScrollArea,
     QToolButton,
@@ -21,9 +23,11 @@ from PyQt6.QtWidgets import (
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
 from pagedrop.ui.merge_file_card import MergeFileCard
+from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.preferences_dialog import PreferencesDialog
 from pagedrop.ui.settings import reduce_motion, set_reduce_motion
-from pagedrop.ui.theme import BG_BASE, TEXT_MUTED, app_stylesheet
+from pagedrop.ui.theme import BG_BASE, TEXT_MUTED, app_stylesheet, tabular_font
+from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.ui.zoom_controls import ZoomControls
 
@@ -719,7 +723,6 @@ def test_r2_fonts_and_spacing_tokens():
     """Bundled UI font stack leads with Public Sans; spacing scale feeds toolbar/grid chrome."""
     from pagedrop.ui.theme import (
         CARD_PADDING,
-        FONT_MONO,
         FONT_UI,
         SPACE_2,
         SPACE_3,
@@ -727,7 +730,6 @@ def test_r2_fonts_and_spacing_tokens():
     )
 
     assert FONT_UI == '"Public Sans", "Segoe UI", "Noto Sans", sans-serif'
-    assert FONT_MONO.startswith('"Cascadia Mono"')
     # Do not expand beyond the bundled face and its fallbacks.
     assert "Ubuntu" not in FONT_UI
     assert "SF Pro" not in FONT_UI
@@ -736,7 +738,6 @@ def test_r2_fonts_and_spacing_tokens():
     assert SPACE_3 == 12
     sheet = app_stylesheet()
     assert FONT_UI in sheet
-    assert FONT_MONO in sheet
     assert f"padding: {SPACE_2}px {SPACE_3}px" in sheet
     assert f"padding: 0 0 {SPACE_3}px 0" in sheet
 
@@ -1932,3 +1933,106 @@ def test_prefers_high_contrast_ignores_a_high_contrast_palette(monkeypatch):
         assert accessibility.prefers_high_contrast() is False
     finally:
         QApplication.setPalette(previous)
+
+
+_TNUM = QFont.Tag("tnum")
+
+# (font-size px, font-weight): page title, section title, panel title,
+# body, label, caption.
+_TYPE_SCALE = {(22, 600), (18, 600), (15, 600), (13, 400), (13, 500), (12, 400)}
+
+
+def test_tabular_font_sets_tnum_without_pinning_size():
+    font = tabular_font()
+    assert font.isFeatureSet(_TNUM)
+    assert font.featureValue(_TNUM) == 1
+    # Nothing but the feature is pinned, so the style sheet keeps size control.
+    assert font.pixelSize() == -1
+    assert not font.bold()
+
+    base = QFont()
+    base.setPixelSize(17)
+    derived = tabular_font(base)
+    assert derived.isFeatureSet(_TNUM)
+    assert derived.pixelSize() == 17
+    assert not base.isFeatureSet(_TNUM)
+
+
+def test_tabular_font_survives_app_stylesheet_reapply(qtbot):
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    label = QLabel("1,234")
+    qtbot.addWidget(label)
+    label.setFont(tabular_font())
+    try:
+        for light in (False, True, False):
+            app.setStyleSheet(app_stylesheet(light=light))
+            label.ensurePolished()
+            assert label.font().isFeatureSet(_TNUM)
+            assert label.font().pixelSize() == 13
+    finally:
+        app.setStyleSheet(previous)
+
+
+def test_tabular_font_applied_to_numeric_displays(qtbot):
+    card = PageCard(0)
+    qtbot.addWidget(card)
+    for widget in (card._page_overlay, card._rotation_overlay, card._page_label):
+        assert widget.font().isFeatureSet(_TNUM)
+
+    zoom = ZoomControls(min_width=80, max_width=480, step=16, initial=160)
+    qtbot.addWidget(zoom)
+    assert zoom._value_label.font().isFeatureSet(_TNUM)
+    zoom.show()
+    zoom._value_label.setText("1000px")
+    metrics = zoom._value_label.fontMetrics()
+    assert metrics.horizontalAdvance("1000px") <= zoom._value_label.width()
+
+    merge_card = MergeFileCard(0, "/tmp/a.pdf", 1)
+    qtbot.addWidget(merge_card)
+    assert merge_card._subtitle_label.font().isFeatureSet(_TNUM)
+
+    footer = StatusFooter()
+    qtbot.addWidget(footer)
+    assert footer.font().isFeatureSet(_TNUM)
+
+
+def _qss_rules(sheet: str):
+    sheet = re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", sheet):
+        yield " ".join(match.group(1).split()), match.group(2)
+
+
+@pytest.mark.parametrize(
+    ("light", "high_contrast"),
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["dark", "light", "dark-hc", "light-hc"],
+)
+def test_stylesheet_text_uses_only_the_type_scale(light, high_contrast):
+    sheet = app_stylesheet(light=light, high_contrast=high_contrast)
+    checked = 0
+    for selector, body in _qss_rules(sheet):
+        size = re.search(r"font-size:\s*(\d+)px", body)
+        weight = re.search(r"font-weight:\s*(\d+)", body)
+        if not size and not weight:
+            continue
+        # A rule that sets only one property inherits the other: body size
+        # and regular weight unless the rule says otherwise.
+        pair = (
+            int(size.group(1)) if size else 13,
+            int(weight.group(1)) if weight else 400,
+        )
+        if "FreeTextFormatBold" in selector:
+            assert pair == (13, 700)
+            continue
+        assert pair in _TYPE_SCALE, f"{selector}: {pair}"
+        checked += 1
+    assert checked > 50
+
+
+def test_stylesheet_has_no_monospace_chrome():
+    for light in (False, True):
+        sheet = app_stylesheet(light=light)
+        lowered = sheet.lower()
+        for family in ("monospace", "consolas", "cascadia"):
+            assert family not in lowered

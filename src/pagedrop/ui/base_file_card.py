@@ -22,7 +22,14 @@ from PyQt6.QtWidgets import (
 from pagedrop.core.drag_mime import INTERNAL_MERGE_FILE_MIME, encode_page_indices
 from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.ui.accessibility import prefers_reduce_motion
-from pagedrop.ui.theme import CARD_PADDING, CARD_WIDTH, SPACE_1, SPACE_2, shadow_qcolor
+from pagedrop.ui.theme import (
+    CARD_PADDING,
+    CARD_WIDTH,
+    SPACE_1,
+    SPACE_2,
+    shadow_qcolor,
+    tabular_font,
+)
 
 
 def _repolish(widget: QFrame) -> None:
@@ -203,6 +210,7 @@ class InternalReorderFileCard(BaseFileCard):
 
         self._subtitle_label = QLabel(subtitle)
         self._subtitle_label.setObjectName(f"{object_name}Subtitle")
+        self._subtitle_label.setFont(tabular_font())
         self._subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.setAccessibleName(filename)

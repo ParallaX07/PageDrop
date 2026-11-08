@@ -116,6 +116,7 @@ from pagedrop.ui.theme import (
     MIN_THUMBNAIL_WIDTH,
     ZOOM_WHEEL_STEP,
     current_theme,
+    tabular_font,
 )
 from pagedrop.ui.zoom_controls import ZoomControls
 from pagedrop.utils.page_jump import parse_page_ranges
@@ -754,6 +755,7 @@ class MainWindow(QMainWindow):
         separators = [toolbar.addSeparator()]
         self._selection_toolbar_label = QLabel()
         self._selection_toolbar_label.setObjectName("ToolbarSelectionCount")
+        self._selection_toolbar_label.setFont(tabular_font())
         self._selection_toolbar_label.setFixedWidth(130)
         self._selection_toolbar_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self._selection_toolbar_action = toolbar.addWidget(self._selection_toolbar_label)
@@ -1047,6 +1049,7 @@ class MainWindow(QMainWindow):
 
         self._selection_status = QLabel()
         self._selection_status.setObjectName("SelectionStatusLabel")
+        self._selection_status.setFont(tabular_font())
         self._selection_status.setAccessibleName("Selection count")
         self._selection_status.hide()
 
@@ -1079,6 +1082,7 @@ class MainWindow(QMainWindow):
         self._move_undo_timer.setSingleShot(True)
         self._move_undo_timer.timeout.connect(self._dismiss_move_undo)
 
+        self.statusBar().setFont(tabular_font())
         self.statusBar().addPermanentWidget(self._selection_status)
         self.statusBar().addPermanentWidget(self._move_undo_widget)
         self.statusBar().addPermanentWidget(self._progress_bar)

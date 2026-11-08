@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from pagedrop.ui.theme import SPACE_2, SPACE_4
+from pagedrop.ui.theme import SPACE_2, SPACE_4, tabular_font
 
 if TYPE_CHECKING:
     pass
@@ -98,6 +98,7 @@ class StatusFooter(QLabel):
     def __init__(self, parent: QWidget | None = None, *, initial: str = "") -> None:
         super().__init__(parent)
         self.setObjectName("ToolPageStatus")
+        self.setFont(tabular_font())
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._message = ""
         self.showMessage(initial)

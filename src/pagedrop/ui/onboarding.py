@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
 from PyQt6 import sip
-from PyQt6.QtGui import QAction, QFont, QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -249,9 +249,6 @@ class KeyboardShortcutsDialog(QDialog):
         body_layout.setContentsMargins(0, 0, 8, 0)
         body_layout.setSpacing(16)
 
-        mono = QFont()
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-
         for category, entries in shortcut_groups(actions):
             heading = QLabel(category)
             heading.setObjectName("ShortcutCategory")
@@ -264,7 +261,6 @@ class KeyboardShortcutsDialog(QDialog):
                 name_label.setWordWrap(True)
                 keys_label = QLabel(keys)
                 keys_label.setObjectName("ShortcutKeys")
-                keys_label.setFont(mono)
                 keys_label.setAlignment(
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 )

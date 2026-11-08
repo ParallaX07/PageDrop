@@ -53,6 +53,7 @@ from pagedrop.ui.theme import (
     accent_qcolor,
     on_accent_qcolor,
     shadow_qcolor,
+    tabular_font,
 )
 from pagedrop.utils.temp_manager import TempManager
 
@@ -91,6 +92,7 @@ class PageCard(BaseFileCard):
         self._page_overlay.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
+        self._page_overlay.setFont(tabular_font())
         self._page_overlay.hide()
 
         # Semantic rotation chip — same material as page overlay, opposite corner.
@@ -99,6 +101,7 @@ class PageCard(BaseFileCard):
         self._rotation_overlay.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
+        self._rotation_overlay.setFont(tabular_font())
         self._rotation_overlay.hide()
 
         # Selection needs a shape as well as the accent outline; this remains
@@ -119,6 +122,7 @@ class PageCard(BaseFileCard):
 
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
+        self._page_label.setFont(tabular_font())
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
@@ -589,9 +593,9 @@ class PageCard(BaseFileCard):
             painter.drawPixmap(offset, offset, scaled)
 
         badge_text = f"×{count}"
-        badge_font = QFont()
-        badge_font.setBold(True)
-        badge_font.setPointSize(10)
+        badge_font = tabular_font()
+        badge_font.setPixelSize(13)
+        badge_font.setWeight(QFont.Weight.Medium)
         painter.setFont(badge_font)
 
         metrics = painter.fontMetrics()
