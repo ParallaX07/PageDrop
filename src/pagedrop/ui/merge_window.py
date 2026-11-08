@@ -42,8 +42,8 @@ from pagedrop.ui.theme import (
     ICON_SIZE,
     MAX_THUMBNAIL_WIDTH,
     MIN_THUMBNAIL_WIDTH,
-    ON_PRIMARY,
     ZOOM_WHEEL_STEP,
+    current_theme,
 )
 from pagedrop.ui.tool_page import StatusFooter, ToolWorkflowHeader
 from pagedrop.ui.tool_shell import run_tool_job
@@ -208,7 +208,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         toolbar.addWidget(self._zoom_controls)
 
         self._merge_action = toolbar.addAction(
-            icons.icon("floppy-disk", color=ON_PRIMARY),
+            icons.icon("floppy-disk", color=current_theme().on_ink),
             "Merge",
         )
         self._merge_action.triggered.connect(self._merge_pdfs)
@@ -228,7 +228,7 @@ class MergeWindow(JobChromeMixin, QWidget):
         self._remove_action.setIcon(icons.icon("trash"))
         self._move_up_action.setIcon(icons.icon("arrow-up"))
         self._move_down_action.setIcon(icons.icon("arrow-down"))
-        self._merge_action.setIcon(icons.icon("floppy-disk", color=ON_PRIMARY))
+        self._merge_action.setIcon(icons.icon("floppy-disk", color=current_theme().on_ink))
 
     def _connect_signals(self) -> None:
         self._file_grid.selection_changed.connect(self._update_actions)

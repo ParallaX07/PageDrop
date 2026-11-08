@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QApplication
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.settings import set_light_theme
-from pagedrop.ui.theme import app_stylesheet
+from pagedrop.ui.theme import DARK, LIGHT, app_stylesheet
 
 
 def test_set_thumbnail(qtbot):
@@ -85,7 +85,7 @@ def test_theme_toggle_keeps_property_based_card_chrome(qtbot, isolated_settings)
     assert not card.styleSheet()
     light = app.styleSheet()
     assert 'QFrame#PageCard[selected="true"]' in light
-    assert "#F7F8FA" in light
+    assert LIGHT.chrome in light
 
     set_light_theme(False)
     apply_app_stylesheet(app)
@@ -93,7 +93,7 @@ def test_theme_toggle_keeps_property_based_card_chrome(qtbot, isolated_settings)
     assert not card.styleSheet()
     dark = app.styleSheet()
     assert 'QFrame#PageCard[selected="true"]' in dark
-    assert "#131316" in dark
+    assert DARK.chrome in dark
 
 
 def test_page_card_accessible_name(qtbot):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
@@ -76,6 +76,31 @@ def refresh_themed_widgets(app: QApplication | None = None) -> None:
 
     refresh_icons()
 
+
+def apply_appearance(value: str) -> None:
+    """Store the appearance choice, re-theme, and sync every window's menu."""
+    app_settings.set_appearance(value)
+    refresh_themed_widgets()
+    for widget in QApplication.topLevelWidgets():
+        try:
+            action = getattr(widget, "_appearance_actions", {}).get(value)
+            if action is not None:
+                # The group's ``triggered`` only fires on user triggers, so
+                # this keeps its exclusivity without re-entering the handler.
+                action.setChecked(True)
+            relayout = getattr(widget, "_update_responsive_shell", None)
+            if relayout is not None:
+                QTimer.singleShot(0, relayout)
+        except RuntimeError:  # window already deleted
+            continue
+
+
+def _on_color_scheme_changed(*_: object) -> None:
+    """Follow an OS light/dark switch, unless a theme was chosen explicitly."""
+    if app_settings.appearance() == "system":
+        refresh_themed_widgets()
+
+
 def install_accessibility(app: QApplication) -> None:
     """Apply theme for current prefs and re-apply it when the platform appearance changes."""
     apply_app_stylesheet(app)
@@ -95,5 +120,14 @@ def install_accessibility(app: QApplication) -> None:
         if state == Qt.ApplicationState.ApplicationActive and prefers_high_contrast() != applied["high_contrast"]:
             reapply()
 
-    QGuiApplication.styleHints().colorSchemeChanged.connect(lambda *_: reapply())
+    def on_scheme(*_: object) -> None:
+        # Follow the OS under the system appearance (icons too); otherwise only
+        # pick up a contrast change that rode along with the scheme change.
+        if app_settings.appearance() == "system":
+            applied["high_contrast"] = prefers_high_contrast()
+            _on_color_scheme_changed()
+        else:
+            reapply()
+
+    QGuiApplication.styleHints().colorSchemeChanged.connect(on_scheme)
     app.applicationStateChanged.connect(on_state)

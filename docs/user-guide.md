@@ -100,10 +100,10 @@ from the result bar. PageDrop does not open the report automatically.
 
 ## Preferences and accessibility
 
-- View → Toggle light theme, and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
+- View → Appearance (System, Light, or Dark; also in Preferences → Window → Appearance), and View → Thumbnail quality (Low / Medium / High); the app remembers your last thumbnail zoom
 - Preferences cover confirm-before-delete, confirm dirty tab close, remember window geometry, **Automatically check for updates**, and **Reduce motion** (platform reduce-motion is still honored when available)
 - Recheck and Download English language data try your changes but do not save them; nothing is saved until you click OK, and Cancel puts everything back as it was
-- The first run follows the operating system's light or dark scheme; once you choose a theme, that choice is kept
+- System appearance follows the operating system's light or dark setting, and is the default on first run; once you choose Light or Dark, that choice is kept
 - High-contrast preferences are respected where the platform exposes them (Qt 6.10 or later). Focus rings keep enough contrast against light and dark chrome, and icons stay sharp on HiDPI displays
 - Shortcuts act only in the window that has focus, and not while you type in a text field. The undo and zoom controls in the status bar can be reached with Tab
 - Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions. A toast stays while the pointer or keyboard focus is on it, and the Undo toast takes clicks only on its own card

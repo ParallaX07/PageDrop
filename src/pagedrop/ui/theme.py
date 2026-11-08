@@ -2,102 +2,202 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PyQt6.QtGui import QColor, QIcon
 
-# Cold charcoal + electric blue (devtool / document utility)
-BG_BASE = "#131316"
-BG_SURFACE = "#1A1A1F"
-BG_GRID = "#16161A"
-BG_CARD = "#222228"
-BG_CARD_HOVER = "#2A2A32"
-BG_TOOLBAR = "#1A1A1F"
-BG_STATUS = "#1A1A1F"
-BG_TAB_BAR = "#17171C"
-BG_PREVIEW_FOOTER = "#1A1A1F"
+@dataclass(frozen=True)
+class Theme:
+    """One complete colour set; every chrome colour is read from here."""
+
+    chrome: str
+    raised: str
+    canvas: str
+    bar_top: str
+    bar_tabs: str
+    line: str
+    line_strong: str
+    text: str
+    text_muted: str
+    on_bar: str
+    on_bar_muted: str
+    ink: str
+    ink_hover: str
+    ink_pressed: str
+    on_ink: str
+    ink_tint: str
+    focus: str
+    success: str
+    warning: str
+    danger: str
+    index_clay: str
+    index_teal: str
+    index_ochre: str
+    index_plum: str
+    index_moss: str
+    index_slate: str
+    on_index: str
+
+
+LIGHT = Theme(
+    chrome="#FAF9F7",
+    raised="#FFFFFF",
+    canvas="#E9E7E2",
+    bar_top="#F0EEE9",
+    bar_tabs="#E6E3DC",
+    line="#D8D5CE",
+    line_strong="#7F7C74",
+    text="#1E2226",
+    text_muted="#4C5258",
+    on_bar="#22262A",
+    on_bar_muted="#555B61",
+    ink="#1F4E79",
+    ink_hover="#17406A",
+    ink_pressed="#12345A",
+    on_ink="#FFFFFF",
+    ink_tint="#DDE7F1",
+    focus="#1E2226",
+    success="#1B7A3D",
+    warning="#8A6200",
+    danger="#B3261E",
+    index_clay="#B4432F",
+    index_teal="#1F6F6B",
+    index_ochre="#8A6200",
+    index_plum="#6B4A8E",
+    index_moss="#3F6B2F",
+    index_slate="#5A6470",
+    on_index="#FFFFFF",
+)
+
+DARK = Theme(
+    chrome="#222528",
+    raised="#2A2E31",
+    canvas="#16181A",
+    bar_top="#1A1C1E",
+    bar_tabs="#212427",
+    line="#393D41",
+    line_strong="#71777C",
+    text="#EDEEEF",
+    text_muted="#B9BDC1",
+    on_bar="#ECEDEE",
+    on_bar_muted="#A7ACB0",
+    ink="#82B4E0",
+    ink_hover="#9AC4E8",
+    ink_pressed="#6FA3D2",
+    on_ink="#0B2236",
+    ink_tint="#1F3347",
+    focus="#EDEEEF",
+    success="#62CC8E",
+    warning="#E4BA5A",
+    danger="#F2A29A",
+    index_clay="#EE8F7C",
+    index_teal="#63C9C2",
+    index_ochre="#E4BA5A",
+    index_plum="#C3A6E6",
+    index_moss="#A5D08A",
+    index_slate="#AEB8C2",
+    on_index="#21100C",
+)
+
+
+def current_theme() -> Theme:
+    """The chrome theme the user (or the OS) currently selects."""
+    from pagedrop.ui.settings import light_theme
+
+    return LIGHT if light_theme() else DARK
+
+
+def rgba(hex_color: str, alpha: int) -> str:
+    """QSS ``rgba()`` for a theme hex plus an 0-255 alpha."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def blend(foreground: str, background: str, weight: float) -> str:
+    """Solid ``#RRGGBB`` of ``foreground`` over ``background`` at ``weight``."""
+    f = foreground.lstrip("#")
+    b = background.lstrip("#")
+    mixed = (
+        round(int(f[i : i + 2], 16) * weight + int(b[i : i + 2], 16) * (1 - weight))
+        for i in (0, 2, 4)
+    )
+    return "#" + "".join(f"{c:02X}" for c in mixed)
+
+
+# Legacy names stay as aliases: dark names read DARK, ``*_LIGHT`` names read LIGHT.
+BG_BASE = BG_SURFACE = BG_PREVIEW_FOOTER = DARK.chrome
+BG_GRID = DARK.canvas
+BG_CARD = DARK.raised
+BG_CARD_HOVER = DARK.ink_tint
+BG_TOOLBAR = BG_STATUS = DARK.bar_top
+BG_TAB_BAR = DARK.bar_tabs
 
 # Semantic surface roles. Keep these named by purpose so document-oriented
 # widgets do not need to infer a colour from generic application-card tokens.
 SURFACE_QUIET_CHROME = BG_SURFACE
 SURFACE_DOCUMENT_CANVAS = BG_GRID
-SURFACE_PAPER = "#FFFFFF"
 SURFACE_RAISED = BG_CARD
 
-BORDER_SUBTLE = "#2E2E36"
-BORDER_DEFAULT = "#45454F"
-BORDER_HOVER = "#5C5C68"
-# Light chrome border — shared by app_stylesheet locals + paint helpers
-BORDER_HOVER_LIGHT = "#9CA3AF"
-FOCUS_RING_LIGHT = "#13558E"
+BORDER_SUBTLE = DARK.line
+BORDER_DEFAULT = BORDER_HOVER = DARK.line_strong
+BORDER_HOVER_LIGHT = LIGHT.line_strong
+FOCUS_RING = DARK.focus
+FOCUS_RING_LIGHT = LIGHT.focus
 
-# ponytail: darkened from #2F9BE6 so TEXT_ON_ACCENT meets WCAG AA ≥ 4.5 on
-# fill / hover / pressed; brighten only if labels move off the fill.
-ACCENT = "#1868AD"
-ACCENT_HOVER = "#1C74BC"
-ACCENT_PRESSED = "#13558E"
+ACCENT = PRIMARY = DARK.ink
+ACCENT_HOVER = DARK.ink_hover
+ACCENT_PRESSED = DARK.ink_pressed
 
-TEXT_PRIMARY = "#F2F2F4"
-TEXT_SECONDARY = "#A8A8B3"
-TEXT_MUTED = "#82828E"
+TEXT_PRIMARY = DARK.text
+TEXT_SECONDARY = TEXT_MUTED = DARK.text_muted
 # Ink on accent / filled interactive chrome (labels, selection text, focus rings)
-TEXT_ON_ACCENT = "#FFFFFF"
+TEXT_ON_ACCENT = ON_PRIMARY = DARK.on_ink
 
-# Shared semantic roles. Widget code should use these names when the purpose is
-# known; the older palette names above remain the source values for compatibility.
+# Shared semantic roles for widget code.
 BACKGROUND = BG_BASE
 FOREGROUND = TEXT_PRIMARY
 MUTED_FOREGROUND = TEXT_MUTED
 BORDER = BORDER_DEFAULT
 INPUT = BG_CARD
-# Keyboard focus ring. ACCENT is darkened for text on the accent fill, so it
-# falls below 3:1 on dark surfaces; these stay >= 3:1 on every chrome surface.
-FOCUS_RING = "#5AB0F5"
-PRIMARY = ACCENT
-ON_PRIMARY = TEXT_ON_ACCENT
 DOCUMENT_CANVAS = SURFACE_DOCUMENT_CANVAS
 RAISED_SURFACE = SURFACE_RAISED
 
-# Light chrome mirrors — paint helpers + app_stylesheet(light=True) share these
-# so toggling light never leaves dark-only module hex on white surfaces.
-TEXT_PRIMARY_LIGHT = "#1A1A1F"
-TEXT_SECONDARY_LIGHT = "#4A4A55"
-TEXT_MUTED_LIGHT = "#5A5D68"
-BG_CARD_LIGHT = "#FFFFFF"
-BG_BASE_LIGHT = "#F7F8FA"
-BG_GRID_LIGHT = "#F0F1F4"
-SURFACE_QUIET_CHROME_LIGHT = BG_CARD_LIGHT
+TEXT_PRIMARY_LIGHT = LIGHT.text
+TEXT_SECONDARY_LIGHT = TEXT_MUTED_LIGHT = LIGHT.text_muted
+BG_CARD_LIGHT = LIGHT.raised
+BG_BASE_LIGHT = LIGHT.chrome
+BG_GRID_LIGHT = LIGHT.canvas
+SURFACE_QUIET_CHROME_LIGHT = LIGHT.chrome
 SURFACE_DOCUMENT_CANVAS_LIGHT = BG_GRID_LIGHT
-SURFACE_PAPER_LIGHT = "#FFFFFF"
 SURFACE_RAISED_LIGHT = BG_CARD_LIGHT
 
 BACKGROUND_LIGHT = BG_BASE_LIGHT
 FOREGROUND_LIGHT = TEXT_PRIMARY_LIGHT
 MUTED_FOREGROUND_LIGHT = TEXT_MUTED_LIGHT
-BORDER_LIGHT = "#D1D5DB"
+BORDER_LIGHT = LIGHT.line
 INPUT_LIGHT = BG_CARD_LIGHT
 DOCUMENT_CANVAS_LIGHT = SURFACE_DOCUMENT_CANVAS_LIGHT
 RAISED_SURFACE_LIGHT = SURFACE_RAISED_LIGHT
 
-CLOSE_TAB = "#E85D5D"
-CLOSE_TAB_HOVER_BG = "#3D2228"
-CLOSE_TAB_PRESSED_BG = "#2A1519"
-CLOSE_TAB_LIGHT = "#D14343"
-CLOSE_TAB_HOVER_BG_LIGHT = "#F5D6D6"
-CLOSE_TAB_PRESSED_BG_LIGHT = "#E8B4B4"
+CLOSE_TAB = DARK.danger
+CLOSE_TAB_LIGHT = LIGHT.danger
 
 # Semantic status (compare diffs, validation errors, toast kinds)
-STATUS_SUCCESS = "#4CAF6E"
-STATUS_WARNING = "#F0B43C"
-# Darker status ink for light chrome text (toast / lists) — AA ≥ 4.5 on white
-STATUS_SUCCESS_LIGHT = "#1B7A3D"
-STATUS_WARNING_LIGHT = "#8A6200"
+STATUS_SUCCESS = DARK.success
+STATUS_WARNING = DARK.warning
+STATUS_SUCCESS_LIGHT = LIGHT.success
+STATUS_WARNING_LIGHT = LIGHT.warning
 
-# Viewer page paper — intentional light plane even under dark chrome
+# Page plane: the page stays white and its marks stay dark in both themes.
+SURFACE_PAPER = "#FFFFFF"
 VIEWER_PAGE_BG = SURFACE_PAPER
-# Marks drawn on page paper (stay dark regardless of chrome theme)
 PAGE_INK = "#141414"
+# Selection / handle marks drawn on the page: light-theme ink in both themes,
+# since the page behind them is always white.
+PAGE_ACCENT = LIGHT.ink
 # Find / search overlays drawn on the page (content, not chrome)
 SEARCH_HIT = "#FFDC00"
 SEARCH_HIT_ACTIVE = "#FF9100"
@@ -118,10 +218,10 @@ COMPACT_CONTROL_HEIGHT = 32
 FORM_CONTROL_HEIGHT = 36
 ICON_SIZE_SMALL = 16
 ICON_SIZE = 18
-RADIUS_CONTROL = 6
-RADIUS_SURFACE = 10
+RADIUS_CONTROL = 4
+RADIUS_SURFACE = 6
 RADIUS_CARD = RADIUS_SURFACE
-RADIUS_BADGE = 6
+RADIUS_BADGE = 3
 
 FONT_UI = '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
 FONT_MONO = '"Cascadia Mono", "Consolas", monospace'
@@ -166,68 +266,36 @@ def relative_luminance(hex_color: str) -> float:
 
 
 def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
-    # Light / HC overrides under distinct locals so we never mutate module tokens.
-    if light:
-        # Cool off-white base; white cards; light borders (Bento light translation).
-        bg_base = BG_BASE_LIGHT
-        bg_surface = SURFACE_QUIET_CHROME_LIGHT
-        bg_grid = SURFACE_DOCUMENT_CANVAS_LIGHT
-        bg_card = SURFACE_RAISED_LIGHT
-        bg_card_hover = "#EEF0F4"
-        bg_thumb_empty = "#E2E4EA"
-        bg_toolbar = BG_CARD_LIGHT
-        bg_status = BG_CARD_LIGHT
-        bg_tab_bar = BG_BASE_LIGHT
-        bg_preview_footer = BG_CARD_LIGHT
-        border_subtle_tok = "#E5E7EB"
-        border_default_tok = "#D1D5DB"
-        border_hover = BORDER_HOVER_LIGHT
-        text_primary = TEXT_PRIMARY_LIGHT
-        text_secondary = TEXT_SECONDARY_LIGHT
-        text_muted_tok = TEXT_MUTED_LIGHT
-        close_tab = CLOSE_TAB_LIGHT
-        close_tab_hover_bg = CLOSE_TAB_HOVER_BG_LIGHT
-        close_tab_pressed_bg = CLOSE_TAB_PRESSED_BG_LIGHT
-        status_success = STATUS_SUCCESS_LIGHT
-        status_warning = STATUS_WARNING_LIGHT
-        busy_overlay_bg = "rgba(247, 248, 250, 200)"
-        # Chips sit on page-paper thumbs (always light) — dark pill either chrome.
-        page_chip_bg = "rgba(26, 26, 31, 170)"
-        # R10c: one step deeper than bg_base for generic press fills.
-        bg_pressed = "#E2E4EA"
-    else:
-        bg_base = BG_BASE
-        bg_surface = SURFACE_QUIET_CHROME
-        bg_grid = SURFACE_DOCUMENT_CANVAS
-        bg_card = SURFACE_RAISED
-        bg_card_hover = BG_CARD_HOVER
-        bg_thumb_empty = "#2A2A32"
-        bg_toolbar = BG_TOOLBAR
-        bg_status = BG_STATUS
-        bg_tab_bar = BG_TAB_BAR
-        bg_preview_footer = BG_PREVIEW_FOOTER
-        border_subtle_tok = BORDER_SUBTLE
-        border_default_tok = BORDER_DEFAULT
-        border_hover = BORDER_HOVER
-        text_primary = TEXT_PRIMARY
-        text_secondary = TEXT_SECONDARY
-        text_muted_tok = TEXT_MUTED
-        close_tab = CLOSE_TAB
-        close_tab_hover_bg = CLOSE_TAB_HOVER_BG
-        close_tab_pressed_bg = CLOSE_TAB_PRESSED_BG
-        status_success = STATUS_SUCCESS
-        status_warning = STATUS_WARNING
-        busy_overlay_bg = "rgba(19, 19, 22, 180)"
-        page_chip_bg = "rgba(19, 19, 22, 160)"
-        bg_pressed = "#0E0E11"
-
-    focus_ring = FOCUS_RING_LIGHT if light else FOCUS_RING
-    # Ring for a focused item on an ACCENT fill: white is invisible against the
-    # light surface edge, so light uses black (3.6:1 on ACCENT); dark uses white.
-    selected_focus_ring = "#000000" if light else TEXT_ON_ACCENT
-    text_muted = text_secondary if high_contrast else text_muted_tok
-    border_default = border_hover if high_contrast else border_default_tok
-    border_subtle = border_default_tok if high_contrast else border_subtle_tok
+    # High contrast is an overlay on either theme: all text in ``text`` and
+    # surface edges drawn in ``text``, with a thicker focus ring.
+    t = LIGHT if light else DARK
+    bg_base = bg_surface = bg_preview_footer = t.chrome
+    bg_float = bg_card = t.raised
+    bg_grid = t.canvas
+    bg_card_hover = t.ink_tint
+    bg_pressed = bg_thumb_empty = t.line
+    bg_toolbar = bg_status = bg_bar = t.bar_top
+    bg_tab_bar = t.bar_tabs
+    text_primary = t.text
+    on_bar = t.text if high_contrast else t.on_bar
+    text_muted = t.text if high_contrast else t.text_muted
+    on_bar_muted = t.text if high_contrast else t.on_bar_muted
+    border_subtle = t.text if high_contrast else t.line
+    border_default = border_hover = t.text if high_contrast else t.line_strong
+    ink, ink_hover, ink_pressed, on_ink = t.ink, t.ink_hover, t.ink_pressed, t.on_ink
+    focus_ring = t.focus
+    # Ring for a focused item on an ink fill; the focus colour cannot contrast
+    # with it, so use the ink label colour.
+    selected_focus_ring = on_ink
+    close_tab = t.danger
+    close_hover_bg = blend(t.danger, bg_bar, 0.14)
+    close_tab_hover_bg = blend(t.danger, bg_tab_bar, 0.14)
+    close_tab_pressed_bg = blend(t.danger, bg_tab_bar, 0.26)
+    status_success = t.success
+    status_warning = t.warning
+    busy_overlay_bg = rgba(t.chrome, 200 if light else 180)
+    # Chips sit on page-paper thumbs (always light): a page-ink pill in both themes.
+    page_chip_bg = rgba(PAGE_INK, 170 if light else 160)
     focus_width = 3 if high_contrast else 2
     # Selection reads thicker than keyboard focus (multi-select still obvious in HC)
     selected_width = focus_width + 1
@@ -251,13 +319,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#WindowTitleBar {{
-        background-color: {bg_surface};
+        background-color: {bg_bar};
         border-bottom: 1px solid {border_subtle};
     }}
 
     QMenuBar {{
-        background-color: {bg_surface};
-        color: {text_primary};
+        background-color: {bg_bar};
+        color: {on_bar};
         padding: 2px 0;
     }}
 
@@ -279,7 +347,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#WindowTitle {{
-        color: {text_secondary};
+        color: {on_bar_muted};
         font-weight: 600;
         padding: 0 8px;
     }}
@@ -293,9 +361,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         max-height: 26px;
         padding: 0;
         border: {focus_width}px solid transparent;
-        border-radius: 5px;
+        border-radius: {RADIUS_CONTROL}px;
         background: transparent;
-        color: {text_primary};
+        color: {on_bar};
     }}
 
     QToolButton#WindowMinimize:focus,
@@ -311,12 +379,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#WindowClose:hover {{
-        background-color: {CLOSE_TAB_HOVER_BG if not light else CLOSE_TAB_HOVER_BG_LIGHT};
-        color: {CLOSE_TAB if not light else CLOSE_TAB_LIGHT};
+        background-color: {close_hover_bg};
+        color: {close_tab};
     }}
 
     QMenu {{
-        background-color: {bg_surface};
+        background-color: {bg_float};
         color: {text_primary};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_SURFACE}px;
@@ -352,8 +420,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_CONTROL}px;
         padding: {FORM_CONTROL_VERTICAL_PADDING}px {SPACE_2}px;
         min-height: {FORM_CONTROL_CONTENT_HEIGHT}px;
-        selection-background-color: {ACCENT};
-        selection-color: {TEXT_ON_ACCENT};
+        selection-background-color: {ink};
+        selection-color: {on_ink};
     }}
 
     QLineEdit:focus {{
@@ -376,14 +444,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QTreeWidget::item {{
         padding: {8 - focus_width}px {10 - focus_width}px;
         border: {focus_width}px solid transparent;
-        border-radius: 6px;
+        border-radius: {RADIUS_CONTROL}px;
         color: {text_primary};
     }}
 
     QListWidget::item:selected,
     QTreeWidget::item:selected {{
-        background-color: {ACCENT};
-        color: {TEXT_ON_ACCENT};
+        background-color: {ink};
+        color: {on_ink};
     }}
 
     QListWidget::item:focus,
@@ -453,7 +521,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QCheckBox::indicator {{
-        border-radius: 3px;
+        border-radius: {RADIUS_BADGE}px;
     }}
 
     QRadioButton::indicator {{
@@ -462,8 +530,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QCheckBox::indicator:checked,
     QRadioButton::indicator:checked {{
-        background-color: {ACCENT};
-        border-color: {ACCENT_PRESSED};
+        background-color: {ink};
+        border-color: {ink_pressed};
     }}
 
     QCheckBox:focus,
@@ -505,8 +573,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_surface};
         color: {text_primary};
         border: 1px solid {border_subtle};
-        selection-background-color: {ACCENT};
-        selection-color: {TEXT_ON_ACCENT};
+        selection-background-color: {ink};
+        selection-color: {on_ink};
     }}
 
     QSpinBox,
@@ -516,8 +584,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 8px;
-        selection-background-color: {ACCENT};
-        selection-color: {TEXT_ON_ACCENT};
+        selection-background-color: {ink};
+        selection-color: {on_ink};
     }}
 
     QSpinBox:focus,
@@ -531,8 +599,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 8px 10px;
-        selection-background-color: {ACCENT};
-        selection-color: {TEXT_ON_ACCENT};
+        selection-background-color: {ink};
+        selection-color: {on_ink};
     }}
 
     QPlainTextEdit,
@@ -542,8 +610,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 8px 10px;
-        selection-background-color: {ACCENT};
-        selection-color: {TEXT_ON_ACCENT};
+        selection-background-color: {ink};
+        selection-color: {on_ink};
     }}
 
     QPlainTextEdit:focus,
@@ -564,7 +632,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         subcontrol-origin: margin;
         left: 10px;
         padding: 0 4px;
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     /* Encrypt permissions — surface + card radius so it matches section language. */
@@ -575,7 +643,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QGroupBox#EncryptPermissions::title {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     QToolBar {{
@@ -619,13 +687,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton:checked {{
         background-color: {bg_card_hover};
         color: {text_primary};
-        border: 1px solid {ACCENT};
+        border: 1px solid {ink};
         font-weight: 600;
     }}
 
     QToolButton:checked:hover {{
         background-color: {bg_pressed};
-        border-color: {ACCENT_HOVER};
+        border-color: {ink_hover};
     }}
 
     QToolButton:disabled,
@@ -638,9 +706,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToolbarPrimary,
     QPushButton#EmptyStateOpenButton,
     QToolBar QToolButton#ToolbarPrimary {{
-        background-color: {ACCENT};
-        color: {TEXT_ON_ACCENT};
-        border: 1px solid {ACCENT_PRESSED};
+        background-color: {ink};
+        color: {on_ink};
+        border: 1px solid {ink_pressed};
         font-weight: 600;
         padding: 6px 14px;
     }}
@@ -648,21 +716,21 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToolbarPrimary:hover,
     QPushButton#EmptyStateOpenButton:hover,
     QToolBar QToolButton#ToolbarPrimary:hover {{
-        background-color: {ACCENT_HOVER};
-        border-color: {ACCENT_HOVER};
+        background-color: {ink_hover};
+        border-color: {ink_hover};
     }}
 
     QPushButton#ToolbarPrimary:pressed,
     QPushButton#EmptyStateOpenButton:pressed,
     QToolBar QToolButton#ToolbarPrimary:pressed {{
-        background-color: {ACCENT_PRESSED};
-        border-color: {ACCENT_PRESSED};
+        background-color: {ink_pressed};
+        border-color: {ink_pressed};
     }}
 
     QPushButton#ToolbarPrimary:focus,
     QPushButton#EmptyStateOpenButton:focus,
     QToolBar QToolButton#ToolbarPrimary:focus {{
-        border: {focus_width}px solid {TEXT_ON_ACCENT};
+        border: {focus_width}px solid {on_ink};
     }}
 
     QPushButton#ToolbarPrimary:disabled,
@@ -676,7 +744,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToolbarPrimary[resultAvailable="true"],
     QToolBar QToolButton#ToolbarPrimary[resultAvailable="true"] {{
         background-color: transparent;
-        color: {text_secondary};
+        color: {text_muted};
         border-color: {border_default};
     }}
 
@@ -691,7 +759,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ToolbarSecondary,
     QToolBar QToolButton#ToolbarSecondary {{
         background-color: transparent;
-        color: {text_secondary};
+        color: {text_muted};
         border: 1px solid {border_default};
         font-weight: 600;
     }}
@@ -729,14 +797,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QPushButton[destructive="true"]:hover {{
-        color: {TEXT_ON_ACCENT};
+        color: {on_ink};
         border-color: {close_tab};
         background-color: {close_tab};
     }}
 
     QToolButton#NewTabButton {{
         background-color: transparent;
-        color: {text_secondary};
+        color: {text_muted};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         font-size: 16px;
@@ -765,7 +833,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton#ChromeToggleButton {{
         background-color: transparent;
-        color: {text_secondary};
+        color: {text_muted};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         font-size: 14px;
@@ -803,7 +871,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
         color: {text_primary};
         border: 1px solid transparent;
-        border-radius: 6px;
+        border-radius: {RADIUS_CONTROL}px;
         font-size: 15px;
         font-weight: 600;
         padding: 0;
@@ -842,8 +910,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::sub-page:horizontal {{
-        background: {ACCENT};
-        border: 1px solid {ACCENT_PRESSED};
+        background: {ink};
+        border: 1px solid {ink_pressed};
         height: 4px;
         border-radius: 2px;
     }}
@@ -857,7 +925,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QSlider#ZoomSlider::handle:horizontal {{
         background: {text_primary};
-        border: 2px solid {ACCENT};
+        border: 2px solid {ink};
         width: 12px;
         height: 12px;
         margin: -5px 0;
@@ -865,8 +933,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider::handle:horizontal:hover {{
-        background: {TEXT_ON_ACCENT};
-        border-color: {ACCENT_HOVER};
+        background: {on_ink};
+        border-color: {ink_hover};
     }}
 
     QSlider#ZoomSlider:focus {{
@@ -878,8 +946,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#ZoomSlider:focus::handle:horizontal {{
-        background: {ACCENT};
-        border: 2px solid {TEXT_ON_ACCENT};
+        background: {ink};
+        border: 2px solid {on_ink};
         width: 14px;
         height: 14px;
         margin: -6px 0;
@@ -898,7 +966,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ZoomValueLabel {{
-        color: {text_secondary};
+        color: {text_muted};
         font-family: {FONT_MONO};
         font-size: 11px;
         font-weight: 600;
@@ -906,25 +974,25 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QStatusBar {{
         background-color: {bg_status};
-        color: {text_secondary};
+        color: {text_muted};
         border-top: 1px solid {border_subtle};
     }}
 
     QStatusBar QLabel {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     /* R10e: tool-tab footers mirror QStatusBar so Tools/editor chrome feel related. */
     QLabel#ToolPageStatus {{
         background-color: {bg_status};
-        color: {text_secondary};
+        color: {text_muted};
         border-top: 1px solid {border_subtle};
         padding: {SPACE_1}px {SPACE_3}px;
         min-height: {COMPACT_CONTROL_HEIGHT}px;
     }}
 
     QWidget#MoveUndoToast QLabel {{
-        color: {text_secondary};
+        color: {text_muted};
         font-weight: 600;
     }}
 
@@ -971,8 +1039,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QProgressBar::chunk {{
-        background-color: {ACCENT};
-        border-radius: 7px;
+        background-color: {ink};
+        border-radius: {RADIUS_BADGE}px;
     }}
 
     QScrollArea#ThumbnailGrid {{
@@ -993,7 +1061,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#EmptyStatePanel[dropActive="true"] {{
-        border-color: {ACCENT};
+        border-color: {ink};
         border-style: dashed;
         background-color: {bg_card_hover};
     }}
@@ -1005,7 +1073,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#GridEmptyState {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 21px;
         font-weight: 600;
         letter-spacing: -0.2px;
@@ -1053,7 +1121,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QTabWidget#TabManager > QTabBar::tab {{
         background-color: transparent;
-        color: {text_muted};
+        color: {on_bar_muted};
         border: none;
         border-bottom: 2px solid transparent;
         padding: {SPACE_2}px {SPACE_3}px {SPACE_2 - 1}px {SPACE_3}px;
@@ -1064,25 +1132,25 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QTabWidget#TabManager > QTabBar::tab:selected {{
-        color: {text_primary};
+        color: {on_bar};
         background-color: transparent;
-        border-bottom: 2px solid {ACCENT};
+        border-bottom: 2px solid {ink};
         font-weight: 600;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:hover:!selected {{
-        color: {text_secondary};
+        color: {on_bar_muted};
         background-color: transparent;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:selected:hover {{
-        color: {text_primary};
+        color: {on_bar};
     }}
 
     QTabWidget#TabManager QTabBar QAbstractButton {{
         background-color: transparent;
         border: none;
-        border-radius: {SPACE_1}px;
+        border-radius: {RADIUS_CONTROL}px;
         padding: 2px;
         min-width: 18px;
         max-width: 18px;
@@ -1197,15 +1265,15 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QMessageBox QPushButton:default {{
-        background-color: {ACCENT};
-        border-color: {ACCENT};
-        color: {TEXT_ON_ACCENT};
+        background-color: {ink};
+        border-color: {ink};
+        color: {on_ink};
         font-weight: 600;
     }}
 
     QMessageBox QPushButton:default:hover {{
-        background-color: {ACCENT_HOVER};
-        border-color: {ACCENT_HOVER};
+        background-color: {ink_hover};
+        border-color: {ink_hover};
     }}
 
     QScrollArea#PagePreviewScroll {{
@@ -1228,7 +1296,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#PagePreviewHint {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 11px;
         font-family: {FONT_MONO};
         padding: 10px 16px;
@@ -1259,7 +1327,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QFrame#PdfViewerToolbarGroup {{
         border: 1px solid {border_subtle};
-        border-radius: 6px;
+        border-radius: {RADIUS_CONTROL}px;
     }}
 
     QLineEdit#PdfViewerPageEdit[invalid="true"] {{
@@ -1272,7 +1340,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#PdfViewerAnnotRailTitle {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 11px;
         font-weight: 600;
         padding: 2px 4px;
@@ -1283,7 +1351,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         padding: 5px 8px;
         border: 1px solid transparent;
         border-radius: {RADIUS_CONTROL}px;
-        color: {text_secondary};
+        color: {text_muted};
         background-color: transparent;
     }}
 
@@ -1301,7 +1369,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QWidget#PdfViewerAnnotTools QToolButton:checked {{
         color: {text_primary};
         background-color: {bg_card};
-        border: 1px solid {ACCENT};
+        border: 1px solid {ink};
     }}
 
     QWidget#PdfViewerAnnotTools QToolButton:focus {{
@@ -1445,8 +1513,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton#FreeTextFormatBold:checked,
     QToolButton#FreeTextFormatItalic:checked {{
         background-color: {bg_card};
-        border: 1px solid {ACCENT};
-        color: {ACCENT};
+        border: 1px solid {ink};
+        color: {ink};
     }}
 
     QToolButton#FreeTextFormatBold:focus,
@@ -1486,17 +1554,17 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QTabWidget#PdfViewerSide > QTabBar::tab:selected {{
         color: {text_primary};
         background-color: {bg_surface};
-        border-bottom: 2px solid {ACCENT};
+        border-bottom: 2px solid {ink};
         font-weight: 600;
     }}
 
     QTabWidget#PdfViewerSide > QTabBar::tab:hover:!selected {{
-        color: {text_secondary};
+        color: {text_muted};
         background-color: {bg_card_hover};
     }}
 
     QLabel#PdfViewerHint {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 11px;
         font-family: {FONT_MONO};
         padding: 10px 16px;
@@ -1506,7 +1574,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#PdfViewerPageLabel,
     QLabel#PdfViewerHitLabel {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 12px;
         padding: 0 8px;
     }}
@@ -1516,7 +1584,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#BusyOverlayPanel {{
-        background-color: {bg_surface};
+        background-color: {bg_float};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -1553,7 +1621,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#ToastOverlayCard {{
-        background-color: {bg_surface};
+        background-color: {bg_float};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         padding: 4px 8px 4px 4px;
@@ -1581,7 +1649,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToastOverlayMessage[kind="info"] {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     QPushButton#ToastOverlayUndo {{
@@ -1608,7 +1676,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#TipsOverlayCard {{
-        background-color: {bg_surface};
+        background-color: {bg_float};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -1620,7 +1688,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#TipsOverlayIntro {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 13px;
     }}
 
@@ -1630,7 +1698,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#ContextHint {{
-        background-color: {bg_surface};
+        background-color: {bg_float};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
     }}
@@ -1654,7 +1722,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ShortcutAction {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 13px;
     }}
 
@@ -1679,7 +1747,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#MergeEmptyTitle {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 15px;
         font-weight: 600;
         letter-spacing: -0.2px;
@@ -1711,7 +1779,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ConvertEmptyTitle {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 15px;
         font-weight: 600;
         letter-spacing: -0.2px;
@@ -1737,18 +1805,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QFrame#DropIndicator {{
-        background-color: {ACCENT};
+        background-color: {ink};
         border: none;
         border-radius: 2px;
     }}
 
     QLabel#ComparePaneTitle,
     QLabel#CompareSummary {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     QLabel#CompareModeLabel {{
-        color: {ACCENT};
+        color: {ink};
         font-weight: 600;
     }}
 
@@ -1787,7 +1855,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#ToolsPurpose,
     QLabel#ToolsCategoryDescription {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 13px;
     }}
 
@@ -1828,12 +1896,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QToolButton#ToolsDensityToggle:checked,
     QToolButton#ToolsUpcomingToggle:checked {{
-        color: {ACCENT};
+        color: {ink};
     }}
 
     QToolButton#ToolsDensityToggle:hover,
     QToolButton#ToolsUpcomingToggle:hover {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     QLabel#ToolsEmptyGlyph {{
@@ -1864,7 +1932,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToolWorkflowPurpose {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 13px;
     }}
 
@@ -1891,9 +1959,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#ToolShellHelp:hover {{
-        color: {TEXT_ON_ACCENT};
-        background-color: {ACCENT};
-        border-color: {ACCENT};
+        color: {on_ink};
+        background-color: {ink};
+        border-color: {ink};
     }}
 
     QToolButton#ToolShellHelp:focus {{
@@ -1901,13 +1969,13 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QFrame#ToolShellHelpPopup {{
-        background-color: {bg_surface};
+        background-color: {bg_float};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
     }}
 
     QLabel#ToolShellHelpBody {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 13px;
     }}
 
@@ -1934,7 +2002,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QFrame#ToolShellDropZone[dropActive="true"] {{
-        border-color: {ACCENT};
+        border-color: {ink};
         border-style: dashed;
         background-color: {bg_card_hover};
     }}
@@ -1944,7 +2012,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ToolShellDropPrompt {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 14px;
         font-weight: 500;
     }}
@@ -1967,7 +2035,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#ResultActionsLabel {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 13px;
     }}
 
@@ -1975,7 +2043,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#ResultActionsOpen,
     QPushButton#ResultActionsFolder {{
         background-color: transparent;
-        color: {text_secondary};
+        color: {text_muted};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         font-weight: 600;
@@ -2031,7 +2099,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QLabel#WatermarkZoomLabel {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 12px;
         font-family: {FONT_MONO};
         min-width: 40px;
@@ -2104,7 +2172,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#WatermarkSlider::handle:horizontal {{
-        background: {ACCENT};
+        background: {ink};
         border: none;
         width: 14px;
         height: 14px;
@@ -2113,7 +2181,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QSlider#WatermarkSlider::sub-page:horizontal {{
-        background: {ACCENT};
+        background: {ink};
         border-radius: 2px;
     }}
 
@@ -2147,11 +2215,11 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#MergeFileCard[selected="true"],
     QFrame#ConvertFileCard[selected="true"] {{
-        border: {selected_width}px solid {ACCENT};
+        border: {selected_width}px solid {ink};
     }}
     QFrame#MergeFileCard[selected="true"]:hover,
     QFrame#ConvertFileCard[selected="true"]:hover {{
-        border-color: {ACCENT_HOVER};
+        border-color: {ink_hover};
     }}
     QLabel#PageCardThumbnail {{
         background-color: {bg_thumb_empty};
@@ -2166,10 +2234,10 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
     }}
     QFrame#PageCard[selected="true"] QLabel#PageCardThumbnail {{
-        border: {selected_width}px solid {ACCENT};
+        border: {selected_width}px solid {ink};
     }}
     QLabel#PageCardLabel {{
-        color: {text_secondary};
+        color: {text_muted};
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.3px;
@@ -2178,9 +2246,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
     }}
     QLabel#PageCardSelectionIndicator {{
-        color: {TEXT_ON_ACCENT};
-        background-color: {ACCENT};
-        border: 1px solid {TEXT_ON_ACCENT};
+        color: {on_ink};
+        background-color: {ink};
+        border: 1px solid {on_ink};
         border-radius: 8px;
         font-size: 11px;
         font-weight: 700;
@@ -2193,26 +2261,31 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#PageCardFocusRing {{
         background-color: transparent;
         border: {focus_width}px dashed {focus_ring};
-        border-radius: 3px;
+        border-radius: {RADIUS_BADGE}px;
     }}
     QLabel#PageCardPageOverlay {{
-        color: {TEXT_ON_ACCENT};
+        color: {SURFACE_PAPER};
         background-color: {page_chip_bg};
         font-size: 11px;
         font-weight: 600;
         padding: {SPACE_1}px {SPACE_2}px;
-        border-radius: {SPACE_1}px;
+        border-radius: {RADIUS_BADGE}px;
     }}
     QLabel#PageCardRotationOverlay {{
-        color: {TEXT_ON_ACCENT};
+        color: {SURFACE_PAPER};
         background-color: {page_chip_bg};
         font-family: {FONT_MONO};
         font-size: 10px;
         font-weight: 600;
         padding: {SPACE_1}px {SPACE_1}px;
-        border-radius: {SPACE_1}px;
+        border-radius: {RADIUS_BADGE}px;
     }}
 
+    QScrollArea#PreferencesScroll,
+    QScrollArea#PreferencesScroll > QWidget#qt_scrollarea_viewport,
+    QWidget#PreferencesContent {{
+        background-color: {bg_surface};
+    }}
     QLabel#PreferencesSection {{
         color: {text_muted};
         font-size: 11px;
@@ -2246,7 +2319,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#MergeFileCard[selected="true"] QLabel#MergeFileCardSubtitle,
     QFrame#ConvertFileCard[selected="true"] QLabel#ConvertFileCardSubtitle {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
 
     /* R6: ToolTiles — quieter rest/hover; keep HC-aware focus rings. */
@@ -2285,7 +2358,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {focus_ring};
     }}
     QFrame#ToolTile[compact="true"] {{
-        border-radius: {max(6, RADIUS_CARD - 2)}px;
+        border-radius: {RADIUS_CONTROL}px;
     }}
     QLabel#ToolTileTitle {{
         color: {text_primary};
@@ -2295,7 +2368,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#ToolTile[blocked="true"] QLabel#ToolTileTitle,
     QFrame#ToolTile[comingSoon="true"] QLabel#ToolTileTitle {{
-        color: {text_secondary};
+        color: {text_muted};
     }}
     QFrame#ToolTile[compact="true"] QLabel#ToolTileTitle {{
         font-size: 12px;
@@ -2327,20 +2400,23 @@ def token_qcolor(hex_color: str, alpha: int = 255) -> "QColor":
 
 
 def accent_qcolor(*, alpha: int = 255) -> "QColor":
-    """Accent color for programmatic painting (drag badge, etc.)."""
-    return token_qcolor(ACCENT, alpha)
+    """Ink colour for programmatic painting (drag badge, etc.)."""
+    return token_qcolor(current_theme().ink, alpha)
+
+
+def page_accent_qcolor(*, alpha: int = 255) -> "QColor":
+    """Ink colour for marks painted on the white page (handles, selections)."""
+    return token_qcolor(PAGE_ACCENT, alpha)
 
 
 def focus_ring_hex() -> str:
     """Keyboard focus ring colour for the active chrome theme (inline styles, painters)."""
-    from pagedrop.ui.settings import light_theme
-
-    return FOCUS_RING_LIGHT if light_theme() else FOCUS_RING
+    return current_theme().focus
 
 
 def on_accent_qcolor() -> "QColor":
-    """Ink color for text/icons drawn on top of the accent background."""
-    return token_qcolor(TEXT_ON_ACCENT)
+    """Colour for text/icons drawn on top of the ink fill."""
+    return token_qcolor(current_theme().on_ink)
 
 
 def shadow_qcolor(*, alpha: int = 55) -> "QColor":
@@ -2357,50 +2433,33 @@ def shadow_qcolor(*, alpha: int = 55) -> "QColor":
 
 
 def border_hover_qcolor() -> "QColor":
-    """Theme-aware hover/stack border for programmatic paint (not QSS).
-
-    Do not use ``token_qcolor(BORDER_HOVER)`` alone — that hex is dark-only and
-    stays stale after a light/dark toggle. Light uses ``BORDER_HOVER_LIGHT``,
-    the same token as ``app_stylesheet(light=True)``.
-    """
-    from pagedrop.ui.settings import light_theme
-
-    return token_qcolor(BORDER_HOVER_LIGHT if light_theme() else BORDER_HOVER)
+    """Theme-aware hover/stack border for programmatic paint (not QSS)."""
+    return token_qcolor(current_theme().line_strong)
 
 
 def chrome_card_qcolor() -> "QColor":
     """Card/surface fill for programmatic paint (pairs with light/dark QSS)."""
-    from pagedrop.ui.settings import light_theme
-
-    return token_qcolor(BG_CARD_LIGHT if light_theme() else BG_CARD)
+    return token_qcolor(current_theme().raised)
 
 
 def chrome_text_muted_qcolor() -> "QColor":
     """Muted chrome ink for programmatic paint (pairs with light/dark QSS)."""
-    from pagedrop.ui.settings import light_theme
-
-    return token_qcolor(TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED)
+    return token_qcolor(current_theme().text_muted)
 
 
 def status_success_hex() -> str:
-    """Success ink for toast/list text — darkened under light chrome for AA."""
-    from pagedrop.ui.settings import light_theme
-
-    return STATUS_SUCCESS_LIGHT if light_theme() else STATUS_SUCCESS
+    """Success ink for toast/list text."""
+    return current_theme().success
 
 
 def status_warning_hex() -> str:
-    """Warning ink for toast/list text — darkened under light chrome for AA."""
-    from pagedrop.ui.settings import light_theme
-
-    return STATUS_WARNING_LIGHT if light_theme() else STATUS_WARNING
+    """Warning ink for toast/list text."""
+    return current_theme().warning
 
 
 def close_tab_hex() -> str:
     """Destructive / close-tab red (pairs with light/dark QSS)."""
-    from pagedrop.ui.settings import light_theme
-
-    return CLOSE_TAB_LIGHT if light_theme() else CLOSE_TAB
+    return current_theme().danger
 
 
 def tab_close_icon(*, color: str | None = None) -> "QIcon":

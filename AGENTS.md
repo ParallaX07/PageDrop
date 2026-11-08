@@ -35,6 +35,7 @@ merge, and image→PDF. Keep it local, trustworthy, keyboard-friendly, and acces
 - Use sentence-case labels; progress status ends with `…`, idle/success status does not.
 - Stay on Fusion and `theme.py` tokens, with no third-party Qt widget kits. Tool pages
   follow the "Result UX" section of `docs/architecture.md`.
+- `DESIGN.md` is the visual source of truth for colour, type, shape and components; `theme.py` implements it.
 - Planning docs (`*plan*.md`) are working notes. Never reference them, their phase
   numbers, or their checklist IDs in code, comments, docstrings, tests, test names, or
   `docs/`; describe the behaviour instead.

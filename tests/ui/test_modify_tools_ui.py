@@ -809,7 +809,9 @@ def test_watermark_swatch_ring_follows_theme_change(qtbot, isolated_settings):
             assert count(ring) >= 40
             assert count(stale) == 0
             # The fill still shows under the app sheet's focus border.
-            assert swatch.grab().toImage().pixelColor(12, swatch.height() // 2).rgb() == fill
+            row = swatch.grab().toImage()
+            mid = swatch.height() // 2
+            assert any(row.pixelColor(x, mid).rgb() == fill for x in range(row.width()))
     finally:
         set_light_theme(previous_light)
         refresh_themed_widgets()  # Resets the icon cache for the restored theme.

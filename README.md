@@ -95,7 +95,7 @@ Searchable catalogue (`Ctrl+Shift+O`) for organize, convert, modify, optimize, a
 
 ### Preferences and accessibility
 
-Light theme (the first run follows the OS light or dark scheme), thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available. The window shrinks to 480 × 320, and Ctrl+Shift+H hides the menus and toolbar while the title bar and window controls stay.
+Appearance (System, Light, or Dark; System follows the OS light or dark setting), thumbnail quality, confirm-before-delete, reduce motion, and platform high-contrast where available. The window shrinks to 480 × 320, and Ctrl+Shift+H hides the menus and toolbar while the title bar and window controls stay.
 
 ## Keyboard shortcuts
 

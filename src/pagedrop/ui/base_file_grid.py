@@ -41,7 +41,6 @@ from pagedrop.ui.grid_helpers import (
     drop_index_at_pos,
     drop_indicator_rect,
 )
-from pagedrop.ui.settings import light_theme
 from pagedrop.ui.theme import (
     CARD_PADDING,
     CARD_WIDTH,
@@ -53,8 +52,7 @@ from pagedrop.ui.theme import (
     SPACE_4,
     SPACE_6,
     SPACE_7,
-    TEXT_MUTED,
-    TEXT_MUTED_LIGHT,
+    current_theme,
 )
 from pagedrop.utils.list_utils import move_items
 
@@ -179,7 +177,7 @@ class BaseFileGrid(QScrollArea):
         icons.register_refresh(refresh_cb)
 
     def _refresh_empty_glyph(self) -> None:
-        tint = TEXT_MUTED_LIGHT if light_theme() else TEXT_MUTED
+        tint = current_theme().text_muted
         pix = icons.icon(self._empty_glyph_name, color=tint).pixmap(
             QSize(_EMPTY_GLYPH_PX, _EMPTY_GLYPH_PX)
         )

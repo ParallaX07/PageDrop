@@ -77,9 +77,9 @@ from pagedrop.ui.tool_shell import run_tool_job
 from pagedrop.ui.tool_page import StatusFooter, scrollable_page_body
 from pagedrop.ui.settings import last_directory, remember_directory
 from pagedrop.ui.theme import (
-    CLOSE_TAB,
+    CLOSE_TAB_LIGHT,
     ICON_SIZE,
-    STATUS_SUCCESS,
+    STATUS_SUCCESS_LIGHT,
     chrome_card_qcolor,
     chrome_text_muted_qcolor,
     close_tab_hex,
@@ -88,8 +88,8 @@ from pagedrop.ui.theme import (
 )
 
 # Diff highlight washes on page paper (content plane — not chrome ink).
-_DELETED = token_qcolor(CLOSE_TAB, 90)
-_ADDED = token_qcolor(STATUS_SUCCESS, 90)
+_DELETED = token_qcolor(CLOSE_TAB_LIGHT, 90)
+_ADDED = token_qcolor(STATUS_SUCCESS_LIGHT, 90)
 
 # Keep worker signal objects alive until the slot runs (QRunnable auto-deletes).
 _COMPARE_TEXT_SIGNAL_REFS: list[QObject] = []

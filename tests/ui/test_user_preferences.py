@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QCheckBox, QDialogButtonBox, QScrollArea, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QDialogButtonBox,
+    QScrollArea,
+    QWidget,
+)
 
 from pagedrop.ui.accessibility import apply_app_stylesheet
 from pagedrop.ui.command_palette import (
@@ -20,6 +26,9 @@ from pagedrop.ui.settings import (
     KEY_CONFIRM_DELETE_MULTIPLE,
     KEY_REMEMBER_GEOMETRY,
     KEY_VIEWER_PANEL_STATE,
+    KEY_APPEARANCE,
+    KEY_LIGHT_THEME,
+    appearance,
     chrome_visible,
     confirm_before_closing_dirty_tabs,
     confirm_before_deleting_multiple_pages,
@@ -28,6 +37,7 @@ from pagedrop.ui.settings import (
     set_chrome_visible,
     set_confirm_before_closing_dirty_tabs,
     set_confirm_before_deleting_multiple_pages,
+    set_appearance,
     set_light_theme,
     set_remember_window_geometry,
     set_thumbnail_quality,
@@ -41,6 +51,8 @@ from pagedrop.ui.settings import (
 from datetime import UTC, datetime
 from pagedrop.ui.theme import (
     DEFAULT_THUMBNAIL_WIDTH,
+    DARK,
+    LIGHT,
     MAX_THUMBNAIL_WIDTH,
     app_stylesheet,
 )
@@ -51,8 +63,8 @@ def test_light_theme_stylesheet_differs(isolated_settings):
     dark = app_stylesheet(light=False)
     light = app_stylesheet(light=True)
     assert dark != light
-    assert "#F7F8FA" in light
-    assert "#131316" in dark
+    assert LIGHT.chrome in light
+    assert DARK.chrome in dark
 
 
 def test_light_theme_pref_round_trip(isolated_settings):
@@ -277,7 +289,7 @@ def test_command_palette_collects_menu_actions(main_window):
     actions = collect_actions(main_window)
     labels = {action_label(a) for a in actions}
     assert "Open PDF" in labels
-    assert "Toggle light theme" in labels
+    assert {"System appearance", "Light appearance", "Dark appearance"} <= labels
     assert "Command palette…" in labels
     assert "Preferences…" in labels
     assert "Check for updates…" in labels
@@ -345,13 +357,12 @@ def test_preferences_scrolls_content_with_a_persistent_footer(qtbot, isolated_se
 def test_view_menu_theme_and_quality(isolated_settings, main_window, qtbot):
     # MainWindow may init before isolated_settings; force a known starting point.
     set_light_theme(False)
-    main_window._light_theme_action.blockSignals(True)
-    main_window._light_theme_action.setChecked(False)
-    main_window._light_theme_action.blockSignals(False)
+    main_window._appearance_actions["dark"].setChecked(True)
 
-    main_window._light_theme_action.trigger()
+    main_window._appearance_actions["light"].trigger()
     assert light_theme() is True
-    assert main_window._light_theme_action.isChecked() is True
+    assert appearance() == "light"
+    assert main_window._appearance_actions["light"].isChecked() is True
 
     low = next(
         a for a in main_window._quality_action_group.actions() if a.data() == "low"
@@ -482,7 +493,7 @@ def test_light_theme_follows_the_os_scheme_until_chosen(
     _stub_color_scheme(monkeypatch, scheme)
     assert light_theme() is expected
     # Reading never stores a choice.
-    assert not settings_mod._settings().contains(settings_mod.KEY_LIGHT_THEME)
+    assert not settings_mod._settings().contains(settings_mod.KEY_APPEARANCE)
 
 
 def test_explicit_light_theme_choice_beats_the_os_scheme(
@@ -496,7 +507,7 @@ def test_explicit_light_theme_choice_beats_the_os_scheme(
     assert light_theme() is True
 
 
-def test_light_theme_menu_action_starts_in_step_with_the_os_scheme(
+def test_system_appearance_action_is_checked_while_following_the_os_scheme(
     qtbot, isolated_settings, monkeypatch
 ):
     from pagedrop.ui.main_window import MainWindow
@@ -505,6 +516,223 @@ def test_light_theme_menu_action_starts_in_step_with_the_os_scheme(
     window = MainWindow()
     qtbot.addWidget(window)
     try:
-        assert window._light_theme_action.isChecked()
+        assert window._appearance_actions["system"].isChecked()
+        assert light_theme() is True
     finally:
         window._temp_manager.cleanup()
+
+
+@pytest.mark.parametrize(("old", "expected"), [(True, "light"), (False, "dark")])
+def test_old_light_theme_flag_migrates_to_appearance(
+    isolated_settings, old, expected
+):
+    store = settings_mod._settings()
+    store.setValue(KEY_LIGHT_THEME, old)
+    store.sync()
+    assert appearance() == expected
+    store = settings_mod._settings()
+    assert store.value(KEY_APPEARANCE) == expected
+    assert not store.contains(KEY_LIGHT_THEME)
+
+
+def test_appearance_defaults_to_system_without_stored_values(isolated_settings):
+    assert appearance() == "system"
+    assert not settings_mod._settings().contains(KEY_APPEARANCE)
+
+
+def test_invalid_stored_appearance_reads_as_system_and_is_removed(isolated_settings):
+    settings_mod._settings().setValue(KEY_APPEARANCE, "sepia")
+    assert appearance() == "system"
+    assert not settings_mod._settings().contains(KEY_APPEARANCE)
+
+
+def test_set_appearance_rejects_unknown_values(isolated_settings):
+    with pytest.raises(ValueError):
+        set_appearance("sepia")
+    assert not settings_mod._settings().contains(KEY_APPEARANCE)
+
+
+@pytest.mark.parametrize(
+    ("choice", "scheme", "expected"),
+    [
+        ("light", Qt.ColorScheme.Dark, True),
+        ("dark", Qt.ColorScheme.Light, False),
+        ("system", Qt.ColorScheme.Light, True),
+        ("system", Qt.ColorScheme.Dark, False),
+    ],
+)
+def test_appearance_round_trip_and_effective_theme(
+    isolated_settings, monkeypatch, choice, scheme, expected
+):
+    _stub_color_scheme(monkeypatch, scheme)
+    set_appearance(choice)
+    assert appearance() == choice
+    assert light_theme() is expected
+
+
+def test_os_scheme_change_restyles_only_while_following_the_system(
+    qtbot, isolated_settings, monkeypatch
+):
+    from PyQt6.QtWidgets import QApplication
+
+    from pagedrop.ui import icons
+    from pagedrop.ui.accessibility import _on_color_scheme_changed
+
+    app = QApplication.instance()
+    refreshed: list[int] = []
+
+    def on_refresh() -> None:
+        refreshed.append(1)
+
+    icons.register_refresh(on_refresh)
+    previous_sheet = app.styleSheet()
+    try:
+        set_appearance("system")
+        _stub_color_scheme(monkeypatch, Qt.ColorScheme.Dark)
+        apply_app_stylesheet()
+        dark_sheet = app.styleSheet()
+        _stub_color_scheme(monkeypatch, Qt.ColorScheme.Light)
+        _on_color_scheme_changed(Qt.ColorScheme.Light)
+        assert app.styleSheet() != dark_sheet
+        assert LIGHT.chrome in app.styleSheet()
+        assert refreshed == [1]
+
+        for choice, sheet_color in (("dark", DARK.chrome), ("light", LIGHT.chrome)):
+            set_appearance(choice)
+            apply_app_stylesheet()
+            sheet = app.styleSheet()
+            refreshed.clear()
+            _stub_color_scheme(
+                monkeypatch,
+                Qt.ColorScheme.Dark if choice == "light" else Qt.ColorScheme.Light,
+            )
+            _on_color_scheme_changed(Qt.ColorScheme.Dark)
+            assert app.styleSheet() == sheet
+            assert sheet_color in sheet
+            assert refreshed == []
+    finally:
+        icons.unregister_refresh(on_refresh)
+        app.setStyleSheet(previous_sheet)
+
+
+def test_appearance_menu_is_exclusive_and_persists(
+    isolated_settings, main_window, qtbot
+):
+    actions = main_window._appearance_actions
+    assert main_window._appearance_group.isExclusive()
+    assert actions["system"].isChecked()
+
+    actions["dark"].trigger()
+    assert appearance() == "dark"
+    assert [k for k, a in actions.items() if a.isChecked()] == ["dark"]
+
+    actions["light"].trigger()
+    assert appearance() == "light"
+    assert [k for k, a in actions.items() if a.isChecked()] == ["light"]
+
+    actions["system"].trigger()
+    assert appearance() == "system"
+    assert [k for k, a in actions.items() if a.isChecked()] == ["system"]
+
+
+def test_appearance_choice_syncs_other_windows(isolated_settings, qtbot):
+    from pagedrop.ui.main_window import MainWindow
+
+    first, second = MainWindow(), MainWindow()
+    for window in (first, second):
+        qtbot.addWidget(window)
+    try:
+        first._appearance_actions["dark"].trigger()
+        assert second._appearance_actions["dark"].isChecked()
+        assert not second._appearance_actions["system"].isChecked()
+    finally:
+        first._temp_manager.cleanup()
+        second._temp_manager.cleanup()
+
+
+def test_preferences_appearance_round_trip_syncs_open_windows(
+    isolated_settings, main_window, qtbot
+):
+    dialog = PreferencesDialog(main_window)
+    qtbot.addWidget(dialog)
+    combo = dialog._appearance
+    assert combo.accessibleName() == "Appearance"
+    assert [combo.itemData(i) for i in range(combo.count())] == [
+        "system",
+        "light",
+        "dark",
+    ]
+    assert combo.currentData() == "system"
+
+    combo.setCurrentIndex(combo.findData("dark"))
+    dialog._on_accept()
+    assert appearance() == "dark"
+    assert main_window._appearance_actions["dark"].isChecked()
+    assert DARK.chrome in QApplication.instance().styleSheet()
+
+    reopened = PreferencesDialog(main_window)
+    qtbot.addWidget(reopened)
+    assert reopened._appearance.currentData() == "dark"
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_preferences_scroll_surface_uses_the_chrome_background(light):
+    theme = LIGHT if light else DARK
+    sheet = app_stylesheet(light=light)
+    start = sheet.index("QScrollArea#PreferencesScroll")
+    rule = sheet[start : sheet.index("}", start)]
+    assert "QScrollArea#PreferencesScroll > QWidget#qt_scrollarea_viewport" in rule
+    assert "QWidget#PreferencesContent" in rule
+    assert f"background-color: {theme.chrome}" in rule
+
+
+def test_preferences_dialog_names_the_scroll_content_widget(qtbot, isolated_settings):
+    dialog = PreferencesDialog()
+    qtbot.addWidget(dialog)
+    scroll = dialog.findChild(QScrollArea, "PreferencesScroll")
+    assert scroll.widget().objectName() == "PreferencesContent"
+    assert scroll.viewport().objectName() == "qt_scrollarea_viewport"
+
+
+def test_installing_accessibility_twice_hooks_the_os_scheme_once(
+    qtbot, isolated_settings, monkeypatch
+):
+    from PyQt6.QtWidgets import QApplication
+
+    from pagedrop.ui import accessibility
+
+    app = QApplication.instance()
+    handlers: list = []
+
+    class Signal:
+        @staticmethod
+        def connect(handler):
+            handlers.append(handler)
+
+    class Hints:
+        colorSchemeChanged = Signal  # noqa: N815
+
+        @staticmethod
+        def colorScheme():  # noqa: N802
+            return Qt.ColorScheme.Light
+
+    monkeypatch.setattr(
+        "PyQt6.QtGui.QGuiApplication.styleHints", staticmethod(lambda: Hints)
+    )
+    refreshed: list[int] = []
+    monkeypatch.setattr(
+        accessibility, "refresh_themed_widgets", lambda *a: refreshed.append(1)
+    )
+    previous_sheet = app.styleSheet()
+    previous_hooked = app.property("_pagedrop_a11y_watcher")
+    app.setProperty("_pagedrop_a11y_watcher", None)
+    try:
+        accessibility.install_accessibility(app)
+        accessibility.install_accessibility(app)
+        assert len(handlers) == 1
+        for handler in handlers:
+            handler(Qt.ColorScheme.Light)
+        assert refreshed == [1]
+    finally:
+        app.setProperty("_pagedrop_a11y_watcher", previous_hooked)
+        app.setStyleSheet(previous_sheet)
