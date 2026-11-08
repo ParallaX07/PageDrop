@@ -100,7 +100,7 @@ def test_shortcut_dialog_lists_every_shortcut_action_once(main_window, qtbot):
     assert dict(rows)["Previous tab (MRU)"] == QKeySequence("Ctrl+Tab").toString(
         QKeySequence.SequenceFormat.NativeText
     )
-    assert "Tools" in dict(rows)
+    assert "All tools" in dict(rows)
 
 
 def test_shortcut_dialog_follows_changed_shortcut(main_window, qtbot):

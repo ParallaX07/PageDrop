@@ -225,6 +225,8 @@ def test_context_menu_projects_registered_page_actions(
     assert [
         action for action in captured[0].actions() if not action.isSeparator()
     ] == [
+        window._select_all_action,
+        window._deselect_all_action,
         window._move_up_action,
         window._move_down_action,
         window._move_to_action,
@@ -236,6 +238,10 @@ def test_context_menu_projects_registered_page_actions(
         window._extract_selected_action,
         window._extract_selected_to_tab_action,
         window._extract_selected_to_window_action,
+    ]
+    assert [a.text() for a in captured[0].actions()[:2]] == [
+        "Select all",
+        "Clear selection",
     ]
     grid.selection_manager.select_single(0)
     qtbot.waitUntil(lambda: window._deselect_all_action.isEnabled())

@@ -26,8 +26,13 @@ def test_menu_mnemonics_are_unambiguous(main_window):
     menubar = main_window.menuBar()
     top_labels = [action.text() for action in menubar.actions()]
     assert "&File" in top_labels
-    assert "&Merge PDFs" in top_labels
-    assert "&Create PDF" in top_labels
+    assert "&Pages" in top_labels
+    assert "&Tools" in top_labels
+    assert "&Merge PDFs" not in top_labels
+    assert "&Create PDF" not in top_labels
+    tools_menu = main_window._tools_menu_action.menu()
+    tools_labels = [a.text() for a in tools_menu.actions() if not a.isSeparator()]
+    assert tools_labels == ["&Merge PDFs", "&Create PDF", "All &tools"]
 
     file_menu = next(
         action.menu()

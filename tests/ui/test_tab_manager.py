@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QFileDialog, QTabBar, QWidget
 
@@ -641,9 +642,7 @@ def test_detach_tab_in_preview_mode(
     assert detached_tab.preview_widget.current_page == 2
 
 
-def test_open_tabs_button_shares_one_corner_with_new_tab_and_chrome_toggle(
-    main_window, qtbot
-):
+def test_open_tabs_button_shares_one_corner_with_new_tab(main_window, qtbot):
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QToolButton, QWidget
 
@@ -652,9 +651,8 @@ def test_open_tabs_button_shares_one_corner_with_new_tab_and_chrome_toggle(
     assert corner.objectName() == "TabCorner"
     assert manager.cornerWidget(Qt.Corner.TopLeftCorner) is None
     new_tab = corner.findChild(QToolButton, "NewTabButton")
-    toggle = corner.findChild(QToolButton, "ChromeToggleButton")
+    assert corner.findChild(QToolButton, "ChromeToggleButton") is None
     assert new_tab is main_window._tab_manager.findChild(QToolButton, "NewTabButton")
-    assert toggle is main_window._chrome_toggle_btn
     assert manager._open_tabs_button.parent() is corner
 
     for title in ("One", "Two", "Three", "Four"):
@@ -667,11 +665,11 @@ def test_open_tabs_button_shares_one_corner_with_new_tab_and_chrome_toggle(
     def buttons_laid_out():
         rects = [
             b.geometry()
-            for b in (manager._open_tabs_button, new_tab, toggle)
+            for b in (manager._open_tabs_button, new_tab)
             if b.isVisible()
         ]
         return (
-            len(rects) == 3
+            len(rects) == 2
             and all(corner.rect().contains(r) for r in rects)
             and not any(
                 a.intersects(b) for i, a in enumerate(rects) for b in rects[i + 1 :]
@@ -694,9 +692,35 @@ def test_open_tabs_button_shares_one_corner_with_new_tab_and_chrome_toggle(
     # Hiding the button shrinks the corner without leaving a gap or overlap.
     main_window.resize(1200, 500)
     qtbot.waitUntil(lambda: manager._open_tabs_button.isHidden(), timeout=3000)
-    qtbot.waitUntil(
-        lambda: new_tab.geometry().left() == 0
-        and toggle.geometry().left() > new_tab.geometry().right(),
-        timeout=3000,
-    )
+    qtbot.waitUntil(lambda: new_tab.geometry().left() == 0, timeout=3000)
     assert isinstance(corner, QWidget)
+
+
+def test_chrome_toggle_lives_in_the_window_controls_and_collapses_the_chrome(
+    isolated_settings, main_window, qtbot
+):
+    from PyQt6.QtWidgets import QToolButton
+
+    toggle = main_window._chrome_toggle_btn
+    controls = main_window._window_controls
+    assert toggle.objectName() == "ChromeToggleButton"
+    assert toggle.parent() is controls
+    minimize = controls.findChild(QToolButton, "WindowMinimize")
+    assert toggle not in main_window._window_control_buttons
+    assert controls.layout().indexOf(toggle) + 1 == controls.layout().indexOf(minimize)
+    assert toggle.text() == ""
+    assert not toggle.icon().isNull()
+    assert toggle.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert toggle.accessibleName() == toggle.toolTip() == "Hide menu and toolbar"
+
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    assert toggle.isVisible()
+    toggle.click()
+    assert main_window.menuBar().isHidden()
+    assert main_window._toolbar.isHidden()
+    # The toggle is the way back and stays on screen with the chrome collapsed.
+    qtbot.waitUntil(lambda: toggle.isVisible() and toggle.width() > 0)
+    toggle.click()
+    assert not main_window.menuBar().isHidden()
+    assert not main_window._toolbar.isHidden()

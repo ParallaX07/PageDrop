@@ -37,6 +37,10 @@ from pagedrop.utils.diagnostics import log_failure
 RESIZE_MARGIN = 6
 MIN_WINDOW_WIDTH = 480
 MIN_WINDOW_HEIGHT = 320
+# The title and menu row is never shorter than this; the menus come first and
+# the document title takes whatever room is left, up to the maximum.
+TITLE_BAR_HEIGHT = 34
+TITLE_MAX_WIDTH = 360
 
 
 def resize_edges_at(pos, size, margin: int = RESIZE_MARGIN) -> Qt.Edge:
@@ -75,6 +79,7 @@ class WindowChromeMixin:
         title_bar = QWidget(self)
         title_bar.setObjectName("WindowTitleBar")
         title_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        title_bar.setMinimumHeight(TITLE_BAR_HEIGHT)
         title_layout = QHBoxLayout(title_bar)
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(0)
@@ -87,12 +92,24 @@ class WindowChromeMixin:
         window_controls = QWidget(title_bar)
         window_controls.setObjectName("WindowControls")
         layout = QHBoxLayout(window_controls)
-        layout.setContentsMargins(8, 0, 4, 0)
+        # The label's margin lives here, not in its style sheet, so the width
+        # the title is elided to is the width its text really has.
+        layout.setContentsMargins(16, 0, 4, 0)
         layout.setSpacing(2)
         self._title_label = QLabel(self.windowTitle(), window_controls)
         self._title_label.setObjectName("WindowTitle")
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._title_label)
+        # Stays reachable by mouse when the menus are hidden: the window
+        # controls never collapse.
+        toggle = QToolButton(window_controls)
+        toggle.setObjectName("ChromeToggleButton")
+        toggle.setIconSize(QSize(ICON_SIZE_SMALL, ICON_SIZE_SMALL))
+        toggle.setAutoRaise(True)
+        toggle.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        toggle.clicked.connect(self._toggle_chrome_visible)
+        layout.addWidget(toggle)
+        self._chrome_toggle_btn = toggle
         for name, slot, label in (
             ("WindowMinimize", self.showMinimized, "Minimize window"),
             ("WindowMaximize", self._toggle_maximized, "Maximize window"),
@@ -112,7 +129,9 @@ class WindowChromeMixin:
             if name == "WindowMaximize":
                 self._maximize_button = button
         self._window_control_buttons = tuple(
-            window_controls.findChildren(QToolButton)
+            button
+            for button in window_controls.findChildren(QToolButton)
+            if button is not toggle
         )
         self._refresh_window_control_icons()
         title_layout.addWidget(menubar, 1)
@@ -134,6 +153,19 @@ class WindowChromeMixin:
         for button in self._window_control_buttons:
             name, active = glyphs[button.objectName()]
             button.setIcon(icons.icon(name, color=tint, active_color=active))
+        self._sync_chrome_toggle(tint)
+
+    def _sync_chrome_toggle(self, tint: str | None = None) -> None:
+        """Point the collapse button at the action its next click performs."""
+        toggle = self._chrome_toggle_btn
+        if tint is None:
+            theme = current_theme()
+            tint = theme.text if prefers_high_contrast() else theme.on_bar
+        visible = not self._menu_bar.isHidden()
+        toggle.setIcon(icons.icon("caret-up-bold" if visible else "caret-down-bold", color=tint))
+        tip = "Hide menu and toolbar" if visible else "Show menu and toolbar"
+        toggle.setToolTip(tip)
+        toggle.setAccessibleName(tip)
 
     def _toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -177,8 +209,10 @@ class WindowChromeMixin:
                 self._flush_menu_layout()
 
             # With the menu hidden the title has the whole strip to itself.
-            room = 180 if self._menu_bar.isHidden() else self._menu_action_slack()
-            self._fit_window_controls(min(180, max(0, room)))
+            room = (
+                TITLE_MAX_WIDTH if self._menu_bar.isHidden() else self._menu_action_slack()
+            )
+            self._fit_window_controls(min(TITLE_MAX_WIDTH, max(0, room)))
             self._flush_menu_layout()
             self._sync_custom_title()
         finally:
@@ -254,16 +288,7 @@ class WindowChromeMixin:
             action.blockSignals(True)
             action.setChecked(visible)
             action.blockSignals(False)
-        btn = getattr(self, "_chrome_toggle_btn", None)
-        if btn is not None:
-            if visible:
-                btn.setText("⌃")
-                tip = "Hide menu and toolbar"
-            else:
-                btn.setText("⌄")
-                tip = "Show menu and toolbar"
-            btn.setToolTip(tip)
-            btn.setAccessibleName(tip)
+        self._sync_chrome_toggle()
         if persist:
             set_chrome_visible(visible)
 

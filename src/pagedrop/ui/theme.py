@@ -388,9 +388,9 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#WindowTitle {{
         color: {on_bar_muted};
         font-weight: 500;
-        padding: 0 8px;
     }}
 
+    QToolButton#ChromeToggleButton,
     QToolButton#WindowMinimize,
     QToolButton#WindowMaximize,
     QToolButton#WindowClose {{
@@ -405,12 +405,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {on_bar};
     }}
 
+    QToolButton#ChromeToggleButton:focus,
     QToolButton#WindowMinimize:focus,
     QToolButton#WindowMaximize:focus,
     QToolButton#WindowClose:focus {{
         border-color: {focus_ring};
     }}
 
+    QToolButton#ChromeToggleButton:hover,
     QToolButton#WindowMinimize:hover,
     QToolButton#WindowMaximize:hover,
     QToolButton#WindowMaximize[nativeHover="true"] {{
@@ -1109,35 +1111,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#NewTabButton:focus {{
-        border: {focus_width}px solid {focus_ring};
-        color: {text_primary};
-    }}
-
-    QToolButton#ChromeToggleButton {{
-        background-color: transparent;
-        color: {text_muted};
-        border: 1px solid {border_subtle};
-        border-radius: {RADIUS_CONTROL}px;
-        font-size: 15px;
-        font-weight: 600;
-        min-width: 28px;
-        max-width: 28px;
-        min-height: 28px;
-        max-height: 28px;
-        padding: 0;
-    }}
-
-    QToolButton#ChromeToggleButton:hover {{
-        background-color: {bg_card_hover};
-        color: {text_primary};
-        border-color: {border_hover};
-    }}
-
-    QToolButton#ChromeToggleButton:pressed {{
-        background-color: {bg_pressed};
-    }}
-
-    QToolButton#ChromeToggleButton:focus {{
         border: {focus_width}px solid {focus_ring};
         color: {text_primary};
     }}

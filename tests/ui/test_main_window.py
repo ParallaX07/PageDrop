@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer
-from PyQt6.QtGui import QFont, QMouseEvent
+from PyQt6.QtGui import QFont, QKeySequence, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
 from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, MainWindow
+from pagedrop.ui.window_chrome import TITLE_MAX_WIDTH
 from tests.conftest import wait_for_compare_render, wait_for_pdf_loaded
 
 
@@ -319,15 +320,142 @@ def test_narrow_shell_elides_title_and_keeps_application_actions_reachable(main_
     QApplication.processEvents()
 
     assert main_window._title_label.toolTip() == main_window.windowTitle()
-    assert main_window._title_label.width() < 220
+    assert main_window._title_label.width() <= TITLE_MAX_WIDTH
     overflow_actions = main_window._application_overflow_menu.actions()
     top_level_actions = main_window.menuBar().actions()
     for action in (
-        main_window._actions["create_pdf"],
-        main_window._actions["tools"],
+        main_window._pages_menu_action,
+        main_window._tools_menu_action,
         main_window._help_menu_action,
     ):
         assert action in top_level_actions or action in overflow_actions
+
+
+def _top_level_menu(window, title: str):
+    for action in window.menuBar().actions():
+        if action.text().replace("&", "") == title:
+            return action.menu()
+    raise AssertionError(f"{title} menu not found")
+
+
+def _menu_keys(window, menu) -> list[str | None]:
+    by_action = {id(action): key for key, action in window._actions.items()}
+    return [
+        None if action.isSeparator() else by_action[id(action)]
+        for action in menu.actions()
+    ]
+
+
+def test_top_level_menus_are_in_task_order(main_window):
+    main_window.resize(1600, 680)
+    main_window._update_responsive_shell()
+    titles = [
+        action.text().replace("&", "")
+        for action in main_window.menuBar().actions()
+        if action.isVisible()
+    ]
+    assert titles == ["File", "Edit", "View", "Pages", "Tools", "Help"]
+    assert not main_window._application_overflow_menu.menuAction().isVisible()
+    mnemonics = [
+        action.text()[action.text().index("&") + 1].casefold()
+        for action in main_window.menuBar().actions()
+        if "&" in action.text()
+    ]
+    assert len(mnemonics) == len(set(mnemonics))
+
+
+def test_pages_menu_holds_the_page_commands(main_window):
+    menu = _top_level_menu(main_window, "Pages")
+    assert _menu_keys(main_window, menu) == [
+        "select_all",
+        "deselect_all",
+        None,
+        "rotate_ccw",
+        "rotate_cw",
+        "duplicate_pages",
+        "extract_selected",
+        "delete_pages",
+        None,
+        "move_up",
+        "move_down",
+        "move_to",
+    ]
+    assert main_window._pages_menu_action is menu.menuAction()
+    edit_menu = _top_level_menu(main_window, "Edit")
+    assert main_window._actions["select_all"] not in edit_menu.actions()
+    assert main_window._actions["deselect_all"] not in edit_menu.actions()
+    select_all = main_window._actions["select_all"]
+    assert select_all.shortcut() == QKeySequence(QKeySequence.StandardKey.SelectAll)
+
+
+def test_select_all_shortcut_still_works_from_the_pages_menu(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=960)
+    grid = tab.thumbnail_grid
+    qtbot.keyClick(grid, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: len(grid.selection_manager.selection) == 5)
+    main_window._actions["deselect_all"].trigger()
+    qtbot.waitUntil(lambda: not grid.selection_manager.selection)
+
+
+def test_tools_menu_holds_the_tool_launchers(main_window):
+    menu = _top_level_menu(main_window, "Tools")
+    assert _menu_keys(main_window, menu) == ["merge", "create_pdf", None, "tools"]
+    assert main_window._tools_menu_action is menu.menuAction()
+    assert main_window._actions["tools"].text() == "All &tools"
+    assert main_window._actions["tools"].shortcut() == QKeySequence("Ctrl+Shift+O")
+    top_level = main_window.menuBar().actions()
+    assert main_window._actions["merge"] not in top_level
+    assert main_window._actions["create_pdf"] not in top_level
+    assert main_window._actions["tools"] not in top_level
+
+
+def test_responsive_menu_actions_are_the_movable_menus_in_order(main_window):
+    expected = [
+        _top_level_menu(main_window, title).menuAction()
+        for title in ("Edit", "View", "Pages", "Tools", "Help")
+    ]
+    assert list(main_window._responsive_menu_actions) == expected
+
+
+@pytest.mark.parametrize("width", [MIN_WINDOW_WIDTH, 600, 800, 1200])
+def test_title_label_elides_to_the_text_it_can_draw(main_window, qtbot, width):
+    main_window.resize(width, 480)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window.setWindowTitle("PageDrop: " + "a_very_long_document_name_" * 6 + ".pdf (10 pages)")
+    main_window._update_responsive_shell()
+
+    label = main_window._title_label
+    margins = label.contentsMargins()
+    usable = label.width() - margins.left() - margins.right()
+    assert label.toolTip() == main_window.windowTitle()
+    assert label.text() != main_window.windowTitle()
+    assert label.text().endswith("…")
+    assert label.fontMetrics().horizontalAdvance(label.text()) <= usable
+    assert label.width() <= TITLE_MAX_WIDTH
+
+
+def test_title_label_shows_a_short_title_in_full(main_window, qtbot):
+    main_window.resize(960, 680)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    main_window.setWindowTitle("PageDrop: ten_page.pdf (10 pages)")
+    main_window._update_responsive_shell()
+
+    label = main_window._title_label
+    assert label.text() == main_window.windowTitle()
+    assert label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
+
+
+def test_title_row_is_at_least_34px_without_raising_the_window_floor(main_window, qtbot):
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    main_window.show()
+    qtbot.waitExposed(main_window, timeout=5000)
+    assert main_window._title_bar.minimumHeight() == 34
+    assert main_window._title_bar.height() >= 34
+    assert main_window.minimumSize() == QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
 
 def test_title_does_not_overlap_window_controls(main_window, qtbot):
@@ -359,12 +487,7 @@ def test_shell_keeps_application_destinations_reachable_at_baseline_sizes(main_w
         top_level_actions = main_window.menuBar().actions()
         overflow_actions = main_window._application_overflow_menu.actions()
         assert main_window._actions["open"] in _file_menu_actions(main_window)
-        for action in (
-            main_window._actions["merge"],
-            main_window._actions["create_pdf"],
-            main_window._actions["tools"],
-            main_window._help_menu_action,
-        ):
+        for action in main_window._responsive_menu_actions:
             assert (action in top_level_actions) + (action in overflow_actions) == 1
         assert main_window._application_overflow_menu.menuAction().isVisible() == bool(
             overflow_actions
@@ -510,7 +633,7 @@ def test_menu_bar_is_the_single_title_bar_menu(main_window):
 
 
 def test_window_controls_are_keyboard_reachable(main_window):
-    for name in ("WindowMinimize", "WindowMaximize", "WindowClose"):
+    for name in ("ChromeToggleButton", "WindowMinimize", "WindowMaximize", "WindowClose"):
         button = main_window.findChild(QToolButton, name)
         assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
         assert button.accessibleName()
@@ -528,7 +651,7 @@ def test_hiding_menu_and_toolbar_keeps_window_controls_working(main_window, qtbo
     controls = main_window._window_controls
     qtbot.waitUntil(lambda: controls.isVisible() and controls.width() > 0)
     buttons = controls.findChildren(QToolButton)
-    assert len(buttons) == 3
+    assert len(buttons) == 4
     assert all(button.isVisible() for button in buttons)
     # Controls stay on the right edge with the menu gone.
     assert controls.geometry().right() == main_window._title_bar.rect().right()

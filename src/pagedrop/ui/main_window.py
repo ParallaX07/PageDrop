@@ -351,7 +351,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         )
         actions.register(
             "tools",
-            "&Tools",
+            "All &tools",
             slot=self._open_tools_window,
             # Ctrl+T is New tab — use a dedicated chord for Tools.
             shortcut="Ctrl+Shift+O",
@@ -604,8 +604,6 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         edit_menu.addAction(a["undo"])
         edit_menu.addAction(a["redo"])
         edit_menu.addSeparator()
-        edit_menu.addAction(a["select_all"])
-        edit_menu.addAction(a["deselect_all"])
         edit_menu.addAction(a["page_jump"])
         edit_menu.addSeparator()
         edit_menu.addAction(a["preferences"])
@@ -621,12 +619,33 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(a["command_palette"])
 
-        menubar.addAction(a["merge"])
-        menubar.addAction(a["create_pdf"])
-        menubar.addAction(a["tools"])
-        self._merge_menu_action = a["merge"]
-        self._create_pdf_menu_action = a["create_pdf"]
-        self._tools_menu_action = a["tools"]
+        pages_menu = menubar.addMenu("&Pages")
+        for key in (
+            "select_all",
+            "deselect_all",
+            None,
+            "rotate_ccw",
+            "rotate_cw",
+            "duplicate_pages",
+            "extract_selected",
+            "delete_pages",
+            None,
+            "move_up",
+            "move_down",
+            "move_to",
+        ):
+            if key is None:
+                pages_menu.addSeparator()
+            else:
+                pages_menu.addAction(a[key])
+        self._pages_menu_action = pages_menu.menuAction()
+
+        tools_menu = menubar.addMenu("&Tools")
+        tools_menu.addAction(a["merge"])
+        tools_menu.addAction(a["create_pdf"])
+        tools_menu.addSeparator()
+        tools_menu.addAction(a["tools"])
+        self._tools_menu_action = tools_menu.menuAction()
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(a["keyboard_shortcuts"])
@@ -644,8 +663,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             # the window controls may not fit. Move View and Edit last.
             edit_menu.menuAction(),
             view_menu.menuAction(),
-            self._merge_menu_action,
-            self._create_pdf_menu_action,
+            self._pages_menu_action,
             self._tools_menu_action,
             self._help_menu_action,
         )
@@ -657,6 +675,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             edit_menu,
             view_menu,
             quality_menu,
+            pages_menu,
+            tools_menu,
             help_menu,
             self._application_overflow_menu,
         ):
@@ -784,11 +804,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         new_tab_button.setToolTip("New tab (Ctrl+T)")
         new_tab_button.setAccessibleName("New tab")
         new_tab_button.clicked.connect(self._new_blank_tab)
-        self._chrome_toggle_btn = QToolButton()
-        self._chrome_toggle_btn.setObjectName("ChromeToggleButton")
-        self._chrome_toggle_btn.clicked.connect(self._toggle_chrome_visible)
         self._tab_manager.add_corner_widget(new_tab_button)
-        self._tab_manager.add_corner_widget(self._chrome_toggle_btn)
 
         if self._initial_tab is not None:
             self._adopt_tab(self._initial_tab)
@@ -820,6 +836,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 self._move_undo_button,
                 *self._zoom_controls.focus_widgets(),
                 # Last, so a newly activated window never lands on Minimize.
+                self._chrome_toggle_btn,
                 *self._window_control_buttons,
             ),
         )
@@ -1038,6 +1055,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         grid.pdf_drop_failed.connect(self._on_pdf_drop_failed)
         grid.extract_to_folder_requested.connect(self._extract_selected_to_folder)
         grid.bind_page_actions(
+            (self._select_all_action, self._deselect_all_action),
             (self._move_up_action, self._move_down_action, self._move_to_action),
             (
                 self._duplicate_pages_action,
