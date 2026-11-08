@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
+from pagedrop.ui import icons
 from pagedrop.ui import settings as app_settings
 from pagedrop.ui.theme import app_stylesheet, relative_luminance
 
@@ -114,10 +115,15 @@ def install_accessibility(app: QApplication) -> None:
 
     def reapply() -> None:
         applied["high_contrast"] = prefers_high_contrast()
-        apply_app_stylesheet(app)
+        # Icons tinted for the bar follow the contrast preference too.
+        refresh_themed_widgets(app)
 
     def on_state(state: Qt.ApplicationState) -> None:
-        if state == Qt.ApplicationState.ApplicationActive and prefers_high_contrast() != applied["high_contrast"]:
+        if state != Qt.ApplicationState.ApplicationActive:
+            return
+        # Check both so a lost indicator file is forgotten even alongside a contrast change.
+        icon_files_lost = not icons.indicator_files_present()
+        if prefers_high_contrast() != applied["high_contrast"] or icon_files_lost:
             reapply()
 
     def on_scheme(*_: object) -> None:

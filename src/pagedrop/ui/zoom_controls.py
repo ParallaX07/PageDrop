@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pagedrop.ui import icons
-from pagedrop.ui.theme import SPACE_1, SPACE_2
+from pagedrop.ui.theme import SPACE_1, SPACE_2, SPACE_7, tabular_font
 
 
 class ZoomControls(QWidget):
@@ -68,10 +68,11 @@ class ZoomControls(QWidget):
 
         self._value_label = QLabel()
         self._value_label.setObjectName("ZoomValueLabel")
+        self._value_label.setFont(tabular_font())
         self._value_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self._value_label.setFixedWidth(44)
+        self._value_label.setFixedWidth(SPACE_7)
 
         layout.addWidget(self._zoom_out)
         layout.addWidget(self._slider)

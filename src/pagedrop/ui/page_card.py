@@ -53,6 +53,7 @@ from pagedrop.ui.theme import (
     accent_qcolor,
     on_accent_qcolor,
     shadow_qcolor,
+    tabular_font,
 )
 from pagedrop.utils.temp_manager import TempManager
 
@@ -63,6 +64,14 @@ _SKELETON_PULSE_BRIGHT = 1.0
 # One-way leg of the opacity loop (~400–600ms InOutSine; R10d).
 _SKELETON_PULSE_MS = 500
 _SKELETON_PULSE_EASE = QEasingCurve.Type.InOutSine
+
+
+def drag_badge_font() -> QFont:
+    """Font for the count chip painted on a drag preview."""
+    font = tabular_font()
+    font.setPixelSize(13)
+    font.setWeight(QFont.Weight.Medium)
+    return font
 
 
 class PageCard(BaseFileCard):
@@ -91,6 +100,7 @@ class PageCard(BaseFileCard):
         self._page_overlay.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
+        self._page_overlay.setFont(tabular_font())
         self._page_overlay.hide()
 
         # Semantic rotation chip — same material as page overlay, opposite corner.
@@ -99,6 +109,7 @@ class PageCard(BaseFileCard):
         self._rotation_overlay.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
+        self._rotation_overlay.setFont(tabular_font())
         self._rotation_overlay.hide()
 
         # Selection needs a shape as well as the accent outline; this remains
@@ -119,6 +130,7 @@ class PageCard(BaseFileCard):
 
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
+        self._page_label.setFont(tabular_font())
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
@@ -589,10 +601,7 @@ class PageCard(BaseFileCard):
             painter.drawPixmap(offset, offset, scaled)
 
         badge_text = f"×{count}"
-        badge_font = QFont()
-        badge_font.setBold(True)
-        badge_font.setPointSize(10)
-        painter.setFont(badge_font)
+        painter.setFont(drag_badge_font())
 
         metrics = painter.fontMetrics()
         badge_w = metrics.horizontalAdvance(badge_text) + 10

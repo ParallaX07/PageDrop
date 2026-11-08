@@ -49,7 +49,15 @@ LICENSE_TEXTS = {
     "GPL-3.0.txt": "GNU GENERAL PUBLIC LICENSE",
     "LGPL-3.0.txt": "GNU LESSER GENERAL PUBLIC LICENSE",
 }
-NOTICE_SECTIONS = ("## pywin32", "## openpyxl", "## et-xmlfile", "## Pillow", "## Written offer")
+NOTICE_SECTIONS = (
+    "## pywin32",
+    "## openpyxl",
+    "## et-xmlfile",
+    "## Pillow",
+    "## Public Sans",
+    "## Written offer",
+)
+FONT_FILES = tuple(f"PublicSans-{weight}.ttf" for weight in ("Regular", "Medium", "SemiBold", "Bold"))
 LICENCE_GATE = re.compile(r"commercial|\bMIT\b", re.IGNORECASE)
 
 
@@ -152,6 +160,9 @@ def _assert_icons_in_spec(spec_text: str) -> None:
         "pagedrop.spec must collect PyQt6.QtSvg for SVG toolbar icons"
     )
     assert 'ASSETS / "logo.svg"' in spec_text, "pagedrop.spec must bundle logo.svg"
+    assert "assets/fonts" in spec_text, (
+        "pagedrop.spec must bundle Public Sans under pagedrop/assets/fonts"
+    )
 
 
 def _assert_onedir_spec(spec_text: str) -> None:
@@ -193,6 +204,12 @@ def _assert_onedir_dist_if_present() -> None:
     assert logo.is_file() and logo.stat().st_size > 0, (
         f"onedir bundle must include non-empty {logo}"
     )
+    fonts = data_root / "pagedrop" / "assets" / "fonts"
+    for name in (*FONT_FILES, "OFL.txt"):
+        font = fonts / name
+        assert font.is_file() and font.stat().st_size > 0, (
+            f"onedir bundle must include non-empty {font}"
+        )
     metadata = list(data_root.glob("pagedrop-*.dist-info/METADATA"))
     assert len(metadata) == 1, "onedir bundle must include exactly one PageDrop METADATA file"
     metadata_text = metadata[0].read_text(encoding="utf-8")

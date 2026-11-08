@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QEnterEvent
+from PyQt6.QtGui import QEnterEvent, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QDialogButtonBox,
     QLineEdit,
+    QLabel,
     QListWidget,
     QScrollArea,
     QToolButton,
@@ -21,9 +23,11 @@ from PyQt6.QtWidgets import (
 from pagedrop.ui.accessibility import contrast_ratio, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
 from pagedrop.ui.merge_file_card import MergeFileCard
+from pagedrop.ui.page_card import PageCard
 from pagedrop.ui.preferences_dialog import PreferencesDialog
 from pagedrop.ui.settings import reduce_motion, set_reduce_motion
-from pagedrop.ui.theme import BG_BASE, TEXT_MUTED, app_stylesheet
+from pagedrop.ui.theme import BG_BASE, TEXT_MUTED, app_stylesheet, tabular_font
+from pagedrop.ui.tool_page import StatusFooter
 from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 from pagedrop.ui.zoom_controls import ZoomControls
 
@@ -716,29 +720,24 @@ def test_watermark_selection_chrome_uses_accent_token(isolated_settings):
 
 
 def test_r2_fonts_and_spacing_tokens():
-    """R2: Windows-first fonts unchanged; spacing scale feeds toolbar/grid chrome."""
+    """Bundled UI font stack leads with Public Sans; spacing scale feeds toolbar/grid chrome."""
     from pagedrop.ui.theme import (
         CARD_PADDING,
-        FONT_MONO,
         FONT_UI,
         SPACE_2,
         SPACE_3,
         SPACE_4,
     )
 
-    assert FONT_UI.startswith('"Segoe UI Variable"')
-    assert "Segoe UI" in FONT_UI
-    assert FONT_MONO.startswith('"Cascadia Mono"')
-    # R2: do not expand for Linux-friendly product faces.
+    assert FONT_UI == '"Public Sans", "Segoe UI", "Noto Sans", sans-serif'
+    # Do not expand beyond the bundled face and its fallbacks.
     assert "Ubuntu" not in FONT_UI
-    assert "Noto" not in FONT_UI
     assert "SF Pro" not in FONT_UI
 
     assert CARD_PADDING == SPACE_4 == 16
     assert SPACE_3 == 12
     sheet = app_stylesheet()
     assert FONT_UI in sheet
-    assert FONT_MONO in sheet
     assert f"padding: {SPACE_2}px {SPACE_3}px" in sheet
     assert f"padding: 0 0 {SPACE_3}px 0" in sheet
 
@@ -1934,3 +1933,464 @@ def test_prefers_high_contrast_ignores_a_high_contrast_palette(monkeypatch):
         assert accessibility.prefers_high_contrast() is False
     finally:
         QApplication.setPalette(previous)
+
+
+_TNUM = QFont.Tag("tnum")
+
+# (font-size px, font-weight): page title, section title, panel title,
+# body, label, caption.
+_TYPE_SCALE = {(22, 600), (18, 600), (15, 600), (13, 400), (13, 500), (12, 400)}
+
+
+def test_tabular_font_sets_tnum_without_pinning_size():
+    font = tabular_font()
+    assert font.isFeatureSet(_TNUM)
+    assert font.featureValue(_TNUM) == 1
+    # Nothing but the feature is pinned, so the style sheet keeps size control.
+    assert font.pixelSize() == -1
+    assert not font.bold()
+
+    base = QFont()
+    base.setPixelSize(17)
+    derived = tabular_font(base)
+    assert derived.isFeatureSet(_TNUM)
+    assert derived.pixelSize() == 17
+    assert not base.isFeatureSet(_TNUM)
+
+
+def test_tabular_font_survives_app_stylesheet_reapply(qtbot):
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    label = QLabel("1,234")
+    qtbot.addWidget(label)
+    label.setFont(tabular_font())
+    try:
+        for light in (False, True, False):
+            app.setStyleSheet(app_stylesheet(light=light))
+            label.ensurePolished()
+            assert label.font().isFeatureSet(_TNUM)
+            assert label.font().pixelSize() == 13
+    finally:
+        app.setStyleSheet(previous)
+
+
+def test_tabular_font_applied_to_numeric_displays(qtbot, main_window):
+    from pagedrop.ui.page_card import drag_badge_font
+    from pagedrop.ui.pdf_viewer import PdfViewerWidget
+    from pagedrop.ui.tools_window import ToolsWindow
+
+    badge = drag_badge_font()
+    assert badge.isFeatureSet(_TNUM)
+    assert badge.pixelSize() == 13
+
+    for label in (main_window._selection_toolbar_label, main_window._selection_status):
+        assert label.font().isFeatureSet(_TNUM)
+
+    viewer = PdfViewerWidget()
+    qtbot.addWidget(viewer)
+    for widget in (viewer._page_edit, viewer._zoom_button, viewer._hit_label):
+        assert widget.font().isFeatureSet(_TNUM)
+
+    tools = ToolsWindow()
+    qtbot.addWidget(tools)
+    assert tools._match_label.font().isFeatureSet(_TNUM)
+
+    card = PageCard(0)
+    qtbot.addWidget(card)
+    for widget in (card._page_overlay, card._rotation_overlay, card._page_label):
+        assert widget.font().isFeatureSet(_TNUM)
+
+    zoom = ZoomControls(min_width=80, max_width=480, step=16, initial=160)
+    qtbot.addWidget(zoom)
+    assert zoom._value_label.font().isFeatureSet(_TNUM)
+    zoom.show()
+    zoom._value_label.setText("1000px")
+    metrics = zoom._value_label.fontMetrics()
+    assert metrics.horizontalAdvance("1000px") <= zoom._value_label.width()
+
+    merge_card = MergeFileCard(0, "/tmp/a.pdf", 1)
+    qtbot.addWidget(merge_card)
+    assert merge_card._subtitle_label.font().isFeatureSet(_TNUM)
+
+    footer = StatusFooter()
+    qtbot.addWidget(footer)
+    assert footer.font().isFeatureSet(_TNUM)
+
+
+def _qss_rules(sheet: str):
+    sheet = re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", sheet):
+        yield " ".join(match.group(1).split()), match.group(2)
+
+
+@pytest.mark.parametrize(
+    ("light", "high_contrast"),
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["dark", "light", "dark-hc", "light-hc"],
+)
+def test_stylesheet_text_uses_only_the_type_scale(light, high_contrast):
+    sheet = app_stylesheet(light=light, high_contrast=high_contrast)
+    checked = 0
+    for selector, body in _qss_rules(sheet):
+        size = re.search(r"font-size:\s*(\d+)px", body)
+        weight = re.search(r"font-weight:\s*(\d+)", body)
+        if not size and not weight:
+            continue
+        # A rule that sets only one property inherits the other: body size
+        # and regular weight unless the rule says otherwise.
+        pair = (
+            int(size.group(1)) if size else 13,
+            int(weight.group(1)) if weight else 400,
+        )
+        if "FreeTextFormatBold" in selector:
+            assert pair == (13, 700)
+            continue
+        assert pair in _TYPE_SCALE, f"{selector}: {pair}"
+        checked += 1
+    assert checked > 50
+
+
+def test_stylesheet_has_no_monospace_chrome():
+    for light in (False, True):
+        sheet = app_stylesheet(light=light)
+        lowered = sheet.lower()
+        for family in ("monospace", "consolas", "cascadia"):
+            assert family not in lowered
+
+
+# --- Form-control indicator images ------------------------------------------
+
+
+def _theme_for(light: bool):
+    from pagedrop.ui.theme import DARK, LIGHT
+
+    return LIGHT if light else DARK
+
+
+def _closer_to(img, rect, near: str, far: str) -> int:
+    """Pixels in ``rect`` nearer to ``near`` than to ``far`` (anti-aliasing tolerant)."""
+    from PyQt6.QtGui import QColor
+
+    def dist(c, target) -> int:
+        t = QColor(target)
+        return (c.red() - t.red()) ** 2 + (c.green() - t.green()) ** 2 + (c.blue() - t.blue()) ** 2
+
+    count = 0
+    for y in range(rect.top(), rect.bottom() + 1):
+        for x in range(rect.left(), rect.right() + 1):
+            c = img.pixelColor(x, y)
+            if dist(c, near) < dist(c, far):
+                count += 1
+    return count
+
+
+def _exact_count(img, rect, hex_color: str) -> int:
+    from PyQt6.QtGui import QColor
+
+    target = QColor(hex_color).rgb()
+    return sum(
+        1
+        for y in range(rect.top(), rect.bottom() + 1)
+        for x in range(rect.left(), rect.right() + 1)
+        if img.pixelColor(x, y).rgb() == target
+    )
+
+
+def _indicator_interior(widget):
+    """Inside the 16px indicator's border: only its fill and mark are in here."""
+    from PyQt6.QtCore import QRect
+
+    g = widget.geometry()
+    return QRect(g.x() + 2, g.center().y() - 5, 12, 11)
+
+
+def _hosted(qtbot, widget):
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.addWidget(widget)
+    _show(qtbot, host)
+    QApplication.processEvents()
+    return host
+
+
+@pytest.mark.parametrize("mode", _STYLE_MODES)
+@pytest.mark.parametrize("kind", ["check", "radio"])
+def test_checked_indicator_draws_mark_on_ink_fill(qtbot, themed_app, mode, kind):
+    from PyQt6.QtWidgets import QCheckBox, QRadioButton
+
+    themed_app(**mode)
+    theme = _theme_for(mode["light"])
+    widget = QCheckBox() if kind == "check" else QRadioButton()
+    widget.setChecked(True)
+    host = _hosted(qtbot, widget)
+    img = host.grab().toImage()
+    area = _indicator_interior(widget)
+    assert _exact_count(img, area, theme.ink) >= 40
+    # The mark's own pixels: nearer the on-ink tint than the ink fill.
+    assert _closer_to(img, area, theme.on_ink, theme.ink) >= 6
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_unchecked_indicator_has_no_mark(qtbot, themed_app, light):
+    from PyQt6.QtWidgets import QCheckBox
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    box = QCheckBox()
+    host = _hosted(qtbot, box)
+    img = host.grab().toImage()
+    assert _exact_count(img, _indicator_interior(box), theme.ink) == 0
+
+
+@pytest.mark.parametrize("light", [False, True])
+def test_combo_arrow_is_drawn_in_the_drop_down(qtbot, themed_app, light):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QComboBox
+
+    from pagedrop.ui.theme import FORM_BUTTON_WIDTH
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    combo = QComboBox()
+    combo.addItem("")
+    host = _hosted(qtbot, combo)
+    img = host.grab().toImage()
+    g = combo.geometry()
+    inner = g.adjusted(3, 3, -3, -3)
+    arrow = QRect(inner.right() - FORM_BUTTON_WIDTH + 1, inner.top(), FORM_BUTTON_WIDTH, inner.height())
+    assert _closer_to(img, arrow, theme.text_muted, theme.raised) >= 4
+
+
+@pytest.mark.parametrize("cls_name", ["QSpinBox", "QDoubleSpinBox"])
+@pytest.mark.parametrize("light", [False, True])
+def test_spin_box_draws_both_arrows_at_the_right_edge(qtbot, themed_app, light, cls_name):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox
+
+    from pagedrop.ui.theme import FORM_BUTTON_WIDTH
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    spin = {"QSpinBox": QSpinBox, "QDoubleSpinBox": QDoubleSpinBox}[cls_name]()
+    spin.setValue(5)
+    host = _hosted(qtbot, spin)
+    img = host.grab().toImage()
+    g = spin.geometry()
+    inner = g.adjusted(3, 3, -3, -3)
+    x = inner.right() - FORM_BUTTON_WIDTH + 1
+    half = inner.height() // 2
+    up = QRect(x, inner.top(), FORM_BUTTON_WIDTH, half)
+    down = QRect(x, inner.top() + half, FORM_BUTTON_WIDTH, inner.height() - half)
+    assert _closer_to(img, up, theme.text_muted, theme.raised) >= 3
+    assert _closer_to(img, down, theme.text_muted, theme.raised) >= 3
+
+
+def test_spin_box_arrow_dims_at_its_limit(qtbot, themed_app):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtWidgets import QSpinBox
+
+    from pagedrop.ui.theme import FORM_BUTTON_WIDTH
+
+    themed_app(light=True)
+    theme = _theme_for(True)
+    spin = QSpinBox()
+    spin.setRange(0, 10)
+    spin.setValue(10)
+    host = _hosted(qtbot, spin)
+    img = host.grab().toImage()
+    inner = spin.geometry().adjusted(3, 3, -3, -3)
+    x = inner.right() - FORM_BUTTON_WIDTH + 1
+    half = inner.height() // 2
+    up = QRect(x, inner.top(), FORM_BUTTON_WIDTH, half)
+    down = QRect(x, inner.top() + half, FORM_BUTTON_WIDTH, inner.height() - half)
+    # The up arrow is at its limit, so it is paler than the live down arrow.
+    assert _closer_to(img, down, theme.text_muted, theme.raised) > _closer_to(
+        img, up, theme.text_muted, theme.raised
+    )
+
+
+def test_indicator_images_load_from_a_directory_with_a_space(
+    qtbot, themed_app, tmp_path, monkeypatch
+):
+    from PyQt6.QtWidgets import QCheckBox
+
+    from pagedrop.ui import icons
+
+    folder = tmp_path / "with space"
+    folder.mkdir()
+    monkeypatch.setattr(icons, "_indicator_dir", lambda: folder)
+    themed_app(light=True)
+    assert list(folder.glob("*.png"))
+    theme = _theme_for(True)
+    box = QCheckBox()
+    box.setChecked(True)
+    host = _hosted(qtbot, box)
+    img = host.grab().toImage()
+    assert _closer_to(img, _indicator_interior(box), theme.on_ink, theme.ink) >= 6
+
+
+def test_window_controls_are_icons_not_glyphs(qtbot, main_window, themed_app):
+    from PyQt6.QtGui import QIcon
+
+    themed_app()
+    expected = {
+        "WindowMinimize": "Minimize window",
+        "WindowMaximize": "Maximize window",
+        "WindowClose": "Close window",
+    }
+    for button in main_window._window_control_buttons:
+        assert button.text() == ""
+        assert not button.icon().isNull()
+        assert button.accessibleName() == expected[button.objectName()]
+        assert button.toolTip() == expected[button.objectName()]
+        assert button.autoRaise()
+    close = next(b for b in main_window._window_control_buttons if b.objectName() == "WindowClose")
+    size = close.iconSize()
+    normal = close.icon().pixmap(size, QIcon.Mode.Normal).toImage()
+    active = close.icon().pixmap(size, QIcon.Mode.Active).toImage()
+    assert normal != active
+
+
+def test_window_close_icon_turns_red_when_hovered(qtbot, main_window, themed_app):
+    from PyQt6.QtGui import QColor
+
+    themed_app()
+    theme = _theme_for(False)
+    _show(qtbot, main_window)
+    close = next(b for b in main_window._window_control_buttons if b.objectName() == "WindowClose")
+
+    def mark_colour() -> QColor:
+        """Colour of the pixel that stands furthest out from the button fill."""
+        img = close.grab().toImage()
+        fill = img.pixelColor(img.width() // 2, 3)
+
+        def away(c: QColor) -> int:
+            return abs(c.red() - fill.red()) + abs(c.green() - fill.green()) + abs(c.blue() - fill.blue())
+
+        return max(
+            (img.pixelColor(x, y) for x in range(img.width()) for y in range(3, img.height() - 3)),
+            key=away,
+        )
+
+    def nearer(c: QColor, hex_color: str, other: str) -> bool:
+        def dist(target: str) -> int:
+            t = QColor(target)
+            return (c.red() - t.red()) ** 2 + (c.green() - t.green()) ** 2 + (c.blue() - t.blue()) ** 2
+
+        return dist(hex_color) < dist(other)
+
+    assert nearer(mark_colour(), theme.on_bar, theme.danger)
+    close.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, True)
+    close.update()
+    assert nearer(mark_colour(), theme.danger, theme.on_bar)
+
+
+def test_maximize_control_swaps_icon_and_tooltip(qtbot, main_window):
+    from PyQt6.QtGui import QIcon
+
+    _show(qtbot, main_window)
+    button = main_window._maximize_button
+    size = button.iconSize()
+    normal = button.icon().pixmap(size).toImage()
+    main_window.showMaximized()
+    qtbot.waitUntil(main_window.isMaximized)
+    assert button.toolTip() == "Restore window"
+    assert button.accessibleName() == "Restore window"
+    assert button.text() == ""
+    restore = button.icon().pixmap(size, QIcon.Mode.Normal).toImage()
+    assert restore != normal
+    main_window.showNormal()
+    qtbot.waitUntil(lambda: not main_window.isMaximized())
+    assert button.toolTip() == "Maximize window"
+    assert button.icon().pixmap(size).toImage() == normal
+
+
+def test_window_control_icons_retint_on_theme_change(qtbot, main_window, themed_app, isolated_settings):
+    from pagedrop.ui import icons
+    from pagedrop.ui.settings import set_light_theme
+
+    set_light_theme(False)
+    icons.refresh_icons()
+    minimize = next(b for b in main_window._window_control_buttons if b.objectName() == "WindowMinimize")
+    dark = minimize.icon().pixmap(minimize.iconSize()).toImage()
+    set_light_theme(True)
+    icons.refresh_icons()
+    try:
+        assert minimize.icon().pixmap(minimize.iconSize()).toImage() != dark
+    finally:
+        set_light_theme(False)
+        icons.refresh_icons()
+
+
+@pytest.mark.parametrize("kind", ["check", "radio"])
+@pytest.mark.parametrize("light", [False, True])
+def test_disabled_checked_indicator_draws_the_disabled_mark(qtbot, themed_app, light, kind):
+    from PyQt6.QtWidgets import QCheckBox, QRadioButton
+
+    from pagedrop.ui.theme import blend
+
+    themed_app(light=light)
+    theme = _theme_for(light)
+    widget = QCheckBox() if kind == "check" else QRadioButton()
+    widget.setChecked(True)
+    widget.setEnabled(False)
+    host = _hosted(qtbot, widget)
+    img = host.grab().toImage()
+    area = _indicator_interior(widget)
+    # Not the ink fill of an enabled control: a muted mark on the plain surface.
+    assert _exact_count(img, area, theme.ink) == 0
+    assert _exact_count(img, area, theme.raised) >= 40
+    assert _closer_to(img, area, blend(theme.text_muted, theme.raised, 0.5), theme.raised) >= 6
+
+
+def test_selection_count_label_fits_the_longest_range(main_window, themed_app):
+    from pagedrop.assets import register_fonts
+
+    # Measure in the bundled UI font, which is wider than the fallbacks.
+    register_fonts()
+    themed_app()
+    label = main_window._selection_toolbar_label
+    label.ensurePolished()
+    assert label.fontMetrics().horizontalAdvance("Pages 1000–1000 selected") <= label.width()
+
+
+def test_spin_and_combo_text_stops_before_the_buttons(qtbot, themed_app):
+    from PyQt6.QtWidgets import (
+        QComboBox,
+        QDoubleSpinBox,
+        QSpinBox,
+        QStyle,
+        QStyleOptionComboBox,
+        QStyleOptionSpinBox,
+    )
+
+    themed_app(light=True)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    spins = (QSpinBox(), QDoubleSpinBox())
+    combo = QComboBox()
+    combo.addItem("A long item that has to be elided before the drop-down")
+    for widget in (*spins, combo):
+        layout.addWidget(widget)
+    _show(qtbot, host)
+    QApplication.processEvents()
+
+    for spin in spins:
+        option = QStyleOptionSpinBox()
+        option.initFrom(spin)
+        option.subControls = QStyle.SubControl.SC_All
+        up = spin.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, option, QStyle.SubControl.SC_SpinBoxUp, spin
+        )
+        assert spin.lineEdit().geometry().right() + 1 <= up.left()
+    option = QStyleOptionComboBox()
+    option.initFrom(combo)
+    option.subControls = QStyle.SubControl.SC_All
+    style = combo.style()
+    field = style.subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxEditField, combo
+    )
+    arrow = style.subControlRect(
+        QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxArrow, combo
+    )
+    assert field.right() + 1 <= arrow.left()

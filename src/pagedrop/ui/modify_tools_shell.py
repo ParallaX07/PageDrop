@@ -48,7 +48,7 @@ from pagedrop.ui.dialogs import confirm_remove_blank_pages
 from pagedrop.ui.job_chrome import gui_fitz_call
 from pagedrop.ui.organize_tools import adopt_context_credentials, editor_pdf_context
 from pagedrop.ui.settings import last_directory, remember_directory
-from pagedrop.ui.theme import ICON_SIZE_SMALL, current_theme
+from pagedrop.ui.theme import ICON_SIZE_SMALL, current_theme, tabular_font
 from pagedrop.ui.tool_page import present_tool_page, tool_shell_store
 from pagedrop.ui.tool_shell import (
     ToolShellWindow,
@@ -305,6 +305,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     next_btn.setAccessibleName("Next page")
     page_label = QLabel("—")
     page_label.setObjectName("ToolsHint")
+    page_label.setFont(tabular_font())
     page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     page_label.setMinimumWidth(48)
 
@@ -314,6 +315,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     zoom_out.setAccessibleName("Zoom out")
     zoom_label = QLabel("100%")
     zoom_label.setObjectName("WatermarkZoomLabel")
+    zoom_label.setFont(tabular_font())
     zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     zoom_label.setToolTip("Ctrl+0 resets to fit")
     zoom_in = QPushButton("+")
@@ -496,6 +498,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     opacity_slider.setAccessibleName("Opacity")
     opacity_value = QLabel("0.3")
     opacity_value.setObjectName("ToolsHint")
+    opacity_value.setFont(tabular_font())
     opacity_value.setMinimumWidth(28)
     opacity_row.addWidget(opacity_slider, stretch=1)
     opacity_row.addWidget(opacity_value)
@@ -511,6 +514,7 @@ def _configure_watermark(shell: ToolShellWindow) -> None:
     angle_slider.setAccessibleName("Angle")
     angle_value = QLabel("-45°")
     angle_value.setObjectName("ToolsHint")
+    angle_value.setFont(tabular_font())
     angle_value.setMinimumWidth(40)
     angle_row.addWidget(angle_slider, stretch=1)
     angle_row.addWidget(angle_value)

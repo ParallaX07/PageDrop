@@ -180,3 +180,72 @@ def test_command_line_paths_drop_options_and_blanks():
     ]
     assert command_line_paths(args) == ["a.pdf", "/tmp/b.pdf"]
     assert command_line_paths([]) == []
+
+
+def test_startup_survives_a_missing_font_directory(monkeypatch, tmp_path):
+    """Missing bundled fonts log a warning; startup still sets the app font and opens a window."""
+    import logging
+
+    import pagedrop.assets
+    from PyQt6 import QtWidgets
+    from PyQt6.QtGui import QFont
+
+    from pagedrop import main as main_module
+    from pagedrop.ui import accessibility, settings, theme, window_manager
+    from pagedrop.utils import diagnostics
+
+    calls: list[str] = []
+
+    class FakeApp:
+        instance = staticmethod(QtWidgets.QApplication.instance)  # pytest-qt calls it
+        sendPostedEvents = staticmethod(lambda *_args: None)
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self._font = QFont()
+
+        def __getattr__(self, name):
+            return lambda *_a, **_kw: [] if name in ("arguments", "topLevelWidgets") else None
+
+        def font(self):
+            return self._font
+
+        def exec(self) -> int:
+            return 0
+
+    class FakeManager:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def open_new_window(self, **_kwargs):
+            calls.append("window")
+
+    records: list[logging.LogRecord] = []
+
+    class Spy(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    spy = Spy(level=logging.WARNING)
+    logger = logging.getLogger("pagedrop")
+    logger.addHandler(spy)
+    real_apply = theme.apply_app_font
+    monkeypatch.setattr(diagnostics, "configure_terminal_logging", lambda: None)
+    monkeypatch.setattr(diagnostics, "configure_app_logging", lambda _argv: None)
+    monkeypatch.setattr(diagnostics, "install_qt_message_handler", lambda: None)
+    monkeypatch.setattr(diagnostics, "log_startup", lambda **_kw: None)
+    monkeypatch.setattr(QtWidgets, "QApplication", FakeApp)
+    monkeypatch.setattr(accessibility, "install_accessibility", lambda _app: None)
+    monkeypatch.setattr(settings, "apply_optional_settings_to_capabilities", lambda: None)
+    monkeypatch.setattr(window_manager, "WindowManager", FakeManager)
+    monkeypatch.setattr(
+        theme, "apply_app_font", lambda app: calls.append("font") or real_apply(app)
+    )
+    monkeypatch.setattr(pagedrop.assets, "fonts_dir", lambda: tmp_path / "no-fonts")
+    monkeypatch.setattr(sys, "argv", ["pagedrop"])
+    try:
+        assert main_module.main() == 0
+    finally:
+        logger.removeHandler(spy)
+
+    assert calls == ["font", "window"]
+    assert any("font" in record.getMessage().lower() for record in records)

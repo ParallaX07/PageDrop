@@ -137,8 +137,16 @@ def test_missing_installer_output_and_frozen_metadata_fail_packaging_checks(tmp_
     (data / "THIRD_PARTY_NOTICES.md").write_text("notices", encoding="utf-8")
     (data / "pagedrop" / "assets" / "icons" / "icon.svg").write_text("svg", encoding="utf-8")
     (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
+    _write_fonts(data)
     with pytest.raises(AssertionError, match="METADATA"):
         check_packaging._assert_onedir_dist_if_present()
+
+
+def _write_fonts(data):
+    fonts = data / "pagedrop" / "assets" / "fonts"
+    fonts.mkdir(parents=True)
+    for name in (*check_packaging.FONT_FILES, "OFL.txt"):
+        (fonts / name).write_bytes(b"font")
 
 
 def _fake_bundle(tmp_path, monkeypatch, modules, *, windows, dlls=True):
@@ -168,6 +176,7 @@ def _fake_bundle(tmp_path, monkeypatch, modules, *, windows, dlls=True):
         licence.write_text("licence", encoding="utf-8")
     (data / "pagedrop" / "assets" / "icons" / "icon.svg").write_text("svg", encoding="utf-8")
     (data / "pagedrop" / "assets" / "logo.svg").write_text("svg", encoding="utf-8")
+    _write_fonts(data)
     dist_info = data / f"pagedrop-{check_packaging.read_version()}.dist-info"
     dist_info.mkdir()
     (dist_info / "METADATA").write_text(
@@ -179,6 +188,22 @@ def _fake_bundle(tmp_path, monkeypatch, modules, *, windows, dlls=True):
         (sys32 / "pywintypes311.dll").write_bytes(b"dll")
         (sys32 / "pythoncom311.dll").write_bytes(b"dll")
     monkeypatch.setattr(check_packaging, "_frozen_modules", lambda exe: set(modules))
+
+
+@pytest.mark.parametrize("missing", ["PublicSans-Medium.ttf", "OFL.txt"])
+def test_frozen_bundle_without_fonts_or_their_licence_fails(tmp_path, monkeypatch, missing):
+    _fake_bundle(tmp_path, monkeypatch, {"openpyxl", "PIL.Image"}, windows=False, dlls=False)
+    fonts = tmp_path / "dist" / "pagedrop" / "_internal" / "pagedrop" / "assets" / "fonts"
+    (fonts / missing).unlink()
+    with pytest.raises(AssertionError, match=missing):
+        check_packaging._assert_onedir_dist_if_present()
+
+
+def test_spec_without_fonts_entry_fails_icon_check():
+    spec = check_packaging.SPEC.read_text(encoding="utf-8")
+    check_packaging._assert_icons_in_spec(spec)
+    with pytest.raises(AssertionError, match="fonts"):
+        check_packaging._assert_icons_in_spec(spec.replace("assets/fonts", "assets/gone"))
 
 
 def test_frozen_bundle_with_every_backend_passes(tmp_path, monkeypatch):

@@ -84,6 +84,7 @@ from pagedrop.ui.theme import (
     chrome_text_muted_qcolor,
     close_tab_hex,
     status_success_hex,
+    tabular_font,
     token_qcolor,
 )
 
@@ -573,6 +574,7 @@ class CompareWindow(JobChromeMixin, QWidget):
         self._prev_act = toolbar.addAction("Previous page")
         self._next_act = toolbar.addAction("Next page")
         self._page_label = QLabel("Page:")
+        self._page_label.setFont(tabular_font())
         toolbar.addWidget(self._page_label)
         toolbar.addSeparator()
 

@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from PyQt6.QtGui import QColor, QIcon
+    from PyQt6.QtGui import QColor, QFont, QIcon
+    from PyQt6.QtWidgets import QApplication
 
 @dataclass(frozen=True)
 class Theme:
@@ -218,13 +219,19 @@ COMPACT_CONTROL_HEIGHT = 32
 FORM_CONTROL_HEIGHT = 36
 ICON_SIZE_SMALL = 16
 ICON_SIZE = 18
+# Marks are drawn at their own size inside the 16px indicator, not scaled to fill it.
+INDICATOR_CHECK_SIZE = 12
+INDICATOR_DOT_SIZE = 8
+INDICATOR_ARROW_SIZE = 10
+FORM_BUTTON_WIDTH = 24
 RADIUS_CONTROL = 4
 RADIUS_SURFACE = 6
 RADIUS_CARD = RADIUS_SURFACE
 RADIUS_BADGE = 3
 
-FONT_UI = '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
-FONT_MONO = '"Cascadia Mono", "Consolas", monospace'
+# Bundled Public Sans leads; later families cover scripts it lacks (CJK, etc.).
+FONT_UI_FAMILIES = ("Public Sans", "Segoe UI", "Noto Sans")
+FONT_UI = ", ".join(f'"{name}"' for name in FONT_UI_FAMILIES) + ", sans-serif"
 
 # Spacing scale (4px steps) — toolbar / grid / empty-state rhythm
 SPACE_1 = 4
@@ -265,6 +272,14 @@ def relative_luminance(hex_color: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+def _indicator_image(name: str, color: str, size: int, canvas: int | None = None) -> str:
+    """QSS ``image:`` rule for a tinted indicator, or nothing if it cannot be rendered."""
+    from pagedrop.ui import icons
+
+    path = icons.indicator_path(name, color=color, size=size, canvas=canvas)
+    return f'image: url("{path}");' if path else ""
+
+
 def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # High contrast is an overlay on either theme: all text in ``text`` and
     # surface edges drawn in ``text``, with a thicker focus ring.
@@ -297,6 +312,15 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     # Chips sit on page-paper thumbs (always light): a page-ink pill in both themes.
     page_chip_bg = rgba(PAGE_INK, 170 if light else 160)
     focus_width = 3 if high_contrast else 2
+    mark_disabled = blend(text_muted, bg_card, 0.5)
+    check_mark = _indicator_image("check-bold", on_ink, INDICATOR_CHECK_SIZE, ICON_SIZE_SMALL)
+    check_mark_off = _indicator_image("check-bold", mark_disabled, INDICATOR_CHECK_SIZE, ICON_SIZE_SMALL)
+    dot_mark = _indicator_image("circle-fill", on_ink, INDICATOR_DOT_SIZE, ICON_SIZE_SMALL)
+    dot_mark_off = _indicator_image("circle-fill", mark_disabled, INDICATOR_DOT_SIZE, ICON_SIZE_SMALL)
+    arrow_down = _indicator_image("caret-down-bold", text_muted, INDICATOR_ARROW_SIZE)
+    arrow_down_off = _indicator_image("caret-down-bold", mark_disabled, INDICATOR_ARROW_SIZE)
+    arrow_up = _indicator_image("caret-up-bold", text_muted, INDICATOR_ARROW_SIZE)
+    arrow_up_off = _indicator_image("caret-up-bold", mark_disabled, INDICATOR_ARROW_SIZE)
     # Selection reads thicker than keyboard focus (multi-select still obvious in HC)
     selected_width = focus_width + 1
     return f"""
@@ -348,7 +372,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#WindowTitle {{
         color: {on_bar_muted};
-        font-weight: 600;
+        font-weight: 500;
         padding: 0 8px;
     }}
 
@@ -472,8 +496,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#CommandPaletteHint {{
         color: {text_muted};
-        font-size: 11px;
-        font-family: {FONT_MONO};
+        font-size: 12px;
     }}
 
     QPushButton {{
@@ -482,7 +505,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 14px;
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QPushButton:hover {{
@@ -528,10 +551,58 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: 8px;
     }}
 
+    QCheckBox::indicator:hover,
+    QRadioButton::indicator:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QCheckBox::indicator:pressed,
+    QRadioButton::indicator:pressed {{
+        background-color: {bg_pressed};
+    }}
+
+    QCheckBox::indicator:disabled,
+    QRadioButton::indicator:disabled {{
+        background-color: {bg_card};
+        border-color: {border_subtle};
+    }}
+
     QCheckBox::indicator:checked,
     QRadioButton::indicator:checked {{
         background-color: {ink};
         border-color: {ink_pressed};
+    }}
+
+    QCheckBox::indicator:checked {{
+        {check_mark}
+    }}
+
+    QRadioButton::indicator:checked {{
+        {dot_mark}
+    }}
+
+    QCheckBox::indicator:checked:hover,
+    QRadioButton::indicator:checked:hover {{
+        background-color: {ink_hover};
+    }}
+
+    QCheckBox::indicator:checked:pressed,
+    QRadioButton::indicator:checked:pressed {{
+        background-color: {ink_pressed};
+    }}
+
+    QCheckBox::indicator:checked:disabled,
+    QRadioButton::indicator:checked:disabled {{
+        background-color: {bg_card};
+        border-color: {border_subtle};
+    }}
+
+    QCheckBox::indicator:checked:disabled {{
+        {check_mark_off}
+    }}
+
+    QRadioButton::indicator:checked:disabled {{
+        {dot_mark_off}
     }}
 
     QCheckBox:focus,
@@ -565,8 +636,18 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
         border: none;
-        width: 24px;
+        width: {FORM_BUTTON_WIDTH}px;
+    }}
+
+    QComboBox::down-arrow {{
+        {arrow_down}
+    }}
+
+    QComboBox::down-arrow:disabled {{
+        {arrow_down_off}
     }}
 
     QComboBox QAbstractItemView {{
@@ -591,6 +672,64 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QSpinBox:focus,
     QDoubleSpinBox:focus {{
         border: {focus_width}px solid {focus_ring};
+    }}
+
+    QSpinBox::up-button,
+    QDoubleSpinBox::up-button {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: {FORM_BUTTON_WIDTH}px;
+        border: none;
+        border-top-right-radius: {RADIUS_CONTROL}px;
+        background-color: transparent;
+    }}
+
+    QSpinBox::down-button,
+    QDoubleSpinBox::down-button {{
+        subcontrol-origin: padding;
+        subcontrol-position: bottom right;
+        width: {FORM_BUTTON_WIDTH}px;
+        border: none;
+        border-bottom-right-radius: {RADIUS_CONTROL}px;
+        background-color: transparent;
+    }}
+
+    QSpinBox::up-button:hover,
+    QSpinBox::down-button:hover,
+    QDoubleSpinBox::up-button:hover,
+    QDoubleSpinBox::down-button:hover {{
+        background-color: {bg_card_hover};
+    }}
+
+    QSpinBox::up-button:pressed,
+    QSpinBox::down-button:pressed,
+    QDoubleSpinBox::up-button:pressed,
+    QDoubleSpinBox::down-button:pressed {{
+        background-color: {bg_pressed};
+    }}
+
+    QSpinBox::up-arrow,
+    QDoubleSpinBox::up-arrow {{
+        {arrow_up}
+    }}
+
+    QSpinBox::down-arrow,
+    QDoubleSpinBox::down-arrow {{
+        {arrow_down}
+    }}
+
+    QSpinBox::up-arrow:disabled,
+    QSpinBox::up-arrow:off,
+    QDoubleSpinBox::up-arrow:disabled,
+    QDoubleSpinBox::up-arrow:off {{
+        {arrow_up_off}
+    }}
+
+    QSpinBox::down-arrow:disabled,
+    QSpinBox::down-arrow:off,
+    QDoubleSpinBox::down-arrow:disabled,
+    QDoubleSpinBox::down-arrow:off {{
+        {arrow_down_off}
     }}
 
     QTextEdit {{
@@ -688,7 +827,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_card_hover};
         color: {text_primary};
         border: 1px solid {ink};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QToolButton:checked:hover {{
@@ -709,7 +848,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ink};
         color: {on_ink};
         border: 1px solid {ink_pressed};
-        font-weight: 600;
+        font-weight: 500;
         padding: 6px 14px;
     }}
 
@@ -761,7 +900,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: transparent;
         color: {text_muted};
         border: 1px solid {border_default};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QPushButton#ToolbarSecondary:hover,
@@ -807,7 +946,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 600;
         min-width: 28px;
         max-width: 28px;
@@ -836,7 +975,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 600;
         min-width: 28px;
         max-width: 28px;
@@ -967,9 +1106,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#ZoomValueLabel {{
         color: {text_muted};
-        font-family: {FONT_MONO};
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 400;
     }}
 
     QStatusBar {{
@@ -993,7 +1131,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QWidget#MoveUndoToast QLabel {{
         color: {text_muted};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QPushButton#MoveUndoButton {{
@@ -1002,7 +1140,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 2px 10px;
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QPushButton#MoveUndoButton:hover {{
@@ -1074,7 +1212,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#GridEmptyState {{
         color: {text_muted};
-        font-size: 21px;
+        font-size: 22px;
         font-weight: 600;
         letter-spacing: -0.2px;
         padding: 0;
@@ -1096,8 +1234,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#MergeEmptyKbd,
     QLabel#ConvertEmptyKbd {{
         color: {text_muted};
-        font-family: {FONT_MONO};
-        font-size: 11px;
+        font-size: 12px;
         padding: {SPACE_2}px 0 0 0;
     }}
 
@@ -1135,7 +1272,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {on_bar};
         background-color: transparent;
         border-bottom: 2px solid {ink};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QTabWidget#TabManager > QTabBar::tab:hover:!selected {{
@@ -1268,7 +1405,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ink};
         border-color: {ink};
         color: {on_ink};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QMessageBox QPushButton:default:hover {{
@@ -1297,8 +1434,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#PagePreviewHint {{
         color: {text_muted};
-        font-size: 11px;
-        font-family: {FONT_MONO};
+        font-size: 12px;
         padding: 10px 16px;
     }}
 
@@ -1341,8 +1477,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#PdfViewerAnnotRailTitle {{
         color: {text_muted};
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 13px;
+        font-weight: 500;
         padding: 2px 4px;
     }}
 
@@ -1488,6 +1624,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QToolButton#FreeTextFormatBold {{
+        /* The button shows the format it toggles, so it stays bold. */
         font-weight: 700;
     }}
 
@@ -1555,7 +1692,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_primary};
         background-color: {bg_surface};
         border-bottom: 2px solid {ink};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QTabWidget#PdfViewerSide > QTabBar::tab:hover:!selected {{
@@ -1565,8 +1702,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#PdfViewerHint {{
         color: {text_muted};
-        font-size: 11px;
-        font-family: {FONT_MONO};
+        font-size: 12px;
         padding: 10px 16px;
         background-color: {bg_preview_footer};
         border-top: 1px solid {border_subtle};
@@ -1591,7 +1727,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#BusyOverlayMessage {{
         color: {text_primary};
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 600;
         background-color: transparent;
         border: none;
@@ -1600,7 +1736,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QPushButton#BusyOverlayCancel {{
         color: {text_primary};
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 500;
         padding: 6px 16px;
         background-color: {bg_card};
         border: 1px solid {border_subtle};
@@ -1630,7 +1766,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ToastOverlayMessage {{
         color: {text_primary};
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 500;
         padding: 8px 16px;
         background-color: transparent;
         border: none;
@@ -1658,7 +1794,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
         padding: 6px 12px;
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QPushButton#ToastOverlayUndo:hover {{
@@ -1684,7 +1820,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#TipsOverlayTitle {{
         color: {text_primary};
         font-size: 18px;
-        font-weight: 700;
+        font-weight: 600;
     }}
 
     QLabel#TipsOverlayIntro {{
@@ -1716,8 +1852,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#ShortcutCategory {{
         color: {text_primary};
-        font-size: 14px;
-        font-weight: 700;
+        font-size: 15px;
+        font-weight: 600;
         padding-top: 4px;
     }}
 
@@ -1729,7 +1865,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ShortcutKeys {{
         color: {text_primary};
         font-size: 12px;
-        font-family: {FONT_MONO};
     }}
 
     QWidget#MergeListPane {{
@@ -1817,7 +1952,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#CompareModeLabel {{
         color: {ink};
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QLabel#ToolsErrorHint {{
@@ -1848,7 +1983,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#ToolsHeading {{
         color: {text_primary};
-        font-size: 21px;
+        font-size: 22px;
         font-weight: 600;
         letter-spacing: -0.2px;
     }}
@@ -1867,7 +2002,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ToolsCategoryHeading,
     QToolButton#ToolsCategoryHeading {{
         color: {text_primary};
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 600;
         border: none;
         border-bottom: 1px solid {border_subtle};
@@ -1889,6 +2024,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QToolButton#ToolsUpcomingToggle {{
         color: {text_muted};
         font-size: 12px;
+        font-weight: 400;
         border: none;
         background: transparent;
         padding: 2px 4px;
@@ -1926,7 +2062,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#ToolWorkflowTitle {{
         color: {text_primary};
-        font-size: 21px;
+        font-size: 22px;
         font-weight: 600;
         letter-spacing: -0.2px;
     }}
@@ -1949,8 +2085,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {bg_surface};
         border: 1px solid {border_default};
         border-radius: 12px;
-        font-size: 12px;
-        font-weight: 700;
+        font-size: 13px;
+        font-weight: 500;
         min-width: 22px;
         max-width: 22px;
         min-height: 22px;
@@ -2013,7 +2149,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
 
     QLabel#ToolShellDropPrompt {{
         color: {text_muted};
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
     }}
 
@@ -2046,7 +2182,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         color: {text_muted};
         border: 1px solid {border_default};
         border-radius: {RADIUS_CONTROL}px;
-        font-weight: 600;
+        font-weight: 500;
         padding: 6px 12px;
     }}
 
@@ -2095,13 +2231,12 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#WatermarkPreviewTitle {{
         color: {text_primary};
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 500;
     }}
 
     QLabel#WatermarkZoomLabel {{
         color: {text_muted};
         font-size: 12px;
-        font-family: {FONT_MONO};
         min-width: 40px;
     }}
 
@@ -2111,7 +2246,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: 1px solid {border_subtle};
         border-radius: {RADIUS_CONTROL}px;
         padding: 0;
-        font-weight: 600;
+        font-weight: 500;
         min-width: 28px;
         max-width: 28px;
         min-height: 28px;
@@ -2238,8 +2373,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PageCardLabel {{
         color: {text_muted};
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 400;
         letter-spacing: 0.3px;
     }}
     QFrame#PageCard[selected="true"] QLabel#PageCardLabel {{
@@ -2250,8 +2385,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         background-color: {ink};
         border: 1px solid {on_ink};
         border-radius: 8px;
-        font-size: 11px;
-        font-weight: 700;
+        font-size: 12px;
+        font-weight: 400;
         min-width: 16px;
         min-height: 16px;
         max-width: 16px;
@@ -2266,17 +2401,16 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#PageCardPageOverlay {{
         color: {SURFACE_PAPER};
         background-color: {page_chip_bg};
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 400;
         padding: {SPACE_1}px {SPACE_2}px;
         border-radius: {RADIUS_BADGE}px;
     }}
     QLabel#PageCardRotationOverlay {{
         color: {SURFACE_PAPER};
         background-color: {page_chip_bg};
-        font-family: {FONT_MONO};
-        font-size: 10px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 400;
         padding: {SPACE_1}px {SPACE_1}px;
         border-radius: {RADIUS_BADGE}px;
     }}
@@ -2288,8 +2422,8 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QLabel#PreferencesSection {{
         color: {text_muted};
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 13px;
+        font-weight: 500;
         letter-spacing: 0.3px;
         padding-top: {SPACE_1}px;
     }}
@@ -2308,14 +2442,14 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#MergeFileCardTitle,
     QLabel#ConvertFileCardTitle {{
         color: {text_primary};
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 13px;
+        font-weight: 500;
     }}
     QLabel#MergeFileCardSubtitle,
     QLabel#ConvertFileCardSubtitle {{
         color: {text_muted};
-        font-size: 11px;
-        font-weight: 500;
+        font-size: 12px;
+        font-weight: 400;
     }}
     QFrame#MergeFileCard[selected="true"] QLabel#MergeFileCardSubtitle,
     QFrame#ConvertFileCard[selected="true"] QLabel#ConvertFileCardSubtitle {{
@@ -2363,7 +2497,7 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     QLabel#ToolTileTitle {{
         color: {text_primary};
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 500;
         letter-spacing: -0.1px;
     }}
     QFrame#ToolTile[blocked="true"] QLabel#ToolTileTitle,
@@ -2372,19 +2506,20 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
     QFrame#ToolTile[compact="true"] QLabel#ToolTileTitle {{
         font-size: 12px;
+        font-weight: 400;
     }}
     QLabel#ToolTileSubtitle {{
         color: {text_muted};
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 400;
     }}
     QLabel#ToolTileCapability {{
         color: {status_warning};
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 400;
     }}
     QFrame#ToolTile[compact="true"] QLabel#ToolTileSubtitle {{
-        font-size: 10px;
+        font-size: 12px;
     }}
     """
 
@@ -2468,3 +2603,27 @@ def tab_close_icon(*, color: str | None = None) -> "QIcon":
 
     ink = color if color is not None else close_tab_hex()
     return icons.icon("x", color=ink)
+
+
+def apply_app_font(app: "QApplication") -> None:
+    """Make the UI family stack the application font, keeping its point size.
+
+    Families missing on this machine are skipped by Qt, so this is safe when
+    the bundled font failed to register.
+    """
+    font = app.font()
+    font.setFamilies(list(FONT_UI_FAMILIES))
+    app.setFont(font)
+
+
+def tabular_font(base: "QFont | None" = None) -> "QFont":
+    """Font that draws digits at equal width so changing numbers do not jitter.
+
+    Without a base it is a bare font, so a widget using it still takes family
+    and size from the style sheet.
+    """
+    from PyQt6.QtGui import QFont
+
+    font = QFont(base) if base is not None else QFont()
+    font.setFeature(QFont.Tag("tnum"), 1)
+    return font

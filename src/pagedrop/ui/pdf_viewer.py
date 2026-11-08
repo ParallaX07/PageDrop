@@ -127,6 +127,7 @@ from pagedrop.ui.theme import (
     close_tab_hex,
     page_accent_qcolor,
     status_success_hex,
+    tabular_font,
     token_qcolor,
 )
 from pagedrop.ui.settings import (
@@ -2174,6 +2175,7 @@ class PdfViewerWidget(QWidget):
         self._hit_label = QLabel("")
         self._hit_label.setObjectName("PdfViewerHitLabel")
         self._hit_label.setAccessibleName("Search results")
+        self._hit_label.setFont(tabular_font())
         find_layout.addWidget(self._hit_label)
         self._ocr_button = QToolButton()
         self._ocr_button.setText("Use OCR")
@@ -2190,6 +2192,7 @@ class PdfViewerWidget(QWidget):
         self._page_edit = QLineEdit()
         self._page_edit.setObjectName("PdfViewerPageEdit")
         self._page_edit.setAccessibleName("Current page")
+        self._page_edit.setFont(tabular_font())
         self._page_edit.setToolTip("Enter a page number")
         self._page_edit.setMinimumWidth(112)
         self._page_edit.setMaximumWidth(160)
@@ -2257,6 +2260,7 @@ class PdfViewerWidget(QWidget):
         self._zoom_menu.addActions((self._fit_width_action, self._fit_page_action))
         self._zoom_button = QToolButton()
         self._zoom_button.setAccessibleName("Zoom")
+        self._zoom_button.setFont(tabular_font())
         self._zoom_button.setToolTip("Choose zoom; Ctrl+scroll adjusts percentage")
         self._zoom_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._zoom_button.setMenu(self._zoom_menu)
