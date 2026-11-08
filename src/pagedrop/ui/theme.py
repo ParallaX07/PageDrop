@@ -1414,6 +1414,46 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border-radius: {RADIUS_BADGE}px;
     }}
 
+    /* Side panes of the editor: chrome surface, one rule against the grid. */
+    QWidget#SectionIndex,
+    QWidget#DocumentPanel {{
+        background-color: {t.chrome};
+    }}
+
+    QWidget#SectionIndex {{
+        border-right: 1px solid {border_subtle};
+    }}
+
+    QWidget#DocumentPanel {{
+        border-left: 1px solid {border_subtle};
+    }}
+
+    QLabel#PanelTitle {{
+        background: transparent;
+        font-size: 15px;
+        font-weight: 600;
+        padding: 0;
+    }}
+
+    QLabel#PanelStatus {{
+        background: transparent;
+        color: {text_muted};
+        font-size: 12px;
+        padding: 0;
+    }}
+
+    QListWidget#PanelList {{
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: 0;
+    }}
+
+    /* Narrow panes: tighter rows leave room for the title beside its value. */
+    QListWidget#PanelList::item {{
+        padding: {6 - focus_width}px {SPACE_2 - focus_width}px;
+    }}
+
     QScrollArea#ThumbnailGrid {{
         background-color: {bg_grid};
         border: none;
