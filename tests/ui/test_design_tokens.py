@@ -34,7 +34,7 @@ TEXT_PAIRS += [
     (fg, bg, 4.5) for fg in ("on_bar", "on_bar_muted") for bg in ("bar_top", "bar_tabs")
 ]
 TEXT_PAIRS += [
-    (fg, bg, 4.5) for fg in ("success", "warning", "danger") for bg in ("chrome", "raised")
+    (fg, bg, 4.5) for fg in ("success", "warning", "danger") for bg in SURFACES
 ]
 MARK_PAIRS = [
     (fg, bg, 3.0) for fg in ("ink", "line_strong") for bg in ("chrome", "raised", "canvas")
@@ -90,6 +90,9 @@ def _design_colors() -> dict[str, str]:
     return colors
 
 
+@pytest.mark.skipif(
+    not DESIGN_MD.is_file(), reason="DESIGN.md is a local-only file and is not present"
+)
 def test_design_md_colours_match_the_themes():
     colors = _design_colors()
     assert len(colors) > 50  # the parse found the block
