@@ -367,7 +367,7 @@ def test_deleted_indicator_is_rendered_again(qapp):
     url = Path(_image_urls(app_stylesheet(light=True))[0])
     url.unlink()
     again = _image_urls(app_stylesheet(light=True))
-    assert str(url) in again
+    assert url.as_posix() in again
     assert url.is_file()
     url.with_name(url.stem + "@2x.png").unlink()
     app_stylesheet(light=True)
