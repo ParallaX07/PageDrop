@@ -21,6 +21,11 @@ KEY_WINDOW_GEOMETRY = "window/geometry"
 KEY_LIGHT_THEME = "view/light_theme"
 KEY_APPEARANCE = "view/appearance"
 KEY_CHROME_VISIBLE = "view/chrome_visible"
+KEY_PAGE_FOCUS = "view/page_focus"
+KEY_SECTIONS_VISIBLE = "view/sections_visible"
+KEY_SECTIONS_WIDTH = "view/sections_width"
+KEY_DOCUMENT_PANEL_VISIBLE = "view/document_panel_visible"
+KEY_DOCUMENT_PANEL_WIDTH = "view/document_panel_width"
 KEY_THUMBNAIL_QUALITY = "view/thumbnail_quality"
 KEY_THUMBNAIL_ZOOM = "view/thumbnail_zoom"
 KEY_VIEWER_PANEL_STATE = "view/viewer_panel_state"
@@ -190,37 +195,64 @@ def remember_directory(path: str | Path) -> None:
         _settings().setValue(KEY_LAST_DIRECTORY, str(directory))
 
 
-def recent_files() -> list[str]:
-    """Most recently opened PDF paths (newest first), missing files omitted."""
+def _recent_state(path: Path) -> tuple[bool, str]:
+    """Whether *path* exists and its dedupe key; unreadable paths count as missing."""
+    try:
+        return path.exists(), str(path.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False, str(path)
+
+
+def _recent_entries(*, keep_missing: bool) -> list[tuple[str, bool]]:
     raw = _settings().value(KEY_RECENT_FILES, [])
     if not isinstance(raw, list):
         return []
-    result: list[str] = []
+    result: list[tuple[str, bool]] = []
     seen: set[str] = set()
     for item in raw:
         path = Path(str(item))
-        key = str(path.resolve()) if path.exists() else ""
+        exists, key = _recent_state(path)
+        if not exists and not keep_missing:
+            continue
         if not key or key in seen:
             continue
         seen.add(key)
-        result.append(str(path))
+        result.append((str(path), exists))
         if len(result) >= RECENT_FILES_MAX:
             break
     return result
 
 
+def recent_files() -> list[str]:
+    """Most recently opened PDF paths (newest first), missing files omitted."""
+    return [path for path, _ in _recent_entries(keep_missing=False)]
+
+
+def recent_file_entries() -> list[tuple[str, bool]]:
+    """Recent PDF paths (newest first) with whether each still exists."""
+    return _recent_entries(keep_missing=True)
+
+
 def remember_recent_file(path: str | Path) -> None:
-    """Prepend *path* to the recent-files list (deduped, capped)."""
+    """Prepend *path* to the recent-files list (deduped, capped).
+
+    Entries whose file has gone missing stay in the list so the start screen can
+    still show them, but they are dropped (oldest first) before any live file when
+    the list is full.
+    """
     resolved = Path(path)
     if not resolved.is_file():
         return
     key = str(resolved.resolve())
     existing = [
-        p
-        for p in recent_files()
-        if str(Path(p).resolve()) != key
+        (p, ok) for p, ok in recent_file_entries() if _recent_state(Path(p))[1] != key
     ]
-    _settings().setValue(KEY_RECENT_FILES, [key, *existing][:RECENT_FILES_MAX])
+    for i in range(len(existing) - 1, -1, -1):
+        if len(existing) < RECENT_FILES_MAX:
+            break
+        if not existing[i][1]:
+            del existing[i]
+    _settings().setValue(KEY_RECENT_FILES, [key, *(p for p, _ in existing)][:RECENT_FILES_MAX])
 
 
 def reduce_motion() -> bool:
@@ -323,6 +355,59 @@ def chrome_visible() -> bool:
 
 def set_chrome_visible(visible: bool) -> None:
     _settings().setValue(KEY_CHROME_VISIBLE, bool(visible))
+
+
+def page_focus() -> bool:
+    """Hide the tab row and toolbar while Pages view shows a document (default: False)."""
+    return _settings().value(KEY_PAGE_FOCUS, False, type=bool)
+
+
+def set_page_focus(enabled: bool) -> None:
+    _settings().setValue(KEY_PAGE_FOCUS, bool(enabled))
+
+
+def sections_visible() -> bool:
+    """Show the Sections pane beside a document (default: True)."""
+    return _settings().value(KEY_SECTIONS_VISIBLE, True, type=bool)
+
+
+def set_sections_visible(visible: bool) -> None:
+    _settings().setValue(KEY_SECTIONS_VISIBLE, bool(visible))
+
+
+def sections_width(default: int) -> int:
+    """Remembered Sections pane width in pixels, or *default* when unset or invalid."""
+    return _int_setting(KEY_SECTIONS_WIDTH, default)
+
+
+def set_sections_width(width: int) -> None:
+    _settings().setValue(KEY_SECTIONS_WIDTH, int(width))
+
+
+def document_panel_visible() -> bool:
+    """Show the Document panel beside a document (default: True)."""
+    return _settings().value(KEY_DOCUMENT_PANEL_VISIBLE, True, type=bool)
+
+
+def set_document_panel_visible(visible: bool) -> None:
+    _settings().setValue(KEY_DOCUMENT_PANEL_VISIBLE, bool(visible))
+
+
+def document_panel_width(default: int) -> int:
+    """Remembered Document panel width in pixels, or *default* when unset or invalid."""
+    return _int_setting(KEY_DOCUMENT_PANEL_WIDTH, default)
+
+
+def set_document_panel_width(width: int) -> None:
+    _settings().setValue(KEY_DOCUMENT_PANEL_WIDTH, int(width))
+
+
+def _int_setting(key: str, default: int) -> int:
+    try:
+        value = int(_settings().value(key, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def thumbnail_quality() -> ThumbnailQuality:

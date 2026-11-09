@@ -156,10 +156,12 @@ def set_content_tab_order(
 
     # Qt ignores a tab-order anchor that is a focus proxy (tab widgets), so
     # anchor on the last widget of the content subtree in the focus chain.
+    # Controls floating over the content are placed by ``status_controls`` below.
     previous = content
     nxt = content.nextInFocusChain()
     while nxt is not content and content.isAncestorOf(nxt):
-        previous = nxt
+        if nxt not in status_controls:
+            previous = nxt
         nxt = nxt.nextInFocusChain()
     for control in status_controls:
         control.setFocusPolicy(Qt.FocusPolicy.StrongFocus)

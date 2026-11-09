@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from pagedrop.ui.main_window import MainWindow
+from pagedrop.ui.theme import DEFAULT_THUMBNAIL_WIDTH
 from tests.conftest import wait_for_grid_loaded, wait_for_pdf_loaded
 
 
@@ -82,11 +83,16 @@ def test_smoke_zoom_autofit_after_load(qtbot, five_page_pdf, isolated_settings):
     window.showMinimized()
     qtbot.waitExposed(window)
     grid = window._thumbnail_grid
-    expected = grid.fitted_thumbnail_width()
     window._load_pdf(str(five_page_pdf))
+    # Fitted to the viewport the grid ends up with, not the one it had at load.
+    qtbot.waitUntil(
+        lambda: grid.thumbnail_width_px == grid.fitted_thumbnail_width()
+        and grid.thumbnail_width_px != DEFAULT_THUMBNAIL_WIDTH,
+        timeout=5000,
+    )
     wait_for_grid_loaded(qtbot, grid, timeout=15000)
 
-    assert grid.thumbnail_width_px == expected
+    assert grid.thumbnail_width_px == grid.fitted_thumbnail_width()
     assert not grid.manual_zoom
     assert grid._cards[0].width() == grid.card_width
     assert grid.card_width <= grid.viewport().width()

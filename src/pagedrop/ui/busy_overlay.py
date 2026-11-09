@@ -32,7 +32,8 @@ ToastKind = str
 _MOTION_MS = 180
 _EASE_OUT = QEasingCurve.Type.OutCubic
 _TOAST_SLIDE_PX = 12
-_TOAST_MARGINS = (24, 24, 24, 48)
+# The bottom margin clears the floating size control (16 up, ~38 tall) plus a gap.
+_TOAST_MARGINS = (24, 24, 24, 64)
 # After a hover/focus hold, leave at least this long before dismissing.
 _TOAST_MIN_RESUME_MS = 500
 

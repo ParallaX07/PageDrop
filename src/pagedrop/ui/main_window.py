@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import ctypes
 import os
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,10 @@ from PyQt6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QKeyEvent,
     QKeySequence,
     QWindow,
@@ -18,6 +23,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFrame,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -55,6 +61,7 @@ from pagedrop.core.pdf_loader import (
 )
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
+from pagedrop.ui.floating_status import FloatingStatus, FloatingZoomHost
 from pagedrop.ui.editor_jobs import (
     EditorJobWorker,
     release_editor_signals,
@@ -79,21 +86,25 @@ from pagedrop.ui.onboarding import (
     TipsOverlay,
     show_context_hint,
 )
-from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.pdf_tab import PANE_DOCUMENT, PANE_SECTIONS, PdfTab
 from pagedrop.ui.recovery import RecoveryError, draft_owner_pid, recovery_directory
 from pagedrop.ui.accessibility import apply_appearance
 from pagedrop.ui import icons, native_frame
 from pagedrop.ui.settings import (
     chrome_visible,
     confirm_before_closing_dirty_tabs,
+    document_panel_visible,
     has_seen_tips,
     last_directory,
     appearance,
     load_window_geometry,
+    page_focus,
     recent_files,
     remember_directory,
     remember_recent_file,
     save_window_geometry,
+    sections_visible,
+    set_page_focus,
     settings_file_path,
     set_thumbnail_quality,
     set_thumbnail_zoom,
@@ -139,7 +150,14 @@ from pagedrop.utils.diagnostics import log_failure
 
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
-COMPACT_STATUS_WIDTH = 640
+
+
+def _is_file(path: Path) -> bool:
+    """Whether *path* is a file; a path that cannot be read counts as missing."""
+    try:
+        return path.is_file()
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 class MainWindow(WindowChromeMixin, QMainWindow):
@@ -194,6 +212,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.resize(960, 680)
+        # The whole window takes a drop while the active tab is on its start screen.
+        self.setAcceptDrops(True)
 
         self._tab_order_applied = False
         self._build_actions()
@@ -205,7 +225,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         refresh_cb = self._refresh_action_icons
         icons.register_refresh(refresh_cb)
         self._install_scoped_event_filters()
-        self._persistent_status("Ready")
+        self._idle_status("Ready")
         self._sync_toolbar_from_active_tab()
         self._tips_overlay = TipsOverlay(self)
         QTimer.singleShot(0, self._maybe_show_first_run_tips)
@@ -321,6 +341,53 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             tip="Show or hide the menu and toolbar (Ctrl+Shift+H)",
             add_to_window=True,
         )
+        self._pane_actions = {
+            PANE_SECTIONS: actions.register(
+                "toggle_sections",
+                "Show &sections",
+                slot=lambda visible: self._on_pane_toggled(PANE_SECTIONS, visible),
+                shortcut="Ctrl+Shift+B",
+                checkable=True,
+                checked=sections_visible(),
+                icon=icons.icon(
+                    "sidebar-left-fill" if sections_visible() else "sidebar-left"
+                ),
+                tip="Show or hide sections (Ctrl+Shift+B)",
+                enabled=False,
+                add_to_window=True,
+            ),
+            PANE_DOCUMENT: actions.register(
+                "toggle_document_panel",
+                "Show &document panel",
+                slot=lambda visible: self._on_pane_toggled(PANE_DOCUMENT, visible),
+                shortcut="Ctrl+Shift+I",
+                checkable=True,
+                checked=document_panel_visible(),
+                icon=icons.icon(
+                    "sidebar-right-fill" if document_panel_visible() else "sidebar-right"
+                ),
+                tip="Show or hide the document panel (Ctrl+Shift+I)",
+                enabled=False,
+                add_to_window=True,
+            ),
+        }
+        # Accessible name of each sidebar toggle's toolbar button, kept by _sync_pane_actions.
+        self._pane_names: dict[str, str] = {}
+        self._page_focus_action = actions.register(
+            "toggle_page_focus",
+            "&Focus on page",
+            slot=self._on_page_focus_toggled,
+            shortcut="Ctrl+Shift+F",
+            checkable=True,
+            checked=page_focus(),
+            icon=icons.icon("arrows-in-line-vertical" if page_focus() else "arrows-out"),
+            tip="Focus on page (Ctrl+Shift+F)",
+            enabled=False,
+            add_to_window=True,
+        )
+        # True while the tab row and toolbar are hidden for Pages view.
+        self._page_focus_on = False
+        self._page_focus_name = "Focus on page"
         self._quality_action_group = QActionGroup(self)
         self._quality_action_group.setExclusive(True)
         current_quality = thumbnail_quality()
@@ -560,7 +627,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             },
             "View": {
                 "appearance_system", "appearance_light", "appearance_dark",
-                "chrome_visible", "quality_low", "quality_medium",
+                "chrome_visible", "toggle_sections", "toggle_document_panel",
+                "toggle_page_focus",
+                "quality_low", "quality_medium",
                 "quality_high", "command_palette", "reset_zoom",
             },
             "Tools": {"merge", "create_pdf", "tools"},
@@ -596,6 +665,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
         a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
         a["extract_selected"].setIcon(icons.icon("export"))
+        self._sync_pane_actions()
         self._set_toolbar_primary()
         self._refresh_window_control_icons()
 
@@ -636,6 +706,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         for key in ("appearance_system", "appearance_light", "appearance_dark"):
             appearance_menu.addAction(a[key])
         view_menu.addAction(a["chrome_visible"])
+        view_menu.addAction(a["toggle_sections"])
+        view_menu.addAction(a["toggle_document_panel"])
+        view_menu.addAction(a["toggle_page_focus"])
         quality_menu = view_menu.addMenu("Thumbnail &quality")
         for key in ("quality_low", "quality_medium", "quality_high"):
             quality_menu.addAction(a[key])
@@ -715,6 +788,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._toolbar_host_tab: PdfTab | None = None
         a = self._actions
 
+        toolbar.addAction(a["toggle_sections"])
         toolbar.addAction(a["open"])
         # Offscreen Qt needs a widget action here to tear down this reparented
         # toolbar safely. It is intentionally zero-width, not document chrome.
@@ -771,6 +845,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._install_menu_focus_restore(self._toolbar_overflow_menu)
         self._toolbar_overflow.setMenu(self._toolbar_overflow_menu)
         self._toolbar_overflow_action = toolbar.addWidget(self._toolbar_overflow)
+        toolbar.addAction(a["toggle_document_panel"])
 
         # Toolbar order, the separators this toolbar alone owns, and the commands
         # that give way to More (last to go first) when the bar is narrow.
@@ -820,7 +895,28 @@ class MainWindow(WindowChromeMixin, QMainWindow):
     def _style_toolbar_buttons(self) -> None:
         """Apply per-button presentation; run again for any re-created button."""
         self._apply_toolbar_label_style()
+        self._style_sidebar_toggles()
         enable_toolbar_keyboard_navigation(self._toolbar)
+
+    def _style_sidebar_toggles(self) -> None:
+        """Mark the sidebar toggle buttons (state is the icon) and name them for screen readers."""
+        for pane, action in self._pane_actions.items():
+            button = self._toolbar.widgetForAction(action)
+            if not isinstance(button, QToolButton):
+                continue
+            if button.objectName() != "ToolbarSidebarToggle":
+                button.setObjectName("ToolbarSidebarToggle")
+                button.style().unpolish(button)
+                button.style().polish(button)
+            if name := self._pane_names.get(pane):
+                button.setAccessibleName(name)
+
+    def _name_viewer_sidebar_toggles(self, tab: PdfTab) -> None:
+        tab.preview_widget.set_sidebar_names(
+            self._pane_names.get(PANE_SECTIONS, ""),
+            self._pane_names.get(PANE_DOCUMENT, ""),
+            self._page_focus_name,
+        )
 
     def _apply_toolbar_label_style(self) -> None:
         """Labels beside icons, except on buttons the bar has made icon-only.
@@ -845,7 +941,13 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             temp_manager=self._temp_manager,
             recovery_dir=self._recovery_dir,
         )
+        self._floating = FloatingStatus(
+            self._tab_manager,
+            stack=(self._progress_bar, self._move_undo_widget),
+            corner=self._thumbnail_zoom_host,
+        )
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
+        self._tab_manager.currentChanged.connect(self._on_floating_page_changed)
         self._tab_manager.currentChanged.connect(self._on_tab_index_changed)
         self._tab_manager.tab_added.connect(self._connect_tab_signals)
         self._tab_manager.tab_closed.connect(self._on_tab_closed)
@@ -928,22 +1030,65 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 return tab
         return None
 
-    def _transient_status(self, message: str, *, page: QWidget | None = None) -> None:
+    def _transient_status(
+        self, message: str, *, page: QWidget | None = None, float_message: bool = True
+    ) -> None:
+        """Outcome or notice: floats for a few seconds, then gives way to idle text."""
         page = page or self._sender_tab() or self._status_page()
         self._status_by_page[page] = message
         if page is self._status_page():
             self.statusBar().showMessage(message)
+            self._float_message(message if float_message else None)
             self._transient_status_timer.start(STATUS_TRANSIENT_MS)
 
     def _persistent_status(self, message: str, *, page: QWidget | None = None) -> None:
+        """Progress stays floating until replaced; other text floats then dismisses."""
+        page = page or self._sender_tab() or self._status_page()
+        self._status_by_page[page] = message
+        if page is self._status_page():
+            self.statusBar().showMessage(message)
+            self._float_message(message)
+            if message.endswith("…"):
+                self._transient_status_timer.stop()
+            else:
+                self._transient_status_timer.start(STATUS_TRANSIENT_MS)
+
+    def _idle_status(self, message: str, *, page: QWidget | None = None) -> None:
+        """Resting text such as "Ready" or a page count; never floats."""
         page = page or self._sender_tab() or self._status_page()
         self._status_by_page[page] = message
         if page is self._status_page():
             self._transient_status_timer.stop()
             self.statusBar().showMessage(message)
+            self._float_message(None)
 
     def _restore_active_status(self) -> None:
         self.statusBar().showMessage(self._status_by_page.get(self._status_page(), "Ready"))
+        self._float_message(None)
+
+    def _float_message(self, message: str | None) -> None:
+        floating = getattr(self, "_floating", None)
+        if floating is None:
+            return
+        if message:
+            floating.show_message(message)
+        else:
+            floating.clear_message()
+
+    def _floating_anchor(self) -> QWidget | None:
+        """The content the floating status sits over: its panes stay clear."""
+        tab = self._active_tab()
+        return tab.content_stack if tab is not None else self._tab_manager.currentWidget()
+
+    def _sync_floating_anchor(self) -> None:
+        floating = getattr(self, "_floating", None)
+        if floating is not None:
+            floating.set_anchor(self._floating_anchor())
+
+    def _on_floating_page_changed(self, _index: int) -> None:
+        # A message belongs to the page it was about.
+        self._float_message(None)
+        self._sync_floating_anchor()
 
     def _show_toast(
         self,
@@ -952,6 +1097,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         kind: str = "info",
         on_undo=None,
     ) -> None:
+        # The toast carries the news; the floating message would only repeat it.
+        self._float_message(None)
         self._toast.show_toast(message, kind=kind, on_undo=on_undo)
 
     def _begin_editor_job(self, tab: PdfTab, message: str) -> CancelToken:
@@ -1000,7 +1147,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         """Restore sticky document status after a drag hint."""
         tab = self._active_tab()
         if tab is None:
-            self._persistent_status("Ready")
+            self._idle_status("Ready")
             return
         if tab.is_preview_visible() and tab.edit_model is not None:
             self._update_preview_status()
@@ -1008,7 +1155,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
             return
         self._restore_active_status()
 
@@ -1025,27 +1172,26 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         return summary, f"{summary}: Pages {ranges.replace(',', ', ')}"
 
     def _build_status_widgets(self) -> None:
+        """Create what floats over the content; ``_build_central_widget`` places it."""
         self._progress_bar = QProgressBar()
         self._progress_bar.setMaximumWidth(200)
         self._progress_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._progress_bar.setAccessibleName("Page rendering progress")
+        self._progress_bar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._progress_bar.hide()
 
-        self._thumbnail_zoom_host = QWidget()
-        self._thumbnail_zoom_host.setObjectName("ThumbnailZoomStatusHost")
-        zoom_layout = QHBoxLayout(self._thumbnail_zoom_host)
-        zoom_layout.setContentsMargins(0, 0, 0, 0)
-        zoom_layout.setSpacing(4)
-        self._thumbnail_zoom_label = QLabel("Thumbnail size")
-        self._thumbnail_zoom_label.setObjectName("ThumbnailZoomLabel")
-        zoom_layout.addWidget(self._thumbnail_zoom_label)
-        zoom_layout.addWidget(self._zoom_controls)
+        # Weak, so the host does not keep this window alive in a reference cycle.
+        window = weakref.ref(self)
+        self._thumbnail_zoom_host = FloatingZoomHost(
+            lambda: (w := window()) and w._thumbnail_grid
+        )
+        self._thumbnail_zoom_host.layout().addWidget(self._zoom_controls)
         self._thumbnail_zoom_host.hide()
 
-        self._move_undo_widget = QWidget()
+        self._move_undo_widget = QFrame()
         self._move_undo_widget.setObjectName("MoveUndoToast")
         move_undo_layout = QHBoxLayout(self._move_undo_widget)
-        move_undo_layout.setContentsMargins(0, 0, 8, 0)
+        move_undo_layout.setContentsMargins(12, 4, 8, 4)
         move_undo_layout.setSpacing(6)
         self._move_undo_label = QLabel()
         self._move_undo_button = QPushButton("Undo")
@@ -1060,11 +1206,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._move_undo_timer.setSingleShot(True)
         self._move_undo_timer.timeout.connect(self._dismiss_move_undo)
 
-        self.statusBar().setFont(tabular_font())
-        self.statusBar().addPermanentWidget(self._move_undo_widget)
-        self.statusBar().addPermanentWidget(self._progress_bar)
-        self.statusBar().addPermanentWidget(self._thumbnail_zoom_host)
+        # Messages float instead; the bar stays as the store for the latest text.
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.statusBar().hide()
 
     def _connect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -1106,7 +1250,18 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         )
         grid.open_pdfs_requested.connect(self._on_open_pdfs_requested)
         grid.bind_open_action(self._actions["open"])
+        tab.start_screen.bind_actions(
+            self._actions["open"], self._actions["merge"], self._actions["tools"]
+        )
+        tab.preview_widget.set_sidebar_actions(
+            self._pane_actions[PANE_SECTIONS],
+            self._pane_actions[PANE_DOCUMENT],
+            self._page_focus_action,
+        )
+        self._name_viewer_sidebar_toggles(tab)
+        tab.start_screen.recent_file_requested.connect(self._open_recent_if_present)
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
+        tab.workspace_panes_changed.connect(self._on_workspace_panes_changed)
         tab.preview_widget.page_changed.connect(self._on_preview_page_changed)
         tab.preview_widget.busy_changed.connect(self._on_preview_busy_changed)
         tab.preview_widget.render_error.connect(self._on_preview_render_error)
@@ -1216,7 +1371,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             (grid.pdf_drop_failed, self._on_pdf_drop_failed),
             (grid.extract_to_folder_requested, self._extract_selected_to_folder),
             (grid.open_pdfs_requested, self._on_open_pdfs_requested),
+            (tab.start_screen.recent_file_requested, self._open_recent_if_present),
             (tab.pdf_loaded, self._on_tab_pdf_loaded),
+            (tab.workspace_panes_changed, self._on_workspace_panes_changed),
             (preview.page_changed, self._on_preview_page_changed),
             (preview.busy_changed, self._on_preview_busy_changed),
             (preview.render_error, self._on_preview_render_error),
@@ -1387,8 +1544,125 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             tab.close_preview()
         self._sync_toolbar_from_active_tab()
 
+    def _on_pane_toggled(self, pane: str, visible: bool) -> None:
+        tab = self._active_tab()
+        if tab is not None:
+            tab.set_workspace_pane_visible(pane, visible)
+
+    def _on_workspace_panes_changed(self) -> None:
+        if self.sender() is self._active_tab():
+            self._sync_pane_actions()
+
+    def _sync_pane_actions(self) -> None:
+        """Enable the sidebar toggles for a document and show the real sidebar state.
+
+        Checked means open. The text, hint and icon name the sidebar of the
+        active view: sections and document panel in the grid, navigation and
+        markup tools in the viewer.
+        """
+        tab = self._active_tab()
+        has_document = tab is not None and not tab.is_blank
+        for pane, action in self._pane_actions.items():
+            action.setEnabled(has_document)
+            if tab is None:
+                continue
+            left = pane == PANE_SECTIONS
+            if has_document:
+                checked = tab.workspace_pane_visible(pane)
+                noun = tab.workspace_pane_label(pane)
+            else:
+                checked = sections_visible() if left else document_panel_visible()
+                noun = "sections" if left else "document panel"
+            if action.isChecked() != checked:
+                action.blockSignals(True)
+                action.setChecked(checked)
+                action.blockSignals(False)
+            name = f"{'Hide' if checked else 'Show'} {noun}"
+            hint = f"{name} ({action.shortcut().toString()})"
+            if has_document and not left and not checked and tab.is_viewer_mode():
+                if tool := tab.preview_widget.active_markup_label():
+                    hint += f" — active: {tool}"
+            action.setText(f"Show &{noun}")
+            self._set_action_hint(action, hint)
+            side = "left" if left else "right"
+            action.setIcon(icons.icon(f"sidebar-{side}-fill" if checked else f"sidebar-{side}"))
+            self._pane_names[pane] = name
+        self._sync_page_focus()
+        self._style_sidebar_toggles()
+        if tab is not None:
+            self._name_viewer_sidebar_toggles(tab)
+        # The toggles live on this bar in the grid and on the viewer's own in
+        # Pages view; refit whenever the view changed under them.
+        on_bar = set(self._toolbar.actions())
+        owned = self._viewer_owned_toolbar_actions()
+        if any((a in on_bar) == (a in owned) for a in self._pane_actions.values()):
+            self._refit_toolbar()
+
+    def _on_page_focus_toggled(self, enabled: bool) -> None:
+        set_page_focus(enabled)
+        self._sync_page_focus()
+
+    def _sync_page_focus(self) -> None:
+        """Show the page-focus preference and hide the tab row and toolbar with it.
+
+        The preference is app-wide, but the rows only hide while the active
+        tab shows a document in Pages view, so every other view restores them.
+        """
+        tab = self._active_tab()
+        in_pages = tab is not None and not tab.is_blank and tab.is_viewer_mode()
+        wanted = page_focus()
+        action = self._page_focus_action
+        action.setEnabled(in_pages)
+        if action.isChecked() != wanted:
+            action.blockSignals(True)
+            action.setChecked(wanted)
+            action.blockSignals(False)
+        self._page_focus_name = "Exit focus" if wanted else "Focus on page"
+        self._set_action_hint(action, f"{self._page_focus_name} ({action.shortcut().toString()})")
+        action.setIcon(icons.icon("arrows-in-line-vertical" if wanted else "arrows-out"))
+        if tab is not None:
+            self._name_viewer_sidebar_toggles(tab)
+        self._apply_page_focus(wanted and in_pages)
+
+    def _apply_page_focus(self, active: bool) -> None:
+        changed = active != self._page_focus_on
+        if changed:
+            tab_bar = self._tab_manager.tabBar()
+            corner = self._tab_manager.cornerWidget(Qt.Corner.TopRightCorner)
+            rows = [w for w in (tab_bar, corner, self._toolbar) if w is not None]
+            focus = QApplication.focusWidget()
+            tab = self._active_tab()
+            if (
+                active
+                and tab is not None
+                and focus is not None
+                and any(w is focus or w.isAncestorOf(focus) for w in rows)
+            ):
+                tab.preview_widget.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._page_focus_on = active
+            tab_bar.setVisible(not active)
+            if corner is not None:
+                corner.setVisible(not active)
+        # Also lets a blank tab take the toolbar back after its document closed.
+        if changed or self._toolbar_host_tab is not None:
+            self._update_toolbar_visibility()
+        if changed and not active and not self._chrome_visible_action.isChecked():
+            # Menu and toolbar were hidden before focus began; leaving it keeps them so.
+            self._toolbar.hide()
+        if changed and self._tab_order_applied:
+            self._apply_tab_order()
+
+    def _update_toolbar_visibility(self) -> None:
+        """The one place that decides whether the window toolbar shows."""
+        tab = self._active_tab()
+        self._toolbar.setVisible(
+            tab is not None and not tab.is_blank and not self._page_focus_on
+        )
+
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
+        self._sync_floating_anchor()
+        self._sync_pane_actions()
         self._set_toolbar_host(tab)
         if tab is None:
             self._reset_toolbar_for_tool_page()
@@ -1422,14 +1696,13 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._sync_contextual_toolbar(selection)
 
     def _set_toolbar_host(self, tab: PdfTab | None) -> None:
-        if self._toolbar_host_tab is tab:
-            self._toolbar.setVisible(tab is not None)
-            return
-        if self._toolbar_host_tab is not None:
-            self._toolbar_host_tab.detach_context_toolbar(self._toolbar)
-        self._toolbar_host_tab = tab
-        if tab is not None:
-            tab.attach_context_toolbar(self._toolbar)
+        if self._toolbar_host_tab is not tab:
+            if self._toolbar_host_tab is not None:
+                self._toolbar_host_tab.detach_context_toolbar(self._toolbar)
+            self._toolbar_host_tab = tab
+            if tab is not None:
+                tab.attach_context_toolbar(self._toolbar)
+        self._update_toolbar_visibility()
 
     def _sync_contextual_toolbar(self, selection: set[int]) -> None:
         # Page commands stay on the bar and are enabled by their own actions, so
@@ -1485,15 +1758,19 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             return []
         self._measure_toolbar_buttons()
         measured = self._toolbar_hint_widths
+        viewer_owned = self._viewer_owned_toolbar_actions()
         if any(
-            a not in measured and a not in self._toolbar_separators for a in order
+            a not in measured
+            and a not in self._toolbar_separators
+            and a not in viewer_owned
+            for a in order
         ) or any(a not in self._toolbar_icon_widths for a in self._toolbar_label_droppable):
             # Not measured while present (e.g. after a font change): measure all.
             self._show_all_toolbar_items()
             return self._fit_toolbar(static_overflow)
 
         available = toolbar.width()
-        removed: set[QAction] = set()
+        removed = set(viewer_owned)
         displaced: list[QAction] = []
         droppable = list(reversed(self._toolbar_label_droppable))
         icon_only: set[QAction] = set()
@@ -1512,9 +1789,22 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._apply_toolbar_label_style()
         return displaced
 
+    def _viewer_owned_toolbar_actions(self) -> set[QAction]:
+        """Sidebar toggles the viewer's own bar shows in Pages view.
+
+        They leave the toolbar by being removed from it, never hidden, so
+        their shortcuts keep working.
+        """
+        tab = self._active_tab()
+        if tab is not None and tab.is_viewer_mode():
+            return set(self._pane_actions.values())
+        return set()
+
     def _show_all_toolbar_items(self) -> None:
         self._toolbar_icon_only = frozenset()
-        self._apply_toolbar_members(set(self._toolbar_order))
+        self._apply_toolbar_members(
+            set(self._toolbar_order) - self._viewer_owned_toolbar_actions()
+        )
         self._apply_toolbar_label_style()
 
     def _measure_toolbar_buttons(self) -> None:
@@ -1723,7 +2013,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         # No document here: the preview, selection and page commands do nothing.
         self._preview_action.setEnabled(False)
         self._update_preview_mode_ui()
-        self._persistent_status("Ready")
+        self._idle_status("Ready")
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
@@ -1995,6 +2285,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._move_undo_label.setText(f"{count} {noun} moved ·")
         self._move_undo_widget.show()
         self.statusBar().clearMessage()
+        self._float_message(None)
         self._move_undo_timer.start(MOVE_UNDO_TIMEOUT_MS)
 
     def _dismiss_move_undo(self) -> None:
@@ -2072,7 +2363,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
 
     def _open_preview(self) -> None:
         tab = self._active_tab()
@@ -2141,7 +2432,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             return
         page = tab.preview_widget.current_page + 1
         total = tab.edit_model.logical_count()
-        self._persistent_status(f"Page {page} of {total}")
+        self._idle_status(f"Page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
         tab = self._active_tab()
@@ -2155,9 +2446,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         tab = self.sender()
         if not isinstance(tab, PdfTab):
             return
-        if tab.thumbnail_grid.autofit_thumbnails_if_allowed():
-            if tab is self._active_tab():
-                self._zoom_controls.set_value(tab.zoom_level)
+        # Fitted once the grid has its real size; the zoom control follows
+        # through the grid's zoom signal.
+        tab.thumbnail_grid.request_autofit()
         if tab is self._active_tab():
             self._maybe_quality_scale_guidance(tab)
 
@@ -2320,8 +2611,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             if tip is not None:
                 self._transient_status(tip)
             else:
+                # The size control already reads this out.
                 self._transient_status(
-                    f"Thumbnail size: {thumbnail_width_px} px"
+                    f"Thumbnail size: {thumbnail_width_px} px", float_message=False
                 )
 
     def _on_zoom_render_pending(self, pending: bool) -> None:
@@ -2339,7 +2631,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if self.statusBar().currentMessage() == "Rendering thumbnails…":
             tab = self._active_tab()
             if tab is not None:
-                self._transient_status(f"Thumbnail size: {tab.zoom_level} px")
+                self._transient_status(
+                    f"Thumbnail size: {tab.zoom_level} px", float_message=False
+                )
 
     def _on_thumbnail_quality_triggered(self, action: QAction) -> None:
         value = action.data()
@@ -2532,15 +2826,13 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._update_responsive_shell()
 
     def _update_thumbnail_zoom_host(self) -> None:
-        if not hasattr(self, "_thumbnail_zoom_host"):
+        if not hasattr(self, "_floating"):
             return
         tab = self._active_tab()
         visible = tab is not None and tab.loader is not None and not tab.is_preview_visible()
         self._thumbnail_zoom_host.setVisible(visible)
         self._zoom_controls.set_slider_visible(self.width() > 800)
-        # The buttons and px readout say what the cluster is; the caption goes
-        # first so the status message keeps its room in a narrow window.
-        self._thumbnail_zoom_label.setVisible(self.width() > COMPACT_STATUS_WIDTH)
+        self._floating.relayout()
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange:
@@ -2865,7 +3157,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         problems: list[str] = []
         for path in paths:
             file = Path(path)
-            if not file.is_file():
+            if not _is_file(file):
                 problems.append(f"{file.name or path}: file not found")
             elif file.suffix.lower() != ".pdf":
                 problems.append(f"{file.name}: not a PDF file")
@@ -2911,7 +3203,11 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         path = action.data()
         if not isinstance(path, str) or not path:
             return
-        if not Path(path).is_file():
+        self._open_recent_if_present(path)
+
+    def _open_recent_if_present(self, path: str) -> None:
+        """Open a recent file, or say why not when it has gone."""
+        if not _is_file(Path(path)):
             QMessageBox.warning(
                 self,
                 "Open recent",
@@ -3062,14 +3358,14 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 if password is None:
                     if target is self._active_tab():
                         self._sync_toolbar_from_active_tab()
-                        self._persistent_status("Ready")
+                        self._idle_status("Ready")
                     return
             except PdfPasswordError:
                 password = self._prompt_pdf_password(filename, incorrect=True)
                 if password is None:
                     if target is self._active_tab():
                         self._sync_toolbar_from_active_tab()
-                        self._persistent_status("Ready")
+                        self._idle_status("Ready")
                     return
             except PdfEmptyError as exc:
                 log_failure("Open PDF", exc, path=path)
@@ -3080,7 +3376,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 )
                 if target is self._active_tab():
                     self._sync_toolbar_from_active_tab()
-                    self._persistent_status("Ready")
+                    self._idle_status("Ready")
                 return
             except PdfLoadError as exc:
                 log_failure("Open PDF", exc, path=path)
@@ -3091,7 +3387,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 )
                 if target is self._active_tab():
                     self._sync_toolbar_from_active_tab()
-                    self._persistent_status("Ready")
+                    self._idle_status("Ready")
                 return
 
         self._tab_manager.update_tab_title(target)
@@ -3107,6 +3403,41 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             if cancelled_previous:
                 self._show_toast("Cancelled previous load", kind="info")
             self._persistent_status(f"Loading {count} {noun}…")
+
+    def _blank_tab_start_screen(self):
+        """The active tab's start screen, or None when something else is showing."""
+        tab = self._active_tab()
+        if tab is None or not tab.is_blank:
+            return None
+        if tab.content_stack.currentWidget() is not tab.start_screen:
+            return None
+        return tab.start_screen
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is None:
+            event.ignore()
+            return
+        screen.dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is None:
+            event.ignore()
+            return
+        screen.dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is not None:
+            screen.dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        screen = self._blank_tab_start_screen()
+        if screen is None:
+            event.ignore()
+            return
+        screen.dropEvent(event)
 
     def _on_open_pdfs_requested(self, paths: list) -> None:
         """Open PDFs dropped onto a blank tab (first into that tab, rest as new tabs)."""
@@ -3393,7 +3724,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if tab is not None and tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
 
     def _on_pages_inserted(
         self, count: int, filename: str, position: int
@@ -3499,7 +3830,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 "Insert PDF",
                 f"Could not insert PDF:\n{exc}",
             )
-        self._persistent_status("Ready", page=tab)
+        self._idle_status("Ready", page=tab)
 
     def _on_rendering_error(self, message: str) -> None:
         # One notice per loaded document; the grid keeps rendering other pages.
@@ -3533,7 +3864,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         elif tab.edit_model is not None and not self._progress_bar.isVisible():
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
 
     def _on_preview_busy_changed(self, busy: bool, message: str) -> None:
         tab = self._active_tab()
@@ -3544,7 +3875,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         elif tab.is_viewer_mode() and tab.edit_model is not None:
             page = tab.preview_widget.current_page + 1
             total = tab.edit_model.logical_count()
-            self._persistent_status(f"Page {page} of {total}")
+            self._idle_status(f"Page {page} of {total}")
 
     def _selection_toolbar_snapshot(self, selection: set[int]) -> tuple:
         """Toolbar-relevant view of selection — skip redundant coalesced flushes."""

@@ -58,7 +58,169 @@ def test_ctrl_click_toggles(qtbot, five_page_pdf):
         modifier=Qt.KeyboardModifier.ControlModifier,
     )
     assert _selected_indices(cards) == {0, 2, 4}
-    assert all(not cards[index]._focus_ring.isHidden() for index in (0, 2, 4))
+    assert all(cards[index].is_selected for index in (0, 2, 4))
+
+
+def _ctrl_click(qtbot, card):
+    qtbot.mouseClick(
+        card,
+        Qt.MouseButton.LeftButton,
+        modifier=Qt.KeyboardModifier.ControlModifier,
+    )
+
+
+def _ranks(cards) -> dict[int, int]:
+    return {
+        card.page_index: card.selection_rank
+        for card in cards
+        if card.selection_rank is not None
+    }
+
+
+def _shown_numbers(cards) -> dict[int, int]:
+    """Numbers the chips actually show, by page index."""
+    return {
+        card.page_index: card._order_chip._rank
+        for card in cards
+        if not card._order_chip.isHidden()
+    }
+
+
+def test_ctrl_click_in_reverse_numbers_pages_by_page_order(qtbot, five_page_pdf):
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+
+    for index in (4, 2, 0):
+        _ctrl_click(qtbot, cards[index])
+
+    assert grid.selection_manager.selection == {0, 2, 4}
+    assert _ranks(cards) == {0: 1, 2: 2, 4: 3}
+    assert _shown_numbers(cards) == {0: 1, 2: 2, 4: 3}
+    assert "number 2" in cards[2].accessibleDescription()
+
+
+def test_selecting_an_earlier_page_renumbers_later_ones(qtbot, five_page_pdf):
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+
+    _ctrl_click(qtbot, cards[3])
+    _ctrl_click(qtbot, cards[4])
+    assert _ranks(cards) == {3: 1, 4: 2}
+
+    _ctrl_click(qtbot, cards[1])
+    assert _ranks(cards) == {1: 1, 3: 2, 4: 3}
+    assert _shown_numbers(cards) == {1: 1, 3: 2, 4: 3}
+
+    # Dropping one from the middle closes the gap; deselected cards clear.
+    _ctrl_click(qtbot, cards[3])
+    assert _ranks(cards) == {1: 1, 4: 2}
+    assert cards[3].selection_rank is None
+    assert cards[3]._order_chip.isHidden()
+
+
+def test_selection_order_does_not_change_the_drag_payload(qtbot, five_page_pdf, monkeypatch):
+    from PyQt6.QtGui import QDrag
+
+    from pagedrop.core.drag_mime import (
+        INTERNAL_PAGE_MIME,
+        PAGE_TRANSFER_MIME,
+        decode_page_indices,
+        decode_page_refs,
+    )
+
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+    for index in (4, 0, 2):
+        _ctrl_click(qtbot, cards[index])
+    assert _ranks(cards) == {0: 1, 2: 2, 4: 3}
+
+    seen: dict[str, object] = {}
+
+    def fake_exec(drag, *args, **kwargs):
+        mime = drag.mimeData()
+        seen["formats"] = set(mime.formats())
+        seen["indices"] = decode_page_indices(mime.data(INTERNAL_PAGE_MIME))
+        seen["refs"] = [r.source_index for r in decode_page_refs(mime.data(PAGE_TRANSFER_MIME))]
+        return Qt.DropAction.IgnoreAction
+
+    monkeypatch.setattr(QDrag, "exec", fake_exec)
+    qtbot.mousePress(cards[4], Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    qtbot.mouseMove(cards[4], pos=QPoint(200, 200))
+
+    assert seen["formats"] == {INTERNAL_PAGE_MIME, PAGE_TRANSFER_MIME, "text/uri-list"}
+    # Page order, not the order the pages were clicked in.
+    assert seen["indices"] == [0, 2, 4]
+    assert seen["refs"] == [0, 2, 4]
+    assert grid.selection_manager.selection == {0, 2, 4}
+
+
+def test_unchanged_ranks_are_not_pushed_again(qtbot, five_page_pdf, monkeypatch):
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+    _ctrl_click(qtbot, cards[0])
+    _ctrl_click(qtbot, cards[1])
+
+    pushed: list[int] = []
+    for card in cards:
+        original = card.set_selection_rank
+
+        def spy(rank, _card=card, _original=original):
+            pushed.append(_card.page_index)
+            _original(rank)
+
+        monkeypatch.setattr(card, "set_selection_rank", spy)
+
+    _ctrl_click(qtbot, cards[4])  # joins at the end: nothing else renumbers
+    assert pushed == [4]
+    pushed.clear()
+    _ctrl_click(qtbot, cards[4])  # leaves the end: nobody else renumbers
+    assert pushed == []
+    _ctrl_click(qtbot, cards[0])  # leaves the front: page 2 becomes number 1
+    assert pushed == [1]
+    assert _ranks(cards) == {1: 1}
+
+
+def test_ranks_after_select_all_delete_and_reorder(qtbot, five_page_pdf):
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+
+    grid.selection_manager.select_all()
+    assert _ranks(cards) == {i: i + 1 for i in range(5)}
+
+    grid.selection_manager.set_selection({1, 3})
+    assert grid.delete_selected_pages()
+    cards = grid._cards
+    assert len(cards) == 3
+    assert grid.selection_manager.selection == set()
+    assert _ranks(cards) == {}
+    assert all(card._order_chip.isHidden() for card in cards)
+
+    grid.selection_manager.select_all()
+    assert _ranks(grid._cards) == {0: 1, 1: 2, 2: 3}
+
+    grid.selection_manager.clear()
+    grid.selection_manager.set_selection({0, 2})
+    assert grid.reorder_pages_by_drop([0, 2], 1)
+    cards = grid._cards
+    selection = grid.selection_manager.selection
+    assert len(selection) == 2
+    assert _ranks(cards) == {
+        index: rank for rank, index in enumerate(sorted(selection), start=1)
+    }
+    assert _shown_numbers(cards) == _ranks(cards)
+
+
+def test_selection_manager_stays_an_unordered_set(qtbot, five_page_pdf):
+    grid = _load_grid(qtbot, five_page_pdf)
+    cards = grid._cards
+    for index in (3, 0, 2):
+        _ctrl_click(qtbot, cards[index])
+
+    selection = grid.selection_manager.selection
+    assert selection == {0, 2, 3}
+    assert type(selection) is set
+    public = {name for name in dir(grid.selection_manager) if not name.startswith("_")}
+    assert not {name for name in public if "order" in name or "rank" in name}
 
 
 def test_shift_click_selects_range(qtbot, five_page_pdf):

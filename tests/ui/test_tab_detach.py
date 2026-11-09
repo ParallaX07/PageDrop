@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 
 from pagedrop.ui.main_window import MainWindow
 from pagedrop.ui.pdf_tab import PdfTab
+from pagedrop.ui.theme import index_qcolor
 from tests.conftest import RENDER_TIMEOUT_MS
 
 
@@ -121,6 +122,41 @@ def test_detached_tab_keeps_its_colour_and_leaves_the_new_counter_alone(
     # The adopted tab did not use up a colour: the first new tab starts at clay.
     fresh = detached._tab_manager.add_blank_tab()
     assert fresh.index_colour == "index_clay"
+
+
+def test_order_chip_keeps_the_documents_colour_after_detach(
+    one_page_pdf,
+    qtbot,
+    qapp,
+):
+    manager = _ensure_window_manager(qapp)
+    source = manager.open_new_window()
+    qtbot.addWidget(source)
+    source.showMinimized()
+
+    source._tab_manager.add_blank_tab()
+    moving = _tab_at(source, 1)
+    source._load_pdf(str(one_page_pdf), tab=moving)
+    _wait_for_tab_loaded(qtbot, moving)
+    card = moving.thumbnail_grid._cards[0]
+    moving.thumbnail_grid.selection_manager.select_single(0)
+    teal = index_qcolor("index_teal")
+    assert card._order_chip.fill_colour() == teal
+
+    windows_before = frozenset(manager.windows)
+    source._detach_tab_to_new_window(1)
+    qtbot.waitUntil(
+        lambda: len(_windows_added(manager, windows_before)) == 1,
+        timeout=5000,
+    )
+    detached = _windows_added(manager, windows_before)[0]
+    qtbot.addWidget(detached)
+
+    assert _tab_at(detached, 0) is moving
+    assert card._order_chip.fill_colour() == teal
+    chip = card._order_chip
+    assert not chip.isHidden()
+    assert chip.grab().toImage().pixelColor(4, chip.height() // 2) == teal
 
 
 def test_move_to_new_window_context_menu(

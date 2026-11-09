@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -11,6 +12,19 @@ from PyQt6.QtWidgets import (
 
 from pagedrop.ui import icons
 from pagedrop.ui.theme import SPACE_1, SPACE_2, SPACE_7, tabular_font
+
+
+class _ZoomSlider(QSlider):
+    """Slider that asks for the default size when double-clicked."""
+
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self.isEnabled():
+            self.double_clicked.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class ZoomControls(QWidget):
@@ -50,14 +64,14 @@ class ZoomControls(QWidget):
         self._zoom_out.setFixedSize(28, 28)
         self._zoom_out.clicked.connect(self._on_zoom_out)
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider = _ZoomSlider(Qt.Orientation.Horizontal)
         self._slider.setObjectName("ZoomSlider")
         self._slider.setAccessibleName("Thumbnail size")
         self._slider.setToolTip("Double-click to reset default size")
         self._slider.setFixedWidth(128)
         self._slider.setRange(0, (max_width - min_width) // step)
         self._slider.valueChanged.connect(self._on_slider_changed)
-        self._slider.installEventFilter(self)
+        self._slider.double_clicked.connect(self._on_slider_double_clicked)
 
         self._zoom_in = QPushButton()
         self._zoom_in.setObjectName("ZoomButton")
@@ -89,15 +103,9 @@ class ZoomControls(QWidget):
         self._zoom_out.setIcon(icons.icon("minus"))
         self._zoom_in.setIcon(icons.icon("plus"))
 
-    def eventFilter(self, obj, event) -> bool:
-        if (
-            obj is self._slider
-            and event.type() == QEvent.Type.MouseButtonDblClick
-            and self.isEnabled()
-        ):
+    def _on_slider_double_clicked(self) -> None:
+        if self.isEnabled():
             self.reset_requested.emit()
-            return True
-        return super().eventFilter(obj, event)
 
     def set_value(self, width_px: int) -> None:
         clamped = max(self._min_width, min(self._max_width, width_px))

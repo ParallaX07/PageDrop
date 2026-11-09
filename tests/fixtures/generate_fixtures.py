@@ -14,6 +14,7 @@ FIXTURE_NAMES = (
     "empty",
     "corrupt",
     "garbage",
+    "bookmarked",
     "compare_original",
     "compare_revised",
 )
@@ -81,6 +82,28 @@ def generate_garbage(path: Path) -> None:
 
 def generate_n_page(path: Path, page_count: int) -> None:
     _write_blank_pages(path, page_count)
+
+
+def generate_bookmarked(path: Path) -> None:
+    """Eight pages: three top-level sections (pages 1, 3 and 6) with nested entries."""
+    doc = fitz.open()
+    try:
+        for _ in range(8):
+            doc.new_page(width=200, height=200)
+        doc.set_toc(
+            [
+                [1, "Introduction", 1],
+                [2, "Background", 2],
+                [1, "Method", 3],
+                [2, "Data", 4],
+                [3, "Cleaning", 5],
+                [1, "Results", 6],
+                [2, "Tables", 8],
+            ]
+        )
+        _save_pdf(doc, path)
+    finally:
+        doc.close()
 
 
 def generate_compare_pair(directory: Path) -> tuple[Path, Path]:
@@ -157,6 +180,7 @@ def ensure_fixtures(directory: Path) -> None:
         "empty": generate_empty,
         "corrupt": generate_corrupt,
         "garbage": generate_garbage,
+        "bookmarked": generate_bookmarked,
     }
     for name, generator in generators.items():
         target = directory / f"{name}.pdf"

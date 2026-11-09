@@ -234,34 +234,35 @@ def test_viewer_panels_preserve_reader_state(qtbot, viewer_pdf: Path, isolated_s
     try:
         assert viewer._navigation_panel_collapsed
         assert viewer._annot_rail_collapsed
-        assert "collapsed" in viewer._annot_rail.accessibleDescription()
+        assert viewer._side.isHidden()
+        assert viewer._annot_rail.isHidden()
 
-        viewer._side_expand_btn.setFocus()
-        viewer._side_expand_btn.click()
+        viewer.set_navigation_panel_visible(True)
         assert not viewer._navigation_panel_collapsed
+        assert not viewer._side.isHidden()
 
         viewer.set_annot_tool(AnnotTool.COMMENT)
-        assert "Comment" in viewer._annot_expand_btn.text()
-        assert "active tool: Comment" in viewer._annot_expand_btn.accessibleName()
+        assert viewer.active_markup_label() == "Comment"
 
         viewer.go_to_page(2)
         viewer.set_layout_mode(ViewerLayout.SINGLE)
         viewer.set_zoom_mode(ZoomMode.PERCENT, 125)
         viewer._search_edit.setText("Alpha")
-        viewer.setFocus()
-        viewer._side_collapse_btn.setFocus()
-        viewer._side_collapse_btn.click()
-        assert viewer._side_expand_btn.hasFocus()
-        viewer._annot_expand_btn.setFocus()
-        viewer._annot_expand_btn.click()
-        assert viewer._annot_collapse_btn.hasFocus()
+        viewer._outline.setFocus()
+        assert viewer._outline.hasFocus()
+        viewer.set_navigation_panel_visible(False)
+        assert viewer._side.isHidden()
+        assert viewer.hasFocus()
+        with qtbot.waitSignal(viewer.status_message) as shown:
+            viewer.set_markup_rail_visible(True)
+        assert shown.args == ["Markup tools shown"]
+        assert not viewer._annot_rail.isHidden()
         assert viewer._navigation_panel_collapsed
         assert not viewer._annot_rail_collapsed
         assert viewer.current_page == 2
         assert viewer.layout_mode == ViewerLayout.SINGLE
         assert viewer.zoom_mode == ZoomMode.PERCENT
         assert viewer._search_edit.text() == "Alpha"
-        assert viewer._annot_collapse_btn.hasFocus()
 
         breakpoint = viewer._toolbar_compact_breakpoint()
         viewer.setFixedSize(breakpoint - 1, 700)
@@ -280,6 +281,8 @@ def test_viewer_markup_guidance_and_empty_navigation(
         assert viewer._hint.text() == (
             "Select: drag across text; click an annotation to edit it."
         )
+        # Select is the resting state: its hint row stays out of the way.
+        assert viewer._hint.isHidden()
         for tool, expected in (
             (AnnotTool.HIGHLIGHT, "Highlight: drag across text."),
             (AnnotTool.UNDERLINE, "Underline: drag across text."),
@@ -293,6 +296,10 @@ def test_viewer_markup_guidance_and_empty_navigation(
             viewer.set_annot_tool(tool)
             assert viewer._hint.text() == expected
             assert expected in viewer._hint.accessibleName()
+            assert not viewer._hint.isHidden()
+
+        viewer.set_annot_tool(AnnotTool.SELECT)
+        assert viewer._hint.isHidden()
 
         assert viewer._outline.topLevelItem(0).text(0) == "This PDF has no bookmarks"
         assert viewer._layers.item(0).text() == "This PDF has no optional layers"
@@ -1082,7 +1089,8 @@ def test_fit_width_uses_full_width_with_and_without_scrollbar(
     viewer, _model, loader = _bind_viewer(qtbot, short)
     try:
         viewer.set_zoom_mode(ZoomMode.FIT_WIDTH)
-        viewer.setFixedSize(900, 700)
+        # Closed side panels leave the page the full width, so allow its height.
+        viewer.setFixedSize(900, 900)
         # The page fits without a bar, so it spans the whole viewport width.
         qtbot.waitUntil(lambda: _viewer_settled(viewer), timeout=5000)
         assert not viewer._scroll.verticalScrollBar().isVisible()

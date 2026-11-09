@@ -223,12 +223,11 @@ def test_zoom_controls_enabled_with_pdf(main_window, five_page_pdf, qtbot):
     assert zoom.isEnabled()
 
 
-def test_thumbnail_zoom_lives_in_status_bar_and_compacts_at_narrow_width(
+def test_thumbnail_zoom_floats_over_the_grid_and_compacts_at_narrow_width(
     main_window, five_page_pdf, qtbot
 ):
     zoom = main_window.findChild(ZoomControls)
     assert zoom.parentWidget() is main_window._thumbnail_zoom_host
-    assert main_window._thumbnail_zoom_label.text() == "Thumbnail size"
     assert main_window._thumbnail_zoom_host.isHidden()
 
     main_window._load_pdf(str(five_page_pdf))

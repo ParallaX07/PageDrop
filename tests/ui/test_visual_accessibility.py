@@ -309,8 +309,11 @@ def test_r10a_page_chips_and_prefs_chrome():
         assert "QFrame#PreferencesDivider" in sheet
         assert "QWidget#PdfViewerAnnotTools QToolButton:focus" in sheet
         assert "QWidget#PdfViewerAnnotTools QToolButton:pressed" in sheet
-        assert "QToolButton#PdfViewerAnnotCollapse:focus" in sheet
-        assert "QToolButton#PdfViewerAnnotExpand:pressed" in sheet
+        assert "QToolButton#ToolbarSidebarToggle:checked:focus" in sheet
+        assert "QToolButton#ToolbarSidebarToggle:checked:pressed" in sheet
+        for state in ("", ":hover", ":pressed", ":focus", ":disabled"):
+            for scope in ("QToolBar", "QWidget#PdfViewerToolbar"):
+                assert f"{scope} QToolButton#ToolbarSidebarToggle:checked{state}" in sheet
         assert f"solid {ring}" in sheet.split(
             "QWidget#PdfViewerAnnotTools QToolButton:focus"
         )[1].split("}")[0]
@@ -351,6 +354,7 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
 
     from pagedrop.ui.convert_file_grid import ConvertFileGrid
     from pagedrop.ui.merge_file_grid import MergeFileGrid
+    from pagedrop.ui.start_screen import StartScreen
     from pagedrop.ui.theme import DARK, LIGHT, app_stylesheet
     from pagedrop.ui.thumbnail_grid import ThumbnailGrid
 
@@ -365,6 +369,11 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
         assert 'QWidget#EmptyStatePanel[dropActive="true"]' in sheet
         assert f"border-color: {theme.ink}" in sheet.split(
             'QWidget#EmptyStatePanel[dropActive="true"]'
+        )[1].split("}")[0]
+        # The start screen welcomes a drop with the same ink outline.
+        assert 'QWidget#StartScreen[dropActive="true"]' in sheet
+        assert f"border-color: {theme.ink}" in sheet.split(
+            'QWidget#StartScreen[dropActive="true"]'
         )[1].split("}")[0]
 
     grid = ThumbnailGrid()
@@ -384,6 +393,12 @@ def test_r10b_empty_drop_affordance_and_glyphs(qtbot):
         grid._empty_kbd,
     ]
     assert isinstance(grid._empty_open_button, QPushButton)
+
+    # A blank tab shows the start screen, with the same logo and drop copy.
+    screen = StartScreen()
+    qtbot.addWidget(screen)
+    assert screen.findChild(QLabel, "GridEmptyLogo").accessibleName() == "PageDrop logo"
+    assert screen.findChild(QLabel, "GridEmptyKbd").text() == "or drop a file here"
 
     merge = MergeFileGrid()
     convert = ConvertFileGrid()
@@ -705,6 +720,12 @@ def test_progress_and_empty_state_accessible_names(main_window, qtbot):
     assert isinstance(grid, ThumbnailGrid)
     assert grid._empty_state.accessibleName()
     assert grid._empty_logo.accessibleName() == "PageDrop logo"
+    screen = main_window._active_tab().start_screen
+    assert screen.accessibleName() == "Open a PDF"
+    assert screen.findChild(QLabel, "GridEmptyLogo").accessibleName() == "PageDrop logo"
+    assert screen.recent_list.accessibleName() == "Recent files"
+    for button in (screen.open_button, screen.merge_button, screen.tools_button):
+        assert button.accessibleName() == button.text()
 
     corner = main_window._tab_manager.cornerWidget(Qt.Corner.TopRightCorner)
     new_tab = corner.findChild(QToolButton, "NewTabButton")
@@ -782,11 +803,18 @@ def test_r2_empty_state_drop_copy_and_spacing(qtbot):
     assert empty_margins.top() == SPACE_7
     assert grid._empty_kbd.text() == "or drop a file here"
 
+    from pagedrop.ui.start_screen import StartScreen
+
+    screen = StartScreen()
+    qtbot.addWidget(screen)
+    assert screen.findChild(QLabel, "GridEmptyKbd").text() == "or drop a file here"
+    content = screen.findChild(QWidget, "StartScreenContent").layout().contentsMargins()
+    assert (content.left(), content.top()) == (SPACE_6, SPACE_7)
+
 
 def test_r5_card_chrome_and_empty_tokens():
     """R5: quieter rest border, HC-aware select/focus widths, empty QSS tokens."""
     from pagedrop.ui.theme import (
-        ACCENT,
         RADIUS_BADGE,
         SHADOW_ALPHA_CAP_LIGHT,
         SPACE_2,
@@ -794,14 +822,12 @@ def test_r5_card_chrome_and_empty_tokens():
     )
 
     dark = app_stylesheet()
-    high = app_stylesheet(high_contrast=True)
 
     page_block = dark.split("QFrame#PageCard {")[1].split("QFrame#MergeFileCard,")[0]
     assert "background-color: transparent" in page_block
-    assert "QLabel#PageCardFocusRing" in dark
-    assert "QLabel#PageCardSelectionIndicator" in dark
-    assert f"border: 3px solid {ACCENT}" in dark
-    assert f"border: 4px solid {ACCENT}" in high
+    assert "PageCardFocusRing" not in dark
+    assert "PageCardSelectionIndicator" not in dark
+    assert "QLabel#PageCardThumbnail {" not in dark
     assert f"border-radius: {RADIUS_BADGE}px" in dark
     assert f"padding: {SPACE_2}px 0 0 0" in dark
     assert SHADOW_ALPHA_CAP_LIGHT == 48
@@ -812,7 +838,7 @@ def test_r5_multi_select_drag_badge_visible(qtbot):
     from PyQt6.QtGui import QColor, QPixmap
 
     from pagedrop.ui.page_card import PageCard
-    from pagedrop.ui.theme import ACCENT
+    from pagedrop.ui.theme import accent_qcolor
 
     card = PageCard(0)
     qtbot.addWidget(card)
@@ -824,7 +850,8 @@ def test_r5_multi_select_drag_badge_visible(qtbot):
     assert badge_pixmap is not None
     assert badge_pixmap.width() > thumb.width()
 
-    accent = QColor(ACCENT)
+    # The badge paints in the current theme's ink, which the system scheme picks.
+    accent = accent_qcolor()
     found_accent = False
     # Sample the top-right badge region for accent fill pixels.
     image = badge_pixmap.toImage()
@@ -855,8 +882,7 @@ def test_r5_smoke_select_hover_focus_drag_badge(qtbot, isolated_settings):
     set_reduce_motion(False)
     sheet = app_stylesheet()
     assert "QFrame#PageCard:hover" in sheet
-    assert 'QFrame#PageCard[selected="true"]' in sheet
-    assert "QLabel#PageCardFocusRing" in sheet
+    assert "PageCardFocusRing" not in sheet
 
     card = PageCard(0)
     qtbot.addWidget(card)
@@ -1252,6 +1278,7 @@ def test_r8_light_hc_parity_freeze(isolated_settings):
         "QWidget#ZoomControls",
         "QFrame#ToolShellDropZone",
         "QWidget#EmptyStatePanel",
+        "QWidget#StartScreen",
     )
     sheets = {f"{m['light']}_{m['high_contrast']}": app_stylesheet(**m) for m in modes}
     for sheet in sheets.values():
@@ -1637,7 +1664,6 @@ def test_focus_rules_use_ring_token_not_accent(mode):
         assert all(ink not in line for line in borders), selector.strip()
         assert any(ring in line for line in borders), selector.strip()
     assert seen > 20
-    assert ring in sheet.split("QLabel#PageCardFocusRing")[1].split("}")[0]
 
 
 @pytest.fixture

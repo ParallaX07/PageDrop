@@ -12,6 +12,8 @@ from PyQt6.QtCore import (
     QMimeData,
     QPoint,
     QPropertyAnimation,
+    QRect,
+    QRectF,
     QSequentialAnimationGroup,
     Qt,
     QUrl,
@@ -20,8 +22,11 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QDrag,
     QFont,
+    QFontMetrics,
     QMouseEvent,
     QPainter,
+    QPainterPath,
+    QPaintEvent,
     QPixmap,
     QResizeEvent,
 )
@@ -31,6 +36,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from pagedrop.core.drag_mime import (
@@ -43,17 +49,26 @@ from pagedrop.core.page_extractor import extract_page_refs_to_files
 from pagedrop.core.pdf_editor import PageRef, PdfEditModel
 from pagedrop.core.pdf_loader import PdfPasswordError, PdfPasswordRequiredError
 from pagedrop.core.selection_manager import SelectionManager
-from pagedrop.ui.accessibility import prefers_reduce_motion
+from pagedrop.ui.accessibility import prefers_high_contrast, prefers_reduce_motion
 from pagedrop.ui.base_file_card import BaseFileCard
 from pagedrop.ui.theme import (
     CARD_PADDING,
+    FOCUS_WIDTH,
+    FOCUS_WIDTH_HIGH_CONTRAST,
+    INDEX_COLOUR_NAMES,
+    PAGE_OUTLINE_WIDTH,
+    PAGE_RING_GAP,
     RADIUS_BADGE,
+    SHADOW_PAGE_LAYERS,
     SPACE_1,
     SPACE_2,
     accent_qcolor,
+    current_theme,
+    index_qcolor,
     on_accent_qcolor,
     shadow_qcolor,
     tabular_font,
+    token_qcolor,
 )
 from pagedrop.utils.temp_manager import TempManager
 
@@ -74,6 +89,64 @@ def drag_badge_font() -> QFont:
     return font
 
 
+class _ThumbnailLabel(QLabel):
+    """Thumbnail frame that paints a page-shaped fill only while it has no page."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.placeholder = True
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        if self.placeholder:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), token_qcolor(current_theme().line))
+            painter.end()
+        super().paintEvent(event)
+
+
+class _OrderChip(QWidget):
+    """Selection-order number, painted at paint time so it follows the theme."""
+
+    def __init__(self, parent: QWidget, fill_name: Callable[[], str]) -> None:
+        super().__init__(parent)
+        self._fill_name = fill_name
+        self._rank = 0
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def _chip_font(self) -> QFont:
+        font = tabular_font(self.font())
+        font.setPixelSize(12)
+        font.setWeight(QFont.Weight.Medium)
+        return font
+
+    def fill_colour(self):
+        return index_qcolor(self._fill_name())
+
+    def set_rank(self, rank: int) -> None:
+        self._rank = rank
+        metrics = QFontMetrics(self._chip_font())
+        width = metrics.horizontalAdvance(str(rank)) + 2 * SPACE_2 - 2
+        self.setFixedSize(max(width, 18), max(metrics.height() + 2, 18))
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Hairline edge keeps the light index colours readable on the white page.
+        painter.setPen(shadow_qcolor(alpha=90))
+        painter.setBrush(self.fill_colour())
+        painter.drawRoundedRect(
+            self.rect().adjusted(0, 0, -1, -1), RADIUS_BADGE, RADIUS_BADGE
+        )
+        painter.setPen(token_qcolor(current_theme().on_index))
+        painter.setFont(self._chip_font())
+        painter.drawText(
+            self.rect(), Qt.AlignmentFlag.AlignCenter, str(self._rank)
+        )
+        painter.end()
+
+
 class PageCard(BaseFileCard):
     context_menu_requested = pyqtSignal(int, QPoint)
 
@@ -89,6 +162,8 @@ class PageCard(BaseFileCard):
         self._page_overlay_wanted = False
         self._size_provider: Callable[[], tuple[int, int]] | None = None
         self._size_cached: tuple[int, int] | None = None
+        self._selection_rank: int | None = None
+        self._index_colour_provider: Callable[[], str | None] | None = None
         self._skeleton_pulse_effect: QGraphicsOpacityEffect | None = None
         self._skeleton_pulse_anim: QSequentialAnimationGroup | None = None
 
@@ -112,21 +187,10 @@ class PageCard(BaseFileCard):
         self._rotation_overlay.setFont(tabular_font())
         self._rotation_overlay.hide()
 
-        # Selection needs a shape as well as the accent outline; this remains
-        # legible for people who cannot distinguish the accent colour.
-        self._selection_indicator = QLabel("✓", self._thumbnail_label)
-        self._selection_indicator.setObjectName("PageCardSelectionIndicator")
-        self._selection_indicator.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents
-        )
-        self._selection_indicator.hide()
-
-        # Focus is intentionally independent from selection: selecting a page
-        # must not hide the keyboard location.
-        self._focus_ring = QLabel(self)
-        self._focus_ring.setObjectName("PageCardFocusRing")
-        self._focus_ring.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._focus_ring.hide()
+        # Selection needs a shape as well as the outline: the number says which
+        # place the page takes in the output, whatever the colour looks like.
+        self._order_chip = _OrderChip(self._thumbnail_label, self._index_colour_name)
+        self._thumbnail_label.installEventFilter(self)
 
         self._page_label = QLabel(f"Page {page_index + 1}")
         self._page_label.setObjectName("PageCardLabel")
@@ -144,6 +208,9 @@ class PageCard(BaseFileCard):
         self._sync_page_overlay_visibility()
         self.setToolTip(f"Page {page_index + 1} · Click to select")
         self._sync_accessible()
+
+    def _make_thumbnail_label(self) -> QLabel:
+        return _ThumbnailLabel()
 
     def _item_index(self) -> int:
         return self.page_index
@@ -182,6 +249,7 @@ class PageCard(BaseFileCard):
         self.clear_skeleton_pulse()
         self._reset_failed()
         super().set_thumbnail(pixmap)
+        self._sync_placeholder()
         self._sync_page_overlay_visibility()
 
     def set_failed(self) -> None:
@@ -193,6 +261,7 @@ class PageCard(BaseFileCard):
         self.clear_skeleton_pulse()
         self._thumbnail_label.setText("Page unavailable")
         self._set_failed_style(True)
+        self._sync_placeholder()
         self._sync_page_overlay_visibility()
         self._sync_accessible()
 
@@ -211,21 +280,49 @@ class PageCard(BaseFileCard):
         style.unpolish(self._thumbnail_label)
         style.polish(self._thumbnail_label)
 
+    @property
+    def selection_rank(self) -> int | None:
+        return self._selection_rank
+
     def set_selected(self, selected: bool) -> None:
         super().set_selected(selected)
-        self._selection_indicator.setVisible(selected)
-        self._focus_ring.setVisible(selected or self._keyboard_focused)
-        if not self._focus_ring.isHidden():
-            self._sync_focus_ring_geometry()
-        if selected:
-            self._sync_selection_indicator_geometry()
+        if not selected:
+            self._selection_rank = None
+        self._sync_order_chip()
+        self.update()
         self._sync_accessible()
+
+    def set_selection_rank(self, rank: int | None) -> None:
+        """Place in the selection, in page order (1 = lowest selected page)."""
+        if rank == self._selection_rank:
+            return
+        self._selection_rank = rank
+        self._sync_order_chip()
+        self._sync_accessible()
+
+    def set_index_colour_provider(
+        self, provider: Callable[[], str | None] | None
+    ) -> None:
+        """Defer the document's index colour lookup until the chip paints."""
+        self._index_colour_provider = provider
+        self._order_chip.update()
+
+    def _index_colour_name(self) -> str:
+        name = self._index_colour_provider() if self._index_colour_provider else None
+        return name if name in INDEX_COLOUR_NAMES else "index_slate"
 
     def set_keyboard_focused(self, focused: bool) -> None:
         super().set_keyboard_focused(focused)
-        self._focus_ring.setVisible(focused or self._selected)
-        if not self._focus_ring.isHidden():
-            self._sync_focus_ring_geometry()
+        self.update()
+
+    def _sync_order_chip(self) -> None:
+        rank = self._selection_rank
+        if not self._selected or rank is None:
+            self._order_chip.hide()
+            return
+        self._order_chip.set_rank(rank)
+        self._order_chip.show()
+        self._sync_order_chip_geometry()
 
     def release_thumbnail(self) -> bool:
         """Drop the cached pixmap and return to skeleton placeholder.
@@ -240,6 +337,7 @@ class PageCard(BaseFileCard):
         self._thumbnail_label.clear()
         self._is_skeleton = True
         self.clear_skeleton_pulse()
+        self._sync_placeholder()
         self._apply_skeleton_size()
         self._sync_page_overlay_visibility()
         return had_pixmap
@@ -325,7 +423,14 @@ class PageCard(BaseFileCard):
     def _sync_accessible(self) -> None:
         page_num = self.page_index + 1
         self.setAccessibleName(f"Page {page_num}")
-        selected = "Selected · " if self._selected else ""
+        selected = ""
+        if self._selected:
+            number = (
+                f", number {self._selection_rank}"
+                if self._selection_rank is not None
+                else ""
+            )
+            selected = f"Selected{number} · "
         if self._failed:
             selected += "Page unavailable · "
         if self._size_cached is not None:
@@ -349,9 +454,7 @@ class PageCard(BaseFileCard):
         self._thumbnail_label.setFixedHeight(
             max(80, int(thumb_w * _SKELETON_ASPECT))
         )
-        self._sync_page_overlay_geometry()
-        self._sync_rotation_overlay_geometry()
-        self._sync_selection_indicator_geometry()
+        self._sync_page_chrome()
 
     def set_rotation_indicator(self, degrees: int) -> None:
         rot = degrees % 360
@@ -364,10 +467,12 @@ class PageCard(BaseFileCard):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
-        self._sync_page_overlay_geometry()
-        self._sync_rotation_overlay_geometry()
-        self._sync_selection_indicator_geometry()
-        self._sync_focus_ring_geometry()
+        self._sync_page_chrome()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._thumbnail_label and event.type() == QEvent.Type.Resize:
+            self._sync_page_chrome()
+        return super().eventFilter(watched, event)
 
     def _refresh_thumbnail_display(self, *, fast: bool = False) -> None:
         """Fit every page within the stable thumbnail frame without cropping."""
@@ -385,48 +490,108 @@ class PageCard(BaseFileCard):
             mode,
         )
         self._thumbnail_label.setPixmap(display)
+        self._sync_page_chrome()
+
+    def _sync_placeholder(self) -> None:
+        label = self._thumbnail_label
+        assert isinstance(label, _ThumbnailLabel)
+        label.placeholder = self._is_skeleton or self._failed
+        label.update()
+
+    def _page_rect_in_label(self) -> QRect:
+        """Where the page sits in the thumbnail frame: centred at its real aspect."""
+        label = self._thumbnail_label
+        pixmap = label.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return label.rect()
+        size = pixmap.deviceIndependentSize().toSize()
+        width = min(size.width(), label.width())
+        height = min(size.height(), label.height())
+        return QRect(
+            (label.width() - width) // 2,
+            (label.height() - height) // 2,
+            width,
+            height,
+        )
+
+    def _page_rect(self) -> QRect:
+        """The page rectangle in card coordinates."""
+        return self._page_rect_in_label().translated(self._thumbnail_label.pos())
+
+    def _sync_page_chrome(self) -> None:
+        """Anchor the overlays to the page and repaint the outline and shadow."""
+        self._sync_page_overlay_geometry()
+        self._sync_rotation_overlay_geometry()
+        self._sync_order_chip_geometry()
+        self.update()
 
     def _sync_page_overlay_geometry(self) -> None:
         if self._page_overlay.isHidden():
             return
         self._page_overlay.adjustSize()
         margin = 4
-        x = max(
-            0,
-            self._thumbnail_label.width() - self._page_overlay.width() - margin,
+        page = self._page_rect_in_label()
+        self._page_overlay.move(
+            max(0, page.right() + 1 - self._page_overlay.width() - margin),
+            max(0, page.bottom() + 1 - self._page_overlay.height() - margin),
         )
-        y = max(
-            0,
-            self._thumbnail_label.height() - self._page_overlay.height() - margin,
-        )
-        self._page_overlay.move(x, y)
 
     def _sync_rotation_overlay_geometry(self) -> None:
         if self._rotation_overlay.isHidden():
             return
         self._rotation_overlay.adjustSize()
         margin = 4
-        self._rotation_overlay.move(margin, margin)
+        page = self._page_rect_in_label()
+        self._rotation_overlay.move(page.left() + margin, page.top() + margin)
 
-    def _sync_selection_indicator_geometry(self) -> None:
-        if self._selection_indicator.isHidden():
+    def _sync_order_chip_geometry(self) -> None:
+        if self._order_chip.isHidden():
             return
-        self._selection_indicator.adjustSize()
         margin = 4
-        self._selection_indicator.move(
-            margin,
-            max(
-                0,
-                self._thumbnail_label.height()
-                - self._selection_indicator.height()
-                - margin,
-            ),
+        page = self._page_rect_in_label()
+        self._order_chip.move(
+            page.left() + margin,
+            max(0, page.bottom() + 1 - self._order_chip.height() - margin),
         )
 
-    def _sync_focus_ring_geometry(self) -> None:
-        if self._focus_ring.isHidden():
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        page = self._page_rect()
+        if page.isEmpty():
             return
-        self._focus_ring.setGeometry(self.rect().adjusted(1, 1, -1, -1))
+        theme = current_theme()
+        painter = QPainter(self)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread, drop, alpha in SHADOW_PAGE_LAYERS:
+            painter.setBrush(shadow_qcolor(alpha=alpha))
+            painter.drawRect(
+                page.adjusted(-spread, -spread, spread, spread).translated(0, drop)
+            )
+        if self._selected:
+            self._fill_band(
+                painter, page, 0, PAGE_OUTLINE_WIDTH, token_qcolor(theme.ink)
+            )
+        if self._keyboard_focused:
+            ring = (
+                FOCUS_WIDTH_HIGH_CONTRAST if prefers_high_contrast() else FOCUS_WIDTH
+            )
+            self._fill_band(
+                painter,
+                page,
+                PAGE_OUTLINE_WIDTH + PAGE_RING_GAP,
+                ring,
+                token_qcolor(theme.focus),
+            )
+        painter.end()
+
+    @staticmethod
+    def _fill_band(painter: QPainter, page: QRect, gap: int, width: int, colour) -> None:
+        """Solid frame `width` thick, `gap` px outside the page edge."""
+        outer = gap + width
+        path = QPainterPath()
+        path.addRect(QRectF(page.adjusted(-outer, -outer, outer, outer)))
+        path.addRect(QRectF(page.adjusted(-gap, -gap, gap, gap)))
+        painter.fillPath(path, colour)
 
     def set_drag_context(
         self,
@@ -450,7 +615,11 @@ class PageCard(BaseFileCard):
             and self._model is None
         ):
             window = self.window()
-            if hasattr(window, "statusBar"):
+            # MainWindow floats this; other windows only have a status bar.
+            notify = getattr(window, "_transient_status", None)
+            if callable(notify):
+                notify("Open a PDF first")
+            elif hasattr(window, "statusBar"):
                 window.statusBar().showMessage("Open a PDF first")
         super().mouseMoveEvent(event)
 

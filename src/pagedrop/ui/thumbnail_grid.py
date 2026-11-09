@@ -60,6 +60,7 @@ from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.drag_autoscroll import DragAutoScroller
+from pagedrop.ui.floating_status import FLOAT_CLEARANCE
 from pagedrop.ui.grid_helpers import (
     DropIndicator,
     ctrl_wheel_zoom_step,
@@ -276,9 +277,6 @@ class ThumbnailGrid(QScrollArea):
         self._layout = QGridLayout(self._container)
         self._layout.setSpacing(SPACE_3)
         self._layout.setContentsMargins(SPACE_4, SPACE_4, SPACE_4, SPACE_4)
-        self._layout.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
-        )
 
         self._empty_state = QWidget()
         self._empty_state.setObjectName("EmptyStatePanel")
@@ -329,15 +327,16 @@ class ThumbnailGrid(QScrollArea):
         empty_layout.addWidget(self._empty_open_button, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addWidget(self._empty_kbd)
         empty_layout.addStretch(2)
-        self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
 
         self.setWidget(self._container)
 
         self._cards: list[PageCard] = []
+        self._update_empty_state()
         self._model: PdfEditModel | None = None
         self._get_loader: Callable[[str], PdfLoader] | None = None
         self._thumbnail_width_px = DEFAULT_THUMBNAIL_WIDTH
         self._card_width = CARD_WIDTH
+        self._base_card_width = CARD_WIDTH
         self._page_render_width: list[int] = []
         self._last_rendered_width_px = 0
         self._grid_cols = 0
@@ -371,6 +370,13 @@ class ThumbnailGrid(QScrollArea):
         self._background_render_timer.setSingleShot(True)
         self._background_render_timer.setInterval(200)
         self._background_render_timer.timeout.connect(self._render_background_quality)
+        # Fit on open waits for the grid's real size: panes and the page itself
+        # are laid out after the document loads.
+        self._autofit_pending = False
+        self._autofit_timer = QTimer(self)
+        self._autofit_timer.setSingleShot(True)
+        self._autofit_timer.setInterval(0)
+        self._autofit_timer.timeout.connect(self._run_pending_autofit)
         self._deferred_thumbnail_timer = QTimer(self)
         self._deferred_thumbnail_timer.setSingleShot(True)
         self._deferred_thumbnail_timer.timeout.connect(
@@ -565,11 +571,17 @@ class ThumbnailGrid(QScrollArea):
         ref = self._model.page_at(logical_index)
         card.set_page_ref(ref)
         card.set_page_size_provider(lambda r=ref: self._page_size_mm_for(r))
+        card.set_index_colour_provider(self._tab_index_colour)
         card.clicked.connect(self._on_card_clicked)
         card.double_clicked.connect(self.preview_requested.emit)
         card.context_menu_requested.connect(self._on_card_context_menu)
         card.set_page_overlay_visible(self._page_overlay_visible())
         return card
+
+    def _tab_index_colour(self) -> str:
+        """The document's index colour, read when a card paints so a detach follows."""
+        tab = self._parent_tab()
+        return (tab.index_colour if tab is not None else None) or "index_slate"
 
     def _page_size_mm_for(self, ref: PageRef) -> tuple[int, int]:
         assert self._get_loader is not None
@@ -899,6 +911,8 @@ class ThumbnailGrid(QScrollArea):
         self._worker_signals.clear()
 
     def clear(self) -> None:
+        self._autofit_pending = False
+        self._autofit_timer.stop()
         self._zoom_render_timer.stop()
         self._scroll_render_timer.stop()
         self._background_render_timer.stop()
@@ -951,10 +965,12 @@ class ThumbnailGrid(QScrollArea):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self._refresh_empty_logo()
+        self._rearm_autofit()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reflow_grid()
+        self._rearm_autofit()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if not self._cards:
@@ -1903,10 +1919,18 @@ class ThumbnailGrid(QScrollArea):
         spacing = self._layout.spacing()
         margins = self._layout.contentsMargins()
         available = self.viewport().width() - margins.left() - margins.right()
+        bar = self.verticalScrollBar()
+        if not bar.isVisibleTo(self):
+            # The bar appears once the fitted cards overflow; leave its room now
+            # so the column count does not change when it does.
+            available -= bar.sizeHint().width()
         if available <= 0:
             return self._thumbnail_width_px
-        cols = max(1, available // (self._card_width + spacing))
-        card = (available - (cols - 1) * spacing) // cols
+        # Columns follow the size the user chose, not the size the last fit left, so
+        # fitting again at the same viewport gives the same answer.
+        cols = max(1, available // (self._base_card_width + spacing))
+        # Each column pays for its own gap, as the layout counts them.
+        card = available // cols - spacing
         raw = max(
             MIN_THUMBNAIL_WIDTH,
             min(MAX_THUMBNAIL_WIDTH, card - CARD_PADDING),
@@ -1915,6 +1939,30 @@ class ThumbnailGrid(QScrollArea):
         steps = (raw - MIN_THUMBNAIL_WIDTH) // ZOOM_WHEEL_STEP
         return MIN_THUMBNAIL_WIDTH + steps * ZOOM_WHEEL_STEP
 
+
+    def request_autofit(self) -> None:
+        """Fit the columns once the grid has settled at its real size.
+
+        Does nothing after a manual zoom, and is dropped if the document goes
+        away first.
+        """
+        self._autofit_pending = True
+        self._rearm_autofit()
+
+    def _rearm_autofit(self) -> None:
+        if self._autofit_pending:
+            self._autofit_timer.start()
+
+    def _run_pending_autofit(self) -> None:
+        if not self._autofit_pending:
+            return
+        if self._manual_zoom or self._model is None:
+            self._autofit_pending = False
+            return
+        if not self.isVisible():
+            return  # fitted when it is shown
+        self._autofit_pending = False
+        self.autofit_thumbnails_if_allowed()
 
     def autofit_thumbnails_if_allowed(self) -> bool:
         """Fill columns on open. No-op after manual zoom. Returns True when size changed."""
@@ -1944,6 +1992,10 @@ class ThumbnailGrid(QScrollArea):
         )
         if manual:
             self._manual_zoom = True
+        # An explicit size, manual or not, is not to be fitted over later.
+        self._autofit_pending = False
+        self._autofit_timer.stop()
+        self._base_card_width = clamped + CARD_PADDING
         if clamped != self._thumbnail_width_px:
             self._apply_zoom(clamped)
 
@@ -1960,6 +2012,16 @@ class ThumbnailGrid(QScrollArea):
         self.selection_manager.set_selection(set(valid))
         self._last_clicked_index = valid[0]
         self._set_focused_index(valid[0])
+        self._scroll_to_focused_card()
+
+    def scroll_to_page(self, index: int) -> None:
+        """Move keyboard focus to page *index* and scroll it into view.
+
+        The selection is left as it is.
+        """
+        if not 0 <= index < len(self._cards):
+            return
+        self._set_focused_index(index)
         self._scroll_to_focused_card()
 
     def _page_overlay_visible(self) -> bool:
@@ -2147,8 +2209,7 @@ class ThumbnailGrid(QScrollArea):
             item = self._layout.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
-        self._layout.addWidget(self._empty_state, 0, 0, 1, 1)
-        self._empty_state.show()
+        self._update_empty_state()
 
     def _set_empty_drop_active(self, active: bool) -> None:
         """Toggle dashed-panel dropActive chrome while the empty state is visible."""
@@ -2160,10 +2221,23 @@ class ThumbnailGrid(QScrollArea):
         style.polish(self._empty_state)
 
     def _update_empty_state(self) -> None:
+        # Cards pack at the top left; the empty panel centres in the viewport.
+        # With pages, the last row scrolls clear of the floating size control.
+        self._layout.setContentsMargins(
+            SPACE_4, SPACE_4, SPACE_4, FLOAT_CLEARANCE if self._cards else SPACE_4
+        )
         if self._cards:
+            self._layout.setAlignment(
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+            )
             self._set_empty_drop_active(False)
             self._empty_state.hide()
         else:
+            self._layout.setAlignment(Qt.AlignmentFlag(0))
+            if self._layout.indexOf(self._empty_state) < 0:
+                self._layout.addWidget(
+                    self._empty_state, 0, 0, 1, 1, Qt.AlignmentFlag.AlignCenter
+                )
             self._empty_state.show()
 
     def _compute_grid_cols(self) -> int:
@@ -2325,12 +2399,20 @@ class ThumbnailGrid(QScrollArea):
         self.selection_changed.emit(selection)
 
     def _sync_selection_chrome(self, selection: set[int]) -> None:
-        """Update only cards whose selected bit flipped."""
+        """Update cards whose selected bit or place in the selection changed."""
         n = len(self._cards)
         applicable = {i for i in selection if 0 <= i < n}
         for index in self._painted_selection ^ applicable:
             self._cards[index].set_selected(index in applicable)
+        self._push_selection_ranks(applicable)
         self._painted_selection = applicable
+
+    def _push_selection_ranks(self, applicable: set[int]) -> None:
+        """Number selected cards by page order; skip cards whose number is unchanged."""
+        for rank, index in enumerate(sorted(applicable), start=1):
+            card = self._cards[index]
+            if card.selection_rank != rank:
+                card.set_selection_rank(rank)
 
     def _resync_selection_chrome(self) -> None:
         """Full chrome pass after card list surgery (insert/delete/reorder)."""
@@ -2339,4 +2421,5 @@ class ThumbnailGrid(QScrollArea):
         applicable = {i for i in selection if 0 <= i < n}
         for index, card in enumerate(self._cards):
             card.set_selected(index in applicable)
+        self._push_selection_ranks(applicable)
         self._painted_selection = applicable
