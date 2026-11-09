@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import ctypes
 import os
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFrame,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -59,6 +61,7 @@ from pagedrop.core.pdf_loader import (
 )
 from pagedrop.ui.actions import ActionRegistry
 from pagedrop.ui.busy_overlay import BusyOverlay, ToastOverlay
+from pagedrop.ui.floating_status import FloatingStatus, FloatingZoomHost
 from pagedrop.ui.editor_jobs import (
     EditorJobWorker,
     release_editor_signals,
@@ -145,7 +148,6 @@ from pagedrop.utils.diagnostics import log_failure
 
 MOVE_UNDO_TIMEOUT_MS = 8000
 STATUS_TRANSIENT_MS = 5000
-COMPACT_STATUS_WIDTH = 640
 
 
 def _is_file(path: Path) -> bool:
@@ -221,7 +223,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         refresh_cb = self._refresh_action_icons
         icons.register_refresh(refresh_cb)
         self._install_scoped_event_filters()
-        self._persistent_status("Ready")
+        self._idle_status("Ready")
         self._sync_toolbar_from_active_tab()
         self._tips_overlay = TipsOverlay(self)
         QTimer.singleShot(0, self._maybe_show_first_run_tips)
@@ -919,7 +921,13 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             temp_manager=self._temp_manager,
             recovery_dir=self._recovery_dir,
         )
+        self._floating = FloatingStatus(
+            self._tab_manager,
+            stack=(self._progress_bar, self._move_undo_widget),
+            corner=self._thumbnail_zoom_host,
+        )
         self._tab_manager.active_tab_changed.connect(self._on_active_tab_changed)
+        self._tab_manager.currentChanged.connect(self._on_floating_page_changed)
         self._tab_manager.currentChanged.connect(self._on_tab_index_changed)
         self._tab_manager.tab_added.connect(self._connect_tab_signals)
         self._tab_manager.tab_closed.connect(self._on_tab_closed)
@@ -1002,22 +1010,65 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 return tab
         return None
 
-    def _transient_status(self, message: str, *, page: QWidget | None = None) -> None:
+    def _transient_status(
+        self, message: str, *, page: QWidget | None = None, float_message: bool = True
+    ) -> None:
+        """Outcome or notice: floats for a few seconds, then gives way to idle text."""
         page = page or self._sender_tab() or self._status_page()
         self._status_by_page[page] = message
         if page is self._status_page():
             self.statusBar().showMessage(message)
+            self._float_message(message if float_message else None)
             self._transient_status_timer.start(STATUS_TRANSIENT_MS)
 
     def _persistent_status(self, message: str, *, page: QWidget | None = None) -> None:
+        """Progress stays floating until replaced; other text floats then dismisses."""
+        page = page or self._sender_tab() or self._status_page()
+        self._status_by_page[page] = message
+        if page is self._status_page():
+            self.statusBar().showMessage(message)
+            self._float_message(message)
+            if message.endswith("…"):
+                self._transient_status_timer.stop()
+            else:
+                self._transient_status_timer.start(STATUS_TRANSIENT_MS)
+
+    def _idle_status(self, message: str, *, page: QWidget | None = None) -> None:
+        """Resting text such as "Ready" or a page count; never floats."""
         page = page or self._sender_tab() or self._status_page()
         self._status_by_page[page] = message
         if page is self._status_page():
             self._transient_status_timer.stop()
             self.statusBar().showMessage(message)
+            self._float_message(None)
 
     def _restore_active_status(self) -> None:
         self.statusBar().showMessage(self._status_by_page.get(self._status_page(), "Ready"))
+        self._float_message(None)
+
+    def _float_message(self, message: str | None) -> None:
+        floating = getattr(self, "_floating", None)
+        if floating is None:
+            return
+        if message:
+            floating.show_message(message)
+        else:
+            floating.clear_message()
+
+    def _floating_anchor(self) -> QWidget | None:
+        """The content the floating status sits over: its panes stay clear."""
+        tab = self._active_tab()
+        return tab.content_stack if tab is not None else self._tab_manager.currentWidget()
+
+    def _sync_floating_anchor(self) -> None:
+        floating = getattr(self, "_floating", None)
+        if floating is not None:
+            floating.set_anchor(self._floating_anchor())
+
+    def _on_floating_page_changed(self, _index: int) -> None:
+        # A message belongs to the page it was about.
+        self._float_message(None)
+        self._sync_floating_anchor()
 
     def _show_toast(
         self,
@@ -1026,6 +1077,8 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         kind: str = "info",
         on_undo=None,
     ) -> None:
+        # The toast carries the news; the floating message would only repeat it.
+        self._float_message(None)
         self._toast.show_toast(message, kind=kind, on_undo=on_undo)
 
     def _begin_editor_job(self, tab: PdfTab, message: str) -> CancelToken:
@@ -1074,7 +1127,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         """Restore sticky document status after a drag hint."""
         tab = self._active_tab()
         if tab is None:
-            self._persistent_status("Ready")
+            self._idle_status("Ready")
             return
         if tab.is_preview_visible() and tab.edit_model is not None:
             self._update_preview_status()
@@ -1082,7 +1135,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
             return
         self._restore_active_status()
 
@@ -1099,27 +1152,26 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         return summary, f"{summary}: Pages {ranges.replace(',', ', ')}"
 
     def _build_status_widgets(self) -> None:
+        """Create what floats over the content; ``_build_central_widget`` places it."""
         self._progress_bar = QProgressBar()
         self._progress_bar.setMaximumWidth(200)
         self._progress_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._progress_bar.setAccessibleName("Page rendering progress")
+        self._progress_bar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._progress_bar.hide()
 
-        self._thumbnail_zoom_host = QWidget()
-        self._thumbnail_zoom_host.setObjectName("ThumbnailZoomStatusHost")
-        zoom_layout = QHBoxLayout(self._thumbnail_zoom_host)
-        zoom_layout.setContentsMargins(0, 0, 0, 0)
-        zoom_layout.setSpacing(4)
-        self._thumbnail_zoom_label = QLabel("Thumbnail size")
-        self._thumbnail_zoom_label.setObjectName("ThumbnailZoomLabel")
-        zoom_layout.addWidget(self._thumbnail_zoom_label)
-        zoom_layout.addWidget(self._zoom_controls)
+        # Weak, so the host does not keep this window alive in a reference cycle.
+        window = weakref.ref(self)
+        self._thumbnail_zoom_host = FloatingZoomHost(
+            lambda: (w := window()) and w._thumbnail_grid
+        )
+        self._thumbnail_zoom_host.layout().addWidget(self._zoom_controls)
         self._thumbnail_zoom_host.hide()
 
-        self._move_undo_widget = QWidget()
+        self._move_undo_widget = QFrame()
         self._move_undo_widget.setObjectName("MoveUndoToast")
         move_undo_layout = QHBoxLayout(self._move_undo_widget)
-        move_undo_layout.setContentsMargins(0, 0, 8, 0)
+        move_undo_layout.setContentsMargins(12, 4, 8, 4)
         move_undo_layout.setSpacing(6)
         self._move_undo_label = QLabel()
         self._move_undo_button = QPushButton("Undo")
@@ -1134,11 +1186,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._move_undo_timer.setSingleShot(True)
         self._move_undo_timer.timeout.connect(self._dismiss_move_undo)
 
-        self.statusBar().setFont(tabular_font())
-        self.statusBar().addPermanentWidget(self._move_undo_widget)
-        self.statusBar().addPermanentWidget(self._progress_bar)
-        self.statusBar().addPermanentWidget(self._thumbnail_zoom_host)
+        # Messages float instead; the bar stays as the store for the latest text.
         self.statusBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.statusBar().hide()
 
     def _connect_tab_signals(self, tab: PdfTab) -> None:
         grid = tab.thumbnail_grid
@@ -1527,6 +1577,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
 
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
+        self._sync_floating_anchor()
         self._sync_pane_actions()
         self._set_toolbar_host(tab)
         if tab is None:
@@ -1879,7 +1930,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         # No document here: the preview, selection and page commands do nothing.
         self._preview_action.setEnabled(False)
         self._update_preview_mode_ui()
-        self._persistent_status("Ready")
+        self._idle_status("Ready")
 
     def _update_save_as_action(self) -> None:
         tab = self._active_tab()
@@ -2151,6 +2202,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._move_undo_label.setText(f"{count} {noun} moved ·")
         self._move_undo_widget.show()
         self.statusBar().clearMessage()
+        self._float_message(None)
         self._move_undo_timer.start(MOVE_UNDO_TIMEOUT_MS)
 
     def _dismiss_move_undo(self) -> None:
@@ -2228,7 +2280,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
 
     def _open_preview(self) -> None:
         tab = self._active_tab()
@@ -2297,7 +2349,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             return
         page = tab.preview_widget.current_page + 1
         total = tab.edit_model.logical_count()
-        self._persistent_status(f"Page {page} of {total}")
+        self._idle_status(f"Page {page} of {total}")
 
     def _on_preview_page_changed(self, page_index: int) -> None:
         tab = self._active_tab()
@@ -2476,8 +2528,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             if tip is not None:
                 self._transient_status(tip)
             else:
+                # The size control already reads this out.
                 self._transient_status(
-                    f"Thumbnail size: {thumbnail_width_px} px"
+                    f"Thumbnail size: {thumbnail_width_px} px", float_message=False
                 )
 
     def _on_zoom_render_pending(self, pending: bool) -> None:
@@ -2495,7 +2548,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if self.statusBar().currentMessage() == "Rendering thumbnails…":
             tab = self._active_tab()
             if tab is not None:
-                self._transient_status(f"Thumbnail size: {tab.zoom_level} px")
+                self._transient_status(
+                    f"Thumbnail size: {tab.zoom_level} px", float_message=False
+                )
 
     def _on_thumbnail_quality_triggered(self, action: QAction) -> None:
         value = action.data()
@@ -2688,15 +2743,13 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._update_responsive_shell()
 
     def _update_thumbnail_zoom_host(self) -> None:
-        if not hasattr(self, "_thumbnail_zoom_host"):
+        if not hasattr(self, "_floating"):
             return
         tab = self._active_tab()
         visible = tab is not None and tab.loader is not None and not tab.is_preview_visible()
         self._thumbnail_zoom_host.setVisible(visible)
         self._zoom_controls.set_slider_visible(self.width() > 800)
-        # The buttons and px readout say what the cluster is; the caption goes
-        # first so the status message keeps its room in a narrow window.
-        self._thumbnail_zoom_label.setVisible(self.width() > COMPACT_STATUS_WIDTH)
+        self._floating.relayout()
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange:
@@ -3222,14 +3275,14 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 if password is None:
                     if target is self._active_tab():
                         self._sync_toolbar_from_active_tab()
-                        self._persistent_status("Ready")
+                        self._idle_status("Ready")
                     return
             except PdfPasswordError:
                 password = self._prompt_pdf_password(filename, incorrect=True)
                 if password is None:
                     if target is self._active_tab():
                         self._sync_toolbar_from_active_tab()
-                        self._persistent_status("Ready")
+                        self._idle_status("Ready")
                     return
             except PdfEmptyError as exc:
                 log_failure("Open PDF", exc, path=path)
@@ -3240,7 +3293,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 )
                 if target is self._active_tab():
                     self._sync_toolbar_from_active_tab()
-                    self._persistent_status("Ready")
+                    self._idle_status("Ready")
                 return
             except PdfLoadError as exc:
                 log_failure("Open PDF", exc, path=path)
@@ -3251,7 +3304,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 )
                 if target is self._active_tab():
                     self._sync_toolbar_from_active_tab()
-                    self._persistent_status("Ready")
+                    self._idle_status("Ready")
                 return
 
         self._tab_manager.update_tab_title(target)
@@ -3588,7 +3641,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         if tab is not None and tab.edit_model is not None:
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
 
     def _on_pages_inserted(
         self, count: int, filename: str, position: int
@@ -3694,7 +3747,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
                 "Insert PDF",
                 f"Could not insert PDF:\n{exc}",
             )
-        self._persistent_status("Ready", page=tab)
+        self._idle_status("Ready", page=tab)
 
     def _on_rendering_error(self, message: str) -> None:
         # One notice per loaded document; the grid keeps rendering other pages.
@@ -3728,7 +3781,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         elif tab.edit_model is not None and not self._progress_bar.isVisible():
             count = tab.edit_model.logical_count()
             noun = "page" if count == 1 else "pages"
-            self._persistent_status(f"Loaded {count} {noun}")
+            self._idle_status(f"Loaded {count} {noun}")
 
     def _on_preview_busy_changed(self, busy: bool, message: str) -> None:
         tab = self._active_tab()
@@ -3739,7 +3792,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         elif tab.is_viewer_mode() and tab.edit_model is not None:
             page = tab.preview_widget.current_page + 1
             total = tab.edit_model.logical_count()
-            self._persistent_status(f"Page {page} of {total}")
+            self._idle_status(f"Page {page} of {total}")
 
     def _selection_toolbar_snapshot(self, selection: set[int]) -> tuple:
         """Toolbar-relevant view of selection — skip redundant coalesced flushes."""

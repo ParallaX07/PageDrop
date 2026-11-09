@@ -139,6 +139,8 @@ class SectionIndex(QWidget):
         layout.addWidget(title)
         layout.addWidget(self._status)
         layout.addWidget(self._list, stretch=1)
+        # Takes the slack while the list is hidden, so title and status stay on top.
+        layout.addStretch(0)
         self._render()
 
     # --- public API -------------------------------------------------------

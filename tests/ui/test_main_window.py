@@ -1696,25 +1696,21 @@ def test_selection_count_has_no_status_bar_copy(main_window, five_page_pdf, qtbo
     assert _visible_texts(main_window).count("3 pages selected") == 1
 
 
-def test_thumbnail_size_caption_appears_once_in_the_status_bar(
+def test_thumbnail_size_control_floats_with_a_name_and_no_caption(
     main_window, five_page_pdf, qtbot
 ):
-    from PyQt6.QtGui import QFont
-
     _open_loaded_window(main_window, five_page_pdf, qtbot, width=1600)
-    qtbot.waitUntil(lambda: main_window._thumbnail_zoom_label.isVisible())
-    captions = [
-        label
-        for label in main_window.statusBar().findChildren(QLabel)
-        if label.isVisible() and label.text() == "Thumbnail size"
-    ]
-    assert captions == [main_window._thumbnail_zoom_label]
-    assert sum("Thumbnail size" in text for text in _visible_texts(main_window)) == 1
-    # The caption is ordinary text; only the numeric readout is tabular.
-    font = captions[0].font()
-    assert not font.fixedPitch()
-    assert font.styleHint() != QFont.StyleHint.Monospace
+    host = main_window._thumbnail_zoom_host
+    qtbot.waitUntil(host.isVisible)
+    assert not hasattr(main_window, "_thumbnail_zoom_label")
+    assert not main_window.statusBar().isVisible()
+    assert host.parentWidget() is main_window._tab_manager
+    assert main_window._zoom_controls.isVisible()
+    assert "Thumbnail size" not in _visible_texts(main_window)
+    # Assistive tech still gets a name for the control and its slider.
+    assert main_window._zoom_controls.accessibleName() == "Thumbnail zoom"
     assert main_window._zoom_controls._slider.accessibleName() == "Thumbnail size"
+    assert main_window._zoom_controls._value_label.isVisible()
 
 
 def _members_on_bar(window: MainWindow):

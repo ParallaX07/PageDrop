@@ -269,6 +269,34 @@ def test_document_without_bookmarks_shows_one_quiet_line(qtbot, five_page_pdf: P
     assert not _list(widget).isVisible()
 
 
+def test_title_and_status_sit_at_the_top_when_the_list_is_hidden(qtbot, five_page_pdf: Path):
+    widget = _make(qtbot)
+    widget.resize(240, 600)
+    widget.refresh(_pages(5))
+    title = next(
+        lbl for lbl in widget.findChildren(type(widget._status)) if lbl.objectName() == "PanelTitle"
+    )
+    margin = widget.layout().contentsMargins().top()
+
+    def assert_at_top() -> None:
+        assert title.y() == margin
+        # Neither label is stretched, so its text really is at the top.
+        assert title.height() <= title.sizeHint().height()
+        status = widget._status
+        assert status.isVisible()
+        assert status.height() <= status.heightForWidth(status.width())
+        assert status.y() == title.geometry().bottom() + 1 + widget.layout().spacing()
+
+    # Loading, then the empty line for a document without bookmarks.
+    widget.load([five_page_pdf])
+    assert widget.status_text() == LOADING_TEXT
+    assert_at_top()
+    qtbot.waitUntil(lambda: _settled(widget), timeout=10000)
+    assert widget.status_text() == EMPTY_TEXT
+    assert not _list(widget).isVisible()
+    assert_at_top()
+
+
 def test_deleting_every_section_page_shows_the_empty_line(qtbot, bookmarked_pdf: Path):
     model = PdfEditModel(str(bookmarked_pdf), 8)
     widget = _make(qtbot)

@@ -615,7 +615,11 @@ class PageCard(BaseFileCard):
             and self._model is None
         ):
             window = self.window()
-            if hasattr(window, "statusBar"):
+            # MainWindow floats this; other windows only have a status bar.
+            notify = getattr(window, "_transient_status", None)
+            if callable(notify):
+                notify("Open a PDF first")
+            elif hasattr(window, "statusBar"):
                 window.statusBar().showMessage("Open a PDF first")
         super().mouseMoveEvent(event)
 

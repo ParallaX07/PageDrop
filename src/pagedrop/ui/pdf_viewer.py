@@ -1823,6 +1823,8 @@ class PdfViewerWidget(QWidget):
         text = guidance[self._tool]
         self._hint.setText(text)
         self._hint.setAccessibleName(f"Active markup tool: {text}")
+        # Select is the resting state, so its guidance would only be noise.
+        self._hint.setVisible(self._tool is not AnnotTool.SELECT)
 
     def _prompt_markup_color(self) -> bool:
         """Ask for markup color; return False if cancelled (caller keeps prior tool)."""

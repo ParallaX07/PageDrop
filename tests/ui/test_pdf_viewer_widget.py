@@ -281,6 +281,8 @@ def test_viewer_markup_guidance_and_empty_navigation(
         assert viewer._hint.text() == (
             "Select: drag across text; click an annotation to edit it."
         )
+        # Select is the resting state: its hint row stays out of the way.
+        assert viewer._hint.isHidden()
         for tool, expected in (
             (AnnotTool.HIGHLIGHT, "Highlight: drag across text."),
             (AnnotTool.UNDERLINE, "Underline: drag across text."),
@@ -294,6 +296,10 @@ def test_viewer_markup_guidance_and_empty_navigation(
             viewer.set_annot_tool(tool)
             assert viewer._hint.text() == expected
             assert expected in viewer._hint.accessibleName()
+            assert not viewer._hint.isHidden()
+
+        viewer.set_annot_tool(AnnotTool.SELECT)
+        assert viewer._hint.isHidden()
 
         assert viewer._outline.topLevelItem(0).text(0) == "This PDF has no bookmarks"
         assert viewer._layers.item(0).text() == "This PDF has no optional layers"

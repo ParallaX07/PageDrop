@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QDialog, QInputDialog, QLineEdit, QPushButton
+from PyQt6.QtWidgets import QApplication, QDialog, QInputDialog, QLineEdit, QPushButton
 
 from pagedrop.core.pdf_loader import PdfLoader
 from pagedrop.ui.page_card import PageCard
@@ -124,7 +124,7 @@ def test_zoom_slider_double_click_resets(main_window, five_page_pdf, qtbot):
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
     )
-    zoom.eventFilter(zoom._slider, event)
+    QApplication.sendEvent(zoom._slider, event)
     assert grid.thumbnail_width_px == DEFAULT_THUMBNAIL_WIDTH
 
 

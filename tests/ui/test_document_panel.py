@@ -279,3 +279,17 @@ def test_closing_the_document_clears_the_panel(main_window, qtbot, five_page_pdf
     tab = _open_tab(main_window, qtbot, five_page_pdf)
     tab.close_loader()
     assert tab.document_panel.status_text() == EMPTY_TEXT
+
+
+def test_title_and_status_sit_at_the_top_without_a_document(qtbot):
+    panel = _make(qtbot)
+    panel.resize(300, 600)
+    panel.clear()
+    title = next(lbl for lbl in panel.findChildren(QLabel) if lbl.objectName() == "PanelTitle")
+    assert not _list(panel).isVisible()
+    assert title.y() == panel.layout().contentsMargins().top()
+    # Neither label is stretched, so its text really is at the top.
+    assert title.height() <= title.sizeHint().height()
+    assert panel._status.height() <= panel._status.heightForWidth(panel._status.width())
+    assert panel._status.isVisible()
+    assert panel._status.y() == title.geometry().bottom() + 1 + panel.layout().spacing()

@@ -60,6 +60,7 @@ from pagedrop.core.selection_manager import SelectionManager
 from pagedrop.core.supported_formats import pdf_paths_from_mime
 from pagedrop.ui.accessibility import prefers_reduce_motion
 from pagedrop.ui.drag_autoscroll import DragAutoScroller
+from pagedrop.ui.floating_status import FLOAT_CLEARANCE
 from pagedrop.ui.grid_helpers import (
     DropIndicator,
     ctrl_wheel_zoom_step,
@@ -2221,6 +2222,10 @@ class ThumbnailGrid(QScrollArea):
 
     def _update_empty_state(self) -> None:
         # Cards pack at the top left; the empty panel centres in the viewport.
+        # With pages, the last row scrolls clear of the floating size control.
+        self._layout.setContentsMargins(
+            SPACE_4, SPACE_4, SPACE_4, FLOAT_CLEARANCE if self._cards else SPACE_4
+        )
         if self._cards:
             self._layout.setAlignment(
                 Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft

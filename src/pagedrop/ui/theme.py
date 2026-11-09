@@ -1385,14 +1385,26 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         font-weight: 400;
     }}
 
-    QStatusBar {{
-        background-color: {bg_status};
-        color: {text_muted};
-        border-top: 1px solid {border_subtle};
+    QFrame#FloatingStatusPill,
+    QFrame#MoveUndoToast,
+    QFrame#ThumbnailZoomStatusHost {{
+        background-color: {bg_float};
+        border: 1px solid {border_subtle};
+        border-radius: {RADIUS_SURFACE}px;
     }}
 
-    QStatusBar QLabel {{
-        color: {text_muted};
+    QLabel#FloatingStatusMessage {{
+        color: {text_primary};
+        font-size: 13px;
+        font-weight: 500;
+        background-color: transparent;
+        border: none;
+    }}
+
+    QFrame#ThumbnailZoomStatusHost QWidget#ZoomControls {{
+        background-color: transparent;
+        border: none;
+        padding: 0;
     }}
 
     /* R10e: tool-tab footers mirror QStatusBar so Tools/editor chrome feel related. */

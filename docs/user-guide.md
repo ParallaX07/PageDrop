@@ -105,7 +105,7 @@ from the result bar. PageDrop does not open the report automatically.
 - Recheck and Download English language data try your changes but do not save them; nothing is saved until you click OK, and Cancel puts everything back as it was
 - System appearance follows the operating system's light or dark setting, and is the default on first run; once you choose Light or Dark, that choice is kept
 - High-contrast preferences are respected where the platform exposes them (Qt 6.10 or later). Focus rings keep enough contrast against light and dark chrome, and icons stay sharp on HiDPI displays
-- Shortcuts act only in the window that has focus, and not while you type in a text field. The undo and zoom controls in the status bar can be reached with Tab
+- Shortcuts act only in the window that has focus, and not while you type in a text field. The floating undo and thumbnail size controls can be reached with Tab
 - Window size and position are restored on launch; toasts confirm saves, extracts, and similar actions. A toast stays while the pointer or keyboard focus is on it, and the Undo toast takes clicks only on its own card
 
 ## Log file for bug reports
