@@ -374,6 +374,24 @@ def test_clear_during_load_leaves_the_pane_empty(qtbot, monkeypatch, tmp_path: P
     assert widget.row_count() == 0
 
 
+def test_a_stale_job_does_not_open_the_pdf(qtbot, monkeypatch, tmp_path: Path):
+    calls: list[object] = []
+    monkeypatch.setattr(section_module, "outline_for_paths", lambda *a, **k: calls.append(a))
+    queued = []
+    monkeypatch.setattr(section_module, "start_editor_worker", queued.append)
+    widget = _make(qtbot)
+    widget.load([tmp_path / "a.pdf"])
+    assert len(queued) == 1
+
+    widget.clear()
+    queued[0].run()
+    QApplication.processEvents()
+
+    assert calls == []
+    assert widget.status_text() == ""
+    assert widget.row_count() == 0
+
+
 def test_result_after_the_widget_is_destroyed_is_dropped(qtbot, monkeypatch, tmp_path: Path):
     gate = _Gate()
     gate.watch("a.pdf")

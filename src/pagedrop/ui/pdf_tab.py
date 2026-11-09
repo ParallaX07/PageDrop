@@ -259,7 +259,10 @@ class PdfTab(QWidget):
         return self._pane_wanted(pane)
 
     def set_workspace_pane_visible(self, pane: str, visible: bool) -> None:
-        """Turn *pane* on or off for every tab; a pane turned on stays on while narrow."""
+        """Turn *pane* on or off; a pane turned on stays on while narrow.
+
+        The preference is app-wide; other tabs pick it up when next shown.
+        """
         if self._edit_model is None:
             return
         self._pane_pref[pane] = visible
@@ -328,7 +331,8 @@ class PdfTab(QWidget):
             if sizes[spec.slot] <= 0:
                 # Dragged fully closed counts as hiding it.
                 self.set_workspace_pane_visible(pane, False)
-            else:
+            elif sizes[spec.slot] >= SIDE_PANE_MIN_WIDTH:
+                # Smaller sizes are a drag on the way closed; keep the last real width.
                 spec.set_width(sizes[spec.slot])
 
     def showEvent(self, event: QShowEvent) -> None:

@@ -399,6 +399,92 @@ def test_recent_entries_are_deduped_and_capped(isolated_settings):
     assert len({p for p, _ in entries}) == RECENT_FILES_MAX
 
 
+def _store_unreadable_recent(directory: Path, monkeypatch, error: Exception) -> Path:
+    """Store a recent path whose filesystem checks raise *error*."""
+    from pagedrop.ui import settings as settings_module
+
+    bad = directory / "locked" / "hidden.pdf"
+    settings_module._settings().setValue(settings_module.KEY_RECENT_FILES, [str(bad)])
+    real_exists, real_resolve, real_is_file = Path.exists, Path.resolve, Path.is_file
+
+    def guard(real):
+        def wrapper(self, *args, **kwargs):
+            if self.name == "hidden.pdf":
+                raise error
+            return real(self, *args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(Path, "exists", guard(real_exists))
+    monkeypatch.setattr(Path, "resolve", guard(real_resolve))
+    monkeypatch.setattr(Path, "is_file", guard(real_is_file))
+    return bad
+
+
+@pytest.mark.parametrize("error", [PermissionError("denied"), RuntimeError("symlink loop")])
+def test_an_unreadable_recent_path_is_listed_as_missing(
+    qtbot, isolated_settings, monkeypatch, error
+):
+    bad = _store_unreadable_recent(isolated_settings, monkeypatch, error)
+    (a,) = _recent_pdfs(isolated_settings, "a.pdf")
+
+    assert recent_file_entries() == [(str(a.resolve()), True), (str(bad), False)]
+    assert [Path(p).name for p in recent_files()] == ["a.pdf"]
+
+    screen = StartScreen()
+    qtbot.addWidget(screen)
+    screen.show()
+    assert _rows(screen) == ["a.pdf", "hidden.pdf"]
+    assert _row(screen, "hidden.pdf").data(VALUE_ROLE) == MISSING_TEXT
+
+    (b,) = _recent_pdfs(isolated_settings, "b.pdf")
+    assert [Path(p).name for p, _ in recent_file_entries()] == ["b.pdf", "a.pdf", "hidden.pdf"]
+    assert b.exists()
+
+
+@pytest.mark.parametrize("error", [PermissionError("denied"), RuntimeError("symlink loop")])
+def test_activating_an_unreadable_recent_row_warns_without_raising(
+    main_window, qtbot, isolated_settings, monkeypatch, error
+):
+    bad = _store_unreadable_recent(isolated_settings, monkeypatch, error)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda _parent, _title, text, *a, **k: warnings.append(text)
+    )
+    tab = main_window._active_tab()
+    tab.start_screen.refresh_recent()
+    item = tab.start_screen.recent_list.item(0)
+    assert item.data(VALUE_ROLE) == MISSING_TEXT
+
+    tab.start_screen.recent_list.itemClicked.emit(item)
+
+    assert warnings == [f"File not found:\n{bad}"]
+    assert tab.is_blank
+
+
+def test_a_full_list_drops_missing_entries_before_live_ones(isolated_settings):
+    from pagedrop.ui.settings import RECENT_FILES_MAX
+
+    paths = _recent_pdfs(
+        isolated_settings, *[f"f{n:02d}.pdf" for n in range(RECENT_FILES_MAX)]
+    )
+    # The oldest entries are the missing ones; a live file sits among the newest.
+    missing = paths[:6]
+    for path in missing:
+        path.unlink()
+    live = paths[6:]
+    (new,) = _recent_pdfs(isolated_settings, "new.pdf")
+
+    entries = recent_file_entries()
+    assert len(entries) == RECENT_FILES_MAX
+    assert Path(entries[0][0]).name == "new.pdf"
+    kept = {Path(p).name for p, ok in entries if ok}
+    assert kept == {p.name for p in live} | {new.name}
+    assert [Path(p).name for p, ok in entries if not ok] == [
+        p.name for p in reversed(missing)
+    ][:5]
+
+
 def test_no_recent_files_shows_one_quiet_line(qtbot, isolated_settings):
     screen = StartScreen()
     qtbot.addWidget(screen)

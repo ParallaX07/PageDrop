@@ -194,6 +194,14 @@ def remember_directory(path: str | Path) -> None:
         _settings().setValue(KEY_LAST_DIRECTORY, str(directory))
 
 
+def _recent_state(path: Path) -> tuple[bool, str]:
+    """Whether *path* exists and its dedupe key; unreadable paths count as missing."""
+    try:
+        return path.exists(), str(path.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False, str(path)
+
+
 def _recent_entries(*, keep_missing: bool) -> list[tuple[str, bool]]:
     raw = _settings().value(KEY_RECENT_FILES, [])
     if not isinstance(raw, list):
@@ -202,10 +210,9 @@ def _recent_entries(*, keep_missing: bool) -> list[tuple[str, bool]]:
     seen: set[str] = set()
     for item in raw:
         path = Path(str(item))
-        exists = path.exists()
+        exists, key = _recent_state(path)
         if not exists and not keep_missing:
             continue
-        key = str(path.resolve())
         if not key or key in seen:
             continue
         seen.add(key)
@@ -229,18 +236,22 @@ def remember_recent_file(path: str | Path) -> None:
     """Prepend *path* to the recent-files list (deduped, capped).
 
     Entries whose file has gone missing stay in the list so the start screen can
-    still show them.
+    still show them, but they are dropped (oldest first) before any live file when
+    the list is full.
     """
     resolved = Path(path)
     if not resolved.is_file():
         return
     key = str(resolved.resolve())
     existing = [
-        p
-        for p, _ in recent_file_entries()
-        if str(Path(p).resolve()) != key
+        (p, ok) for p, ok in recent_file_entries() if _recent_state(Path(p))[1] != key
     ]
-    _settings().setValue(KEY_RECENT_FILES, [key, *existing][:RECENT_FILES_MAX])
+    for i in range(len(existing) - 1, -1, -1):
+        if len(existing) < RECENT_FILES_MAX:
+            break
+        if not existing[i][1]:
+            del existing[i]
+    _settings().setValue(KEY_RECENT_FILES, [key, *(p for p, _ in existing)][:RECENT_FILES_MAX])
 
 
 def reduce_motion() -> bool:

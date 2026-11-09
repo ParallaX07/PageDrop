@@ -156,6 +156,8 @@ class SectionIndex(QWidget):
         password_map = dict(passwords) if passwords else None
 
         def work(_progress) -> tuple[int, list[OutlineItem] | None, BaseException | None]:
+            if generation != self._generation:
+                return generation, None, None  # stale: dropped by _on_loaded
             try:
                 return generation, outline_for_paths(path_list, passwords=password_map), None
             except Exception as exc:

@@ -148,6 +148,14 @@ STATUS_TRANSIENT_MS = 5000
 COMPACT_STATUS_WIDTH = 640
 
 
+def _is_file(path: Path) -> bool:
+    """Whether *path* is a file; a path that cannot be read counts as missing."""
+    try:
+        return path.is_file()
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 class MainWindow(WindowChromeMixin, QMainWindow):
     APP_TITLE = "PageDrop"
     editor_job_finished = pyqtSignal(object)
@@ -2933,7 +2941,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         problems: list[str] = []
         for path in paths:
             file = Path(path)
-            if not file.is_file():
+            if not _is_file(file):
                 problems.append(f"{file.name or path}: file not found")
             elif file.suffix.lower() != ".pdf":
                 problems.append(f"{file.name}: not a PDF file")
@@ -2983,7 +2991,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
 
     def _open_recent_if_present(self, path: str) -> None:
         """Open a recent file, or say why not when it has gone."""
-        if not Path(path).is_file():
+        if not _is_file(Path(path)):
             QMessageBox.warning(
                 self,
                 "Open recent",

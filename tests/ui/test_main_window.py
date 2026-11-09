@@ -2072,6 +2072,26 @@ def test_remembered_widths_are_restored_and_saved_on_drag(main_window, five_page
     assert splitter.sizes()[0] == 220
 
 
+def test_dragging_a_pane_towards_closed_keeps_its_remembered_width(
+    main_window, five_page_pdf, qtbot
+):
+    from pagedrop.ui.pdf_tab import SIDE_PANE_MIN_WIDTH
+    from pagedrop.ui.settings import sections_width
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    splitter = tab.workspace_splitter
+    qtbot.waitUntil(lambda: splitter.sizes()[0] == 176)
+    splitter.moveSplitter(220, 1)
+    assert sections_width(0) == 220
+
+    splitter.moveSplitter(SIDE_PANE_MIN_WIDTH - 40, 1)
+    assert sections_width(0) == 220
+
+    splitter.moveSplitter(0, 1)
+    _pane_action(main_window, "sections").trigger()
+    assert splitter.sizes()[0] == 220
+
+
 def test_dragging_a_pane_closed_counts_as_hiding_it(main_window, five_page_pdf, qtbot):
     from pagedrop.ui.settings import document_panel_visible, sections_visible
 
