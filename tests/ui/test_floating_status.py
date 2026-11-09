@@ -14,7 +14,7 @@ from pagedrop.core.drag_mime import (
     encode_page_indices,
     encode_page_refs,
 )
-from pagedrop.ui.floating_status import FLOAT_MARGIN
+from pagedrop.ui.floating_status import FLOAT_GAP, FLOAT_MARGIN
 from pagedrop.ui.page_card import PageCard
 from tests.conftest import wait_for_pdf_loaded
 from tests.fixtures.generate_fixtures import generate_n_page
@@ -299,6 +299,26 @@ def test_message_stacks_above_the_size_control_when_they_would_overlap(
     qtbot.waitUntil(lambda: pill.geometry().bottom() < host.geometry().top())
     assert not pill.geometry().intersects(host.geometry())
     assert _area(main_window).contains(pill.geometry())
+
+
+def test_toast_clears_the_size_control(main_window, five_page_pdf, qtbot):
+    _open(main_window, five_page_pdf, qtbot, width=560)
+    host = main_window._thumbnail_zoom_host
+    assert host.isVisible()
+    main_window._show_toast(
+        "Extracted 3 pages to a new window and kept the original document", kind="success"
+    )
+    toast = main_window._toast
+    qtbot.waitUntil(lambda: toast.isVisible() and toast.motion_t == 0.0)
+    card = toast.findChild(QWidget, "ToastOverlayCard")
+
+    def _rect(widget: QWidget) -> QRect:
+        return QRect(widget.mapTo(main_window, QPoint(0, 0)), widget.size())
+
+    # Narrow enough that the centred card and the corner control share columns.
+    assert _rect(card).left() <= _rect(host).right() and _rect(host).left() <= _rect(card).right()
+    assert not _rect(card).intersects(_rect(host))
+    assert _rect(host).top() - _rect(card).bottom() - 1 >= FLOAT_GAP
 
 
 def test_size_control_floats_only_in_the_grid_with_a_document(

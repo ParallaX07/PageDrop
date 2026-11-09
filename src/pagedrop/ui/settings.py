@@ -21,6 +21,7 @@ KEY_WINDOW_GEOMETRY = "window/geometry"
 KEY_LIGHT_THEME = "view/light_theme"
 KEY_APPEARANCE = "view/appearance"
 KEY_CHROME_VISIBLE = "view/chrome_visible"
+KEY_PAGE_FOCUS = "view/page_focus"
 KEY_SECTIONS_VISIBLE = "view/sections_visible"
 KEY_SECTIONS_WIDTH = "view/sections_width"
 KEY_DOCUMENT_PANEL_VISIBLE = "view/document_panel_visible"
@@ -354,6 +355,15 @@ def chrome_visible() -> bool:
 
 def set_chrome_visible(visible: bool) -> None:
     _settings().setValue(KEY_CHROME_VISIBLE, bool(visible))
+
+
+def page_focus() -> bool:
+    """Hide the tab row and toolbar while Pages view shows a document (default: False)."""
+    return _settings().value(KEY_PAGE_FOCUS, False, type=bool)
+
+
+def set_page_focus(enabled: bool) -> None:
+    _settings().setValue(KEY_PAGE_FOCUS, bool(enabled))
 
 
 def sections_visible() -> bool:

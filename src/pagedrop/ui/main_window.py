@@ -98,11 +98,13 @@ from pagedrop.ui.settings import (
     last_directory,
     appearance,
     load_window_geometry,
+    page_focus,
     recent_files,
     remember_directory,
     remember_recent_file,
     save_window_geometry,
     sections_visible,
+    set_page_focus,
     settings_file_path,
     set_thumbnail_quality,
     set_thumbnail_zoom,
@@ -371,6 +373,21 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         }
         # Accessible name of each sidebar toggle's toolbar button, kept by _sync_pane_actions.
         self._pane_names: dict[str, str] = {}
+        self._page_focus_action = actions.register(
+            "toggle_page_focus",
+            "&Focus on page",
+            slot=self._on_page_focus_toggled,
+            shortcut="Ctrl+Shift+F",
+            checkable=True,
+            checked=page_focus(),
+            icon=icons.icon("arrows-in-line-vertical" if page_focus() else "arrows-out"),
+            tip="Focus on page (Ctrl+Shift+F)",
+            enabled=False,
+            add_to_window=True,
+        )
+        # True while the tab row and toolbar are hidden for Pages view.
+        self._page_focus_on = False
+        self._page_focus_name = "Focus on page"
         self._quality_action_group = QActionGroup(self)
         self._quality_action_group.setExclusive(True)
         current_quality = thumbnail_quality()
@@ -611,6 +628,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             "View": {
                 "appearance_system", "appearance_light", "appearance_dark",
                 "chrome_visible", "toggle_sections", "toggle_document_panel",
+                "toggle_page_focus",
                 "quality_low", "quality_medium",
                 "quality_high", "command_palette", "reset_zoom",
             },
@@ -690,6 +708,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         view_menu.addAction(a["chrome_visible"])
         view_menu.addAction(a["toggle_sections"])
         view_menu.addAction(a["toggle_document_panel"])
+        view_menu.addAction(a["toggle_page_focus"])
         quality_menu = view_menu.addMenu("Thumbnail &quality")
         for key in ("quality_low", "quality_medium", "quality_high"):
             quality_menu.addAction(a[key])
@@ -896,6 +915,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         tab.preview_widget.set_sidebar_names(
             self._pane_names.get(PANE_SECTIONS, ""),
             self._pane_names.get(PANE_DOCUMENT, ""),
+            self._page_focus_name,
         )
 
     def _apply_toolbar_label_style(self) -> None:
@@ -1234,7 +1254,9 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             self._actions["open"], self._actions["merge"], self._actions["tools"]
         )
         tab.preview_widget.set_sidebar_actions(
-            self._pane_actions[PANE_SECTIONS], self._pane_actions[PANE_DOCUMENT]
+            self._pane_actions[PANE_SECTIONS],
+            self._pane_actions[PANE_DOCUMENT],
+            self._page_focus_action,
         )
         self._name_viewer_sidebar_toggles(tab)
         tab.start_screen.recent_file_requested.connect(self._open_recent_if_present)
@@ -1565,6 +1587,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             side = "left" if left else "right"
             action.setIcon(icons.icon(f"sidebar-{side}-fill" if checked else f"sidebar-{side}"))
             self._pane_names[pane] = name
+        self._sync_page_focus()
         self._style_sidebar_toggles()
         if tab is not None:
             self._name_viewer_sidebar_toggles(tab)
@@ -1574,6 +1597,67 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         owned = self._viewer_owned_toolbar_actions()
         if any((a in on_bar) == (a in owned) for a in self._pane_actions.values()):
             self._refit_toolbar()
+
+    def _on_page_focus_toggled(self, enabled: bool) -> None:
+        set_page_focus(enabled)
+        self._sync_page_focus()
+
+    def _sync_page_focus(self) -> None:
+        """Show the page-focus preference and hide the tab row and toolbar with it.
+
+        The preference is app-wide, but the rows only hide while the active
+        tab shows a document in Pages view, so every other view restores them.
+        """
+        tab = self._active_tab()
+        in_pages = tab is not None and not tab.is_blank and tab.is_viewer_mode()
+        wanted = page_focus()
+        action = self._page_focus_action
+        action.setEnabled(in_pages)
+        if action.isChecked() != wanted:
+            action.blockSignals(True)
+            action.setChecked(wanted)
+            action.blockSignals(False)
+        self._page_focus_name = "Exit focus" if wanted else "Focus on page"
+        self._set_action_hint(action, f"{self._page_focus_name} ({action.shortcut().toString()})")
+        action.setIcon(icons.icon("arrows-in-line-vertical" if wanted else "arrows-out"))
+        if tab is not None:
+            self._name_viewer_sidebar_toggles(tab)
+        self._apply_page_focus(wanted and in_pages)
+
+    def _apply_page_focus(self, active: bool) -> None:
+        changed = active != self._page_focus_on
+        if changed:
+            tab_bar = self._tab_manager.tabBar()
+            corner = self._tab_manager.cornerWidget(Qt.Corner.TopRightCorner)
+            rows = [w for w in (tab_bar, corner, self._toolbar) if w is not None]
+            focus = QApplication.focusWidget()
+            tab = self._active_tab()
+            if (
+                active
+                and tab is not None
+                and focus is not None
+                and any(w is focus or w.isAncestorOf(focus) for w in rows)
+            ):
+                tab.preview_widget.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._page_focus_on = active
+            tab_bar.setVisible(not active)
+            if corner is not None:
+                corner.setVisible(not active)
+        # Also lets a blank tab take the toolbar back after its document closed.
+        if changed or self._toolbar_host_tab is not None:
+            self._update_toolbar_visibility()
+        if changed and not active and not self._chrome_visible_action.isChecked():
+            # Menu and toolbar were hidden before focus began; leaving it keeps them so.
+            self._toolbar.hide()
+        if changed and self._tab_order_applied:
+            self._apply_tab_order()
+
+    def _update_toolbar_visibility(self) -> None:
+        """The one place that decides whether the window toolbar shows."""
+        tab = self._active_tab()
+        self._toolbar.setVisible(
+            tab is not None and not tab.is_blank and not self._page_focus_on
+        )
 
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
@@ -1612,14 +1696,13 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._sync_contextual_toolbar(selection)
 
     def _set_toolbar_host(self, tab: PdfTab | None) -> None:
-        if self._toolbar_host_tab is tab:
-            self._toolbar.setVisible(tab is not None)
-            return
-        if self._toolbar_host_tab is not None:
-            self._toolbar_host_tab.detach_context_toolbar(self._toolbar)
-        self._toolbar_host_tab = tab
-        if tab is not None:
-            tab.attach_context_toolbar(self._toolbar)
+        if self._toolbar_host_tab is not tab:
+            if self._toolbar_host_tab is not None:
+                self._toolbar_host_tab.detach_context_toolbar(self._toolbar)
+            self._toolbar_host_tab = tab
+            if tab is not None:
+                tab.attach_context_toolbar(self._toolbar)
+        self._update_toolbar_visibility()
 
     def _sync_contextual_toolbar(self, selection: set[int]) -> None:
         # Page commands stay on the bar and are enabled by their own actions, so

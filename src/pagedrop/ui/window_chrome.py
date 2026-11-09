@@ -281,7 +281,7 @@ class WindowChromeMixin:
     def _set_chrome_visible(self, visible: bool, *, persist: bool = True) -> None:
         # The title bar and its window controls stay; only the menus go.
         self._menu_bar.setVisible(visible)
-        self._toolbar.setVisible(visible)
+        self._toolbar.setVisible(visible and not self._page_focus_on)
         QTimer.singleShot(0, self._update_responsive_shell)
         action = getattr(self, "_chrome_visible_action", None)
         if action is not None and action.isChecked() != visible:

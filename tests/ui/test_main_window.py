@@ -2501,7 +2501,8 @@ def test_a_tab_moved_to_another_window_rebinds_its_viewer_toggles(
         _enter_pages_view(tab, qtbot)
 
         buttons = _viewer_toggle_buttons(viewer)
-        assert len(buttons) == 2
+        assert len(buttons) == 3
+        assert viewer._focus_button.defaultAction() is other._page_focus_action
         assert viewer._sidebar_left_button.defaultAction() is _pane_action(other, "sections")
         assert viewer._sidebar_right_button.defaultAction() is _pane_action(other, "document")
         qtbot.waitUntil(lambda: _pane_action(other, "sections") not in other._toolbar.actions())

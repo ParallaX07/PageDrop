@@ -2156,6 +2156,7 @@ class PdfViewerWidget(QWidget):
         # in the window; hidden until the window binds its actions.
         self._sidebar_left_button = self._make_sidebar_button()
         self._sidebar_right_button = self._make_sidebar_button()
+        self._focus_button = self._make_sidebar_button()
         layout.addWidget(self._sidebar_left_button)
 
         self._find_group = self._toolbar_group("Find")
@@ -2300,6 +2301,7 @@ class PdfViewerWidget(QWidget):
         self._secondary_overflow.setMenu(self._secondary_overflow_menu)
         secondary_layout.addWidget(self._secondary_overflow)
         layout.addWidget(self._secondary_group)
+        layout.addWidget(self._focus_button)
         layout.addWidget(self._sidebar_right_button)
 
         return bar
@@ -2313,24 +2315,28 @@ class PdfViewerWidget(QWidget):
         button.hide()
         return button
 
-    def set_sidebar_actions(self, left: QAction, right: QAction) -> None:
-        """Show the window's two sidebar toggles at the ends of the bar.
+    def set_sidebar_actions(self, left: QAction, right: QAction, focus: QAction) -> None:
+        """Show the window's sidebar toggles at the ends of the bar.
+
+        The page-focus toggle sits just left of the right sidebar toggle.
 
         Calling it again, for example after the tab moved to another window,
-        rebinds the same two buttons to the new actions.
+        rebinds the same buttons to the new actions.
         """
         for button, action in (
             (self._sidebar_left_button, left),
+            (self._focus_button, focus),
             (self._sidebar_right_button, right),
         ):
             button.setDefaultAction(action)
             button.show()
         self._update_toolbar_layout()
 
-    def set_sidebar_names(self, left: str, right: str) -> None:
-        """Accessible names of the two sidebar toggles."""
+    def set_sidebar_names(self, left: str, right: str, focus: str) -> None:
+        """Accessible names of the sidebar and page-focus toggles."""
         self._sidebar_left_button.setAccessibleName(left)
         self._sidebar_right_button.setAccessibleName(right)
+        self._focus_button.setAccessibleName(focus)
 
     @staticmethod
     def _toolbar_group(name: str) -> QFrame:
@@ -2356,7 +2362,11 @@ class PdfViewerWidget(QWidget):
         margins = toolbar_layout.contentsMargins()
         toggles = tuple(
             button.sizeHint().width()
-            for button in (self._sidebar_left_button, self._sidebar_right_button)
+            for button in (
+                self._sidebar_left_button,
+                self._focus_button,
+                self._sidebar_right_button,
+            )
             if not button.isHidden()
         )
         groups = (
