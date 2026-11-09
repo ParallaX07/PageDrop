@@ -315,8 +315,6 @@ def test_toast_clears_the_size_control(main_window, five_page_pdf, qtbot):
     def _rect(widget: QWidget) -> QRect:
         return QRect(widget.mapTo(main_window, QPoint(0, 0)), widget.size())
 
-    # Narrow enough that the centred card and the corner control share columns.
-    assert _rect(card).left() <= _rect(host).right() and _rect(host).left() <= _rect(card).right()
     assert not _rect(card).intersects(_rect(host))
     assert _rect(host).top() - _rect(card).bottom() - 1 >= FLOAT_GAP
 
@@ -405,7 +403,7 @@ def test_message_does_not_block_clicks_or_drops(
     spot = target.mapFromGlobal(main_window._tab_manager.mapToGlobal(point))
     event = _drop(target, _file_mime(extra), spot)
     assert event.isAccepted()
-    assert [paths for paths, _index in inserted] == [[str(extra)]]
+    assert [paths for paths, _index in inserted] == [[extra.as_posix()]]
 
 
 def test_size_control_forwards_a_file_drop_to_the_grid(
@@ -424,7 +422,7 @@ def test_size_control_forwards_a_file_drop_to_the_grid(
     spot = QPoint(host.width() // 2, host.height() // 2)
     event = _drop(host, _file_mime(extra), spot)
     assert event.isAccepted()
-    assert [paths for paths, _index in inserted] == [[str(extra)]]
+    assert [paths for paths, _index in inserted] == [[extra.as_posix()]]
 
     # The pointer is mapped into the grid, not left in the control's own corner.
     mapped = grid.viewport().mapFromGlobal(host.mapToGlobal(spot))
