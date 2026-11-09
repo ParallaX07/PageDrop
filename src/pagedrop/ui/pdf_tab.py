@@ -153,7 +153,7 @@ class PdfTab(QWidget):
         self._narrow = dict.fromkeys(_PANES, False)
         self._forced = dict.fromkeys(_PANES, False)
         self._applying_panes = False
-        self._last_pane_state: tuple[bool, bool, bool] | None = None
+        self._last_pane_state: tuple[bool, bool, bool, bool] | None = None
         self._outline_paths: frozenset[str] | None = None
         self._panel_path: object = _UNSET
 
@@ -177,6 +177,7 @@ class PdfTab(QWidget):
         self._preview_widget = PdfViewerWidget()
         self._preview_widget.closed.connect(self.close_preview)
         self._preview_widget.markup_changed.connect(self._on_markup_changed)
+        self._preview_widget.panels_changed.connect(self.workspace_panes_changed)
         # The stack sizes itself from every page, hidden ones included. Let the
         # viewer's side panels give way instead of setting the window's floor.
         self._preview_widget.setSizePolicy(
@@ -255,15 +256,38 @@ class PdfTab(QWidget):
         return self._splitter
 
     def workspace_pane_visible(self, pane: str) -> bool:
-        """Whether *pane* (``PANE_SECTIONS`` or ``PANE_DOCUMENT``) is showing."""
+        """Whether the left (``PANE_SECTIONS``) or right (``PANE_DOCUMENT``) sidebar is open.
+
+        The grid has the Sections pane and Document panel; the full viewer has
+        its Navigation panel and Markup rail in the same two positions.
+        """
+        if self.is_viewer_mode():
+            viewer = self._preview_widget
+            if pane == PANE_SECTIONS:
+                return viewer.navigation_panel_visible()
+            return viewer.markup_rail_visible()
         return self._pane_wanted(pane)
 
-    def set_workspace_pane_visible(self, pane: str, visible: bool) -> None:
-        """Turn *pane* on or off; a pane turned on stays on while narrow.
+    def workspace_pane_label(self, pane: str) -> str:
+        """Lower-case noun for the sidebar at *pane* in the current view."""
+        if self.is_viewer_mode():
+            return "navigation" if pane == PANE_SECTIONS else "markup tools"
+        return "sections" if pane == PANE_SECTIONS else "document panel"
 
-        The preference is app-wide; other tabs pick it up when next shown.
+    def set_workspace_pane_visible(self, pane: str, visible: bool) -> None:
+        """Turn a sidebar on or off; a grid pane turned on stays on while narrow.
+
+        The grid preference is app-wide; other tabs pick it up when next shown.
+        In the full viewer this opens or closes the viewer's own panel and
+        leaves the grid preferences alone.
         """
         if self._edit_model is None:
+            return
+        if self.is_viewer_mode():
+            if pane == PANE_SECTIONS:
+                self._preview_widget.set_navigation_panel_visible(visible)
+            else:
+                self._preview_widget.set_markup_rail_visible(visible)
             return
         self._pane_pref[pane] = visible
         _PANES[pane].set_visible(visible)
@@ -276,6 +300,7 @@ class PdfTab(QWidget):
     def _pane_wanted(self, pane: str) -> bool:
         return (
             self._edit_model is not None
+            and not self.is_viewer_mode()
             and self._pane_pref[pane]
             and (not self._narrow[pane] or self._forced[pane])
         )
@@ -306,6 +331,7 @@ class PdfTab(QWidget):
             self._edit_model is None,
             self._pane_wanted(PANE_SECTIONS),
             self._pane_wanted(PANE_DOCUMENT),
+            self.is_viewer_mode(),
         )
         if state != self._last_pane_state:
             self._last_pane_state = state
@@ -673,11 +699,13 @@ class PdfTab(QWidget):
         self._preview_widget.reset_zoom_to_fit()
         self._preview_widget.show_page(page_index)
         self._content_stack.setCurrentWidget(self._preview_widget)
+        self._apply_panes()
 
     def close_preview(self) -> None:
         if not self.is_viewer_mode():
             return
         self._content_stack.setCurrentWidget(self._thumbnail_grid)
+        self._apply_panes()
         self._thumbnail_grid.refresh_markup_thumbnails()
         self._preview_widget.clear_caches()
 

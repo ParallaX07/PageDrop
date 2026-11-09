@@ -979,6 +979,38 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
         border: {focus_width}px solid {focus_ring};
     }}
 
+    /* Sidebar toggles show open/closed by their icon alone, on the window
+       toolbar and on the viewer's own bar. */
+    QToolBar QToolButton#ToolbarSidebarToggle:checked,
+    QWidget#PdfViewerToolbar QToolButton#ToolbarSidebarToggle:checked {{
+        background-color: transparent;
+        border: 1px solid transparent;
+    }}
+
+    QToolBar QToolButton#ToolbarSidebarToggle:checked:hover,
+    QWidget#PdfViewerToolbar QToolButton#ToolbarSidebarToggle:checked:hover {{
+        background-color: {bg_card_hover};
+        border-color: {border_subtle};
+    }}
+
+    QToolBar QToolButton#ToolbarSidebarToggle:checked:pressed,
+    QWidget#PdfViewerToolbar QToolButton#ToolbarSidebarToggle:checked:pressed {{
+        background-color: {bg_pressed};
+        border-color: {border_default};
+    }}
+
+    QToolBar QToolButton#ToolbarSidebarToggle:checked:focus,
+    QWidget#PdfViewerToolbar QToolButton#ToolbarSidebarToggle:checked:focus {{
+        border: {focus_width}px solid {focus_ring};
+    }}
+
+    QToolBar QToolButton#ToolbarSidebarToggle:checked:disabled,
+    QWidget#PdfViewerToolbar QToolButton#ToolbarSidebarToggle:checked:disabled {{
+        background-color: transparent;
+        border-color: {disabled_tool_border};
+        border-style: {disabled_border_style};
+    }}
+
     QToolButton:disabled,
     QToolBar QToolButton:disabled {{
         color: {disabled_text};
@@ -1849,41 +1881,6 @@ def app_stylesheet(*, high_contrast: bool = False, light: bool = False) -> str:
     }}
 
     QWidget#PdfViewerAnnotTools QToolButton:focus {{
-        border: {focus_width}px solid {focus_ring};
-    }}
-
-    QToolButton#PdfViewerAnnotCollapse,
-    QToolButton#PdfViewerAnnotExpand,
-    QToolButton#PdfViewerSideCollapse,
-    QToolButton#PdfViewerSideExpand {{
-        color: {text_muted};
-        border: 1px solid transparent;
-        border-radius: {RADIUS_CONTROL}px;
-        padding: 4px;
-        background-color: transparent;
-    }}
-
-    QToolButton#PdfViewerAnnotCollapse:hover,
-    QToolButton#PdfViewerAnnotExpand:hover,
-    QToolButton#PdfViewerSideCollapse:hover,
-    QToolButton#PdfViewerSideExpand:hover {{
-        color: {text_primary};
-        background-color: {bg_card_hover};
-    }}
-
-    QToolButton#PdfViewerAnnotCollapse:pressed,
-    QToolButton#PdfViewerAnnotExpand:pressed,
-    QToolButton#PdfViewerSideCollapse:pressed,
-    QToolButton#PdfViewerSideExpand:pressed {{
-        color: {text_primary};
-        background-color: {bg_card};
-        border-color: {border_default};
-    }}
-
-    QToolButton#PdfViewerAnnotCollapse:focus,
-    QToolButton#PdfViewerAnnotExpand:focus,
-    QToolButton#PdfViewerSideCollapse:focus,
-    QToolButton#PdfViewerSideExpand:focus {{
         border: {focus_width}px solid {focus_ring};
     }}
 

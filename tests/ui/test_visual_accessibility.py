@@ -309,8 +309,11 @@ def test_r10a_page_chips_and_prefs_chrome():
         assert "QFrame#PreferencesDivider" in sheet
         assert "QWidget#PdfViewerAnnotTools QToolButton:focus" in sheet
         assert "QWidget#PdfViewerAnnotTools QToolButton:pressed" in sheet
-        assert "QToolButton#PdfViewerAnnotCollapse:focus" in sheet
-        assert "QToolButton#PdfViewerAnnotExpand:pressed" in sheet
+        assert "QToolButton#ToolbarSidebarToggle:checked:focus" in sheet
+        assert "QToolButton#ToolbarSidebarToggle:checked:pressed" in sheet
+        for state in ("", ":hover", ":pressed", ":focus", ":disabled"):
+            for scope in ("QToolBar", "QWidget#PdfViewerToolbar"):
+                assert f"{scope} QToolButton#ToolbarSidebarToggle:checked{state}" in sheet
         assert f"solid {ring}" in sheet.split(
             "QWidget#PdfViewerAnnotTools QToolButton:focus"
         )[1].split("}")[0]

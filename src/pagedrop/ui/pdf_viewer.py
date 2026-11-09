@@ -119,6 +119,7 @@ from pagedrop.ui.theme import (
     COMMENT_PIN,
     COMMENT_PIN_EDGE,
     DEFAULT_THUMBNAIL_WIDTH,
+    ICON_SIZE,
     MIN_PREVIEW_RENDER_WIDTH,
     PAGE_INK,
     SEARCH_HIT,
@@ -140,9 +141,7 @@ from pagedrop.ui.settings import (
 
 PAGE_GAP_PX = 16
 SIDE_PANEL_WIDTH = 240
-SIDE_PANEL_COLLAPSED = 64
 ANNOT_RAIL_WIDTH = 120
-ANNOT_RAIL_COLLAPSED = 88
 CACHE_MAX_PIXMAPS = 48
 RENDER_DEBOUNCE_MS = 80
 DEFAULT_ZOOM_PERCENT = 100
@@ -1552,6 +1551,8 @@ class PdfViewerWidget(QWidget):
     ocr_requested = pyqtSignal()
     render_error = pyqtSignal(str)
     markup_changed = pyqtSignal()
+    # Navigation panel or markup rail shown/hidden, or the active markup tool changed.
+    panels_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1845,15 +1846,13 @@ class PdfViewerWidget(QWidget):
             btn = self._annot_group.button(i)
             if btn is not None:
                 btn.setChecked(tool == self._tool)
-        if hasattr(self, "_annot_expand_btn"):
-            label = next(label for label, tool in ANNOT_TOOL_ITEMS if tool == self._tool)
-            self._annot_expand_btn.setText(f"‹ {label}")
-            self._annot_expand_btn.setAccessibleName(
-                f"Show markup tools; active tool: {label}"
-            )
-            self._annot_expand_btn.setToolTip(
-                f"Show markup tools (active: {label})"
-            )
+        self.panels_changed.emit()
+
+    def active_markup_label(self) -> str:
+        """Label of the active markup tool; empty while plain Select is active."""
+        if self._tool == AnnotTool.SELECT:
+            return ""
+        return next(label for label, tool in ANNOT_TOOL_ITEMS if tool == self._tool)
 
     def refresh_markup_overlays(self) -> None:
         for tile in self._tiles.values():
@@ -2151,6 +2150,12 @@ class PdfViewerWidget(QWidget):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
 
+        # The window's sidebar toggles sit at both ends of this bar while it is
+        # in the window; hidden until the window binds its actions.
+        self._sidebar_left_button = self._make_sidebar_button()
+        self._sidebar_right_button = self._make_sidebar_button()
+        layout.addWidget(self._sidebar_left_button)
+
         self._find_group = self._toolbar_group("Find")
         find_layout = self._find_group.layout()
         self._search_edit = QLineEdit()
@@ -2293,8 +2298,37 @@ class PdfViewerWidget(QWidget):
         self._secondary_overflow.setMenu(self._secondary_overflow_menu)
         secondary_layout.addWidget(self._secondary_overflow)
         layout.addWidget(self._secondary_group)
+        layout.addWidget(self._sidebar_right_button)
 
         return bar
+
+    @staticmethod
+    def _make_sidebar_button() -> QToolButton:
+        button = QToolButton()
+        button.setObjectName("ToolbarSidebarToggle")
+        button.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        button.hide()
+        return button
+
+    def set_sidebar_actions(self, left: QAction, right: QAction) -> None:
+        """Show the window's two sidebar toggles at the ends of the bar.
+
+        Calling it again, for example after the tab moved to another window,
+        rebinds the same two buttons to the new actions.
+        """
+        for button, action in (
+            (self._sidebar_left_button, left),
+            (self._sidebar_right_button, right),
+        ):
+            button.setDefaultAction(action)
+            button.show()
+        self._update_toolbar_layout()
+
+    def set_sidebar_names(self, left: str, right: str) -> None:
+        """Accessible names of the two sidebar toggles."""
+        self._sidebar_left_button.setAccessibleName(left)
+        self._sidebar_right_button.setAccessibleName(right)
 
     @staticmethod
     def _toolbar_group(name: str) -> QFrame:
@@ -2318,7 +2352,13 @@ class PdfViewerWidget(QWidget):
         toolbar_layout = self._toolbar.layout()
         assert isinstance(toolbar_layout, QHBoxLayout)
         margins = toolbar_layout.contentsMargins()
+        toggles = tuple(
+            button.sizeHint().width()
+            for button in (self._sidebar_left_button, self._sidebar_right_button)
+            if not button.isHidden()
+        )
         groups = (
+            *toggles,
             self._find_group.minimumSizeHint().width(),
             self._page_group.sizeHint().width(),
             layout_widget.sizeHint().width() + 8,
@@ -2382,30 +2422,17 @@ class PdfViewerWidget(QWidget):
     def _build_annot_rail(self) -> QWidget:
         rail = QFrame()
         rail.setObjectName("PdfViewerAnnotRail")
-        rail.setMinimumWidth(ANNOT_RAIL_COLLAPSED)
-        rail.setMaximumWidth(ANNOT_RAIL_WIDTH)
+        rail.setFixedWidth(ANNOT_RAIL_WIDTH)
         rail.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
         outer = QVBoxLayout(rail)
         outer.setContentsMargins(4, 6, 4, 6)
         outer.setSpacing(4)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(2)
-        self._annot_rail_title = QLabel("Markup")
-        self._annot_rail_title.setObjectName("PdfViewerAnnotRailTitle")
-        self._annot_rail_title.setAccessibleName("Markup tools")
-        header.addWidget(self._annot_rail_title, stretch=1)
-
-        self._annot_collapse_btn = QToolButton()
-        self._annot_collapse_btn.setObjectName("PdfViewerAnnotCollapse")
-        self._annot_collapse_btn.setText("Hide")
-        self._annot_collapse_btn.setToolTip("Collapse markup tools")
-        self._annot_collapse_btn.setAccessibleName("Collapse markup tools")
-        self._annot_collapse_btn.clicked.connect(self._toggle_annot_rail)
-        header.addWidget(self._annot_collapse_btn)
-        outer.addLayout(header)
+        title = QLabel("Markup")
+        title.setObjectName("PdfViewerAnnotRailTitle")
+        title.setAccessibleName("Markup tools")
+        outer.addWidget(title)
 
         self._annot_tools_host = QWidget()
         self._annot_tools_host.setObjectName("PdfViewerAnnotTools")
@@ -2449,16 +2476,14 @@ class PdfViewerWidget(QWidget):
         self._annot_tools_host.setAutoFillBackground(False)
         outer.addWidget(self._annot_tools_scroll, stretch=1)
 
-        self._annot_expand_btn = QToolButton()
-        self._annot_expand_btn.setObjectName("PdfViewerAnnotExpand")
-        self._annot_expand_btn.clicked.connect(self._toggle_annot_rail)
-        self._annot_expand_btn.hide()
-        outer.addWidget(self._annot_expand_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch(0)
         return rail
 
-    def _toggle_annot_rail(self) -> None:
-        self._set_annot_rail_collapsed(not self._annot_rail_collapsed)
+    def markup_rail_visible(self) -> bool:
+        return not self._annot_rail_collapsed
+
+    def set_markup_rail_visible(self, visible: bool) -> None:
+        self._set_annot_rail_collapsed(not visible)
 
     def _set_annot_rail_collapsed(self, collapsed: bool, *, persist: bool = True) -> None:
         focused = QApplication.focusWidget()
@@ -2466,31 +2491,23 @@ class PdfViewerWidget(QWidget):
             focused is self._annot_rail or self._annot_rail.isAncestorOf(focused)
         )
         self._annot_rail_collapsed = collapsed
-        collapsed = self._annot_rail_collapsed
-        self._annot_tools_scroll.setVisible(not collapsed)
-        self._annot_rail_title.setVisible(not collapsed)
-        self._annot_collapse_btn.setVisible(not collapsed)
-        self._annot_expand_btn.setVisible(collapsed)
-        if focus_in_rail:
-            (self._annot_expand_btn if collapsed else self._annot_collapse_btn).setFocus()
-        width = ANNOT_RAIL_COLLAPSED if collapsed else ANNOT_RAIL_WIDTH
-        self._annot_rail.setMaximumWidth(width)
-        self._annot_rail.setMinimumWidth(width)
-        sizes = self._splitter.sizes()
-        if len(sizes) >= 3:
-            # Keep left+center; assign rail width.
-            total = sum(sizes)
-            rail = width
-            left = sizes[0]
-            center = max(200, total - left - rail)
-            self._splitter.setSizes([left, center, rail])
-        self._annot_rail.setAccessibleDescription(
-            "Markup panel collapsed" if collapsed else "Markup panel expanded"
-        )
+        self._annot_rail.setVisible(not collapsed)
+        if focus_in_rail and collapsed:
+            self.setFocus()
+        self._fit_side_panels()
         if persist:
             set_viewer_panel_collapsed("markup", collapsed)
-        tip = "Show markup tools" if collapsed else "Collapse markup tools"
-        self.status_message.emit(tip)
+        self.status_message.emit(
+            "Markup tools hidden" if collapsed else "Markup tools shown"
+        )
+        self.panels_changed.emit()
+
+    def _fit_side_panels(self) -> None:
+        """Give each open side panel its width; the page area takes the rest."""
+        left = 0 if self._navigation_panel_collapsed else SIDE_PANEL_WIDTH
+        right = 0 if self._annot_rail_collapsed else ANNOT_RAIL_WIDTH
+        total = sum(self._splitter.sizes())
+        self._splitter.setSizes([left, max(200, total - left - right), right])
 
     def _show_annot_context_menu(self, global_pos) -> None:
         menu = QMenu(self)
@@ -3087,24 +3104,15 @@ class PdfViewerWidget(QWidget):
     def _build_side_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("PdfViewerNavigationPanel")
+        panel.setFixedWidth(SIDE_PANEL_WIDTH)
         panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(4, 6, 4, 6)
         outer.setSpacing(4)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        self._side_title = QLabel("Navigation")
-        self._side_title.setAccessibleName("Navigation panel")
-        header.addWidget(self._side_title, stretch=1)
-        self._side_collapse_btn = QToolButton()
-        self._side_collapse_btn.setObjectName("PdfViewerSideCollapse")
-        self._side_collapse_btn.setText("Hide")
-        self._side_collapse_btn.setToolTip("Collapse navigation")
-        self._side_collapse_btn.setAccessibleName("Collapse navigation")
-        self._side_collapse_btn.clicked.connect(self._toggle_navigation_panel)
-        header.addWidget(self._side_collapse_btn)
-        outer.addLayout(header)
+        title = QLabel("Navigation")
+        title.setAccessibleName("Navigation panel")
+        outer.addWidget(title)
 
         tabs = QTabWidget()
         tabs.setObjectName("PdfViewerSide")
@@ -3139,18 +3147,13 @@ class PdfViewerWidget(QWidget):
         tabs.addTab(att_host, "Attachments")
 
         outer.addWidget(tabs, stretch=1)
-        self._side_expand_btn = QToolButton()
-        self._side_expand_btn.setObjectName("PdfViewerSideExpand")
-        self._side_expand_btn.setText("Show")
-        self._side_expand_btn.setToolTip("Show navigation")
-        self._side_expand_btn.setAccessibleName("Show navigation")
-        self._side_expand_btn.clicked.connect(self._toggle_navigation_panel)
-        self._side_expand_btn.hide()
-        outer.addWidget(self._side_expand_btn)
         return panel
 
-    def _toggle_navigation_panel(self) -> None:
-        self._set_navigation_panel_collapsed(not self._navigation_panel_collapsed)
+    def navigation_panel_visible(self) -> bool:
+        return not self._navigation_panel_collapsed
+
+    def set_navigation_panel_visible(self, visible: bool) -> None:
+        self._set_navigation_panel_collapsed(not visible)
 
     def _set_navigation_panel_collapsed(
         self, collapsed: bool, *, persist: bool = True
@@ -3160,28 +3163,16 @@ class PdfViewerWidget(QWidget):
             focused is self._side or self._side.isAncestorOf(focused)
         )
         self._navigation_panel_collapsed = collapsed
-        self._side_tabs.setVisible(not collapsed)
-        self._side_title.setVisible(not collapsed)
-        self._side_collapse_btn.setVisible(not collapsed)
-        self._side_expand_btn.setVisible(collapsed)
-        if focus_in_panel:
-            (self._side_expand_btn if collapsed else self._side_collapse_btn).setFocus()
-        width = SIDE_PANEL_COLLAPSED if collapsed else SIDE_PANEL_WIDTH
-        self._side.setMinimumWidth(width)
-        self._side.setMaximumWidth(width)
-        sizes = self._splitter.sizes()
-        if len(sizes) >= 3:
-            total = sum(sizes)
-            center = max(200, total - width - sizes[2])
-            self._splitter.setSizes([width, center, sizes[2]])
-        self._side.setAccessibleDescription(
-            "Navigation panel collapsed" if collapsed else "Navigation panel expanded"
-        )
+        self._side.setVisible(not collapsed)
+        if focus_in_panel and collapsed:
+            self.setFocus()
+        self._fit_side_panels()
         if persist:
             set_viewer_panel_collapsed("navigation", collapsed)
         self.status_message.emit(
-            "Show navigation" if collapsed else "Collapse navigation"
+            "Navigation hidden" if collapsed else "Navigation shown"
         )
+        self.panels_changed.emit()
 
     def _sync_navigation_empty_state(self) -> None:
         """Default empty documents to the canvas, without overriding a user choice."""

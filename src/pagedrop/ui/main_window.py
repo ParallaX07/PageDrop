@@ -340,27 +340,35 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._pane_actions = {
             PANE_SECTIONS: actions.register(
                 "toggle_sections",
-                "Toggle &sections",
+                "Show &sections",
                 slot=lambda visible: self._on_pane_toggled(PANE_SECTIONS, visible),
                 shortcut="Ctrl+Shift+B",
                 checkable=True,
                 checked=sections_visible(),
-                tip="Show or hide the sections list (Ctrl+Shift+B)",
+                icon=icons.icon(
+                    "sidebar-left-fill" if sections_visible() else "sidebar-left"
+                ),
+                tip="Show or hide sections (Ctrl+Shift+B)",
                 enabled=False,
                 add_to_window=True,
             ),
             PANE_DOCUMENT: actions.register(
                 "toggle_document_panel",
-                "Toggle &document panel",
+                "Show &document panel",
                 slot=lambda visible: self._on_pane_toggled(PANE_DOCUMENT, visible),
                 shortcut="Ctrl+Shift+I",
                 checkable=True,
                 checked=document_panel_visible(),
+                icon=icons.icon(
+                    "sidebar-right-fill" if document_panel_visible() else "sidebar-right"
+                ),
                 tip="Show or hide the document panel (Ctrl+Shift+I)",
                 enabled=False,
                 add_to_window=True,
             ),
         }
+        # Accessible name of each sidebar toggle's toolbar button, kept by _sync_pane_actions.
+        self._pane_names: dict[str, str] = {}
         self._quality_action_group = QActionGroup(self)
         self._quality_action_group.setExclusive(True)
         current_quality = thumbnail_quality()
@@ -637,6 +645,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         a["rotate_cw"].setIcon(icons.icon("arrow-clockwise"))
         a["rotate_ccw"].setIcon(icons.icon("arrow-counter-clockwise"))
         a["extract_selected"].setIcon(icons.icon("export"))
+        self._sync_pane_actions()
         self._set_toolbar_primary()
         self._refresh_window_control_icons()
 
@@ -758,6 +767,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._toolbar_host_tab: PdfTab | None = None
         a = self._actions
 
+        toolbar.addAction(a["toggle_sections"])
         toolbar.addAction(a["open"])
         # Offscreen Qt needs a widget action here to tear down this reparented
         # toolbar safely. It is intentionally zero-width, not document chrome.
@@ -814,6 +824,7 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._install_menu_focus_restore(self._toolbar_overflow_menu)
         self._toolbar_overflow.setMenu(self._toolbar_overflow_menu)
         self._toolbar_overflow_action = toolbar.addWidget(self._toolbar_overflow)
+        toolbar.addAction(a["toggle_document_panel"])
 
         # Toolbar order, the separators this toolbar alone owns, and the commands
         # that give way to More (last to go first) when the bar is narrow.
@@ -863,7 +874,27 @@ class MainWindow(WindowChromeMixin, QMainWindow):
     def _style_toolbar_buttons(self) -> None:
         """Apply per-button presentation; run again for any re-created button."""
         self._apply_toolbar_label_style()
+        self._style_sidebar_toggles()
         enable_toolbar_keyboard_navigation(self._toolbar)
+
+    def _style_sidebar_toggles(self) -> None:
+        """Mark the sidebar toggle buttons (state is the icon) and name them for screen readers."""
+        for pane, action in self._pane_actions.items():
+            button = self._toolbar.widgetForAction(action)
+            if not isinstance(button, QToolButton):
+                continue
+            if button.objectName() != "ToolbarSidebarToggle":
+                button.setObjectName("ToolbarSidebarToggle")
+                button.style().unpolish(button)
+                button.style().polish(button)
+            if name := self._pane_names.get(pane):
+                button.setAccessibleName(name)
+
+    def _name_viewer_sidebar_toggles(self, tab: PdfTab) -> None:
+        tab.preview_widget.set_sidebar_names(
+            self._pane_names.get(PANE_SECTIONS, ""),
+            self._pane_names.get(PANE_DOCUMENT, ""),
+        )
 
     def _apply_toolbar_label_style(self) -> None:
         """Labels beside icons, except on buttons the bar has made icon-only.
@@ -1152,6 +1183,10 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         tab.start_screen.bind_actions(
             self._actions["open"], self._actions["merge"], self._actions["tools"]
         )
+        tab.preview_widget.set_sidebar_actions(
+            self._pane_actions[PANE_SECTIONS], self._pane_actions[PANE_DOCUMENT]
+        )
+        self._name_viewer_sidebar_toggles(tab)
         tab.start_screen.recent_file_requested.connect(self._open_recent_if_present)
         tab.pdf_loaded.connect(self._on_tab_pdf_loaded)
         tab.workspace_panes_changed.connect(self._on_workspace_panes_changed)
@@ -1447,20 +1482,48 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             self._sync_pane_actions()
 
     def _sync_pane_actions(self) -> None:
-        """Enable the pane toggles for a document and show its real pane state."""
+        """Enable the sidebar toggles for a document and show the real sidebar state.
+
+        Checked means open. The text, hint and icon name the sidebar of the
+        active view: sections and document panel in the grid, navigation and
+        markup tools in the viewer.
+        """
         tab = self._active_tab()
         has_document = tab is not None and not tab.is_blank
         for pane, action in self._pane_actions.items():
             action.setEnabled(has_document)
             if tab is None:
                 continue
-            checked = tab.workspace_pane_visible(pane) if has_document else (
-                sections_visible() if pane == PANE_SECTIONS else document_panel_visible()
-            )
+            left = pane == PANE_SECTIONS
+            if has_document:
+                checked = tab.workspace_pane_visible(pane)
+                noun = tab.workspace_pane_label(pane)
+            else:
+                checked = sections_visible() if left else document_panel_visible()
+                noun = "sections" if left else "document panel"
             if action.isChecked() != checked:
                 action.blockSignals(True)
                 action.setChecked(checked)
                 action.blockSignals(False)
+            name = f"{'Hide' if checked else 'Show'} {noun}"
+            hint = f"{name} ({action.shortcut().toString()})"
+            if has_document and not left and not checked and tab.is_viewer_mode():
+                if tool := tab.preview_widget.active_markup_label():
+                    hint += f" — active: {tool}"
+            action.setText(f"Show &{noun}")
+            self._set_action_hint(action, hint)
+            side = "left" if left else "right"
+            action.setIcon(icons.icon(f"sidebar-{side}-fill" if checked else f"sidebar-{side}"))
+            self._pane_names[pane] = name
+        self._style_sidebar_toggles()
+        if tab is not None:
+            self._name_viewer_sidebar_toggles(tab)
+        # The toggles live on this bar in the grid and on the viewer's own in
+        # Pages view; refit whenever the view changed under them.
+        on_bar = set(self._toolbar.actions())
+        owned = self._viewer_owned_toolbar_actions()
+        if any((a in on_bar) == (a in owned) for a in self._pane_actions.values()):
+            self._refit_toolbar()
 
     def _sync_toolbar_from_active_tab(self) -> None:
         tab = self._active_tab()
@@ -1561,15 +1624,19 @@ class MainWindow(WindowChromeMixin, QMainWindow):
             return []
         self._measure_toolbar_buttons()
         measured = self._toolbar_hint_widths
+        viewer_owned = self._viewer_owned_toolbar_actions()
         if any(
-            a not in measured and a not in self._toolbar_separators for a in order
+            a not in measured
+            and a not in self._toolbar_separators
+            and a not in viewer_owned
+            for a in order
         ) or any(a not in self._toolbar_icon_widths for a in self._toolbar_label_droppable):
             # Not measured while present (e.g. after a font change): measure all.
             self._show_all_toolbar_items()
             return self._fit_toolbar(static_overflow)
 
         available = toolbar.width()
-        removed: set[QAction] = set()
+        removed = set(viewer_owned)
         displaced: list[QAction] = []
         droppable = list(reversed(self._toolbar_label_droppable))
         icon_only: set[QAction] = set()
@@ -1588,9 +1655,22 @@ class MainWindow(WindowChromeMixin, QMainWindow):
         self._apply_toolbar_label_style()
         return displaced
 
+    def _viewer_owned_toolbar_actions(self) -> set[QAction]:
+        """Sidebar toggles the viewer's own bar shows in Pages view.
+
+        They leave the toolbar by being removed from it, never hidden, so
+        their shortcuts keep working.
+        """
+        tab = self._active_tab()
+        if tab is not None and tab.is_viewer_mode():
+            return set(self._pane_actions.values())
+        return set()
+
     def _show_all_toolbar_items(self) -> None:
         self._toolbar_icon_only = frozenset()
-        self._apply_toolbar_members(set(self._toolbar_order))
+        self._apply_toolbar_members(
+            set(self._toolbar_order) - self._viewer_owned_toolbar_actions()
+        )
         self._apply_toolbar_label_style()
 
     def _measure_toolbar_buttons(self) -> None:

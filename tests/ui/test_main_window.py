@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from pagedrop.assets import register_fonts
 from pagedrop.ui.keyboard_nav import focusable_toolbar_widgets
 from pagedrop.ui.main_window import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, MainWindow
+from pagedrop.ui.pdf_viewer import AnnotTool
 from pagedrop.ui.window_chrome import TITLE_MAX_WIDTH
 from tests.conftest import wait_for_compare_render, wait_for_pdf_loaded
 
@@ -1049,6 +1050,11 @@ def test_title_drag_continues_across_a_menu_action(main_window, qtbot, monkeypat
     assert not main_window.eventFilter(menu_bar, far)
 
 
+# Narrowest bar that still holds the selection count beside Open, Save as, More
+# and both sidebar toggles. Below it the count yields, after every command.
+SELECTION_CELL_FLOOR = MIN_WINDOW_WIDTH + 100
+
+
 def _toolbar_fits(window: MainWindow) -> bool:
     """True when every shown toolbar widget is inside the bar and Qt's own
     extension button, which keyboard users cannot reach, stays unused."""
@@ -1124,22 +1130,22 @@ def test_viewer_content_fits_the_compact_floor(main_window, five_page_pdf, qtbot
     host = tab.preview_widget._annot_tools_host
     assert host.height() >= host.minimumSizeHint().height()
     tab.preview_widget._set_annot_rail_collapsed(True, persist=False)
-    assert rail_scroll.isHidden()
+    assert tab.preview_widget._annot_rail.isHidden()
 
 
 def test_toolbar_moves_trailing_actions_to_more_when_narrow(
     main_window, five_page_pdf, qtbot
 ):
     _style_window(main_window)
-    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=SELECTION_CELL_FLOOR)
     actions = main_window._actions
     toolbar = main_window._toolbar
     overflow_menu = main_window._toolbar_overflow_menu
     tab.thumbnail_grid.selection_manager.select_single(2)
     qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 3 selected")
-    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    main_window.resize(SELECTION_CELL_FLOOR, MIN_WINDOW_HEIGHT)
     qtbot.waitUntil(
-        lambda: toolbar.width() <= MIN_WINDOW_WIDTH
+        lambda: toolbar.width() <= SELECTION_CELL_FLOOR
         and actions["delete_pages"] in overflow_menu.actions()
         and main_window._toolbar_overflow.isVisible()
         and _toolbar_fits(main_window)
@@ -1149,7 +1155,7 @@ def test_toolbar_moves_trailing_actions_to_more_when_narrow(
     # More stay on the bar.
     assert main_window._selection_toolbar_label.isVisible()
     assert main_window._selection_toolbar_label.text() == "Page 3 selected"
-    for key in ("open", "save_as"):
+    for key in ("open", "save_as", "toggle_sections", "toggle_document_panel"):
         assert toolbar.widgetForAction(actions[key]).isVisible()
     assert main_window._toolbar_overflow.isVisible()
     assert main_window._toolbar_overflow in focusable_toolbar_widgets(toolbar)
@@ -1200,9 +1206,10 @@ def test_toolbar_never_needs_the_qt_extension_button_at_any_width(
             )
             assert toolbar.widgetForAction(main_window._actions["open"]).isVisible()
             assert main_window._toolbar_overflow.isVisible()
-            assert focusable_toolbar_widgets(toolbar)[0] is toolbar.widgetForAction(
-                main_window._actions["open"]
-            )
+            assert focusable_toolbar_widgets(toolbar)[:2] == [
+                toolbar.widgetForAction(main_window._actions["toggle_sections"]),
+                toolbar.widgetForAction(main_window._actions["open"]),
+            ]
 
 
 def test_displaced_toolbar_actions_stay_disabled_in_more_and_keep_their_shortcut(
@@ -1224,7 +1231,7 @@ def test_displaced_toolbar_actions_stay_disabled_in_more_and_keep_their_shortcut
 
     # A narrower window than the floor pushes more commands into More.
     main_window.setMinimumSize(0, 0)
-    main_window.resize(300, MIN_WINDOW_HEIGHT)
+    main_window.resize(400, MIN_WINDOW_HEIGHT)
     tab.thumbnail_grid.selection_manager.select_single(0)
     duplicate = actions["duplicate_pages"]
     qtbot.waitUntil(
@@ -1313,6 +1320,7 @@ def test_hosted_compare_page_scrolls_instead_of_raising_the_window_minimum(
 
 
 _COMMAND_BAR_ORDER = [
+    "toggle_sections",
     "open",
     "save_as",
     "|",
@@ -1326,6 +1334,7 @@ _COMMAND_BAR_ORDER = [
     "view",
     "tools",
     "more",
+    "toggle_document_panel",
 ]
 _COMMAND_BAR_LABELS = {
     "open": "Open",
@@ -1594,7 +1603,7 @@ def test_narrow_bar_drops_labels_from_the_right_before_using_more(
     command_keys = {"rotate_ccw", "rotate_cw", "duplicate_pages", "extract_selected", "delete_pages", "preview", "tools"}
 
     saw_mixed = saw_more = False
-    for width in range(1600, MIN_WINDOW_WIDTH - 1, -40):
+    for width in range(1600, SELECTION_CELL_FLOOR - 1, -40):
         _settle_at(qtbot, main_window, width)
         on_bar, more = _command_bar_state(main_window)
         # Save as is primary, so it always keeps its label.
@@ -1712,10 +1721,10 @@ def _members_on_bar(window: MainWindow):
     return {action for action in window._toolbar.actions() if action.isVisible()}
 
 
-def test_all_labels_show_at_1280_with_the_app_style_sheet(main_window, five_page_pdf, qtbot):
+def test_all_labels_show_at_1400_with_the_app_style_sheet(main_window, five_page_pdf, qtbot):
     _style_window(main_window)
-    _open_loaded_window(main_window, five_page_pdf, qtbot, width=1280)
-    qtbot.waitUntil(lambda: abs(main_window._toolbar.width() - 1280) < 10 and _toolbar_fits(main_window))
+    _open_loaded_window(main_window, five_page_pdf, qtbot, width=1400)
+    qtbot.waitUntil(lambda: abs(main_window._toolbar.width() - 1400) < 10 and _toolbar_fits(main_window))
     qtbot.waitUntil(lambda: _refit_changes_nothing(main_window))
     on_bar, more = _command_bar_state(main_window)
     assert [key for key, _icon_only in on_bar] == _DROPPABLE_LABELS
@@ -1759,16 +1768,16 @@ def test_width_estimate_matches_the_real_layout_and_labels_drop_only_when_needed
             assert spacer.width() < extra, (width, spacer.width(), extra)
 
 
-def test_selection_cell_leaves_the_bar_last_and_only_below_the_floor(
+def test_selection_cell_leaves_the_bar_last_and_only_when_nothing_else_can_go(
     main_window, five_page_pdf, qtbot
 ):
     _style_window(main_window)
-    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=SELECTION_CELL_FLOOR)
     tab.thumbnail_grid.selection_manager.select_single(0)
     qtbot.waitUntil(lambda: main_window._selection_toolbar_label.text() == "Page 1 selected")
-    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    main_window.resize(SELECTION_CELL_FLOOR, MIN_WINDOW_HEIGHT)
     qtbot.waitUntil(
-        lambda: main_window.size().width() == MIN_WINDOW_WIDTH and _toolbar_fits(main_window)
+        lambda: main_window.size().width() == SELECTION_CELL_FLOOR and _toolbar_fits(main_window)
     )
     qtbot.waitUntil(lambda: _refit_changes_nothing(main_window))
     toolbar = main_window._toolbar
@@ -1783,13 +1792,15 @@ def test_selection_cell_leaves_the_bar_last_and_only_below_the_floor(
     for key in ("delete_pages", "preview", "tools"):
         assert actions[key] in main_window._toolbar_overflow_menu.actions()
 
-    # Only a window below the floor pushes the cell out, after every command.
-    main_window.setMinimumSize(0, 0)
-    main_window.resize(300, MIN_WINDOW_HEIGHT)
+    # Narrower than that pushes the cell out, after every command; the sidebar
+    # toggles never leave.
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
     qtbot.waitUntil(lambda: not label.isVisible() and _toolbar_fits(main_window))
     for action in main_window._toolbar_displaceable:
         assert action in main_window._toolbar_overflow_menu.actions()
     assert toolbar.widgetForAction(actions["save_as"]).isVisible()
+    for key in ("toggle_sections", "toggle_document_panel"):
+        assert toolbar.widgetForAction(actions[key]).isVisible()
 
 
 def test_every_command_bar_label_is_inside_its_accessible_name(main_window):
@@ -1912,8 +1923,8 @@ def test_pane_toggles_have_shortcuts_menu_entries_and_palette_entries(main_windo
     view = _top_level_menu(main_window, "View")
     in_palette = {id(action) for action in collect_actions(main_window)}
     expected = {
-        "toggle_sections": ("Toggle sections", "Ctrl+Shift+B"),
-        "toggle_document_panel": ("Toggle document panel", "Ctrl+Shift+I"),
+        "toggle_sections": ("Show sections", "Ctrl+Shift+B"),
+        "toggle_document_panel": ("Show document panel", "Ctrl+Shift+I"),
     }
     for key, (label, shortcut) in expected.items():
         action = main_window._actions[key]
@@ -2224,9 +2235,351 @@ def test_tab_order_runs_sections_then_grid_then_document(main_window, five_page_
     order = chain(sections)
     assert tab.thumbnail_grid not in order
     viewer_positions = [i for i, w in enumerate(order) if tab.preview_widget.isAncestorOf(w) or w is tab.preview_widget]
-    assert viewer_positions, "viewer takes focus between the panes"
-    assert max(viewer_positions) < order.index(document)
+    assert viewer_positions, "the viewer takes focus"
+    # The grid panes are hidden in the viewer, so the document panel takes no focus.
+    assert document not in order
 
     tab.close_preview()
     _pane_action(main_window, "document").trigger()
     assert document not in chain(sections)
+
+
+# --- one left and one right sidebar per view ---------------------------------
+
+
+def _icon_key(name: str) -> int:
+    from pagedrop.ui import icons
+
+    return icons.icon(name).cacheKey()
+
+
+def _enter_pages_view(tab, qtbot):
+    tab.show_preview_at(0)
+    qtbot.waitUntil(tab.is_viewer_mode)
+    return tab.preview_widget
+
+
+def test_pages_view_hides_grid_sidebars_without_changing_their_preferences(
+    main_window, five_page_pdf, qtbot
+):
+    from pagedrop.ui.settings import document_panel_visible, sections_visible
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    assert tab.section_index.isVisible() and tab.document_panel.isVisible()
+
+    _enter_pages_view(tab, qtbot)
+    assert tab.section_index.isHidden() and tab.document_panel.isHidden()
+    assert tab.workspace_splitter.sizes()[0] == 0
+    assert tab.workspace_splitter.sizes()[2] == 0
+    assert sections_visible() and document_panel_visible()
+
+    tab.close_preview()
+    qtbot.waitUntil(lambda: tab.section_index.isVisible() and tab.document_panel.isVisible())
+    assert _pane_action(main_window, "sections").isChecked()
+    assert _pane_action(main_window, "document").isChecked()
+
+
+def test_pages_view_toggles_drive_navigation_and_markup_and_persist(
+    main_window, five_page_pdf, qtbot
+):
+    from pagedrop.ui.pdf_viewer import ANNOT_RAIL_WIDTH, SIDE_PANEL_WIDTH
+    from pagedrop.ui.settings import (
+        document_panel_visible,
+        sections_visible,
+        viewer_panel_collapsed,
+    )
+
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    viewer = _enter_pages_view(tab, qtbot)
+    nav, rail = _pane_action(main_window, "sections"), _pane_action(main_window, "document")
+    splitter = viewer._splitter
+
+    for action in (nav, rail):
+        if action.isChecked():
+            action.trigger()
+    assert not nav.isChecked() and not rail.isChecked()
+    assert viewer._side.isHidden() and viewer._annot_rail.isHidden()
+    assert viewer_panel_collapsed("navigation") and viewer_panel_collapsed("markup")
+    # No strip is left behind: the page area takes the whole width.
+    sizes = splitter.sizes()
+    assert sizes[0] == 0 and sizes[2] == 0 and sizes[1] > 0
+
+    nav.trigger()
+    assert nav.isChecked() and viewer.navigation_panel_visible()
+    assert not viewer._side.isHidden()
+    assert not viewer_panel_collapsed("navigation")
+    assert splitter.sizes()[0] == SIDE_PANEL_WIDTH
+    rail.trigger()
+    assert rail.isChecked() and viewer.markup_rail_visible()
+    assert not viewer._annot_rail.isHidden()
+    assert not viewer_panel_collapsed("markup")
+    assert splitter.sizes()[2] == ANNOT_RAIL_WIDTH
+
+    # Closing from the viewer itself keeps the actions in step.
+    viewer.set_markup_rail_visible(False)
+    assert not rail.isChecked()
+
+    # The grid preferences were never touched.
+    assert sections_visible() and document_panel_visible()
+    tab.close_preview()
+    qtbot.waitUntil(lambda: tab.section_index.isVisible() and tab.document_panel.isVisible())
+
+
+def test_sidebar_toggle_hint_icon_and_name_follow_state_and_view(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    toolbar = main_window._toolbar
+    sections, document = _pane_action(main_window, "sections"), _pane_action(main_window, "document")
+
+    assert sections.toolTip() == "Hide sections (Ctrl+Shift+B)"
+    assert document.toolTip() == "Hide document panel (Ctrl+Shift+I)"
+    assert sections.icon().cacheKey() == _icon_key("sidebar-left-fill")
+    assert document.icon().cacheKey() == _icon_key("sidebar-right-fill")
+    button = toolbar.widgetForAction(sections)
+    assert button.objectName() == "ToolbarSidebarToggle"
+    assert button.accessibleName() == "Hide sections"
+
+    sections.trigger()
+    document.trigger()
+    assert sections.toolTip() == "Show sections (Ctrl+Shift+B)"
+    assert document.toolTip() == "Show document panel (Ctrl+Shift+I)"
+    assert sections.icon().cacheKey() == _icon_key("sidebar-left")
+    assert document.icon().cacheKey() == _icon_key("sidebar-right")
+    assert button.accessibleName() == "Show sections"
+    assert sections.text() == "Show &sections" and document.text() == "Show &document panel"
+    sections.trigger()
+    document.trigger()
+
+    viewer = _enter_pages_view(tab, qtbot)
+    for action in (sections, document):
+        if action.isChecked():
+            action.trigger()
+    assert sections.text() == "Show &navigation"
+    assert document.text() == "Show &markup tools"
+    assert sections.toolTip() == "Show navigation (Ctrl+Shift+B)"
+    assert document.toolTip() == "Show markup tools (Ctrl+Shift+I)"
+    assert viewer._sidebar_left_button.accessibleName() == "Show navigation"
+    assert viewer._sidebar_right_button.accessibleName() == "Show markup tools"
+
+    # The active tool stays visible while the markup tools are closed.
+    viewer.set_annot_tool(AnnotTool.COMMENT)
+    assert document.toolTip() == "Show markup tools (Ctrl+Shift+I) — active: Comment"
+    document.trigger()
+    assert document.toolTip() == "Hide markup tools (Ctrl+Shift+I)"
+    assert document.icon().cacheKey() == _icon_key("sidebar-right-fill")
+    sections.trigger()
+    assert sections.toolTip() == "Hide navigation (Ctrl+Shift+B)"
+    assert sections.icon().cacheKey() == _icon_key("sidebar-left-fill")
+    assert viewer._sidebar_left_button.accessibleName() == "Hide navigation"
+    assert viewer._sidebar_right_button.accessibleName() == "Hide markup tools"
+
+    tab.close_preview()
+    assert sections.text() == "Show &sections"
+    assert sections.toolTip().startswith(("Hide sections", "Show sections"))
+
+
+def test_sidebar_toggle_icons_are_retinted_on_a_theme_change(main_window, five_page_pdf, qtbot):
+    from pagedrop.ui import icons
+
+    _open_wide_window(main_window, five_page_pdf, qtbot)
+    sections = _pane_action(main_window, "sections")
+    stale = sections.icon().cacheKey()
+    icons.refresh_icons()
+    assert sections.icon().cacheKey() != stale
+    assert sections.icon().cacheKey() == _icon_key("sidebar-left-fill")
+
+
+def test_sidebar_toggles_stay_first_and_last_on_a_narrow_bar(
+    main_window, five_page_pdf, qtbot
+):
+    _style_window(main_window)
+    tab = _open_loaded_window(main_window, five_page_pdf, qtbot, width=MIN_WINDOW_WIDTH)
+    actions = main_window._actions
+    toolbar = main_window._toolbar
+    overflow_menu = main_window._toolbar_overflow_menu
+    tab.thumbnail_grid.selection_manager.select_single(2)
+    main_window.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(
+        lambda: actions["delete_pages"] in overflow_menu.actions() and _toolbar_fits(main_window)
+    )
+
+    first, last = actions["toggle_sections"], actions["toggle_document_panel"]
+    assert toolbar.actions()[0] is first
+    assert toolbar.actions()[-1] is last
+    for action in (first, last):
+        assert toolbar.widgetForAction(action).isVisible()
+        assert action not in overflow_menu.actions()
+        assert toolbar.widgetForAction(action).objectName() == "ToolbarSidebarToggle"
+    assert main_window._toolbar_order[0] is first
+    assert main_window._toolbar_order[-1] is last
+
+
+# --- the toggles follow the view: window toolbar in the grid, viewer bar in Pages view ---
+
+
+def _viewer_toggle_buttons(viewer):
+    from PyQt6.QtWidgets import QToolButton
+
+    return viewer.findChildren(QToolButton, "ToolbarSidebarToggle")
+
+
+def _bar_items(viewer):
+    layout = viewer._toolbar.layout()
+    return [layout.itemAt(i).widget() for i in range(layout.count())]
+
+
+def test_pages_view_puts_the_toggles_on_the_viewer_bar_and_the_grid_takes_them_back(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    toolbar = main_window._toolbar
+    sections, document = _pane_action(main_window, "sections"), _pane_action(main_window, "document")
+    assert toolbar.actions()[0] is sections and toolbar.actions()[-1] is document
+    assert not _viewer_toggle_buttons(tab.preview_widget)[0].isVisible()
+
+    viewer = _enter_pages_view(tab, qtbot)
+    qtbot.waitUntil(lambda: sections not in toolbar.actions())
+    assert document not in toolbar.actions()
+    left, right = viewer._sidebar_left_button, viewer._sidebar_right_button
+    items = _bar_items(viewer)
+    assert items[0] is left and items[-1] is right
+    assert left.isVisible() and right.isVisible()
+    assert left.defaultAction() is sections and right.defaultAction() is document
+    # The actions stay enabled and visible, so their shortcuts keep working.
+    assert sections.isEnabled() and sections.isVisible()
+    assert document.isEnabled() and document.isVisible()
+
+    tab.close_preview()
+    qtbot.waitUntil(lambda: sections in toolbar.actions() and document in toolbar.actions())
+    assert toolbar.actions()[0] is sections and toolbar.actions()[-1] is document
+
+    # Esc from the viewer, then entering again through the window.
+    main_window._open_preview()
+    qtbot.waitUntil(lambda: sections not in toolbar.actions())
+    qtbot.keyClick(viewer, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: sections in toolbar.actions() and document in toolbar.actions())
+
+
+def test_viewer_buttons_drive_navigation_and_markup_and_shortcuts_still_work(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    viewer = _enter_pages_view(tab, qtbot)
+    sections, document = _pane_action(main_window, "sections"), _pane_action(main_window, "document")
+    for action in (sections, document):
+        if action.isChecked():
+            action.trigger()
+    assert not viewer.navigation_panel_visible() and not viewer.markup_rail_visible()
+
+    viewer._sidebar_left_button.click()
+    assert viewer.navigation_panel_visible() and sections.isChecked()
+    viewer._sidebar_right_button.click()
+    assert viewer.markup_rail_visible() and document.isChecked()
+    viewer._sidebar_left_button.click()
+    assert not viewer.navigation_panel_visible() and not sections.isChecked()
+
+    # The same action, as a shortcut or menu command, drives both views.
+    sections.trigger()
+    assert viewer.navigation_panel_visible() and viewer._sidebar_left_button.isChecked()
+    assert viewer._sidebar_left_button.accessibleName() == "Hide navigation"
+    tab.close_preview()
+    qtbot.waitUntil(tab.section_index.isVisible)
+    before = tab.section_index.isVisible()
+    sections.trigger()
+    assert tab.section_index.isVisible() != before
+
+
+def test_a_tab_moved_to_another_window_rebinds_its_viewer_toggles(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    viewer = tab.preview_widget
+    other = MainWindow()
+    qtbot.addWidget(other)
+    try:
+        other.show()
+        qtbot.waitExposed(other, timeout=5000)
+        other._adopt_tab(tab)
+        qtbot.waitUntil(lambda: other._active_tab() is tab and tab.is_viewer_mode() is False)
+        _enter_pages_view(tab, qtbot)
+
+        buttons = _viewer_toggle_buttons(viewer)
+        assert len(buttons) == 2
+        assert viewer._sidebar_left_button.defaultAction() is _pane_action(other, "sections")
+        assert viewer._sidebar_right_button.defaultAction() is _pane_action(other, "document")
+        qtbot.waitUntil(lambda: _pane_action(other, "sections") not in other._toolbar.actions())
+
+        viewer._sidebar_left_button.click()
+        assert _pane_action(other, "sections").isChecked() == viewer.navigation_panel_visible()
+        assert viewer._sidebar_left_button.isChecked() == viewer.navigation_panel_visible()
+    finally:
+        other._temp_manager.cleanup()
+
+
+def test_viewer_without_a_window_shows_no_sidebar_toggles(qtbot):
+    from pagedrop.ui.pdf_viewer import PdfViewerWidget
+
+    viewer = PdfViewerWidget()
+    qtbot.addWidget(viewer)
+    viewer.resize(900, 400)
+    viewer.show()
+    qtbot.waitExposed(viewer)
+    assert all(not button.isVisible() for button in _viewer_toggle_buttons(viewer))
+    assert all(button.defaultAction() is None for button in _viewer_toggle_buttons(viewer))
+
+
+def test_viewer_bar_keeps_the_toggles_at_its_ends_and_counts_their_width(
+    main_window, five_page_pdf, qtbot
+):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    viewer = _enter_pages_view(tab, qtbot)
+    standalone_width = viewer._toolbar_width_for(viewer._layout_buttons, True)
+    left, right = viewer._sidebar_left_button, viewer._sidebar_right_button
+    left.hide()
+    right.hide()
+    without = viewer._toolbar_width_for(viewer._layout_buttons, True)
+    left.show()
+    right.show()
+    assert standalone_width >= without + left.sizeHint().width() + right.sizeHint().width()
+
+    # Narrow: Print yields to More, the toggles stay on the bar's ends.
+    main_window.setMinimumSize(0, 0)
+    main_window.resize(standalone_width // 2, MIN_WINDOW_HEIGHT)
+    qtbot.waitUntil(lambda: viewer._secondary_overflow.isVisible())
+    items = _bar_items(viewer)
+    assert items[0] is left and items[-1] is right
+    assert left.isVisible() and right.isVisible()
+    assert left.x() == 8
+    assert right.geometry().right() + 8 + 1 == viewer._toolbar.width()
+
+
+def test_viewer_toggles_sit_around_the_bar_in_tab_order(main_window, five_page_pdf, qtbot):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    viewer = _enter_pages_view(tab, qtbot)
+
+    chain = []
+    widget = viewer._sidebar_left_button
+    for _ in range(40):
+        chain.append(widget)
+        widget = widget.nextInFocusChain()
+        if widget is viewer._sidebar_left_button:
+            break
+    assert chain.index(viewer._sidebar_left_button) < chain.index(viewer._search_edit)
+    assert chain.index(viewer._print_button) < chain.index(viewer._sidebar_right_button)
+
+
+def test_toggles_return_to_the_window_toolbar_for_a_blank_tab(main_window, five_page_pdf, qtbot):
+    tab = _open_wide_window(main_window, five_page_pdf, qtbot)
+    toolbar = main_window._toolbar
+    sections, document = _pane_action(main_window, "sections"), _pane_action(main_window, "document")
+    _enter_pages_view(tab, qtbot)
+    qtbot.waitUntil(lambda: sections not in toolbar.actions())
+
+    main_window._new_blank_tab()
+    qtbot.waitUntil(lambda: sections in toolbar.actions() and document in toolbar.actions())
+    assert toolbar.actions()[0] is sections and toolbar.actions()[-1] is document
+
+    main_window._tab_manager.setCurrentWidget(tab)
+    qtbot.waitUntil(lambda: not tab.is_viewer_mode())
+    assert sections in toolbar.actions() and document in toolbar.actions()
